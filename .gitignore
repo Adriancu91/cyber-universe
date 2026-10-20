@@ -1,0 +1,7 @@
+build/
+target/
+*.iso
+*.img
+ovmf/
+limine/
+.DS_Store
