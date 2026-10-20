@@ -113,7 +113,8 @@ cât P3-09 așteaptă testul pe hardware real). Fiecare sarcină are plan în `d
 
 - [x] **P4-01** Mouse (PS/2 și USB). Dep: P3-06.
   Test: scenariile `mouse` (PS/2) și `usb-mouse` (QEMU mișcă mouse-ul și face clic).
-- [ ] **P4-02** Bibliotecă grafică: buffer dublu și desen rapid. Dep: P2-11.
+- [x] **P4-02** Bibliotecă grafică: buffer dublu și desen rapid. Dep: P2-11.
+  Test: scenariul `log` — `test: grafica OK` (pixeli, zone schimbate, copiere pe ecran; ~290 cadre/s pe tot ecranul în QEMU).
 - [ ] **P4-03** Fonturi: diacritice românești și text UTF-8. Dep: P4-02.
 - [ ] **P4-04** Server grafic: ferestre și cursor. Dep: P4-01, P4-02, P4-03.
 - [ ] **P4-05** Ferestre pentru programe (apeluri de sistem, memorie partajată). Dep: P4-04, P2-08.

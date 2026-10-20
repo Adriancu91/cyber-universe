@@ -186,6 +186,7 @@ fn run_tests() -> ! {
     test_address_spaces();
     test_user_mode();
     test_files();
+    test_canvas();
     #[cfg(feature = "test-net")]
     test_network();
     #[cfg(feature = "test-usb")]
@@ -689,6 +690,58 @@ fn test_network() {
     };
     let g = &reply[22..28];
     info!("net: ARP: 10.0.2.2 este la {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", g[0], g[1], g[2], g[3], g[4], g[5]);
+}
+
+/// Draws a known scene in a back buffer, checks pixels, the changed area and the copy to the screen,
+/// and measures how many full-screen frames per second the CPU can draw and copy.
+#[cfg(feature = "qemu-test")]
+fn test_canvas() {
+    use gfx::canvas::{Canvas, Rect};
+    let mut c = Canvas::new(200, 100, 0x000000);
+    assert!(c.present_dirty_for_test() == Some(Rect::new(0, 0, 200, 100)), "o panza noua trebuie redesenata toata");
+    c.fill(Rect::new(10, 10, 50, 20), 0xFF0000);
+    c.outline(Rect::new(100, 10, 40, 30), 2, 0x00FF00);
+    c.line(0, 99, 199, 0, 0x0000FF);
+    let sprite = [0x123456, 0xABCDEF, 0xABCDEF, 0x123456];
+    c.blit(180, 80, 2, 2, &sprite, Some(0xABCDEF));
+    let w = c.text(20, 60, "Cyber", 0xFFFFFF, 2);
+    assert!(c.pixel(10, 10) == Some(0xFF0000) && c.pixel(59, 29) == Some(0xFF0000) && c.pixel(60, 30) == Some(0), "dreptunghi");
+    assert!(c.pixel(100, 10) == Some(0x00FF00) && c.pixel(101, 39) == Some(0x00FF00) && c.pixel(120, 25) == Some(0), "contur");
+    assert!(c.pixel(0, 99) == Some(0x0000FF) && c.pixel(199, 0) == Some(0x0000FF), "capetele liniei");
+    assert!(c.pixel(180, 80) == Some(0x123456) && c.pixel(181, 80) == Some(0), "imagine cu transparenta");
+    assert!(w == 5 * 12, "latimea textului");
+    assert!(c.present_dirty_for_test() == Some(Rect::new(0, 0, 200, 100)), "zona schimbata");
+    c.fill(Rect::new(30, 40, 5, 5), 0x808080);
+    assert!(c.present_dirty_for_test() == Some(Rect::new(30, 40, 5, 5)), "doar zona noua");
+
+    // Copy to the screen (bottom-right corner) and read it back.
+    let on_screen = gfx::console::with_console(|slot| {
+        let fb = slot.as_mut()?.framebuffer();
+        let (x, y) = (fb.width - 200, fb.height - 100);
+        let mut scene = Canvas::new(200, 100, 0x203040);
+        scene.fill(Rect::new(10, 10, 50, 20), 0xFF0000);
+        scene.present(fb, x, y);
+        Some((fb.pixel(x + 10, y + 10), fb.pixel(x + 5, y + 5)))
+    });
+    if let Some(p) = on_screen {
+        assert!(p == (Some(0xFF0000), Some(0x203040)), "copierea pe ecran: {:x?}", p);
+    }
+
+    // Speed: full-screen frames (draw everything + copy everything) in half a second.
+    let fps = gfx::console::with_console(|slot| {
+        let fb = slot.as_mut()?.framebuffer();
+        let (w, h) = (fb.width, fb.height);
+        let mut frame = Canvas::new(w, h, 0);
+        let start = arch::x86_64::apic::ticks();
+        let mut frames = 0u64;
+        while arch::x86_64::apic::ticks() < start + arch::x86_64::apic::HZ / 2 {
+            frame.fill(Rect::new(0, 0, w, h), 0x0010_1828 + frames as u32 % 16);
+            frame.present(fb, 0, 0);
+            frames += 1;
+        }
+        Some(frames * 2)
+    });
+    info!("test: grafica OK (desen in memorie, zone schimbate, copiere pe ecran; {} cadre/s pe tot ecranul)", fps.unwrap_or(0));
 }
 
 /// Runs the `hello` program (an ELF file from the initrd) and checks that damaged ELF files are refused.

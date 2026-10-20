@@ -50,6 +50,27 @@ impl Framebuffer {
         }
     }
 
+    /// Copies a row of pixels to (x, y), clipped to the screen (one memory copy: fast).
+    #[allow(dead_code)] // used by `Canvas::present` (self-tests now, the window server in P4-04)
+    pub fn write_row(&mut self, x: usize, y: usize, pixels: &[u32]) {
+        if y >= self.height || x >= self.width {
+            return;
+        }
+        let n = pixels.len().min(self.width - x);
+        // SAFETY: the row segment [x, x + n) of line y is inside the framebuffer; pixels are 4 bytes.
+        unsafe {
+            core::ptr::copy_nonoverlapping(pixels.as_ptr(), self.addr.add(y * self.pitch + x * 4) as *mut u32, n)
+        }
+    }
+
+    /// Reads a pixel (`None` outside the screen).
+    #[allow(dead_code)] // used by the self-tests
+    pub fn pixel(&self, x: usize, y: usize) -> Option<u32> {
+        // SAFETY: (x, y) is inside the framebuffer when the check passes; offset is 4-byte aligned.
+        (x < self.width && y < self.height)
+            .then(|| unsafe { (self.addr.add(y * self.pitch + x * 4) as *const u32).read_volatile() })
+    }
+
     /// Fills the whole screen.
     pub fn clear(&mut self, color: u32) {
         self.fill_rect(0, 0, self.width, self.height, color);

@@ -56,6 +56,12 @@ impl Console {
         }
     }
 
+    /// The screen under the console (for drawing that is not text).
+    #[allow(dead_code)] // used by the self-tests now, by the window server (P4-04)
+    pub fn framebuffer(&mut self) -> &mut Framebuffer {
+        &mut self.fb
+    }
+
     pub fn put_char(&mut self, c: char) {
         match c {
             '\n' => self.newline(),
