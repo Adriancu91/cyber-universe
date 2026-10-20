@@ -106,6 +106,9 @@ extern "C" fn kernel_main() -> ! {
     }
     boot::collect_files();
     fs::init();
+    if time::uptime_ms().is_some() {
+        drivers::usb::init(); // needs the clock (waits for USB 3 links)
+    }
     // A real disk (NVMe first, then SATA) gives /disk, unless the test disk image already did.
     let nvme = drivers::nvme::init().map(|d| alloc::boxed::Box::new(d) as alloc::boxed::Box<dyn block::BlockDevice>);
     let sata = drivers::ahci::init().map(|d| alloc::boxed::Box::new(d) as alloc::boxed::Box<dyn block::BlockDevice>);

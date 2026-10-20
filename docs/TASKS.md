@@ -94,7 +94,8 @@ AHCI, NVMe, XHCI, e1000). Fiecare sarcină are plan în `docs/plans/`.
   Test: scenariul `nvme` (discul de test ca NVMe → `/disk`).
 - [x] **P3-04** Imagine pentru stick USB (`tools/build.sh --usb`) + ghid `docs/USB.md`. Dep: P2-11.
   Test: scenariul `usb` (QEMU pornește de pe imaginea de stick prin XHCI + usb-storage); imaginea se descarcă din CI (artefactul `stick-usb`).
-- [ ] **P3-05** Controler USB XHCI: pornire și enumerarea dispozitivelor, `lsusb`. Dep: P3-01.
+- [x] **P3-05** Controler USB XHCI: pornire și enumerarea dispozitivelor, `lsusb`. Dep: P3-01.
+  Test: scenariul `usb-enum` (tastatură + stick USB găsite cu clasa corectă); `shell` (`lsusb`).
 - [ ] **P3-06** Tastatură USB (HID boot protocol). Dep: P3-05.
 - [ ] **P3-07** Stick USB (Mass Storage, Bulk-Only + SCSI) ca dispozitiv de blocuri, montat la `/usb`. Dep: P3-05.
 - [ ] **P3-08** Placă de rețea Intel e1000/e1000e: cadre Ethernet, test ARP. Dep: P3-01.

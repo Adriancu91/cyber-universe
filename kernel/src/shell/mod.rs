@@ -32,6 +32,7 @@ pub fn run() {
             "run" => run_program(args),
             "mem" => mem(),
             "lspci" => lspci(),
+            "lsusb" => lsusb(),
             "uptime" => uptime(),
             "reboot" => reboot(),
             #[cfg(feature = "qemu-test")]
@@ -72,6 +73,7 @@ fn help() {
     out!("  run <program> [argumente]  porneste un program (din /bin daca nu dai calea)\n");
     out!("  mem              memoria libera si cea folosita\n");
     out!("  lspci            dispozitivele PCI (discuri, USB, retea...)\n");
+    out!("  lsusb            dispozitivele USB conectate\n");
     out!("  uptime           de cat timp merge sistemul\n");
     out!("  reboot           reporneste calculatorul\n");
 }
@@ -139,6 +141,16 @@ fn mem() {
 fn lspci() {
     for d in crate::pci::devices() {
         out!("  {:02x}:{:02x}.{}  {:04x}:{:04x}  {}\n", d.bus, d.dev, d.func, d.vendor, d.device, d.kind());
+    }
+}
+
+fn lsusb() {
+    let devices = crate::drivers::usb::devices();
+    if devices.is_empty() {
+        out!("(niciun dispozitiv USB)\n");
+    }
+    for d in devices {
+        out!("  port {}  {:04x}:{:04x}  {}\n", d.port, d.vendor, d.product, d.kind());
     }
 }
 
