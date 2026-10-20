@@ -104,16 +104,24 @@ extern "x86-interrupt" fn handler(_frame: idt::InterruptStackFrame) {
     // SAFETY: an IRQ 1 means the controller has a byte for us.
     let scancode = unsafe { inb(DATA) };
     if let Some(key) = decode(scancode) {
-        let head = HEAD.load(Ordering::Relaxed);
-        let next = (head + 1) % QUEUE;
-        if next != TAIL.load(Ordering::Acquire) {
-            // SAFETY: only the handler writes slot `head`; the reader only reads slots before HEAD.
-            unsafe { (*core::ptr::addr_of_mut!(KEYS))[head] = Some(key) };
-            HEAD.store(next, Ordering::Release);
-            KEY_WAIT.wake_all();
-        } // queue full: the key is dropped
+        push_key(key);
     }
     apic::eoi();
+}
+
+/// Adds a key press to the queue read by `read_key`/`wait_key`. Called by the PS/2 interrupt handler and
+/// by the USB keyboard driver; interrupts are off while the queue changes, so the two cannot mix.
+pub fn push_key(key: Key) {
+    let flags = crate::sched::irq_save();
+    let head = HEAD.load(Ordering::Relaxed);
+    let next = (head + 1) % QUEUE;
+    if next != TAIL.load(Ordering::Acquire) {
+        // SAFETY: producers are serialised (interrupts off, one CPU); the reader only reads slots before HEAD.
+        unsafe { (*core::ptr::addr_of_mut!(KEYS))[head] = Some(key) };
+        HEAD.store(next, Ordering::Release);
+        KEY_WAIT.wake_all();
+    } // queue full: the key is dropped
+    crate::sched::irq_restore(flags);
 }
 
 /// Initialises the 8042 controller and routes IRQ 1. Must run after `apic::init`.

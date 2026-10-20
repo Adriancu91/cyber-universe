@@ -38,6 +38,8 @@ struct Thread {
     root: u64,
     /// Top of the thread's kernel stack (0 for the boot thread): where ring 3 enters the kernel.
     kstack_top: u64,
+    /// A system thread (a driver's helper) that runs as long as the kernel: not counted by `alive`.
+    system: bool,
     /// The thread's stack; `None` for the boot thread, which runs on the kernel's boot stack.
     _stack: Option<Box<[u8]>>,
 }
@@ -97,7 +99,7 @@ pub fn init() {
         s.ready.reserve(16);
         s.blocked.reserve(16);
         s.zombies.reserve(16);
-        s.current = Some(Box::new(Thread { id: 0, state: State::Ready, rsp: 0, wait_key: 0, wake_at: 0, root: 0, kstack_top: 0, _stack: None }));
+        s.current = Some(Box::new(Thread { id: 0, state: State::Ready, rsp: 0, wait_key: 0, wake_at: 0, root: 0, kstack_top: 0, system: false, _stack: None }));
     });
     let idle = new_thread(IDLE_ID, idle_loop);
     with_sched(|s| s.idle = Some(idle));
@@ -143,6 +145,15 @@ pub fn spawn(f: fn()) -> u64 {
     spawn_in(0, f)
 }
 
+/// Creates a system thread (it runs as long as the kernel and is not counted by `alive`).
+pub fn spawn_system(f: fn()) -> u64 {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let mut t = new_thread(id, f);
+    t.system = true;
+    with_sched(|s| s.ready.push_back(t));
+    id
+}
+
 /// Like `spawn`, but the thread runs with the page tables at `root` (an `AddressSpace`; 0 = kernel's).
 /// The address space must outlive the thread.
 pub fn spawn_in(root: u64, f: fn()) -> u64 {
@@ -158,7 +169,7 @@ fn new_thread(id: u64, f: fn()) -> Box<Thread> {
     let top = (stack.as_ptr() as u64 + STACK_SIZE as u64) & !15;
     // SAFETY: the 56 bytes below `top` belong to `stack`, which the new thread owns.
     let rsp = unsafe { switch::initial_stack(top, f as *const () as usize) };
-    Box::new(Thread { id, state: State::Ready, rsp, wait_key: 0, wake_at: 0, root: 0, kstack_top: top, _stack: Some(stack) })
+    Box::new(Thread { id, state: State::Ready, rsp, wait_key: 0, wake_at: 0, root: 0, kstack_top: top, system: false, _stack: Some(stack) })
 }
 
 /// The idle thread: sleeps until an interrupt, then lets whoever was woken run.
@@ -175,12 +186,15 @@ pub fn current_id() -> u64 {
     with_sched(|s| s.current.as_ref().map_or(0, |t| t.id))
 }
 
-/// Number of threads that have not exited (running, ready or blocked; the idle thread is not counted).
+/// Number of threads that have not exited (running, ready or blocked), without the idle thread and
+/// the system threads.
 #[allow(dead_code)] // used by the self-tests now
 pub fn alive() -> usize {
     with_sched(|s| {
-        let current = s.current.as_ref().is_some_and(|t| t.id != IDLE_ID && t.state != State::Exited);
-        s.ready.len() + s.blocked.len() + current as usize
+        let counted = |t: &Thread| !t.system && t.id != IDLE_ID && t.state != State::Exited;
+        s.ready.iter().filter(|t| counted(t)).count()
+            + s.blocked.iter().filter(|t| counted(t)).count()
+            + s.current.as_deref().is_some_and(counted) as usize
     })
 }
 
