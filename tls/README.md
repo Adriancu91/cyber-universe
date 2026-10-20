@@ -13,6 +13,11 @@
 
 **Atenție:** cod neauditat de specialiști; nu pentru date sensibile până la o verificare separată (D-011).
 
+**În OS (P5-16):** `/bin/fetch https://…` (bufferul în `static mut`, programele n-au heap); scenariul QEMU `https`
+descarcă o pagină de 18 KB de la serverul OpenSSL de pe gazdă (~1,3 s în emulare) și refuză un nume greșit.
+Numerele aleatoare vin de la nucleu (`kernel/src/random.rs`): RDRAND când procesorul îl are, mereu amestecat prin SHA-256
+cu ceasul procesorului (TSC). Fără RDRAND (ca în QEMU-ul de test) sunt bune pentru teste, slabe în fața unui atacator serios.
+
 **Depinde de:** `crypto/`.
 
 **Cum se testează:** `cd tls && cargo test --release` (și în CI): pornește `tests/server.py` (OpenSSL prin modulul `ssl`

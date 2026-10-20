@@ -35,7 +35,7 @@
 - **Rețea (P5-05, `net.rs`):** `25 resolve(nume, lungime)` → adresa IPv4 ca număr (a<<24|b<<16|c<<8|d);
   `26 tcp_connect(ip, port, ms)` → descriptor; `read`/`write`/`close` pe el = primire (așteaptă max. 30 s; 0 = serverul a
   închis), trimitere, închidere; `27 udp_open(port sau 0)` → descriptor; `28 udp_send(fd, buf, n, ip, port)`;
-  `29 udp_recv(fd, buf, n, ms, de_la)` (de_la = 6 octeți: ip + port); `30 net_info(buf, 48)`; `31 ping(ip, nr, ms)` → ms.
+  `29 udp_recv(fd, buf, n, ms, de_la)` (de_la = 6 octeți: ip + port); `30 net_info(buf, 48)`; `31 ping(ip, nr, ms)` → ms; `32 random(buf, n)` (P5-16, cel mult 4096 de octeți; vezi `kernel/src/random.rs`).
   Socket-urile stau în același tabel ca fișierele și se închid când programul iese. Erori noi: `-17` fără răspuns la timp,
   `-18` refuzat/întrerupt, `-19` rețea fără adresă, `-20` conexiune închisă, `-21` numele nu există.
 - **Erori:** `-1` argument invalid, `-2` adresă invalidă, `-3` nu există, `-4` e director, `-5` descriptor închis, `-6` prea multe fișiere.

@@ -26,6 +26,7 @@ mod syscall;
 mod term;
 #[cfg(feature = "qemu-test")]
 mod qemu;
+mod random;
 #[cfg(feature = "qemu-test")]
 mod tests;
 mod time;
@@ -238,6 +239,8 @@ fn run_tests() -> ! {
     test_appnet();
     #[cfg(feature = "test-crypto")]
     test_crypto();
+    #[cfg(feature = "test-https")]
+    test_https();
     #[cfg(feature = "test-usb")]
     assert!(boot::medium() == boot::Medium::Disk, "test: pornit de pe {:?}, nu de pe stick", boot::medium());
     #[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
@@ -1175,6 +1178,33 @@ fn test_appnet() {
     push_key(Key::Escape);
     assert!(proc::wait(app) == 0, "test: aplicatia Retea nu s-a inchis");
     info!("test: aplicatia Retea OK");
+}
+
+/// HTTPS from a program (P5-16): /bin/fetch talks TLS 1.3 to the OpenSSL test server (tools/before-https.sh, reached
+/// as 10.0.2.2:18443). The test root is put in /etc/certs only here: its private key is public (tls/tests/data).
+#[cfg(feature = "test-https")]
+fn test_https() {
+    assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
+    let _ = fs::create("/etc/certs", fs::Kind::Dir);
+    fs::create("/etc/certs/test.der", fs::Kind::File).expect("test: /etc/certs/test.der");
+    fs::write("/etc/certs/test.der", 0, include_bytes!("../../tls/tests/data/root.der")).expect("test: radacina de test");
+    let mut r = [0u8; 16];
+    random::fill(&mut r);
+    let mut r2 = [0u8; 16];
+    random::fill(&mut r2);
+    assert!(r != r2 && r != [0; 16], "test: numerele aleatoare se repeta");
+    info!("test: aleator {} (RDRAND: {})", if r != r2 { "diferit la fiecare cerere" } else { "?" }, random::hardware());
+    let url = "https://test.cyber.local:18443/pagina";
+    for (args, what) in [
+        (&["fetch", url, "10.0.2.2"][..], "fetch https"),
+        (&["fetch", "https://alt.cyber.local:18443/", "10.0.2.2"][..], "fetch https (nume gresit)"),
+    ] {
+        let start = arch::x86_64::apic::ticks();
+        let id = proc::spawn_path("/bin/fetch", args).expect("test: /bin/fetch");
+        let code = proc::wait_child(id);
+        let ms = (arch::x86_64::apic::ticks() - start) * 1000 / arch::x86_64::apic::HZ;
+        info!("test: {} a iesit cu codul {} in {} ms", what, code, ms);
+    }
 }
 
 /// Our own cryptography (crypto/, D-011): every official test vector, then the SHA-256 speed.

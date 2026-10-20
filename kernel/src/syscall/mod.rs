@@ -36,6 +36,7 @@ pub const SYS_UDP_SEND: u64 = 28;
 pub const SYS_UDP_RECV: u64 = 29;
 pub const SYS_NET_INFO: u64 = 30;
 pub const SYS_PING: u64 = 31;
+pub const SYS_RANDOM: u64 = 32;
 
 mod net;
 mod ui;
@@ -122,6 +123,7 @@ fn call(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64, a5: u64) -> i64 {
         SYS_UDP_RECV => net::udp_recv(a1, a2, _a3, a4, a5),
         SYS_NET_INFO => net::net_info(a1, a2),
         SYS_PING => net::ping(a1, a2, _a3),
+        SYS_RANDOM => random(a1, a2),
         _ => E_INVALID,
     }
 }
@@ -376,6 +378,20 @@ fn time() -> i64 {
             | t.second as i64,
         None => E_NOT_FOUND,
     }
+}
+
+/// random(buf, len): fills the program's buffer with random bytes (at most 4096); returns len.
+fn random(buf: u64, len: u64) -> i64 {
+    if len > 4096 {
+        return E_INVALID;
+    }
+    if !user_range_ok(buf, len, true) {
+        return E_FAULT;
+    }
+    // SAFETY: the whole range was just checked to be writable user memory of the current address space.
+    let out = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len as usize) };
+    crate::random::fill(out);
+    len as i64
 }
 
 /// create(path, length, kind): a new empty file (kind 0) or folder (kind 1).

@@ -30,6 +30,7 @@ pub const SYS_MODULE: u64 = 21;
 pub const SYS_TERM_OPEN: u64 = 22;
 pub const SYS_TERM_READ: u64 = 23;
 pub const SYS_TERM_WRITE: u64 = 24;
+pub const SYS_RANDOM: u64 = 32;
 
 /// A shell running for this program (see kernel/src/term.rs).
 pub mod term {
@@ -234,6 +235,11 @@ pub fn time() -> Option<DateTime> {
     }
     let b = |shift: u32| (r >> shift) as u8;
     Some(DateTime { year: (r >> 40) as u16, month: b(32), day: b(24), hour: b(16), minute: b(8), second: b(0) })
+}
+
+/// Fills `buf` (at most 4096 bytes) with random bytes from the kernel.
+pub fn random(buf: &mut [u8]) -> bool {
+    syscall3(SYS_RANDOM, buf.as_mut_ptr() as u64, buf.len() as u64, 0) == buf.len() as i64
 }
 
 /// Width and height of the screen in pixels.
