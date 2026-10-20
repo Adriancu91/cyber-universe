@@ -57,7 +57,8 @@ Reguli:
 Scop (ROADMAP): mai multe programe rulând în paralel, separate de nucleu. Gata când: din shell se poate porni
 un program separat care citește un fișier. Fiecare sarcină are plan în `docs/plans/`.
 
-- [ ] **P2-01** Fire de execuție ale nucleului + comutare de context (cooperativ). Dep: P1-11.
+- [x] **P2-01** Fire de execuție ale nucleului + comutare de context (cooperativ). Dep: P1-11.
+  Test: scenariul `log` — `test: fire A1 B1 C1 A2 B2 C2 A3 B3 C3, stive eliberate`.
 - [ ] **P2-02** Planificator preemptiv round-robin pe temporizator. Dep: P2-01.
 - [ ] **P2-03** Așteptare și sincronizare: `sleep_ms`, mutex, cozi de așteptare (și pentru tastatură). Dep: P2-02.
 - [ ] **P2-04** Spații de adrese separate pentru procese. Dep: P1-13, P2-01.

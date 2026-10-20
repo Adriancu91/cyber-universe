@@ -13,6 +13,7 @@ mod drivers;
 mod gfx;
 mod log;
 mod mem;
+mod sched;
 #[cfg(feature = "qemu-test")]
 mod qemu;
 #[cfg(feature = "qemu-test")]
@@ -84,6 +85,7 @@ extern "C" fn kernel_main() -> ! {
         error!("mem: nucleul nu poate gestiona memoria, opresc");
         panic!("initializarea memoriei a esuat");
     }
+    sched::init();
 
     if acpi::init() && acpi::madt::init() && arch::x86_64::apic::init() {
         time::start();
@@ -163,6 +165,7 @@ fn run_tests() -> ! {
     test_paging();
     test_heap();
     test_timer();
+    test_threads();
 
     #[cfg(feature = "test-keyboard")]
     test_keyboard();
@@ -320,6 +323,46 @@ fn test_timer() {
     arch::x86_64::hlt();
     assert!(apic::ticks() > before, "hlt nu a fost trezit de temporizator");
     info!("test: temporizator OK ({} intreruperi intr-o secunda)", n);
+}
+
+/// Three threads take turns with `yield_now`; the order of their steps proves round-robin switching,
+/// and the heap returns to its starting size once their stacks are freed.
+#[cfg(feature = "qemu-test")]
+fn test_threads() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static TRACE: [core::sync::atomic::AtomicU8; 32] = [const { core::sync::atomic::AtomicU8::new(0) }; 32];
+    static LEN: AtomicUsize = AtomicUsize::new(0);
+    fn record(c: u8) {
+        TRACE[LEN.fetch_add(1, Ordering::Relaxed)].store(c, Ordering::Relaxed);
+    }
+    fn worker(name: u8) {
+        for step in 1..=3u8 {
+            record(name);
+            record(b'0' + step);
+            sched::yield_now();
+        }
+    }
+    let (heap_before, _) = mem::heap::stats();
+    sched::spawn(|| worker(b'A'));
+    sched::spawn(|| worker(b'B'));
+    sched::spawn(|| worker(b'C'));
+    while sched::alive() > 1 {
+        sched::yield_now();
+    }
+    sched::yield_now(); // nothing else to run: must return at once
+    let n = LEN.load(Ordering::Relaxed);
+    let mut text = alloc::string::String::new();
+    for pair in TRACE[..n].chunks(2) {
+        text.push(pair[0].load(Ordering::Relaxed) as char);
+        text.push(pair[1].load(Ordering::Relaxed) as char);
+        text.push(' ');
+    }
+    assert!(text.trim_end() == "A1 B1 C1 A2 B2 C2 A3 B3 C3", "ordine gresita a firelor: {}", text);
+    drop(text);
+    let (heap_after, _) = mem::heap::stats();
+    assert!(heap_after == heap_before, "scurgere dupa fire: {} B inainte, {} B dupa", heap_before, heap_after);
+    assert!(sched::current_id() == 0, "testul nu ruleaza pe firul 0");
+    info!("test: fire A1 B1 C1 A2 B2 C2 A3 B3 C3, stive eliberate");
 }
 
 /// Waits for the keys the test harness types (h, i, Enter) and logs them.
