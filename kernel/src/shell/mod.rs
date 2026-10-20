@@ -50,6 +50,7 @@ pub fn run() {
             "desktop" => run_program(&["desktop"]),
             "mod" => module(args),
             "tastatura" => layout(args),
+            "ping" => ping(args),
             "mem" => mem(),
             "lspci" => lspci(),
             "lsusb" => lsusb(),
@@ -101,6 +102,7 @@ fn help() {
     out!("  run <program> [argumente]  porneste un program (din /bin daca nu dai calea)\n");
     out!("  desktop          porneste desktopul (Esc il inchide si revine aici)\n");
     out!("  mod list|install <pachet.cum>|start|stop|remove <nume>  module\n");
+    out!("  ping <a.b.c.d>   trimite 4 ping-uri (ICMP)\n");
     out!("  tastatura [ro|us]  aranjamentul tastaturii (romana standard sau engleza SUA)\n");
     out!("  mem              memoria libera si cea folosita\n");
     out!("  lspci            dispozitivele PCI (discuri, USB, retea...)\n");
@@ -156,6 +158,24 @@ fn run_program(args: &[&str]) {
             }
         }
         Err(e) => out!("run: {}: {}\n", path, e.message()),
+    }
+}
+
+fn ping(args: &[&str]) {
+    let Some(ip) = args.first().and_then(|a| crate::net::parse_ip(a)) else {
+        out!("folosire: ping <a.b.c.d>\n");
+        return;
+    };
+    if crate::net::config().is_none() {
+        out!("ping: nicio placa de retea\n");
+        return;
+    }
+    for seq in 1..=4u16 {
+        match crate::net::icmp::ping(ip, seq, 2000) {
+            Some(ms) => out!("raspuns de la {}.{}.{}.{}: seq={} timp={} ms\n", ip[0], ip[1], ip[2], ip[3], seq, ms),
+            None => out!("seq={}: niciun raspuns\n", seq),
+        }
+        crate::sched::sleep_ms(200);
     }
 }
 

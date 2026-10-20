@@ -16,6 +16,7 @@ mod gfx;
 mod input;
 mod log;
 mod mem;
+mod net;
 mod modmgr;
 mod pci;
 mod proc;
@@ -127,6 +128,7 @@ extern "C" fn kernel_main() -> ! {
         }
     }
     drivers::e1000::init_global();
+    net::init();
     if let Some(stick) = drivers::usb::take_disk() {
         fs::mount_disk(alloc::boxed::Box::new(stick), "/usb");
     }
@@ -1034,33 +1036,14 @@ fn test_fat32_mbr() {
 /// and waits for the answer: proves frames go out and come back through the network card.
 #[cfg(feature = "test-net")]
 fn test_network() {
-    let mut guard = drivers::e1000::NIC.lock();
-    let nic = guard.as_mut().expect("test: nicio placa de retea");
-    let mac = nic.mac;
-    let (me, gateway) = ([10u8, 0, 2, 15], [10u8, 0, 2, 2]);
-    let mut frame = alloc::vec::Vec::new();
-    frame.extend_from_slice(&[0xFF; 6]); // broadcast
-    frame.extend_from_slice(&mac);
-    frame.extend_from_slice(&[0x08, 0x06]); // ARP
-    frame.extend_from_slice(&[0, 1, 0x08, 0, 6, 4, 0, 1]); // Ethernet/IPv4, request
-    frame.extend_from_slice(&mac);
-    frame.extend_from_slice(&me);
-    frame.extend_from_slice(&[0; 6]);
-    frame.extend_from_slice(&gateway);
-    assert!(nic.send(&frame), "test: cadrul nu a plecat");
-    let deadline = arch::x86_64::apic::ticks() + arch::x86_64::apic::HZ;
-    let reply = loop {
-        if let Some(p) = nic.receive() {
-            // ARP reply (type 0x0806, operation 2) from the gateway
-            if p.len() >= 42 && p[12..14] == [0x08, 0x06] && p[20..22] == [0, 2] && p[28..32] == gateway {
-                break p;
-            }
-        }
-        assert!(arch::x86_64::apic::ticks() < deadline, "test: niciun raspuns ARP de la 10.0.2.2");
-        core::hint::spin_loop();
-    };
-    let g = &reply[22..28];
+    let gateway = [10u8, 0, 2, 2];
+    let g = net::arp::resolve(gateway, 2000).expect("test: niciun raspuns ARP de la 10.0.2.2");
     info!("net: ARP: 10.0.2.2 este la {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", g[0], g[1], g[2], g[3], g[4], g[5]);
+    // Our answer to a ping: an echo request turned into a reply with a valid checksum.
+    let request = net::icmp::echo(8, 7, 1, b"abc");
+    assert!(net::checksum(&request) == 0, "suma de control ICMP gresita");
+    let ms = net::icmp::ping(gateway, 1, 2000).expect("test: niciun raspuns la ping de la 10.0.2.2");
+    info!("net: ping 10.0.2.2: raspuns in {} ms", ms);
 }
 
 /// Draws a known scene in a back buffer, checks pixels, the changed area and the copy to the screen,

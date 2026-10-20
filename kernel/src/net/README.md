@@ -1,0 +1,21 @@
+# net — rețeaua (Faza 5)
+
+**Ce face (P5-01):**
+- `mod.rs` — pornește stiva pe placa de rețea găsită la boot (`drivers::e1000`); un fir de sistem ia cadrele primite
+  la fiecare ~2 ms și le dă protocolului lor; `send_frame`, suma de control Internet, `parse_ip`.
+  Adresa e fixă (10.0.2.15/24, ruta prin 10.0.2.2 — rețeaua „user” a QEMU) până la DHCP (P5-02).
+- `arp.rs` — află adresa Ethernet a unui vecin (întreabă din nou la 0,5 s, renunță după limită), răspunde pentru adresa
+  noastră; păstrează răspunsurile 5 minute.
+- `ipv4.rs` — trimite pachete (direct în rețeaua noastră sau prin ruta implicită), verifică pachetele primite
+  (versiune, sumă de control, destinație); pachetele fragmentate se ignoră deocamdată (cu mesaj în jurnal).
+- `icmp.rs` — răspunde la ping și trimite ping-uri (`ping`, comanda `ping <ip>` din shell).
+
+**Abatere de la plan:** primirea se face printr-un fir care verifică placa des, nu prin întreruperi: rutarea întreruperilor
+PCI cere tabelele ACPI de rutare (AML) sau MSI; se va reveni la întreruperi când va conta consumul procesorului.
+
+**Depinde de:** `drivers::e1000`, `sched` (fir de sistem, așteptări cu limită), ceasul APIC.
+
+**Test:** scenariile `net` (e1000e) și `net-e1000` — ARP către 10.0.2.2, verificarea sumei de control ICMP, ping la
+10.0.2.2 cu răspuns (`net: ping 10.0.2.2: raspuns in N ms`).
+
+**Surse:** RFC 826 (ARP), RFC 791 (IPv4), RFC 792 (ICMP), RFC 1071 (suma de control). Cod propriu.
