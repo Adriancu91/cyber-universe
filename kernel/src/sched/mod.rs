@@ -44,8 +44,6 @@ struct Thread {
     killed: bool,
     /// Timer ticks during which this thread was running (processor time).
     cpu_ticks: u64,
-    /// When it last started running (µs since boot), for the minimum time slice.
-    slice_start_us: u64,
     /// The thread's stack; `None` for the boot thread, which runs on the kernel's boot stack.
     _stack: Option<Box<[u8]>>,
 }
@@ -65,8 +63,6 @@ static mut SCHED: Scheduler =
     Scheduler { current: None, ready: VecDeque::new(), blocked: Vec::new(), idle: None, zombies: Vec::new() };
 /// Id of the idle thread.
 const IDLE_ID: u64 = u64::MAX;
-/// Shortest time a thread runs before the timer may switch to another (half a tick).
-const MIN_SLICE_US: u64 = 5_000;
 static LOCK: AtomicBool = AtomicBool::new(false);
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 /// Preemption is allowed only while this is 0 (see `preempt_disable`). Starts disabled until `init`.
@@ -107,7 +103,7 @@ pub fn init() {
         s.ready.reserve(16);
         s.blocked.reserve(16);
         s.zombies.reserve(16);
-        s.current = Some(Box::new(Thread { id: 0, state: State::Ready, rsp: 0, wait_key: 0, wake_at: 0, root: 0, kstack_top: 0, system: false, killed: false, cpu_ticks: 0, slice_start_us: 0, _stack: None }));
+        s.current = Some(Box::new(Thread { id: 0, state: State::Ready, rsp: 0, wait_key: 0, wake_at: 0, root: 0, kstack_top: 0, system: false, killed: false, cpu_ticks: 0, _stack: None }));
     });
     let idle = new_thread(IDLE_ID, idle_loop);
     with_sched(|s| s.idle = Some(idle));
@@ -141,14 +137,7 @@ pub fn timer_tick() {
         }
         wake_where(s, usize::MAX, |t| t.wake_at != 0 && t.wake_at <= now)
     });
-    // A thread that started in the middle of the last tick (after another one blocked) keeps the
-    // processor until it has had at least half a tick; otherwise the threads that always follow a
-    // short-running one would get only leftovers.
-    let fresh = with_sched(|s| {
-        let start = s.current.as_ref().map_or(0, |t| t.slice_start_us);
-        crate::time::since_boot_us().is_some_and(|now| now.saturating_sub(start) < MIN_SLICE_US)
-    });
-    if PREEMPT_OFF.load(Ordering::Acquire) == 0 && !fresh {
+    if PREEMPT_OFF.load(Ordering::Acquire) == 0 {
         yield_now();
     }
 }
@@ -189,7 +178,7 @@ fn new_thread(id: u64, f: fn()) -> Box<Thread> {
     let top = (stack.as_ptr() as u64 + STACK_SIZE as u64) & !15;
     // SAFETY: the 56 bytes below `top` belong to `stack`, which the new thread owns.
     let rsp = unsafe { switch::initial_stack(top, f as *const () as usize) };
-    Box::new(Thread { id, state: State::Ready, rsp, wait_key: 0, wake_at: 0, root: 0, kstack_top: top, system: false, killed: false, cpu_ticks: 0, slice_start_us: 0, _stack: Some(stack) })
+    Box::new(Thread { id, state: State::Ready, rsp, wait_key: 0, wake_at: 0, root: 0, kstack_top: top, system: false, killed: false, cpu_ticks: 0, _stack: Some(stack) })
 }
 
 /// The idle thread: sleeps until an interrupt, then lets whoever was woken run.
@@ -332,8 +321,7 @@ pub fn yield_now() {
             State::Ready if prev.id == IDLE_ID => s.idle = Some(prev),
             State::Ready => s.ready.push_back(prev),
         }
-        let next = s.current.as_mut().unwrap();
-        next.slice_start_us = crate::time::since_boot_us().unwrap_or(0);
+        let next = s.current.as_ref().unwrap();
         Some((old_rsp, next.rsp, next.root, next.kstack_top))
     });
     if let Some((old_rsp, new_rsp, root, kstack_top)) = switch {

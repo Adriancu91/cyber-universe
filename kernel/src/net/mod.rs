@@ -5,6 +5,7 @@
 
 pub mod arp;
 pub mod dhcp;
+pub mod dns;
 pub mod icmp;
 pub mod ipv4;
 pub mod udp;
@@ -90,7 +91,6 @@ fn dhcp_thread() {
 }
 
 /// Waits until the interface has an address (at most `timeout_ms`).
-#[cfg(feature = "qemu-test")]
 pub fn wait_ready(timeout_ms: u64) -> bool {
     let deadline = crate::arch::x86_64::apic::ticks() + timeout_ms * crate::arch::x86_64::apic::HZ / 1000;
     while !ready() {

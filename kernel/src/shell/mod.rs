@@ -51,6 +51,7 @@ pub fn run() {
             "mod" => module(args),
             "tastatura" => layout(args),
             "ping" => ping(args),
+            "host" => host(args),
             "mem" => mem(),
             "lspci" => lspci(),
             "lsusb" => lsusb(),
@@ -102,7 +103,8 @@ fn help() {
     out!("  run <program> [argumente]  porneste un program (din /bin daca nu dai calea)\n");
     out!("  desktop          porneste desktopul (Esc il inchide si revine aici)\n");
     out!("  mod list|install <pachet.cum>|start|stop|remove <nume>  module\n");
-    out!("  ping <a.b.c.d>   trimite 4 ping-uri (ICMP)\n");
+    out!("  ping <adresa>    trimite 4 ping-uri (ICMP); merge si cu un nume\n");
+    out!("  host <nume>      afla adresa IPv4 a unui nume (DNS)\n");
     out!("  tastatura [ro|us]  aranjamentul tastaturii (romana standard sau engleza SUA)\n");
     out!("  mem              memoria libera si cea folosita\n");
     out!("  lspci            dispozitivele PCI (discuri, USB, retea...)\n");
@@ -162,24 +164,44 @@ fn run_program(args: &[&str]) {
 }
 
 fn ping(args: &[&str]) {
-    let Some(ip) = args.first().and_then(|a| crate::net::parse_ip(a)) else {
-        out!("folosire: ping <a.b.c.d>\n");
+    let Some(target) = args.first() else {
+        out!("folosire: ping <a.b.c.d sau nume>\n");
         return;
     };
     if crate::net::config().is_none() {
         out!("ping: nicio placa de retea\n");
         return;
     }
-    if !crate::net::ready() {
+    if !crate::net::wait_ready(3000) {
         out!("ping: reteaua nu are inca adresa (DHCP)\n");
         return;
     }
+    let ip = match crate::net::dns::resolve(target) {
+        Ok((ip, _)) => ip,
+        Err(e) => {
+            out!("ping: {}: {}\n", target, e.message());
+            return;
+        }
+    };
     for seq in 1..=4u16 {
         match crate::net::icmp::ping(ip, seq, 2000) {
             Some(ms) => out!("raspuns de la {}.{}.{}.{}: seq={} timp={} ms\n", ip[0], ip[1], ip[2], ip[3], seq, ms),
             None => out!("seq={}: niciun raspuns\n", seq),
         }
         crate::sched::sleep_ms(200);
+    }
+}
+
+fn host(args: &[&str]) {
+    let Some(name) = args.first() else {
+        out!("folosire: host <nume>\n");
+        return;
+    };
+    match crate::net::dns::resolve(name) {
+        Ok((ip, cache)) => {
+            out!("{} are adresa {}.{}.{}.{}{}\n", name, ip[0], ip[1], ip[2], ip[3], if cache { " (din memorie)" } else { "" })
+        }
+        Err(e) => out!("host: {}: {}\n", name, e.message()),
     }
 }
 

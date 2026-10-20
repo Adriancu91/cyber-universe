@@ -34,6 +34,8 @@ test-usb = ["qemu-test"]
 test-usbdisk = ["qemu-test"]
 # P3-08: ARP request through the network card, answer from QEMU's virtual gateway.
 test-net = ["qemu-test"]
+# P5-03: names resolved through the harness's DNS server (tools/dns-test-server.py) at 10.0.2.2:15353.
+test-dns = ["qemu-test"]
 # P4-01: the harness moves the mouse and clicks; the kernel must receive both events.
 test-mouse = ["qemu-test"]
 # P4-04: two windows; the harness types keys and drags the top one by its title bar with the mouse.

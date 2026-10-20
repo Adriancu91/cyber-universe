@@ -86,7 +86,13 @@ while IFS='|' read -r name features ending expects screenshot qextra; do
     [[ -n "$mon" ]] && PY+=(--monitor "$mon")
 
     ok=0
+    helper=""
+    if [[ -x "$ROOT/tools/before-$name.sh" ]]; then   # a helper the scenario talks to (e.g. a test DNS server)
+        "$ROOT/tools/before-$name.sh" & helper=$!
+        sleep 0.5
+    fi
     python3 "$ROOT/tools/qemutest.py" "${PY[@]}" -- "${QARGS[@]}" && ok=1
+    if [[ -n "$helper" ]]; then kill "$helper" 2>/dev/null; wait "$helper" 2>/dev/null; fi
     if (( ok )) && [[ -x "$ROOT/tools/after-$name.sh" ]]; then
         "$ROOT/tools/after-$name.sh" "$DISK_IMG" || ok=0
     fi

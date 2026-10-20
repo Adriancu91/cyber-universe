@@ -230,6 +230,8 @@ fn run_tests() -> ! {
     test_canvas();
     #[cfg(feature = "test-net")]
     test_network();
+    #[cfg(feature = "test-dns")]
+    test_dns();
     #[cfg(feature = "test-usb")]
     assert!(boot::medium() == boot::Medium::Disk, "test: pornit de pe {:?}, nu de pe stick", boot::medium());
     #[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
@@ -494,12 +496,13 @@ fn test_preemption() {
         }
     }
     let switches_before = sched::switches();
-    sched::spawn(|| spin(0));
-    sched::spawn(|| spin(1));
+    let ids = [sched::spawn(|| spin(0)), sched::spawn(|| spin(1))];
     let end = arch::x86_64::apic::ticks() + arch::x86_64::apic::HZ;
     while arch::x86_64::apic::ticks() < end {
         arch::x86_64::hlt();
     }
+    // Processor time as the scheduler counts it (timer ticks), read before the threads end.
+    let t = ids.map(|id| sched::cpu_ticks(id).unwrap_or(0));
     STOP.store(true, Ordering::Relaxed);
     while sched::alive() > 1 {
         arch::x86_64::hlt();
@@ -507,8 +510,19 @@ fn test_preemption() {
     let (a, b) = (COUNT[0].load(Ordering::Relaxed), COUNT[1].load(Ordering::Relaxed));
     let switches = sched::switches() - switches_before;
     assert!(a > 0 && b > 0, "un fir nu a rulat deloc: {} / {}", a, b);
-    assert!(a <= 3 * b && b <= 3 * a, "impartire inegala a procesorului: {} / {}", a, b);
-    info!("test: preemptiune OK ({} comutari intr-o secunda, raport {}:{})", switches, a * 10 / (a + b), b * 10 / (a + b));
+    // Fairness is judged on scheduler time: loop counts also depend on the emulator, which sometimes
+    // pauses the guest for a moment (then the thread running at that time counts less).
+    assert!(t[0] <= 3 * t[1] && t[1] <= 3 * t[0], "impartire inegala a procesorului: {:?} tick-uri ({} / {} pasi)", t, a, b);
+    info!(
+        "test: preemptiune OK ({} comutari intr-o secunda, raport {}:{}, tick-uri {}:{}, pasi {}:{})",
+        switches,
+        t[0] * 10 / (t[0] + t[1]).max(1),
+        t[1] * 10 / (t[0] + t[1]).max(1),
+        t[0],
+        t[1],
+        a / 1000,
+        b / 1000
+    );
 }
 
 /// `sleep_ms` must sleep the requested time (measured in timer ticks); four threads incrementing a counter
@@ -1047,6 +1061,27 @@ fn test_network() {
     assert!(net::checksum(&request) == 0, "suma de control ICMP gresita");
     let ms = net::icmp::ping(gateway, 1, 2000).expect("test: niciun raspuns la ping de la 10.0.2.2");
     info!("net: ping 10.0.2.2: raspuns in {} ms", ms);
+}
+
+/// Resolves names through the harness's DNS server (tools/dns-test-server.py, reached as 10.0.2.2:15353):
+/// a direct answer, a CNAME followed by an A record, a name that does not exist, and an answer from the cache.
+#[cfg(feature = "test-dns")]
+fn test_dns() {
+    use net::dns::{self, Error};
+    assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
+    let server = [10u8, 0, 2, 2];
+    let (ip, cache) = dns::resolve_via(server, 15353, "test.cyber").expect("test: test.cyber nu s-a rezolvat");
+    assert!(ip == [10, 1, 2, 3] && !cache, "test: test.cyber -> {:?}", ip);
+    info!("net: DNS: test.cyber -> 10.1.2.3");
+    let (ip, _) = dns::resolve_via(server, 15353, "Alias.Cyber.").expect("test: alias.cyber nu s-a rezolvat");
+    assert!(ip == [10, 1, 2, 3], "test: alias.cyber -> {:?}", ip);
+    info!("net: DNS: alias.cyber (CNAME) -> 10.1.2.3");
+    assert!(dns::resolve_via(server, 15353, "lipsa.cyber") == Err(Error::NotFound), "test: lipsa.cyber trebuia sa lipseasca");
+    info!("net: DNS: lipsa.cyber nu exista (corect)");
+    assert!(dns::resolve_via(server, 15353, "test.cyber") == Ok(([10, 1, 2, 3], true)), "test: cache-ul nu a raspuns");
+    info!("net: DNS: test.cyber din memorie");
+    assert!(dns::resolve_via(server, 15353, "rau..nume") == Err(Error::BadName), "test: nume invalid acceptat");
+    assert!(dns::resolve("10.0.2.2") == Ok(([10, 0, 2, 2], false)), "test: o adresa trebuie intoarsa direct");
 }
 
 /// Draws a known scene in a back buffer, checks pixels, the changed area and the copy to the screen,

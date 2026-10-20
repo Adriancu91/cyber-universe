@@ -14,9 +14,10 @@
 - **Oprire și timp de procesor (P4-08, P4-09):** `kill(id)` marchează un fir („oprește-te”) și îl trezește dacă doarme;
   așteptările cu limită (`wait_until_or`, `sleep_ms`) renunță pentru un fir marcat. `cpu_ticks(id)` — câte tick-uri a
   rulat firul (și firul idle: timpul liber al procesorului, din care monitorul calculează gradul de ocupare).
-- **Felie minimă de timp (P5-02):** un fir care a pornit la mijlocul unui tick (după ce altul s-a blocat) nu e întrerupt
-  la tick-ul următor dacă a rulat sub 5 ms; altfel firele care urmează mereu după unul scurt (ex. firul de rețea care
-  verifică placa la fiecare tick) ar primi doar resturi (testul de preempțiune a prins asta).
+- **Testul de preempțiune (corectat la P5-03):** judecă împărțirea după timpul numărat de planificator (tick-uri), nu
+  după câte iterații a făcut fiecare fir: emulatorul oprește uneori mașina pentru o clipă, iar firul care rula atunci
+  face mai puține iterații fără vina planificatorului (testul pica 7:1 în `sysapps`/`fatwrite` după P5-02). O „felie
+  minimă de timp” adăugată la P5-02 pentru asta a fost scoasă: nu era cauza (o simulare arată că rotația simplă e corectă).
 - **Ieșirea unui proces:** firul trece întâi definitiv pe tabelele nucleului (`use_kernel_tables`), apoi spațiul de adrese
   e distrus — o comutare la mijloc nu mai poate încărca tabele eliberate.
 - **Fire de sistem:** `spawn_system(f)` — fire care merg cât nucleul (ex. cel care citește tastaturile USB); nu sunt numărate de `alive()`.
