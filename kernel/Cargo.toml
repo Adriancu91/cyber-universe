@@ -52,6 +52,8 @@ test-sysapps = ["qemu-test"]
 test-editor = ["qemu-test"]
 # P4-11: the Modules app driven with the real (emulated) mouse: install, start, stop, remove.
 test-phase4 = ["qemu-test"]
+# P4-13: the shell in the Terminal window (keys typed by QEMU); the desktop started like at boot.
+test-terminal = ["qemu-test"]
 # P1-13: a write to .rodata must fault (the kernel image keeps its per-segment rights).
 test-rodata = ["qemu-test"]
 # Stability test (P1-11): 5 minutes; the quick variant runs the same loop for 15 seconds.

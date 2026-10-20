@@ -27,6 +27,26 @@ pub const SYS_KILL: u64 = 18;
 pub const SYS_CREATE: u64 = 19;
 pub const SYS_REMOVE: u64 = 20;
 pub const SYS_MODULE: u64 = 21;
+pub const SYS_TERM_OPEN: u64 = 22;
+pub const SYS_TERM_READ: u64 = 23;
+pub const SYS_TERM_WRITE: u64 = 24;
+
+/// A shell running for this program (see kernel/src/term.rs).
+pub mod term {
+    use super::{SYS_TERM_OPEN, SYS_TERM_READ, SYS_TERM_WRITE, syscall3};
+    /// Starts a shell for this program; returns its terminal id.
+    pub fn open() -> i64 {
+        syscall3(SYS_TERM_OPEN, 0, 0, 0)
+    }
+    /// Output waiting to be shown (0 = nothing new; negative once the shell has ended).
+    pub fn read(id: i64, buf: &mut [u8]) -> i64 {
+        syscall3(SYS_TERM_READ, id as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
+    }
+    /// Keys typed in the window ('\n' = Enter, '\u{8}' = Backspace).
+    pub fn write(id: i64, text: &str) -> i64 {
+        syscall3(SYS_TERM_WRITE, id as u64, text.as_ptr() as u64, text.len() as u64)
+    }
+}
 
 pub mod gfx;
 pub mod settings;

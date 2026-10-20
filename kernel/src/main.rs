@@ -20,9 +20,9 @@ mod modmgr;
 mod pci;
 mod proc;
 mod sched;
-#[cfg(any(not(feature = "qemu-test"), feature = "test-shell"))]
 mod shell;
 mod syscall;
+mod term;
 #[cfg(feature = "qemu-test")]
 mod qemu;
 #[cfg(feature = "qemu-test")]
@@ -140,8 +140,29 @@ extern "C" fn kernel_main() -> ! {
     run_tests();
 
     #[cfg(not(feature = "qemu-test"))]
-    loop {
-        shell::run();
+    {
+        run_desktop(); // the desktop first; when it closes (Escape), the text shell
+        loop {
+            shell::run();
+        }
+    }
+}
+
+/// Starts the desktop if there is a screen and a `/bin/desktop`, and waits until it closes. Returns
+/// whether it ran.
+fn run_desktop() -> bool {
+    if ui::screen_size().is_none() {
+        return false;
+    }
+    match proc::spawn_path("/bin/desktop", &["desktop"]) {
+        Ok(id) => {
+            proc::wait(id);
+            true
+        }
+        Err(e) => {
+            warn!("desktop: nu porneste ({})", e.message());
+            false
+        }
     }
 }
 
@@ -250,6 +271,9 @@ fn run_tests() -> ! {
 
     #[cfg(feature = "test-phase4")]
     test_phase4();
+
+    #[cfg(feature = "test-terminal")]
+    test_terminal();
 
     #[cfg(feature = "test-shell")]
     {
@@ -942,6 +966,41 @@ fn test_phase4() {
     info!("test: Faza 4 OK (modul instalat, pornit, oprit si sters din interfata, cu mouse-ul)");
 }
 
+/// The terminal window runs the shell: QEMU types `ls /bin`, `run hello` (its output must reach the
+/// window), `mem` and `exit`. Then the desktop is started the way a normal boot starts it, and closed
+/// with Escape.
+#[cfg(feature = "test-terminal")]
+fn test_terminal() {
+    let threads_before = sched::alive();
+    let app = proc::spawn_path("/bin/terminal", &["terminal"]).expect("test: terminal");
+    let deadline = arch::x86_64::apic::ticks() + 10 * arch::x86_64::apic::HZ;
+    while !ui::top_window().is_some_and(|(o, _)| o == app) {
+        assert!(arch::x86_64::apic::ticks() < deadline, "test: terminalul nu porneste");
+        sched::sleep_ms(10);
+    }
+    sched::sleep_ms(300);
+    serial_println!("TASTATURA: astept taste");
+    assert!(proc::wait(app) == 0, "terminalul nu a iesit cu 0");
+    let deadline = arch::x86_64::apic::ticks() + 5 * arch::x86_64::apic::HZ;
+    while sched::alive() > threads_before || ui::running() {
+        assert!(arch::x86_64::apic::ticks() < deadline, "shell-ul terminalului sau serverul grafic nu s-au oprit");
+        sched::sleep_ms(10);
+    }
+    info!("test: terminal OK");
+
+    // Start-up path of a normal boot: the desktop, closed here with Escape once its bar is drawn.
+    sched::spawn(|| {
+        let screen = |x: usize, y: usize| gfx::console::with_console(|c| c.as_mut().and_then(|c| c.framebuffer().pixel(x, y)));
+        let h = ui::screen_size().map_or(0, |s| s.1);
+        while screen(2, h - 2) != Some(0x0D1520) {
+            sched::sleep_ms(20);
+        }
+        drivers::keyboard::push_key(drivers::keyboard::Key::Escape);
+    });
+    assert!(run_desktop(), "desktopul nu a pornit");
+    info!("test: desktop la pornire OK");
+}
+
 /// The same partition must also be found through an MBR (the disk image seen with a different sector 0).
 #[cfg(feature = "test-disk")]
 fn test_fat32_mbr() {
@@ -1271,9 +1330,10 @@ fn test_desktop() {
     );
     serial_println!("TASTATURA: astept taste"); // the harness moves the mouse onto Start and clicks
     wait_for("meniul nu se deschide", &|| screen(150, h - 32 - 6) == Some(MENU));
-    // Menu items from the top: cat, demo, editor, files, hello, modules, monitor, settings (24 pixels
-    // each, 4 of margin, the bar is 32 high); the cursor is on Start (46, h - 16); `demo` is the second.
-    let items = 8;
+    // Menu items from the top: cat, demo, editor, files, hello, modules, monitor, settings, terminal
+    // (24 pixels each, 4 of margin, the bar is 32 high); the cursor is on Start (46, h - 16); `demo` is
+    // the second.
+    let items = 9;
     let demo_y = h - 32 - (items * 24 + 8) + 4 + 24 + 12;
     push_mouse(MouseEvent { dx: 4, dy: demo_y as i16 - (h - 16) as i16, buttons: 0 });
     push_mouse(MouseEvent { dx: 0, dy: 0, buttons: 1 });

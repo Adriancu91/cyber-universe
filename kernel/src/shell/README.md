@@ -10,3 +10,8 @@
   (cu Backspace), `run lipsa`, `uptime`; se verifică răspunsurile. Comanda `test-gata` există doar în build-ul de test
   (închide shell-ul ca testul să se termine). `reboot` nu se testează automat.
 - **Surse:** design propriu.
+- **Terminal (P4-13):** același shell rulează și pentru fereastra `terminal` (`term.rs`): un fir de shell pe fereastră,
+  care citește tastele trimise de fereastră și scrie acolo (inclusiv ce scriu programele pornite cu `run`); `exit` îl închide.
+- **La pornire (P4-13):** nucleul normal pornește întâi desktopul (`/bin/desktop`); când desktopul se închide (Esc),
+  rulează shell-ul în consola text, ca înainte.
+

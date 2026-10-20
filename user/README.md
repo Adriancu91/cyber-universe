@@ -20,6 +20,8 @@
   fișierele care nu sunt programe.
 - `settings` — setări: fusul orar al ceasului (desktopul îl folosește) și aranjamentul tastaturii (se aplică după P4-12),
   salvate în `/disk/config/settings.toml` (`src/settings.rs` le citește). Test: scenariul `editor`.
+- `terminal` — shell-ul nucleului într-o fereastră (aceleași comenzi ca în consolă); programele pornite cu `run`
+  scriu tot acolo; `exit` sau închiderea ferestrei îl termină. Test: scenariul `terminal`.
 - **Ferestre (`src/gfx.rs`):** `Window::open(titlu, l, î)`, `Canvas` (imaginea în memoria programului, `fill`),
   `present`/`present_all`, `draw` (o imagine mică oriunde în fereastră), `fill`, `Canvas::text` (același font ca
   nucleul), `Window::open_desktop`, `wait_event_for(ms)`, `wait_event()` → `Event::Key(c)` sau `Event::Click { x, y, buttons }`, `close()`.

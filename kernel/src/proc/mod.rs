@@ -34,6 +34,8 @@ struct Process {
     thread: u64,
     /// Program name (argument 0 without its folder), for lists of running programs.
     name: String,
+    /// Terminal its output goes to (started from a terminal's shell), or `None` = the console.
+    terminal: Option<u64>,
     entry: u64,
     rsp: u64,
     argc: u64,
@@ -137,7 +139,9 @@ fn start(mut space: AddressSpace, entry: u64, args: &[&str]) -> Result<u64, Spaw
     let mut procs = PROCS.lock();
     let thread = sched::spawn_in(space.root(), start_user);
     let name = String::from(args.first().map_or("(cod)", |a| a.rsplit('/').next().unwrap_or(a)));
-    procs.push(Process { thread, name, entry, rsp, argc: args.len() as u64, argv, files: Vec::new(), _space: space });
+    let terminal = crate::term::of_shell(sched::current_id())
+        .or_else(|| procs.iter().find(|p| p.thread == sched::current_id()).and_then(|p| p.terminal));
+    procs.push(Process { thread, name, terminal, entry, rsp, argc: args.len() as u64, argv, files: Vec::new(), _space: space });
     Ok(thread)
 }
 
@@ -189,6 +193,7 @@ pub fn on_exit(id: u64, code: i64) {
     };
     drop(process); // switches to the kernel's tables first if they were in use (see AddressSpace::drop)
     crate::ui::close_owned(id);
+    crate::term::close_owned(id);
     EXIT_WAIT.wake_all();
 }
 
@@ -196,6 +201,12 @@ pub fn on_exit(id: u64, code: i64) {
 /// no such program. A program waiting for another one (`wait`) stops only when that wait ends.
 pub fn kill(id: u64) -> bool {
     PROCS.lock().iter().any(|p| p.thread == id) && sched::kill(id)
+}
+
+/// The terminal the program on the current thread writes to (`None` = the console).
+pub fn terminal() -> Option<u64> {
+    let id = sched::current_id();
+    PROCS.lock().iter().find(|p| p.thread == id).and_then(|p| p.terminal)
 }
 
 /// The running programs: (thread id, name).

@@ -26,6 +26,9 @@ pub const SYS_KILL: u64 = 18;
 pub const SYS_CREATE: u64 = 19;
 pub const SYS_REMOVE: u64 = 20;
 pub const SYS_MODULE: u64 = 21;
+pub const SYS_TERM_OPEN: u64 = 22;
+pub const SYS_TERM_READ: u64 = 23;
+pub const SYS_TERM_WRITE: u64 = 24;
 
 mod ui;
 
@@ -96,6 +99,14 @@ fn call(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64, a5: u64) -> i64 {
         SYS_CREATE => create(a1, a2, _a3),
         SYS_REMOVE => remove(a1, a2),
         SYS_MODULE => module(a1, a2, _a3, a4, a5),
+        SYS_TERM_OPEN => crate::term::open(sched::current_id()) as i64,
+        SYS_TERM_READ => term_read(a1, a2, _a3),
+        SYS_TERM_WRITE => match user_path(a2, _a3) {
+            Ok(text) => {
+                if crate::term::send_keys(sched::current_id(), a1, &text) { 0 } else { E_NOT_FOUND }
+            }
+            Err(e) => e,
+        },
         _ => E_INVALID,
     }
 }
@@ -158,6 +169,10 @@ fn write(fd: u64, buf: u64, len: u64) -> i64 {
             }
         });
         return n as i64;
+    }
+    if let Some(t) = crate::proc::terminal() {
+        crate::term::write(t, bytes);
+        return len as i64;
     }
     let text = core::str::from_utf8(bytes).unwrap_or("<text invalid>");
     crate::serial_print!("{}", text);
@@ -440,4 +455,22 @@ fn module(op: u64, ptr: u64, len: u64, buf: u64, buf_len: u64) -> i64 {
         _ => return E_INVALID,
     };
     r.map_or_else(err, |()| 0)
+}
+
+/// term_read(id, buf, len): output of terminal `id` waiting to be shown (0 = nothing new);
+/// E_NOT_FOUND once its shell has ended and everything was read.
+fn term_read(id: u64, buf: u64, len: u64) -> i64 {
+    let len = len.min(16 * 1024);
+    if !user_range_ok(buf, len, true) {
+        return E_FAULT;
+    }
+    let mut data = alloc::vec![0u8; len as usize];
+    match crate::term::read_output(sched::current_id(), id, &mut data) {
+        Some(n) => {
+            // SAFETY: the range was checked to be writable user memory of this program; n <= len.
+            unsafe { core::ptr::copy_nonoverlapping(data.as_ptr(), buf as *mut u8, n) };
+            n as i64
+        }
+        None => E_NOT_FOUND,
+    }
 }

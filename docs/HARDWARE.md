@@ -5,7 +5,8 @@
 ## Ce verificăm pe fiecare calculator
 | Verificare | Cum se vede |
 |---|---|
-| Pornește de pe stick | apare textul jurnalului, apoi `Cyber Universe OS` și `cyber>` |
+| Pornește de pe stick | apare textul jurnalului, apoi desktopul (bara cu Start și ceasul); Esc → `cyber>` |
+| Mouse | săgeata se mișcă; clic pe Start deschide meniul |
 | Ecran | textul e clar, nu e tăiat |
 | Tastatură internă | se poate scrie la `cyber>` |
 | Tastatură USB externă | idem, cu tastatura USB |

@@ -8,13 +8,30 @@ use alloc::{format, string::String, vec::Vec};
 const PROMPT: &str = "cyber> ";
 const MAX_LINE: usize = 256;
 
-/// Prints to the screen and to the serial port.
+/// Prints to the screen and to the serial port, or to the terminal window this shell runs for.
 macro_rules! out {
     ($($arg:tt)*) => {{
         let text = format!($($arg)*);
-        crate::print!("{}", text);
-        crate::serial_print!("{}", text);
+        emit(&text);
     }};
+}
+
+fn emit(text: &str) {
+    match crate::term::of_shell(crate::sched::current_id()) {
+        Some(t) => crate::term::write(t, text.as_bytes()),
+        None => {
+            crate::print!("{}", text);
+            crate::serial_print!("{}", text);
+        }
+    }
+}
+
+/// The next key: from the keyboard, or from the terminal window (`None` when it has closed).
+fn next_key() -> Option<Key> {
+    match crate::term::of_shell(crate::sched::current_id()) {
+        Some(t) => crate::term::wait_key(t),
+        None => Some(wait_key()),
+    }
 }
 
 /// Runs the shell forever (in test builds, until the `test-gata` command).
@@ -22,7 +39,7 @@ pub fn run() {
     out!("\nScrie `help` pentru lista de comenzi.\n");
     loop {
         out!("{}", PROMPT);
-        let line = read_line();
+        let Some(line) = read_line() else { return }; // the terminal window closed
         let words: Vec<&str> = line.split_whitespace().collect();
         let Some((&cmd, args)) = words.split_first() else { continue };
         match cmd {
@@ -39,6 +56,13 @@ pub fn run() {
             "net" => net(),
             "uptime" => uptime(),
             "reboot" => reboot(),
+            "exit" => match crate::term::of_shell(crate::sched::current_id()) {
+                Some(t) => {
+                    crate::term::close(t);
+                    return;
+                }
+                None => out!("exit: shell-ul consolei nu se inchide (merge cat calculatorul)\n"),
+            },
             #[cfg(feature = "qemu-test")]
             "test-gata" => return,
             _ => out!("comanda necunoscuta: {} (scrie help)\n", cmd),
@@ -46,14 +70,14 @@ pub fn run() {
     }
 }
 
-/// Reads one line, echoing it; Backspace erases the last character.
-fn read_line() -> String {
+/// Reads one line, echoing it; Backspace erases the last character. `None` if the terminal closed.
+fn read_line() -> Option<String> {
     let mut line = String::new();
     loop {
-        match wait_key() {
+        match next_key()? {
             Key::Enter => {
                 out!("\n");
-                return line;
+                return Some(line);
             }
             Key::Backspace => {
                 if line.pop().is_some() {
@@ -84,6 +108,7 @@ fn help() {
     out!("  net              placa de retea (adresa MAC, pachete)\n");
     out!("  uptime           de cat timp merge sistemul\n");
     out!("  reboot           reporneste calculatorul\n");
+    out!("  exit             inchide terminalul (doar in fereastra Terminal)\n");
 }
 
 fn ls(path: &str) {

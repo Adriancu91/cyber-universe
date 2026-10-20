@@ -24,6 +24,10 @@
   heap folosit, heap rezervat, ms de la pornire, tick-uri libere ale procesorului, tick-uri pe secundă); tip 1: programele
   care merg, câte un rând `id tick-uri nume`; `18 kill(id)`; `19 create(cale, lungime, tip)` (0 fișier, 1 director);
   `20 remove(cale, lungime)`; `write(fd ≥ 3, ...)` scrie într-un fișier deschis, la poziția lui.
+  `21 module(op, text, lungime, buf, mărime)` — managerul de module (0 listă, 1 instalare, 2 pornire, 3 oprire, 4 ștergere).
+- **Terminal (P4-13):** `22 term_open()` → id (pornește un shell pentru program); `23 term_read(id, buf, mărime)` → ce a
+  scris shell-ul (0 = nimic nou, `-3` după `exit`); `24 term_write(id, text, lungime)` — tastele din fereastră.
+  Un program pornit dintr-un terminal scrie (fd 1, 2) în acel terminal.
   Erori noi: `-7` există deja, `-8` disc nemarcat pentru scriere, `-9` director plin, `-10` disc plin.
   Ferestrele unui program se închid singure când programul iese. Doar programul care a deschis fereastra o poate folosi.
   **Alegere:** imaginea rămâne în memoria programului și se copiază la `window_present` (nu cadre partajate): nimic de

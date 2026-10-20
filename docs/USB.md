@@ -22,8 +22,10 @@ Nu se șterge nimic de pe calculator: sistemul rulează doar de pe stick și din
 2. Bagă stick-ul, pornește calculatorul și apasă repetat **F12** → alege stick-ul USB din listă.
 
 ## 5. Ce ar trebui să vezi
-- câteva secunde de text (jurnalul nucleului), apoi `Cyber Universe OS` și promptul **`cyber>`**;
-- încearcă: `help`, `ls /`, `mem`, `lspci`, `run cat /etc/motd`.
+- câteva secunde de text (jurnalul nucleului), apoi **desktopul** (fundal albastru-închis, „Cyber Universe”, bara jos cu
+  **Start** și ceasul); mouse-ul (USB sau al laptopului) mișcă săgeata;
+- încearcă: **Start → terminal**, apoi scrie în fereastră `help`, `ls /`, `mem`, `lspci`;
+- **Esc** pe desktop îl închide și apare consola text cu promptul **`cyber>`** (aceleași comenzi; `desktop` îl repornește).
 
 ## 6. Ce îmi trimiți înapoi
 - o **poză cu ecranul** (mai ales dacă se oprește: ultimele rânduri contează);
