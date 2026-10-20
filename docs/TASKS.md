@@ -27,7 +27,7 @@ Reguli:
   Dep: P0-06.
 - [ ] **P0-08** GitHub Actions: la fiecare push → build + `tools/test.sh`.
   Dep: P0-07. Test: insigna verde pe GitHub.
-- [ ] **P0-09** Text pe ecran prin framebuffer-ul Limine (font bitmap propriu 8x16): „Cyber Universe OS”.
+- [x] **P0-09** Text pe ecran prin framebuffer-ul Limine (font bitmap propriu 8x16): „Cyber Universe OS”.
   Dep: P0-05. Test: captură de ecran QEMU (`screendump`) salvată în `tests/screens/` + verificare că nu e neagră.
 
 ## Faza 1 — Nucleul de bază

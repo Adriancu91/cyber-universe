@@ -6,6 +6,7 @@
 mod arch;
 mod boot;
 mod drivers;
+mod gfx;
 #[cfg(feature = "qemu-test")]
 mod qemu;
 
@@ -26,6 +27,18 @@ extern "C" fn kmain() -> ! {
 
     serial_println!("CYBER UNIVERSE OS: BOOT OK");
     serial_println!("versiune nucleu: {}", VERSION);
+
+    if gfx::console::init() {
+        gfx::console::set_color(gfx::console::ACCENT);
+        println!("Cyber Universe OS");
+        gfx::console::set_color(gfx::console::FOREGROUND);
+        println!("versiune nucleu {}", VERSION);
+        println!();
+        println!("Sistem minim, modular, rapid.");
+        serial_println!("ECRAN OK");
+    } else {
+        serial_println!("AVERTISMENT: niciun ecran utilizabil");
+    }
 
     #[cfg(feature = "qemu-test")]
     qemu::finish_test();
