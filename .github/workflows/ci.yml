@@ -37,6 +37,9 @@ jobs:
       - name: Criptografie — vectorii oficiali pe gazdă (crypto/)
         run: cd crypto && cargo test --release
 
+      - name: TLS 1.3 — clientul nostru față de un server OpenSSL pe gazdă (tls/)
+        run: cd tls && cargo test --release
+
       - name: Build + test în QEMU
         run: tools/test.sh
 
