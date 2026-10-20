@@ -34,6 +34,9 @@ jobs:
       - name: Verificare mediu
         run: tools/env-check.sh
 
+      - name: Criptografie — vectorii oficiali pe gazdă (crypto/)
+        run: cd crypto && cargo test --release
+
       - name: Build + test în QEMU
         run: tools/test.sh
 

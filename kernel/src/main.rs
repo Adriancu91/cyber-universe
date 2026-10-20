@@ -236,6 +236,8 @@ fn run_tests() -> ! {
     test_tcp();
     #[cfg(feature = "test-appnet")]
     test_appnet();
+    #[cfg(feature = "test-crypto")]
+    test_crypto();
     #[cfg(feature = "test-usb")]
     assert!(boot::medium() == boot::Medium::Disk, "test: pornit de pe {:?}, nu de pe stick", boot::medium());
     #[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
@@ -1173,6 +1175,27 @@ fn test_appnet() {
     push_key(Key::Escape);
     assert!(proc::wait(app) == 0, "test: aplicatia Retea nu s-a inchis");
     info!("test: aplicatia Retea OK");
+}
+
+/// Our own cryptography (crypto/, D-011): every official test vector, then the SHA-256 speed.
+#[cfg(feature = "test-crypto")]
+fn test_crypto() {
+    use cyber_crypto::{Digest, sha2::Sha256};
+    let ticks = arch::x86_64::apic::ticks();
+    match cyber_crypto::vectors::self_test() {
+        Ok(n) => info!("crypto: {} vectori oficiali trecuti (SHA-256/384/512, HMAC, HKDF, TLS 1.3)", n),
+        Err(name) => panic!("crypto: vectorul {} a esuat", name),
+    }
+    let ms = (arch::x86_64::apic::ticks() - ticks) * 1000 / arch::x86_64::apic::HZ;
+    let block = alloc::vec![0x5Au8; 1 << 20];
+    let start = arch::x86_64::apic::ticks();
+    let mut h = Sha256::new();
+    for _ in 0..4 {
+        h.update(&block);
+    }
+    core::hint::black_box(h.finish());
+    let t = ((arch::x86_64::apic::ticks() - start) * 1000 / arch::x86_64::apic::HZ).max(1);
+    info!("crypto: vectori in {} ms; SHA-256: {} MiB/s (in emulare)", ms, 4 * 1000 / t);
 }
 
 /// Draws a known scene in a back buffer, checks pixels, the changed area and the copy to the screen,

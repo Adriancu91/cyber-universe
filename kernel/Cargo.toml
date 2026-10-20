@@ -7,6 +7,8 @@ description = "Cyber Universe OS kernel"
 
 [dependencies]
 limine = "=0.5.0"
+# Our own cryptography (D-011); only the crypto test uses it in the kernel for now.
+cyber_crypto = { path = "../crypto", optional = true }
 
 [features]
 # Test build: the kernel waits for a byte on COM1, then exits QEMU through isa-debug-exit.
@@ -40,6 +42,8 @@ test-dns = ["qemu-test"]
 test-tcp = ["qemu-test"]
 # P5-05: /bin/fetch and /bin/udp against tools/before-appnet.sh (web server + UDP echo).
 test-appnet = ["qemu-test"]
+# P5-10: the official vectors of crypto/ (SHA-2, HMAC, HKDF) run in the kernel.
+test-crypto = ["qemu-test", "dep:cyber_crypto"]
 # P4-01: the harness moves the mouse and clicks; the kernel must receive both events.
 test-mouse = ["qemu-test"]
 # P4-04: two windows; the harness types keys and drags the top one by its title bar with the mouse.

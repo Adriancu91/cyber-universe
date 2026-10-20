@@ -1,0 +1,11 @@
+[package]
+name = "cyber_crypto"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Cyber Universe's own cryptography (no_std, no dependencies): SHA-2, HMAC, HKDF (more in P5-11..P5-13)."
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
