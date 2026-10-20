@@ -73,6 +73,27 @@ cp -r "$ROOT/boot/initrd/." "$INITRD_ROOT/"
 for p in "${PROGRAMS[@]}"; do cp "$USER_BIN/$p" "$INITRD_ROOT/bin/$p"; done
 ( cd "$INITRD_ROOT" && tar --format=ustar --owner=0 --group=0 --sort=name -cf "$ISO_ROOT/boot/initrd.tar" * )
 echo "    module_path: boot():/boot/initrd.tar" >> "$ISO_ROOT/boot/limine/limine.conf"
+
+# Test disk: a GPT disk image with one FAT32 partition = boot/disk/ + a 100 KiB file and its checksum.
+# Mounted read-only at /disk until there is a real disk driver (Phase 3).
+DISK_ROOT="$BUILD/disk-$MODE"
+rm -rf "$DISK_ROOT" && mkdir -p "$DISK_ROOT"
+cp -r "$ROOT/boot/disk/." "$DISK_ROOT/"
+python3 - "$DISK_ROOT/docs" <<'PY'
+import sys
+data = bytes(((i * 7) ^ (i >> 8)) & 0xFF for i in range(100 * 1024))
+h = 0xcbf29ce484222325  # FNV-1a 64
+for b in data:
+    h = ((h ^ b) * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
+open(sys.argv[1] + "/mare.bin", "wb").write(data)
+open(sys.argv[1] + "/mare.fnv", "w").write(f"{h:016x}\n")
+PY
+DISK="$ISO_ROOT/boot/disk.img"
+truncate -s 40M "$DISK"
+printf 'label: gpt\nstart=2048, size=38M, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7\n' | PATH="$PATH:/usr/sbin:/sbin" sfdisk -q "$DISK"
+PATH="$PATH:/usr/sbin:/sbin" mkfs.fat -F 32 -s 1 -n CYBERDISK --offset 2048 "$DISK" $((38 * 1024)) >/dev/null 2>&1
+MTOOLS_SKIP_CHECK=1 mcopy -s -i "$DISK@@1M" "$DISK_ROOT"/* ::/
+echo "    module_path: boot():/boot/disk.img" >> "$ISO_ROOT/boot/limine/limine.conf"
 cp "$LIMINE_DIR/limine-uefi-cd.bin" "$ISO_ROOT/boot/limine/"
 cp "$LIMINE_DIR/BOOTX64.EFI" "$ISO_ROOT/EFI/BOOT/"
 

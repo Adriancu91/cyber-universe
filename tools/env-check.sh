@@ -27,9 +27,11 @@ ovmf_code() {
 }
 
 if (( INSTALL )); then
-    if ! command -v qemu-system-x86_64 >/dev/null || ! command -v xorriso >/dev/null || ! ovmf_code >/dev/null; then
-        echo "Instalez QEMU, OVMF, xorriso..."
-        $SUDO apt-get update -qq && $SUDO apt-get install -y -qq qemu-system-x86 ovmf xorriso make curl python3 >/dev/null
+    if ! command -v qemu-system-x86_64 >/dev/null || ! command -v xorriso >/dev/null || ! ovmf_code >/dev/null \
+        || ! command -v mkfs.fat >/dev/null || ! command -v mcopy >/dev/null || ! command -v sfdisk >/dev/null; then
+        echo "Instalez QEMU, OVMF, xorriso, unelte FAT..."
+        $SUDO apt-get update -qq && $SUDO apt-get install -y -qq qemu-system-x86 ovmf xorriso make curl python3 \
+            dosfstools mtools fdisk >/dev/null
     fi
     if ! command -v rustup >/dev/null; then
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
@@ -40,7 +42,8 @@ if (( INSTALL )); then
 fi
 
 echo "Unelte:"
-for c in git curl make xorriso qemu-system-x86_64 python3 rustup cargo; do need_cmd "$c"; done
+export PATH="$PATH:/usr/sbin:/sbin"   # mkfs.fat and sfdisk live there
+for c in git curl make xorriso qemu-system-x86_64 python3 rustup cargo mkfs.fat mcopy sfdisk; do need_cmd "$c"; done
 
 if command -v rustup >/dev/null 2>&1; then
     if rustup run nightly rustc --version >/dev/null 2>&1; then

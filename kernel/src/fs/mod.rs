@@ -1,6 +1,8 @@
 //! Files: the VFS layer (vfs.rs), the in-memory root file system (ramfs.rs) and the initrd reader (tar.rs).
 //! The functions here take absolute paths and work on whatever file system is mounted there.
 
+pub mod fat32;
+pub mod part;
 pub mod ramfs;
 pub mod tar;
 pub mod vfs;
@@ -38,6 +40,29 @@ pub fn init() {
         Ok(n) => crate::info!("fs: radacina din initrd: {} intrari, {} KiB", n, bytes / 1024),
         Err(msg) => crate::error!("fs: initrd stricat: {}", msg),
     }
+    if let Some(image) = crate::boot::file("disk.img") {
+        mount_disk(alloc::boxed::Box::new(crate::block::MemDisk::new(image)), "/disk");
+    }
+}
+
+/// Finds the FAT partition of `dev` and mounts it (read only) at `at`.
+pub fn mount_disk(dev: Box<dyn crate::block::BlockDevice>, at: &str) -> bool {
+    let Some(p) = part::find_fat(dev.as_ref()) else {
+        crate::warn!("fs: disc fara partitie FAT");
+        return false;
+    };
+    let fat = match fat32::Fat32::new(Box::new(crate::block::Partition::new(dev, p.start, p.sectors))) {
+        Ok(f) => f,
+        Err(msg) => {
+            crate::warn!("fs: partitia {} de la sectorul {}: {}", p.table, p.start, msg);
+            return false;
+        }
+    };
+    let ok = create_dirs(at).is_ok() && vfs::mount(at, Box::new(fat)).is_ok();
+    if ok {
+        crate::info!("fs: FAT32 ({}, {} MiB) montat la {}", p.table, p.sectors * 512 / (1024 * 1024), at);
+    }
+    ok
 }
 
 /// Creates `path` and every missing directory above it.

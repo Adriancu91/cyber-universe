@@ -17,6 +17,7 @@ pub enum FsError {
     AlreadyExists,
     NotEmpty,
     InvalidPath,
+    ReadOnly,
 }
 
 impl FsError {
@@ -28,6 +29,7 @@ impl FsError {
             FsError::AlreadyExists => "exista deja",
             FsError::NotEmpty => "directorul nu e gol",
             FsError::InvalidPath => "cale invalida",
+            FsError::ReadOnly => "doar citire",
         }
     }
 }

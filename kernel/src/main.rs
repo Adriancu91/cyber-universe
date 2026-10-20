@@ -7,6 +7,7 @@
 extern crate alloc;
 
 mod acpi;
+mod block;
 mod arch;
 mod boot;
 mod drivers;
@@ -162,6 +163,7 @@ fn run_tests() -> ! {
     test_address_spaces();
     test_user_mode();
     test_files();
+    test_fat32();
     test_elf();
     test_user_files();
 
@@ -562,6 +564,57 @@ fn test_files() {
     assert!(fs::create("/etc/motd/x", Kind::File) == Err(FsError::NotADirectory), "fisier folosit ca director");
     assert!(fs::kind("relativ") == Err(FsError::InvalidPath), "cale relativa acceptata");
     info!("test: ramfs OK (/etc/motd citit; creare, scriere, citire, stergere; erori: {})", FsError::NotFound.message());
+}
+
+/// The test disk (GPT + FAT32, built by tools/build.sh) is mounted at /disk: long names, a sub-directory,
+/// a 100 KiB file over many clusters whose checksum matches the one computed at build time, read-only.
+/// The same partition is then found through an MBR (the disk seen with a different sector 0).
+#[cfg(feature = "qemu-test")]
+fn test_fat32() {
+    use fs::{FsError, Kind};
+    let list = fs::list("/disk").expect("test: /disk lipseste");
+    let names: alloc::vec::Vec<_> = list.iter().map(|(n, k)| if *k == Kind::Dir { alloc::format!("{}/", n) } else { n.clone() }).collect();
+    info!("test: /disk = {}", names.join(", "));
+    assert!(fs::read_all("/disk/salut.txt").unwrap() == b"salut de pe disc\n", "salut.txt gresit");
+    assert!(fs::read_all("/disk/Un nume lung de fisier.txt").is_ok(), "nume lung negasit");
+    assert!(fs::read_all("/disk/SALUT.TXT").is_ok(), "numele nu sunt comparate fara majuscule");
+    let data = fs::read_all("/disk/docs/mare.bin").expect("test: mare.bin");
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in &data {
+        h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
+    }
+    let expected = fs::read_all("/disk/docs/mare.fnv").unwrap();
+    let hex = alloc::format!("{:016x}\n", h);
+    assert!(data.len() == 100 * 1024 && hex.as_bytes() == &expected[..], "mare.bin: {} octeti, suma {}", data.len(), hex.trim());
+    let mut part = [0u8; 1000];
+    assert!(fs::read("/disk/docs/mare.bin", 50_000, &mut part) == Ok(1000), "citire de la mijloc");
+    assert!(part.iter().enumerate().all(|(i, &b)| b == (((50_000 + i) * 7) ^ ((50_000 + i) >> 8)) as u8), "continut gresit la mijloc");
+    assert!(fs::write("/disk/salut.txt", 0, b"x") == Err(FsError::ReadOnly), "scriere acceptata pe FAT32");
+
+    // MBR: the same image, with sector 0 replaced by an MBR that points at the same partition.
+    struct WithMbr(block::MemDisk, [u8; 512]);
+    impl block::BlockDevice for WithMbr {
+        fn sectors(&self) -> u64 {
+            self.0.sectors()
+        }
+        fn read(&self, lba: u64, buf: &mut [u8]) -> Result<(), block::BlockError> {
+            self.0.read(lba, buf)?;
+            if lba == 0 {
+                buf[..512].copy_from_slice(&self.1);
+            }
+            Ok(())
+        }
+    }
+    let image = boot::file("disk.img").unwrap();
+    let mut mbr = [0u8; 512];
+    mbr[446 + 4] = 0x0C; // FAT32 (LBA)
+    mbr[446 + 8..446 + 12].copy_from_slice(&2048u32.to_le_bytes());
+    mbr[446 + 12..446 + 16].copy_from_slice(&(38u32 * 2048).to_le_bytes());
+    mbr[510] = 0x55;
+    mbr[511] = 0xAA;
+    assert!(fs::mount_disk(alloc::boxed::Box::new(WithMbr(block::MemDisk::new(image), mbr)), "/mbr"), "MBR negasit");
+    assert!(fs::read_all("/mbr/salut.txt").unwrap() == b"salut de pe disc\n", "citire prin MBR");
+    info!("test: FAT32 OK (GPT si MBR, nume lungi, 100 KiB cu suma {}, doar citire)", hex.trim());
 }
 
 /// Runs the `hello` program (an ELF file from the initrd) and checks that damaged ELF files are refused.
