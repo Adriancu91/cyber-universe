@@ -3,12 +3,15 @@
 #![cfg_attr(not(test), no_std)]
 
 pub mod aead;
+pub mod bignum;
 pub mod chacha20;
 pub mod hkdf;
 pub mod hmac;
 pub mod poly1305;
+pub mod rsa;
 pub mod sha2;
 pub mod vectors;
+mod vectors_rsa;
 pub mod x25519;
 
 /// A hash function usable by HMAC and HKDF.

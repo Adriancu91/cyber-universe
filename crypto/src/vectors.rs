@@ -1,11 +1,11 @@
-//! The official test vectors (FIPS 180-4 examples, RFC 4231, RFC 5869, RFC 7748, RFC 8439, RFC 8448), run by `self_test`:
+//! The official test vectors (FIPS 180-4 examples, RFC 4231, RFC 5869, RFC 7748, RFC 8439, RFC 8448) and OpenSSL-made RSA signatures, run by `self_test`:
 //! on the host by `cargo test`, in QEMU by the kernel's `crypto` scenario.
 
 use crate::hkdf;
 use crate::hmac::hmac;
 use crate::sha2::{Sha256, Sha384, Sha512};
 use crate::x25519::{x25519, x25519_base};
-use crate::{aead, chacha20, poly1305::Poly1305};
+use crate::{aead, chacha20, poly1305::Poly1305, rsa::PublicKey, vectors_rsa};
 use crate::{Digest, ct_eq};
 
 /// Hex text -> bytes in `out`; returns the length.
@@ -223,6 +223,37 @@ pub fn self_test() -> Result<usize, &'static str> {
     check(!aead::open(&k8, &n12, &aad2, &mut msg, &bad), "aead: eticheta gresita acceptata")?;
     check(!aead::open(&k8, &n12, &aad2[..36], &mut msg, &tag), "aead: date aditionale schimbate acceptate")?;
     check(aead::open(&k8, &n12, &aad2, &mut msg, &tag) && msg == big, "aead 1000 de octeti deschidere")?;
+
+    // RSA (P5-13): PKCS#1 v1.5 and PSS, 2047 … 4096 bits, e = 65537 and e = 3; then everything that must be refused.
+    for &(bits, n_hex, e_hex, sigs) in vectors_rsa::KEYS {
+        let (mut n_b, mut e_b, mut sig) = ([0u8; 512], [0u8; 4], [0u8; 512]);
+        let nl = unhex(n_hex, &mut n_b);
+        let el = unhex(e_hex, &mut e_b);
+        let Some(key) = PublicKey::new(&n_b[..nl], &e_b[..el]) else { return Err("rsa: cheie refuzata") };
+        check(key.bits() == bits, "rsa: lungimea cheii")?;
+        for &(scheme, hash, sig_hex) in sigs {
+            let sl = unhex(sig_hex, &mut sig);
+            let verify = |msg: &[u8], sig: &[u8]| match (scheme, hash) {
+                ("v15", 256) => key.verify_pkcs1v15::<Sha256>(msg, sig),
+                ("v15", 384) => key.verify_pkcs1v15::<Sha384>(msg, sig),
+                ("v15", _) => key.verify_pkcs1v15::<Sha512>(msg, sig),
+                (_, 256) => key.verify_pss::<Sha256>(msg, sig, 32),
+                (_, 384) => key.verify_pss::<Sha384>(msg, sig, 48),
+                _ => key.verify_pss::<Sha512>(msg, sig, 64),
+            };
+            check(verify(vectors_rsa::MSG, &sig[..sl]), if scheme == "v15" { "rsa pkcs1 v1.5" } else { "rsa pss" })?;
+            let mut bad = sig;
+            bad[sl / 2] ^= 4;
+            let wrong_len = sl - 1;
+            check(!verify(vectors_rsa::MSG, &bad[..sl]) && !verify(b"alt mesaj", &sig[..sl]) && !verify(vectors_rsa::MSG, &sig[1..sl]) && !verify(vectors_rsa::MSG, &n_b[..nl]) && !verify(vectors_rsa::MSG, &sig[..wrong_len]), "rsa: semnatura gresita acceptata")?;
+        }
+        if bits == 2048 && el == 1 && e_b[0] == 3 {
+            // The wrong salt length or the other scheme with the same signature is refused too.
+            let sl = unhex(sigs[0].2, &mut sig);
+            check(!key.verify_pss::<Sha256>(vectors_rsa::MSG, &sig[..sl], 32) && !key.verify_pkcs1v15::<Sha384>(vectors_rsa::MSG, &sig[..sl]), "rsa: schema gresita acceptata")?;
+        }
+    }
+    check(PublicKey::new(&[0xff; 64], &[1, 0, 1]).is_none() && PublicKey::new(&[0xfe; 256], &[1, 0, 1]).is_none() && PublicKey::new(&[0xff; 256], &[2]).is_none(), "rsa: cheie invalida acceptata")?;
 
     // Constant-time comparison.
     check(ct_eq(b"abc", b"abc") && !ct_eq(b"abc", b"abd") && !ct_eq(b"abc", b"ab"), "ct_eq")?;
