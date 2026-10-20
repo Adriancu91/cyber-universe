@@ -40,6 +40,8 @@ struct Thread {
     kstack_top: u64,
     /// A system thread (a driver's helper) that runs as long as the kernel: not counted by `alive`.
     system: bool,
+    /// Asked to stop (`kill`): a user program ends at its next return to ring 3.
+    killed: bool,
     /// The thread's stack; `None` for the boot thread, which runs on the kernel's boot stack.
     _stack: Option<Box<[u8]>>,
 }
@@ -99,7 +101,7 @@ pub fn init() {
         s.ready.reserve(16);
         s.blocked.reserve(16);
         s.zombies.reserve(16);
-        s.current = Some(Box::new(Thread { id: 0, state: State::Ready, rsp: 0, wait_key: 0, wake_at: 0, root: 0, kstack_top: 0, system: false, _stack: None }));
+        s.current = Some(Box::new(Thread { id: 0, state: State::Ready, rsp: 0, wait_key: 0, wake_at: 0, root: 0, kstack_top: 0, system: false, killed: false, _stack: None }));
     });
     let idle = new_thread(IDLE_ID, idle_loop);
     with_sched(|s| s.idle = Some(idle));
@@ -169,7 +171,7 @@ fn new_thread(id: u64, f: fn()) -> Box<Thread> {
     let top = (stack.as_ptr() as u64 + STACK_SIZE as u64) & !15;
     // SAFETY: the 56 bytes below `top` belong to `stack`, which the new thread owns.
     let rsp = unsafe { switch::initial_stack(top, f as *const () as usize) };
-    Box::new(Thread { id, state: State::Ready, rsp, wait_key: 0, wake_at: 0, root: 0, kstack_top: top, system: false, _stack: Some(stack) })
+    Box::new(Thread { id, state: State::Ready, rsp, wait_key: 0, wake_at: 0, root: 0, kstack_top: top, system: false, killed: false, _stack: Some(stack) })
 }
 
 /// The idle thread: sleeps until an interrupt, then lets whoever was woken run.
@@ -184,6 +186,34 @@ fn idle_loop() {
 #[allow(dead_code)] // used by the self-tests now
 pub fn current_id() -> u64 {
     with_sched(|s| s.current.as_ref().map_or(0, |t| t.id))
+}
+
+/// Asks thread `id` to stop and wakes it if it sleeps or waits with a time limit. The user program on
+/// it ends at its next return to ring 3 (`syscall::dispatch`, timer interrupt). Returns whether the
+/// thread exists. System threads and the idle thread cannot be stopped.
+pub fn kill(id: u64) -> bool {
+    with_sched(|s| {
+        let mark = |t: &mut Thread| {
+            if t.id == id && !t.system && t.id != IDLE_ID && t.state != State::Exited {
+                t.killed = true;
+                true
+            } else {
+                false
+            }
+        };
+        let found = s.current.as_deref_mut().is_some_and(mark)
+            || s.ready.iter_mut().any(|t| mark(t))
+            || s.blocked.iter_mut().any(|t| mark(t));
+        if found {
+            wake_where(s, 1, |t| t.id == id && t.wake_at != 0);
+        }
+        found
+    })
+}
+
+/// Whether the running thread was asked to stop.
+pub fn killed() -> bool {
+    with_sched(|s| s.current.as_ref().is_some_and(|t| t.killed))
 }
 
 /// Number of threads that have not exited (running, ready or blocked), without the idle thread and

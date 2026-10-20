@@ -1,0 +1,1 @@
+Acest modul arata cum se declara o dependenta.

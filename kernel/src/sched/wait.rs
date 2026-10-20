@@ -1,6 +1,6 @@
 //! Waiting without using the CPU: wait queues and `sleep_ms`.
 
-use super::{block_current, irq_restore, irq_save, wake};
+use super::{block_current, irq_restore, irq_save, killed, wake};
 use crate::arch::x86_64::apic;
 
 /// A place where threads wait for something (a key press, a free lock...). Threads are identified with
@@ -33,7 +33,8 @@ impl WaitQueue {
         }
     }
 
-    /// Like `wait_until`, but gives up at timer tick `deadline` (0 = never). Returns whether `ready` became true.
+    /// Like `wait_until`, but gives up at timer tick `deadline` (0 = never), or when the thread is asked
+    /// to stop (`kill`). Returns whether `ready` became true.
     pub fn wait_until_or(&self, deadline: u64, mut ready: impl FnMut() -> bool) -> bool {
         loop {
             let flags = irq_save();
@@ -41,7 +42,7 @@ impl WaitQueue {
                 irq_restore(flags);
                 return true;
             }
-            if deadline != 0 && apic::ticks() >= deadline {
+            if (deadline != 0 && apic::ticks() >= deadline) || killed() {
                 irq_restore(flags);
                 return false;
             }
@@ -66,7 +67,7 @@ impl WaitQueue {
 pub fn sleep_ms(ms: u64) {
     let ticks = (ms * apic::HZ).div_ceil(1000).max(1);
     let wake_at = apic::ticks() + ticks;
-    while apic::ticks() < wake_at {
+    while apic::ticks() < wake_at && !killed() {
         let flags = irq_save();
         block_current(0, wake_at);
         irq_restore(flags);

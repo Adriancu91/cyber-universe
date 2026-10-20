@@ -38,6 +38,17 @@ pub extern "C" fn dispatch(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64, _a5: u6
     // The kernel may now be interrupted (and preempted) while it serves the call.
     // SAFETY: the IDT and the scheduler are ready long before any program runs.
     unsafe { core::arch::asm!("sti", options(nomem, nostack)) }
+    let result = call(nr, a1, a2, _a3, a4);
+    if sched::killed() {
+        exit_current(EXIT_KILLED);
+    }
+    result
+}
+
+/// Exit code of a program stopped by `proc::kill`.
+pub const EXIT_KILLED: i64 = -9;
+
+fn call(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64) -> i64 {
     match nr {
         SYS_EXIT => exit_current(a1 as i64),
         SYS_WRITE => write(a1, a2, _a3),

@@ -82,9 +82,13 @@ fn pit_wait_ms(ms: u64) {
     }
 }
 
-extern "x86-interrupt" fn timer_handler(_frame: super::idt::InterruptStackFrame) {
+extern "x86-interrupt" fn timer_handler(frame: super::idt::InterruptStackFrame) {
     TICKS.fetch_add(1, Ordering::Relaxed);
     eoi();
+    if frame.cs & 3 == 3 && crate::sched::killed() {
+        // A user program asked to stop (`proc::kill`) that never makes system calls.
+        crate::syscall::exit_current(crate::syscall::EXIT_KILLED);
+    }
     // The interrupted thread's registers are saved on its stack by this handler; switching here and
     // returning later through `iretq` resumes it exactly where it was.
     crate::sched::timer_tick();

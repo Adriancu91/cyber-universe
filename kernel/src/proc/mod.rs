@@ -188,6 +188,17 @@ pub fn on_exit(id: u64, code: i64) {
     EXIT_WAIT.wake_all();
 }
 
+/// Stops the program on thread `id` (it exits with `syscall::EXIT_KILLED`). Returns false if there is
+/// no such program. A program waiting for another one (`wait`) stops only when that wait ends.
+pub fn kill(id: u64) -> bool {
+    PROCS.lock().iter().any(|p| p.thread == id) && sched::kill(id)
+}
+
+/// Whether the program on thread `id` is still running.
+pub fn running(id: u64) -> bool {
+    PROCS.lock().iter().any(|p| p.thread == id)
+}
+
 /// `wait` for a program asking through a system call: only for programs that are running or have
 /// ended and not been collected yet (anything else would wait forever).
 pub fn wait_child(id: u64) -> i64 {

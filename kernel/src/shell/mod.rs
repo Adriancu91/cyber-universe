@@ -31,6 +31,7 @@ pub fn run() {
             "cat" => cat(args),
             "run" => run_program(args),
             "desktop" => run_program(&["desktop"]),
+            "mod" => module(args),
             "mem" => mem(),
             "lspci" => lspci(),
             "lsusb" => lsusb(),
@@ -74,6 +75,7 @@ fn help() {
     out!("  cat <fisier>...  afiseaza fisiere\n");
     out!("  run <program> [argumente]  porneste un program (din /bin daca nu dai calea)\n");
     out!("  desktop          porneste desktopul (Esc il inchide si revine aici)\n");
+    out!("  mod list|install <pachet.cum>|start|stop|remove <nume>  module\n");
     out!("  mem              memoria libera si cea folosita\n");
     out!("  lspci            dispozitivele PCI (discuri, USB, retea...)\n");
     out!("  lsusb            dispozitivele USB conectate\n");
@@ -127,6 +129,32 @@ fn run_program(args: &[&str]) {
             }
         }
         Err(e) => out!("run: {}: {}\n", path, e.message()),
+    }
+}
+
+fn module(args: &[&str]) {
+    use crate::modmgr;
+    let report = |r: Result<(), modmgr::ModError>| {
+        if let Err(e) = r {
+            out!("mod: {}\n", e.message());
+        }
+    };
+    match args {
+        ["list"] | [] => match modmgr::installed() {
+            Ok(list) if list.is_empty() => out!("(niciun modul instalat in {})\n", modmgr::ROOT),
+            Ok(list) => {
+                for m in list {
+                    let state = if modmgr::is_running(&m.name) { "merge" } else { "oprit" };
+                    out!("  {} {}  [{}]  {}\n", m.name, m.version, state, m.description);
+                }
+            }
+            Err(e) => out!("mod: {}\n", e.message()),
+        },
+        ["install", package] => report(modmgr::install(package).map(|m| out!("instalat: {} {}\n", m.name, m.version))),
+        ["start", name] => report(modmgr::start(name).map(|_| ())),
+        ["stop", name] => report(modmgr::stop(name)),
+        ["remove", name] => report(modmgr::remove(name)),
+        _ => out!("folosire: mod list | mod install <pachet.cum> | mod start|stop|remove <nume>\n"),
     }
 }
 

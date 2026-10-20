@@ -61,7 +61,11 @@ echo "[build] Construiesc programele utilizator..."
 ( cd "$ROOT/user" && cargo build --release --target-dir "$BUILD/target-user" )
 USER_BIN="$BUILD/target-user/x86_64-unknown-none/release"
 PROGRAMS=()
-for src in "$ROOT"/user/src/bin/*.rs; do PROGRAMS+=("$(basename "$src" .rs)"); done
+# Programs named mod_* belong to modules (modules/*/module.toml), not to /bin.
+for src in "$ROOT"/user/src/bin/*.rs; do
+    name="$(basename "$src" .rs)"
+    [[ "$name" == mod_* ]] || PROGRAMS+=("$name")
+done
 
 # 3. ISO tree
 ISO_ROOT="$BUILD/iso-$MODE"
@@ -84,6 +88,11 @@ echo "    module_path: boot():/boot/initrd.tar" >> "$ISO_ROOT/boot/limine/limine
 DISK_ROOT="$BUILD/disk-$MODE"
 rm -rf "$DISK_ROOT" && mkdir -p "$DISK_ROOT"
 cp -r "$ROOT/boot/disk/." "$DISK_ROOT/"
+# Module packages (modules/<name>/ -> pachete/<name>.cum) for the module manager tests.
+mkdir -p "$DISK_ROOT/pachete"
+for m in "$ROOT"/modules/*/; do
+    "$ROOT/tools/mkmodule.sh" "$m" "$USER_BIN" "$DISK_ROOT/pachete/$(basename "$m").cum"
+done
 python3 - "$DISK_ROOT/docs" <<'PY'
 import os, sys
 os.makedirs(sys.argv[1], exist_ok=True)  # boot/disk/docs/ is empty in git, so it may not exist

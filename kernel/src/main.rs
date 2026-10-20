@@ -16,6 +16,7 @@ mod gfx;
 mod input;
 mod log;
 mod mem;
+mod modmgr;
 mod pci;
 mod proc;
 mod sched;
@@ -222,6 +223,9 @@ fn run_tests() -> ! {
 
     #[cfg(feature = "test-fatwrite")]
     test_fat_write();
+
+    #[cfg(feature = "test-modules")]
+    test_modules();
 
     #[cfg(feature = "test-shell")]
     {
@@ -582,12 +586,19 @@ fn test_user_mode() {
     let code = proc::wait(id);
     assert!(code == -1, "programul cu eroare a iesit cu {} in loc de -1", code);
 
+    // A program that never makes a system call (jmp $) is stopped from the timer interrupt.
+    let id = proc::spawn_flat(&[0xEB, 0xFE]).expect("test: nu pot porni programul");
+    sched::sleep_ms(30);
+    assert!(proc::kill(id), "kill: programul nu exista");
+    let code = proc::wait(id);
+    assert!(code == syscall::EXIT_KILLED, "programul oprit a iesit cu {}", code);
+
     while sched::alive() > 1 {
         sched::sleep_ms(10); // let the exited threads be reaped
     }
     let free_after = mem::frame::free_frames();
     assert!(free_after == free_before, "cadre pierdute dupa procese: {} inainte, {} dupa", free_before, free_after);
-    info!("test: mod utilizator OK (cod 7; programul cu eroare oprit, nucleul continua)");
+    info!("test: mod utilizator OK (cod 7; programul cu eroare oprit, nucleul continua; bucla infinita oprita cu kill)");
 }
 
 /// The initrd is in the root ramfs; files can be created, written, read and removed; bad paths fail cleanly.
@@ -696,6 +707,41 @@ fn test_fat_write() {
     assert!(fs::read_all("/disk/scris/multe/fisier-19.txt").unwrap() == b"/disk/scris/multe/fisier-19.txt", "ultimul fisier");
     assert!(fs::read_all("/disk/salut.txt").unwrap() == b"salut de pe disc\n", "fisierele vechi s-au stricat");
     info!("test: scriere FAT32 OK (nume scurte si lungi, 10000 octeti peste clustere, gol, stergere, director marit)");
+}
+
+/// Module manager on a copy of the test disk marked for writing: dependency checks, install, start
+/// (the program says hello and keeps running), stop (killed), uninstall. `salut` is installed again at
+/// the end for the shell's `mod list`; tools/after-modules.sh checks the disk with fsck.fat.
+#[cfg(feature = "test-modules")]
+fn test_modules() {
+    use modmgr::ModError;
+    let names = || modmgr::installed().unwrap().into_iter().map(|m| m.name).collect::<alloc::vec::Vec<_>>();
+    assert!(names().is_empty(), "module instalate de la inceput");
+    let r = modmgr::install("/disk/pachete/cere-salut.cum");
+    assert!(r == Err(ModError::MissingDependency("salut".into())), "dependenta lipsa acceptata: {:?}", r);
+    let m = modmgr::install("/disk/pachete/salut.cum").expect("test: instalare salut");
+    assert!(m.version == "1.0" && m.start.as_deref() == Some("bin/salut"), "module.toml citit gresit: {:?}", m);
+    assert!(modmgr::install("/disk/pachete/salut.cum") == Err(ModError::AlreadyInstalled), "instalat de doua ori");
+    modmgr::install("/disk/pachete/cere-salut.cum").expect("test: instalare cere-salut");
+    assert!(names() == ["salut", "cere-salut"], "lista: {:?}", names());
+    assert!(fs::read_all("/disk/modules/cere-salut/docs/citeste.txt").is_ok(), "fisierele modulului lipsesc");
+    assert!(modmgr::remove("salut") == Err(ModError::NeededBy("cere-salut".into())), "sters desi e necesar");
+
+    let id = modmgr::start("salut").expect("test: pornire salut");
+    sched::sleep_ms(300);
+    assert!(modmgr::is_running("salut") && proc::running(id), "programul modulului nu merge");
+    assert!(modmgr::start("salut") == Err(ModError::Running), "pornit de doua ori");
+    assert!(modmgr::remove("cere-salut").is_ok(), "stergere cere-salut");
+    assert!(modmgr::remove("salut") == Err(ModError::Running), "sters in timp ce merge");
+    modmgr::stop("salut").expect("test: oprire salut");
+    assert!(!modmgr::is_running("salut") && !proc::running(id), "programul modulului inca merge");
+    modmgr::remove("salut").expect("test: stergere salut");
+    assert!(fs::kind("/disk/modules/salut") == Err(fs::FsError::NotFound) && names().is_empty(), "directorul modulului a ramas");
+    while sched::alive() > 1 {
+        sched::sleep_ms(10);
+    }
+    modmgr::install("/disk/pachete/salut.cum").expect("test: reinstalare salut");
+    info!("test: module OK (dependente, instalare, pornire, oprire, stergere)");
 }
 
 /// The same partition must also be found through an MBR (the disk image seen with a different sector 0).

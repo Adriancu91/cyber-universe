@@ -1,0 +1,5 @@
+# Test module without a program, that needs `salut` (dependency check).
+name = "cere-salut"
+version = "0.1"
+description = "Modul de proba care are nevoie de salut"
+depends = ["salut"]

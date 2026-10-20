@@ -1,0 +1,7 @@
+# Test module: a program that runs in the background until it is stopped.
+name = "salut"
+version = "1.0"
+description = "Modul de proba: spune salut si ramane pornit"
+start = "bin/salut"
+# Used only by tools/mkmodule.sh: which program from user/src/bin goes at `start`.
+program_source = "mod_salut"

@@ -121,7 +121,7 @@ cât P3-09 așteaptă testul pe hardware real). Fiecare sarcină are plan în `d
 - [x] **P4-05** Ferestre pentru programe (apeluri de sistem, memorie partajată). Dep: P4-04, P2-08.
 - [x] **P4-06** Desktop „Cyber Universe”. Dep: P4-05.
 - [x] **P4-07** FAT32: scriere (fișiere noi, modificare, ștergere). Dep: P2-10.
-- [ ] **P4-08** Manager de module (modmgr). Dep: P4-07, P2-08.
+- [x] **P4-08** Manager de module (modmgr). Dep: P4-07, P2-08.
 - [ ] **P4-09** Aplicații de sistem: monitor sistem și fișiere. Dep: P4-06, P4-08.
 - [ ] **P4-10** Aplicații de sistem: editor de text și setări. Dep: P4-09.
 - [ ] **P4-11** Module din interfață și închiderea Fazei 4. Dep: P4-10.
