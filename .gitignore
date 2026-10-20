@@ -2,7 +2,7 @@ build/
 target/
 *.iso
 *.img
-ovmf/
-limine/
+/ovmf/
+/limine/
 .DS_Store
 kernel/target/

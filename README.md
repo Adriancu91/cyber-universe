@@ -1,5 +1,9 @@
 # Cyber Universe OS
 
+[![CI](https://github.com/Adriancu91/cyber-universe/actions/workflows/ci.yml/badge.svg)](https://github.com/Adriancu91/cyber-universe/actions/workflows/ci.yml)
+
+![Prima pornire](tests/screens/boot.png)
+
 Sistem de operare propriu, construit de la zero: **minim, modular, rapid pe hardware slab**.
 
 - Nucleu propriu (Rust, x86_64, UEFI), dezvoltat întâi în emulatorul QEMU, apoi pe hardware real.
