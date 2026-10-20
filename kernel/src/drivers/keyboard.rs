@@ -36,6 +36,70 @@ static SHIFT: AtomicBool = AtomicBool::new(false);
 static CAPS: AtomicBool = AtomicBool::new(false);
 static EXTENDED: AtomicBool = AtomicBool::new(false);
 static CTRL: AtomicBool = AtomicBool::new(false);
+/// Right Alt (AltGr), used by the Romanian layout.
+static ALTGR: AtomicBool = AtomicBool::new(false);
+/// The layout in use: false = US, true = Romanian (Standard).
+static ROMANIAN: AtomicBool = AtomicBool::new(false);
+
+/// Keyboard layouts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    Us,
+    /// "Romanian (Standard)", SR 13392:2004 primary layout, as Windows defines it (KBDROST).
+    Ro,
+}
+
+/// Chooses the layout for every keyboard (PS/2 and USB).
+pub fn set_layout(l: Layout) {
+    ROMANIAN.store(l == Layout::Ro, Ordering::Relaxed);
+}
+
+pub fn layout() -> Layout {
+    if ROMANIAN.load(Ordering::Relaxed) { Layout::Ro } else { Layout::Us }
+}
+
+/// The Romanian (Standard) layout where it differs from US, by set-1 scan code: (normal, Shift,
+/// AltGr, Shift+AltGr); '\0' = nothing (dead keys, accents, are not supported). Written from the
+/// layout data Microsoft publishes for KBDROST ("Romanian (Standard)").
+#[rustfmt::skip]
+const RO: [(u8, [char; 4]); 18] = [
+    (0x0C, ['-', '_', '\0', '–']),
+    (0x0D, ['=', '+', '\0', '±']),
+    (0x12, ['e', 'E', '€', '\0']),
+    (0x19, ['p', 'P', '§', '\0']),
+    (0x1A, ['ă', 'Ă', '[', '{']),
+    (0x1B, ['î', 'Î', ']', '}']),
+    (0x1F, ['s', 'S', 'ß', '\0']),
+    (0x20, ['d', 'D', 'đ', 'Đ']),
+    (0x26, ['l', 'L', 'ł', 'Ł']),
+    (0x27, ['ș', 'Ș', ';', ':']),
+    (0x28, ['ț', 'Ț', '\'', '"']),
+    (0x29, ['„', '”', '`', '~']),
+    (0x2B, ['â', 'Â', '\\', '|']),
+    (0x2E, ['c', 'C', '©', '\0']),
+    (0x33, [',', ';', '<', '«']),
+    (0x34, ['.', ':', '>', '»']),
+    (0x35, ['/', '?', '\0', '\0']),
+    (0x56, ['\\', '|', '\0', '\0']),
+];
+
+/// The key for scan code `code` in the Romanian layout, if the layout defines it differently from US
+/// (`Some(None)` = the key gives nothing, e.g. AltGr with a key that has no AltGr character).
+pub fn romanian(code: u8, shift: bool, altgr: bool, caps: bool) -> Option<Option<Key>> {
+    let (_, chars) = RO.iter().find(|(c, _)| *c == code)?;
+    let c = chars[(shift as usize) | (altgr as usize) << 1];
+    if c == '\0' {
+        return Some(None);
+    }
+    // Caps Lock changes letters only (including ă î â ș ț).
+    let c = if caps && !altgr && c.is_alphabetic() {
+        let other = if c.is_lowercase() { c.to_uppercase().next() } else { c.to_lowercase().next() };
+        other.unwrap_or(c)
+    } else {
+        c
+    };
+    Some(Some(Key::Char(c)))
+}
 /// Threads waiting for a key press (see `wait_key`).
 static KEY_WAIT: crate::sched::WaitQueue = crate::sched::WaitQueue::new();
 
@@ -79,9 +143,13 @@ fn decode(scancode: u8) -> Option<Key> {
     let released = scancode & 0x80 != 0;
     let code = scancode & 0x7F;
     if EXTENDED.swap(false, Ordering::Relaxed) {
-        // E0-prefixed keys: the cursor block and the right Ctrl.
+        // E0-prefixed keys: the cursor block, the right Ctrl and the right Alt (AltGr).
         if code == 0x1D {
             CTRL.store(!released, Ordering::Relaxed);
+            return None;
+        }
+        if code == 0x38 {
+            ALTGR.store(!released, Ordering::Relaxed);
             return None;
         }
         if released {
@@ -114,10 +182,22 @@ fn decode(scancode: u8) -> Option<Key> {
         }
         _ => {}
     }
-    if released || code as usize >= NORMAL.len() {
+    if released {
         return None;
     }
     let shift = SHIFT.load(Ordering::Relaxed);
+    let altgr = ALTGR.load(Ordering::Relaxed);
+    if ROMANIAN.load(Ordering::Relaxed) && !CTRL.load(Ordering::Relaxed) {
+        if let Some(k) = romanian(code, shift, altgr, CAPS.load(Ordering::Relaxed)) {
+            return k;
+        }
+    }
+    if code == 0x56 {
+        return Some(Key::Char(if shift { '|' } else { '\\' })); // the extra key of ISO keyboards
+    }
+    if code as usize >= NORMAL.len() {
+        return None;
+    }
     if CTRL.load(Ordering::Relaxed) && NORMAL[code as usize].is_ascii_lowercase() {
         return Some(Key::Ctrl(NORMAL[code as usize] as char));
     }

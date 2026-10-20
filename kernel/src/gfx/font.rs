@@ -8,12 +8,27 @@ pub const GLYPH_H: usize = 10;
 
 /// Returns the row bitmaps for `c`, or a box for characters the font does not have.
 pub fn glyph(c: char) -> [u8; GLYPH_H] {
+    // (g, j, p, q and y have their own 10-row shapes below, with the part under the line.)
     let code = c as u32;
-    if (32..=126).contains(&code) {
+    if (32..=126).contains(&code) && !matches!(c, 'g' | 'j' | 'p' | 'q' | 'y') {
         let g = &GLYPHS[(code - 32) as usize];
         return [0, g[0], g[1], g[2], g[3], g[4], g[5], g[6], 0, 0];
     }
     match c {
+        // Letters that go below the line use rows 8-9.
+        'g' => [0, 0, 0, 0x0F, 0x11, 0x11, 0x0F, 0x01, 0x11, 0x0E],
+        'j' => [0, 0x02, 0, 0x06, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0C],
+        'p' => [0, 0, 0, 0x1E, 0x11, 0x11, 0x11, 0x1E, 0x10, 0x10],
+        'q' => [0, 0, 0, 0x0F, 0x11, 0x11, 0x11, 0x0F, 0x01, 0x01],
+        'y' => [0, 0, 0, 0x11, 0x11, 0x11, 0x11, 0x0F, 0x01, 0x0E],
+        // Romanian quotation marks and a few signs of the Romanian keyboard.
+        '„' => [0, 0, 0, 0, 0, 0, 0, 0x1B, 0x09, 0x12],
+        '”' => [0, 0x1B, 0x09, 0x12, 0, 0, 0, 0, 0, 0],
+        '«' => [0, 0, 0, 0x05, 0x0A, 0x14, 0x0A, 0x05, 0, 0],
+        '»' => [0, 0, 0, 0x14, 0x0A, 0x05, 0x0A, 0x14, 0, 0],
+        '€' => [0, 0x07, 0x08, 0x1E, 0x08, 0x1E, 0x08, 0x07, 0, 0],
+        '–' => [0, 0, 0, 0, 0x1F, 0, 0, 0, 0, 0],
+        '±' => [0, 0, 0x04, 0x04, 0x1F, 0x04, 0x04, 0, 0x1F, 0],
         // The cedilla forms (ş ţ), still common in old texts, are shown as the correct comma forms.
         'ă' => [0x11, 0x0E, 0x00, 0x0E, 0x01, 0x0F, 0x11, 0x0F, 0, 0],
         'â' => [0x04, 0x0A, 0x00, 0x0E, 0x01, 0x0F, 0x11, 0x0F, 0, 0],

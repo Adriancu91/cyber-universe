@@ -5,7 +5,7 @@
 //! (keyboard page).
 
 use super::xhci::{Ring, UsbDevice, Xhci};
-use crate::drivers::keyboard::{Key, push_key};
+use crate::drivers::keyboard::{self, Key, push_key};
 use crate::mem::{frame, map::phys_to_virt};
 
 static FIRST_KEY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
@@ -24,7 +24,23 @@ pub struct Keyboard {
 const PLAIN: &[u8; 53] = b"abcdefghijklmnopqrstuvwxyz1234567890\n\x1b\x08\t -=[]\\\0;'`,./";
 const SHIFTED: &[u8; 53] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()\n\x1b\x08\t _+{}|\0:\"~<>?";
 
-fn key_for(usage: u8, shift: bool, ctrl: bool) -> Option<Key> {
+/// HID usages of the keys the Romanian layout changes -> their set-1 scan codes.
+#[rustfmt::skip]
+const USAGE_TO_SCANCODE: [(u8, u8); 18] = [
+    (0x2D, 0x0C), (0x2E, 0x0D), (0x08, 0x12), (0x13, 0x19), (0x2F, 0x1A), (0x30, 0x1B), (0x16, 0x1F), (0x07, 0x20),
+    (0x0F, 0x26), (0x33, 0x27), (0x34, 0x28), (0x35, 0x29), (0x31, 0x2B), (0x06, 0x2E), (0x36, 0x33), (0x37, 0x34),
+    (0x38, 0x35), (0x64, 0x56),
+];
+
+fn key_for(usage: u8, shift: bool, ctrl: bool, altgr: bool) -> Option<Key> {
+    if keyboard::layout() == keyboard::Layout::Ro && !ctrl {
+        if let Some(&(_, code)) = USAGE_TO_SCANCODE.iter().find(|(u, _)| *u == usage) {
+            return keyboard::romanian(code, shift, altgr, false)?;
+        }
+    }
+    if usage == 0x64 {
+        return Some(Key::Char(if shift { '|' } else { '\\' }));
+    }
     match usage {
         0x50 => return Some(Key::Left),
         0x4F => return Some(Key::Right),
@@ -82,9 +98,10 @@ impl Keyboard {
         }
         let shift = report[0] & 0x22 != 0; // left or right Shift
         let ctrl = report[0] & 0x11 != 0; // left or right Ctrl
+        let altgr = report[0] & 0x40 != 0; // right Alt
         for &usage in &report[2..8] {
             if usage >= 4 && !self.previous[2..8].contains(&usage) {
-                if let Some(key) = key_for(usage, shift, ctrl) {
+                if let Some(key) = key_for(usage, shift, ctrl, altgr) {
                     if !FIRST_KEY.swap(true, core::sync::atomic::Ordering::Relaxed) {
                         crate::info!("usb: prima tasta de la tastatura USB");
                     }

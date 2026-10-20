@@ -18,6 +18,8 @@ test-pagefault = ["qemu-test"]
 test-doublefault = ["qemu-test"]
 test-unmapped = ["qemu-test"]
 test-keyboard = ["qemu-test"]
+# P4-12: the Romanian (Standard) layout, keys typed by QEMU (PS/2, and USB in `keyboard-ro-usb`).
+test-keyboard-ro = ["qemu-test"]
 # P2-09: the shell runs the commands typed by the test harness.
 test-shell = ["qemu-test"]
 # P2-10: the build carries the FAT32 test disk (disk.img) and the kernel checks it.

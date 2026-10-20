@@ -11,6 +11,7 @@ Zonă de decupare (`set_clip`) și copiere rapidă de imagini opace (`copy`), fo
 
 **Font:** 5×7, desenat pentru acest proiect (MIT), cu literele românești ă â î ș ț (și majusculele; ş ţ cu sedilă se afișează
 cu virgulă); 10 rânduri pe glifă (accente sus, virgula jos); consola îl mărește de 2 ori în celule de 12×22 pixeli.
+Literele g, j, p, q, y au coada sub rând (rândurile 8–9); există și „ ” « » € – ± pentru tastatura română (P4-12).
 
 **Test grafică:** scenariul `log` — `test: grafica OK` (pixeli verificați, zona schimbată, copierea pe ecran citită înapoi, viteza).
 

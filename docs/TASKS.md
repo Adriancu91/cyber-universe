@@ -125,7 +125,7 @@ cât P3-09 așteaptă testul pe hardware real). Fiecare sarcină are plan în `d
 - [x] **P4-09** Aplicații de sistem: monitor sistem și fișiere. Dep: P4-06, P4-08.
 - [x] **P4-10** Aplicații de sistem: editor de text și setări. Dep: P4-09.
 - [x] **P4-11** Module din interfață și închiderea Fazei 4. Dep: P4-10.
-- [ ] **P4-12** Aranjamentul românesc de tastatură + literele cu „coadă” (g, j, p, q, y). Dep: P4-03.
+- [x] **P4-12** Aranjamentul românesc de tastatură + literele cu „coadă” (g, j, p, q, y). Dep: P4-03.
 - [ ] **P4-13** Terminal (shell-ul) ca aplicație în fereastră; desktopul pornește automat după nucleu. Dep: P4-06.
 
 ## Faza 5 — Rețea și aplicațiile proprii

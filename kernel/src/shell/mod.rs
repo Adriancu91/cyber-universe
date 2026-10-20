@@ -32,6 +32,7 @@ pub fn run() {
             "run" => run_program(args),
             "desktop" => run_program(&["desktop"]),
             "mod" => module(args),
+            "tastatura" => layout(args),
             "mem" => mem(),
             "lspci" => lspci(),
             "lsusb" => lsusb(),
@@ -76,6 +77,7 @@ fn help() {
     out!("  run <program> [argumente]  porneste un program (din /bin daca nu dai calea)\n");
     out!("  desktop          porneste desktopul (Esc il inchide si revine aici)\n");
     out!("  mod list|install <pachet.cum>|start|stop|remove <nume>  module\n");
+    out!("  tastatura [ro|us]  aranjamentul tastaturii (romana standard sau engleza SUA)\n");
     out!("  mem              memoria libera si cea folosita\n");
     out!("  lspci            dispozitivele PCI (discuri, USB, retea...)\n");
     out!("  lsusb            dispozitivele USB conectate\n");
@@ -130,6 +132,20 @@ fn run_program(args: &[&str]) {
         }
         Err(e) => out!("run: {}: {}\n", path, e.message()),
     }
+}
+
+fn layout(args: &[&str]) {
+    use crate::drivers::keyboard::{Layout, layout, set_layout};
+    match args {
+        ["ro"] => set_layout(Layout::Ro),
+        ["us"] => set_layout(Layout::Us),
+        [] => {}
+        _ => {
+            out!("folosire: tastatura ro | tastatura us\n");
+            return;
+        }
+    }
+    out!("tastatura: {}\n", if layout() == Layout::Ro { "romana (standard)" } else { "engleza (SUA)" });
 }
 
 fn module(args: &[&str]) {

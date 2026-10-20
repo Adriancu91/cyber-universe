@@ -130,6 +130,7 @@ extern "C" fn kernel_main() -> ! {
     if let Some(stick) = drivers::usb::take_disk() {
         fs::mount_disk(alloc::boxed::Box::new(stick), "/usb");
     }
+    apply_settings();
     // Every Limine response has been read (memory map, HHDM, framebuffer, RSDP, modules): its memory can be reused.
     mem::reclaim_bootloader();
 
@@ -141,6 +142,17 @@ extern "C" fn kernel_main() -> ! {
     #[cfg(not(feature = "qemu-test"))]
     loop {
         shell::run();
+    }
+}
+
+/// Settings saved by the Settings app that the kernel applies at start-up (the keyboard layout).
+fn apply_settings() {
+    let Ok(text) = fs::read_all("/disk/config/settings.toml") else { return };
+    let text = alloc::string::String::from_utf8_lossy(&text);
+    let ro = text.lines().any(|l| l.split_once('=').is_some_and(|(k, v)| k.trim() == "tastatura" && v.trim() == "\"ro\""));
+    if ro {
+        drivers::keyboard::set_layout(drivers::keyboard::Layout::Ro);
+        info!("tastatura: aranjament romanesc (din setari)");
     }
 }
 
@@ -208,6 +220,9 @@ fn run_tests() -> ! {
 
     #[cfg(feature = "test-keyboard")]
     test_keyboard();
+
+    #[cfg(feature = "test-keyboard-ro")]
+    test_keyboard_romanian();
 
     #[cfg(feature = "test-mouse")]
     test_mouse();
@@ -1013,11 +1028,15 @@ fn test_canvas() {
 
     // Romanian letters: the comma below Ș, the breve over ă, and a box for a character the font lacks.
     let mut t = Canvas::new(40, 10, 0);
-    t.text(0, 0, "Șă€", 0xFFFFFF, 1);
+    t.text(0, 0, "Șă§", 0xFFFFFF, 1);
     let lit = |x, y| t.pixel(x, y) == Some(0xFFFFFF);
     assert!(lit(2, 8) && lit(1, 9) && !lit(2, 0), "Ș: virgula de dedesubt");
     assert!(lit(6, 0) && lit(10, 0) && lit(7, 1) && lit(6, 6), "ă: caciula");
     assert!((12..17).all(|x| lit(x, 1)) && lit(12, 4) && !lit(14, 4), "caracter necunoscut: chenar");
+    let mut g = Canvas::new(6, 10, 0);
+    g.text(0, 0, "g", 0xFFFFFF, 1);
+    let lit_g = |x, y| g.pixel(x, y) == Some(0xFFFFFF);
+    assert!(lit_g(1, 9) && lit_g(3, 9) && lit_g(4, 8) && !lit_g(1, 2), "g: coada sub rand");
 
     // Copy to the screen (bottom-right corner) and read it back.
     let on_screen = gfx::console::with_console(|slot| {
@@ -1271,6 +1290,29 @@ fn test_desktop() {
     assert!(proc::wait(id) == 0, "desktopul nu a iesit cu 0");
     wait_for("serverul grafic nu se opreste", &|| !ui::running());
     info!("test: desktop OK (bara, ceas, meniu Start cu mouse-ul, pornire program din meniu, Esc)");
+}
+
+/// Romanian (Standard) layout: QEMU presses the US keys [ ] \ ; ' (alone and with Shift), AltGr+E, `,
+/// y and z; the kernel must get ă î â ș ț Ș Ț € „ y z.
+#[cfg(feature = "test-keyboard-ro")]
+fn test_keyboard_romanian() {
+    use drivers::keyboard::{Key, Layout, set_layout, wait_key};
+    set_layout(Layout::Ro);
+    serial_println!("TASTATURA: astept taste");
+    let want = ['ă', 'î', 'â', 'ș', 'ț', 'Ș', 'Ț', '€', '„', 'y', 'z'];
+    let mut got = alloc::string::String::new();
+    while got.chars().count() < want.len() {
+        match wait_key() {
+            Key::Char(c) => {
+                info!("KEY: {}", c);
+                got.push(c);
+            }
+            other => info!("KEY: {:?}", other),
+        }
+    }
+    assert!(got.chars().eq(want.iter().copied()), "taste primite: {}", got);
+    set_layout(Layout::Us);
+    info!("test: tastatura romana OK ({})", got);
 }
 
 /// Waits for the keys the test harness types (h, i, Enter) and logs them.

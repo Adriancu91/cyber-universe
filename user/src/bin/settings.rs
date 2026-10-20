@@ -79,7 +79,7 @@ impl Settings {
             c.fill(b.0, b.1, b.2, b.3, BUTTON);
             c.text(b.0 + (b.2 - b.4.len() * 12) / 2, b.1 + 4, b.4, WHITE, 2);
         }
-        c.text(20, 120, "Tastatura romana se aplica la pornire (in curand).", DIM, 1);
+        c.text(20, 120, "Aranjamentul tastaturii se aplica la urmatoarea pornire.", DIM, 1);
         c.text(20, 196, self.status.as_str(), DIM, 1);
         win.present_all(c);
     }

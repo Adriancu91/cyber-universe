@@ -53,6 +53,11 @@ while IFS='|' read -r name features ending expects screenshot qextra; do
         cp "$BUILD/disk.img" "$DISK_IMG"
         echo "scriere permisa" > "$BUILD/cyber.rw"
         MTOOLS_SKIP_CHECK=1 mcopy -o -i "$DISK_IMG@@1M" "$BUILD/cyber.rw" ::/cyber.rw
+        # tests/disk/<name>/ (if it exists) holds extra files for this disk, e.g. saved settings.
+        extra="$ROOT/tests/disk/${BASH_REMATCH[2]%.img}"
+        if [[ -d "$extra" ]]; then
+            MTOOLS_SKIP_CHECK=1 mcopy -o -s -i "$DISK_IMG@@1M" "$extra"/* ::/
+        fi
     fi
     export DISK_IMG
     mapfile -t ARGS < <(qemu_args "$iso")

@@ -8,6 +8,12 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   (`Key::Ctrl`), la fel și tastatura USB (P4-10, testate în scenariul `editor` cu taste trimise de QEMU). Pe laptopuri moderne tastatura internă poate să nu fie PS/2:
   pe hardware real folosește la început o tastatură USB (driver XHCI în Faza 3).
 
+- **Aranjamentul românesc (P4-12):** „Română (standard)” (SR 13392:2004, varianta principală), la fel ca în Windows:
+  ă î â ș ț pe tastele US `[ ] \ ; '`, „ ” pe tasta din stânga lui 1, AltGr (Alt dreapta) dă `[ ] \ ; ' €` etc.;
+  accentele „moarte” (AltGr + cifre) nu sunt suportate. Pentru PS/2 și USB (`keyboard::romanian`). Se alege cu
+  `tastatura ro|us` în shell sau din aplicația Setări (aplicat la pornire din `/disk/config/settings.toml`).
+  Sursa: datele aranjamentului KBDROST publicate de Microsoft (fișierul KLC, prin kbdlayout.info) — doar date publice.
+  Test: scenariile `keyboard-ro`, `keyboard-ro-usb` (taste trimise de QEMU), `layout-boot` (setarea salvată).
 - `mouse.rs` — mouse PS/2 pe portul 2 al controlerului 8042 (IRQ 12), pachete de 3 octeți → `input::MouseEvent` (P4-01).
   Pornirea se face cu întreruperile oprite (altfel răspunsurile controlerului ar fi luate de handler-ul tastaturii).
 - `rtc.rs` — ceasul calculatorului (CMOS, compatibil MC146818, P4-06): data și ora, citite de două ori până coincid
