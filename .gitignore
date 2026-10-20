@@ -5,3 +5,4 @@ target/
 ovmf/
 limine/
 .DS_Store
+kernel/target/
