@@ -4,8 +4,12 @@
   ale căror stive se eliberează de firul următor. `spawn(f)` creează un fir cu stivă proprie de 16 KiB,
   `yield_now()` cedează procesorul, `exit()` termină firul. Codul de pornire devine firul 0 („main”) în `init()`.
   `switch.rs` conține comutarea de context (salvează registrele rbx, rbp, r12–r15 și `rsp`) și pregătirea stivei unui fir nou.
-- **Stadiu:** P2-01 — fire cooperative (comutare doar la `yield_now`). Comutarea automată pe temporizator vine la P2-02.
+- **Preempțiune (P2-02):** la fiecare tick al temporizatorului (10 ms) handler-ul întreruperii cheamă `timer_tick()`,
+  care trece la următorul fir gata. `preempt_disable()` / `preempt_enable()` opresc temporar comutarea automată.
+  Încuietorile nucleului (heap, cadre) nu opresc întreruperile: un fir care așteaptă o încuietoare ținută de alt fir
+  e comutat la tick-ul următor, deci nu apare blocaj; doar planificatorul își ține încuietoarea cu întreruperile oprite.
 - **Depinde de:** heap (`mem::heap`) pentru stive și cozi.
 - **Cum se testează:** scenariul `log` — `test: fire A1 B1 C1 A2 B2 C2 A3 B3 C3, stive eliberate`
-  (trei fire care își cedează rândul; ordinea dovedește round-robin; heap-ul revine exact la valoarea de dinainte).
+  (trei fire care își cedează rândul; ordinea dovedește round-robin; heap-ul revine exact la valoarea de dinainte)
+  și `test: preemptiune OK` (două fire care nu cedează niciodată procesorul primesc amândouă timp, în proporții apropiate).
 - **Surse:** System V AMD64 ABI (registrele păstrate de funcția chemată); OSDev Wiki „Kernel Multitasking” (doar ideea). Cod propriu.

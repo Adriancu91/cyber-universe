@@ -1,5 +1,6 @@
-//! Kernel threads and the scheduler (P2-01: cooperative; a thread gives up the CPU with `yield_now`).
-//! Ready threads wait in a round-robin queue. The boot code becomes thread 0 ("main") in `init`.
+//! Kernel threads and the scheduler. Ready threads wait in a round-robin queue; a thread gives up the CPU
+//! with `yield_now`, and the timer takes it away every tick (10 ms) unless preemption is disabled.
+//! The boot code becomes thread 0 ("main") in `init`.
 
 mod switch;
 
@@ -34,6 +35,10 @@ struct Scheduler {
 static mut SCHED: Scheduler = Scheduler { current: None, ready: VecDeque::new(), zombies: Vec::new() };
 static LOCK: AtomicBool = AtomicBool::new(false);
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+/// Preemption is allowed only while this is 0 (see `preempt_disable`). Starts disabled until `init`.
+static PREEMPT_OFF: AtomicU64 = AtomicU64::new(1);
+/// Context switches done so far.
+static SWITCHES: AtomicU64 = AtomicU64::new(0);
 
 /// Runs `f` with interrupts disabled and exclusive access to the scheduler.
 fn with_sched<R>(f: impl FnOnce(&mut Scheduler) -> R) -> R {
@@ -69,7 +74,38 @@ pub fn init() {
         s.zombies.reserve(16);
         s.current = Some(Box::new(Thread { id: 0, state: State::Ready, rsp: 0, _stack: None }));
     });
-    crate::info!("sched: planificator gata (fire cooperative, stiva {} KiB)", STACK_SIZE / 1024);
+    PREEMPT_OFF.store(0, Ordering::Release);
+    crate::info!(
+        "sched: planificator gata (round-robin, felie {} ms, stiva {} KiB)",
+        1000 / crate::arch::x86_64::apic::HZ,
+        STACK_SIZE / 1024
+    );
+}
+
+/// Stops the timer from switching threads until the matching `preempt_enable` (calls nest).
+#[allow(dead_code)] // used by the self-tests now
+pub fn preempt_disable() {
+    PREEMPT_OFF.fetch_add(1, Ordering::AcqRel);
+}
+
+/// Undoes one `preempt_disable`.
+#[allow(dead_code)] // used by the self-tests now
+pub fn preempt_enable() {
+    PREEMPT_OFF.fetch_sub(1, Ordering::AcqRel);
+}
+
+/// Called by the timer interrupt handler (interrupts disabled, EOI already sent): the running thread's
+/// time slice is over, so the next ready thread runs.
+pub fn timer_tick() {
+    if PREEMPT_OFF.load(Ordering::Acquire) == 0 {
+        yield_now();
+    }
+}
+
+/// Number of context switches since boot.
+#[allow(dead_code)] // used by the self-tests now
+pub fn switches() -> u64 {
+    SWITCHES.load(Ordering::Relaxed)
 }
 
 /// Creates a kernel thread that runs `f` and exits when `f` returns. Returns its id.
@@ -113,6 +149,7 @@ pub fn yield_now() {
         Some((old_rsp, s.current.as_ref().unwrap().rsp))
     });
     if let Some((old_rsp, new_rsp)) = switch {
+        SWITCHES.fetch_add(1, Ordering::Relaxed);
         // SAFETY: interrupts are off; `old_rsp` points into a Thread kept alive by the scheduler queues;
         // `new_rsp` was saved by `switch_context` or prepared by `initial_stack`.
         unsafe { switch::switch_context(old_rsp, new_rsp) };

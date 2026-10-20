@@ -92,6 +92,9 @@ fn pit_wait_ms(ms: u64) {
 extern "x86-interrupt" fn timer_handler(_frame: super::idt::InterruptStackFrame) {
     TICKS.fetch_add(1, Ordering::Relaxed);
     eoi();
+    // The interrupted thread's registers are saved on its stack by this handler; switching here and
+    // returning later through `iretq` resumes it exactly where it was.
+    crate::sched::timer_tick();
 }
 
 extern "x86-interrupt" fn spurious_handler(_frame: super::idt::InterruptStackFrame) {

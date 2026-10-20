@@ -166,6 +166,7 @@ fn run_tests() -> ! {
     test_heap();
     test_timer();
     test_threads();
+    test_preemption();
 
     #[cfg(feature = "test-keyboard")]
     test_keyboard();
@@ -342,6 +343,8 @@ fn test_threads() {
             sched::yield_now();
         }
     }
+    // The exact order needs cooperative switching only: no timer switches during this test.
+    sched::preempt_disable();
     let (heap_before, _) = mem::heap::stats();
     sched::spawn(|| worker(b'A'));
     sched::spawn(|| worker(b'B'));
@@ -362,7 +365,38 @@ fn test_threads() {
     let (heap_after, _) = mem::heap::stats();
     assert!(heap_after == heap_before, "scurgere dupa fire: {} B inainte, {} B dupa", heap_before, heap_after);
     assert!(sched::current_id() == 0, "testul nu ruleaza pe firul 0");
+    sched::preempt_enable();
     info!("test: fire A1 B1 C1 A2 B2 C2 A3 B3 C3, stive eliberate");
+}
+
+/// Two threads spin without ever yielding; only the timer can switch between them. After one second
+/// both must have made progress, in similar amounts.
+#[cfg(feature = "qemu-test")]
+fn test_preemption() {
+    use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    static COUNT: [AtomicU64; 2] = [AtomicU64::new(0), AtomicU64::new(0)];
+    static STOP: AtomicBool = AtomicBool::new(false);
+    fn spin(i: usize) {
+        while !STOP.load(Ordering::Relaxed) {
+            COUNT[i].fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    let switches_before = sched::switches();
+    sched::spawn(|| spin(0));
+    sched::spawn(|| spin(1));
+    let end = arch::x86_64::apic::ticks() + arch::x86_64::apic::HZ;
+    while arch::x86_64::apic::ticks() < end {
+        arch::x86_64::hlt();
+    }
+    STOP.store(true, Ordering::Relaxed);
+    while sched::alive() > 1 {
+        arch::x86_64::hlt();
+    }
+    let (a, b) = (COUNT[0].load(Ordering::Relaxed), COUNT[1].load(Ordering::Relaxed));
+    let switches = sched::switches() - switches_before;
+    assert!(a > 0 && b > 0, "un fir nu a rulat deloc: {} / {}", a, b);
+    assert!(a <= 3 * b && b <= 3 * a, "impartire inegala a procesorului: {} / {}", a, b);
+    info!("test: preemptiune OK ({} comutari intr-o secunda, raport {}:{})", switches, a * 10 / (a + b), b * 10 / (a + b));
 }
 
 /// Waits for the keys the test harness types (h, i, Enter) and logs them.
