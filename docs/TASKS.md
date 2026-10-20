@@ -25,14 +25,14 @@ Reguli:
   Dep: P0-05. Test: `tools/test.sh` returnează 0.
 - [x] **P0-07** Ieșire QEMU automată după test (dispozitiv `isa-debug-exit`), ca testele să nu aștepte timeout-ul.
   Dep: P0-06.
-- [ ] **P0-08** GitHub Actions: la fiecare push → build + `tools/test.sh`.
+- [x] **P0-08** GitHub Actions: la fiecare push → build + `tools/test.sh`.
   Dep: P0-07. Test: insigna verde pe GitHub.
 - [x] **P0-09** Text pe ecran prin framebuffer-ul Limine (font bitmap propriu 8x16): „Cyber Universe OS”.
   Dep: P0-05. Test: captură de ecran QEMU (`screendump`) salvată în `tests/screens/` + verificare că nu e neagră.
 
 ## Faza 1 — Nucleul de bază
 
-- [~] **P1-01** Jurnal (logger) unificat: serial + ecran, niveluri INFO/WARN/ERR. Dep: P0-09.
+- [x] **P1-01** Jurnal (logger) unificat: serial + ecran, niveluri INFO/WARN/ERR. Dep: P0-09.
 - [ ] **P1-02** GDT + TSS. Dep: P1-01.
 - [ ] **P1-03** IDT + excepții (div zero, page fault, double fault cu stivă separată) cu mesaj clar. Dep: P1-02.
   Test: test care provoacă intenționat o excepție și verifică mesajul.

@@ -7,8 +7,10 @@ mod arch;
 mod boot;
 mod drivers;
 mod gfx;
+mod log;
 #[cfg(feature = "qemu-test")]
 mod qemu;
+mod time;
 
 use arch::x86_64::halt_forever;
 
@@ -26,7 +28,6 @@ extern "C" fn kmain() -> ! {
     }
 
     serial_println!("CYBER UNIVERSE OS: BOOT OK");
-    serial_println!("versiune nucleu: {}", VERSION);
 
     if gfx::console::init() {
         gfx::console::set_color(gfx::console::ACCENT);
@@ -34,22 +35,45 @@ extern "C" fn kmain() -> ! {
         gfx::console::set_color(gfx::console::FOREGROUND);
         println!("versiune nucleu {}", VERSION);
         println!();
-        println!("Sistem minim, modular, rapid.");
         serial_println!("ECRAN OK");
     } else {
         serial_println!("AVERTISMENT: niciun ecran utilizabil");
     }
 
+    info!("jurnal: pornit (nucleu {})", VERSION);
+
     #[cfg(feature = "qemu-test")]
-    qemu::finish_test();
+    run_tests();
 
     #[cfg(not(feature = "qemu-test"))]
-    halt_forever();
+    {
+        info!("sistem: pornire completa");
+        halt_forever();
+    }
+}
+
+/// Self-tests compiled only into test builds; each scenario in tests/scenarios.txt checks their output.
+#[cfg(feature = "qemu-test")]
+fn run_tests() -> ! {
+    warn!("jurnal: test avertisment");
+    error!("jurnal: test eroare");
+
+    #[cfg(feature = "test-panic")]
+    panic!("panica intentionata de test");
+
+    #[allow(unreachable_code)]
+    qemu::finish_test()
 }
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    serial_println!("PANIC: {}", info);
+    // The panicking code may hold an output lock; break it so the message always gets out.
+    drivers::serial::force_unlock();
+    gfx::console::force_unlock();
+    error!("PANIC: {}", info.message());
+    if let Some(loc) = info.location() {
+        error!("PANIC la {}:{}", loc.file(), loc.line());
+    }
     #[cfg(feature = "qemu-test")]
     qemu::exit(qemu::ExitCode::Failed);
     #[cfg(not(feature = "qemu-test"))]

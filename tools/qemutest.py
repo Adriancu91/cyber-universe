@@ -70,6 +70,8 @@ def main():
     ap.add_argument("--timeout", type=float, default=60)
     ap.add_argument("--screenshot", help="save a PNG of the screen at TEST READY and check it is not blank")
     ap.add_argument("--log", default="build/serial.log")
+    ap.add_argument("--expect-exit", choices=["success", "failed"], default="success",
+                    help="how the kernel must end: success (code 33) or a reported failure (code 35)")
     ap.add_argument("qemu_args", nargs=argparse.REMAINDER)
     a = ap.parse_args()
 
@@ -139,12 +141,12 @@ def main():
             problems.append(f"lipseste textul: {e!r}")
         else:
             pos = i + len(e)
+    wanted = QEMU_SUCCESS if a.expect_exit == "success" else QEMU_FAILED
     if timed_out:
         problems.append(f"timeout dupa {a.timeout:.0f}s")
-    elif code == QEMU_FAILED:
-        problems.append("nucleul a raportat esec (cod 35)")
-    elif code != QEMU_SUCCESS:
-        problems.append(f"QEMU a iesit cu codul {code}")
+    elif code != wanted:
+        names = {QEMU_SUCCESS: "succes (33)", QEMU_FAILED: "esec raportat de nucleu (35)"}
+        problems.append(f"QEMU a iesit cu {names.get(code, f'codul {code}')}, asteptat {names[wanted]}")
     if screen_msg:
         print(f"[test] captura: {screen_msg}")
         if not screen_ok:

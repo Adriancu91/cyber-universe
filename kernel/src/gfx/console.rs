@@ -102,6 +102,11 @@ pub fn with_console<R>(f: impl FnOnce(&mut Option<Console>) -> R) -> R {
     result
 }
 
+/// Releases the console lock unconditionally. Only for the panic handler (see `serial::force_unlock`).
+pub fn force_unlock() {
+    LOCK.store(false, Ordering::Release);
+}
+
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
     use fmt::Write;

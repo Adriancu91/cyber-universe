@@ -1,0 +1,8 @@
+# Test scenarios run by tools/test.sh. One per line:
+#   name | extra cargo features | expected end (success/failed) | expected serial lines separated by ;; | screenshot (optional)
+# Every scenario boots the kernel in QEMU. Expected lines must appear in this order.
+# Add a scenario for every new feature (CLAUDE.md, section 5).
+
+boot      |            | success | CYBER UNIVERSE OS: BOOT OK;;ECRAN OK;;TEST READY | tests/screens/boot.png
+log       |            | success | INFO  jurnal: pornit;;WARN  jurnal: test avertisment;;ERR   jurnal: test eroare;;TEST READY |
+panic     | test-panic | failed  | PANIC: panica intentionata de test |

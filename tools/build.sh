@@ -2,6 +2,8 @@
 # Builds the kernel and a UEFI-bootable ISO.
 #   tools/build.sh           -> build/cyber-universe.iso
 #   tools/build.sh --test    -> build/cyber-universe-test.iso (kernel built with the `qemu-test` feature)
+#   tools/build.sh --test --features "test-panic"
+#                            -> build/cyber-universe-test-test-panic.iso (extra scenario features)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,10 +16,22 @@ LIMINE_URL="https://github.com/limine-bootloader/limine/releases/download/${LIMI
 MODE="normal"
 FEATURES=()
 ISO_NAME="cyber-universe.iso"
-if [[ "${1:-}" == "--test" ]]; then
-    MODE="test"
-    FEATURES=(--features qemu-test)
+EXTRA_FEATURES=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --test) MODE="test"; shift ;;
+        --features) EXTRA_FEATURES="$2"; shift 2 ;;
+        *) echo "Opțiune necunoscută: $1" >&2; exit 2 ;;
+    esac
+done
+if [[ "$MODE" == "test" ]]; then
+    FEATURES=(--features "qemu-test${EXTRA_FEATURES:+,$EXTRA_FEATURES}")
     ISO_NAME="cyber-universe-test.iso"
+    if [[ -n "$EXTRA_FEATURES" ]]; then
+        SUFFIX="$(echo "$EXTRA_FEATURES" | tr ',' '-')"
+        MODE="test-$SUFFIX"
+        ISO_NAME="cyber-universe-test-$SUFFIX.iso"
+    fi
 fi
 
 mkdir -p "$BUILD"

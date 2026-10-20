@@ -27,7 +27,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            build/target-test
+            build/target-test*
             build/limine-*
           key: ${{ runner.os }}-cu-${{ hashFiles('kernel/Cargo.toml', 'kernel/Cargo.lock', 'kernel/rust-toolchain.toml') }}
 
@@ -35,7 +35,7 @@ jobs:
         run: tools/env-check.sh
 
       - name: Build + test în QEMU
-        run: tools/test.sh --expect "ECRAN OK" --screenshot build/screen.png
+        run: tools/test.sh
 
       - name: Rezultate (log serial și captură de ecran)
         if: always()
@@ -43,7 +43,7 @@ jobs:
         with:
           name: rezultate-test
           path: |
-            build/serial.log
-            build/build-test.log
-            build/screen.png
+            build/serial-*.log
+            build/build-*.log
+            tests/screens/*.png
           if-no-files-found: ignore

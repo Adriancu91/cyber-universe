@@ -1,47 +1,63 @@
 #!/usr/bin/env bash
-# Automated headless test: builds the test ISO, boots it in QEMU and checks the serial output.
-#   tools/test.sh                  standard boot test
-#   tools/test.sh --no-build       reuse the existing test ISO
-#   tools/test.sh --expect "TEXT"  additional text that must appear (can repeat)
-#   tools/test.sh --screenshot tests/screens/boot.png   save the screen and check it is not blank
-# Exit code: 0 = pass, 1 = fail.
-set -euo pipefail
+# Automated headless tests: every scenario from tests/scenarios.txt is built and booted in QEMU.
+#   tools/test.sh                 all scenarios
+#   tools/test.sh boot log        only the named scenarios
+#   tools/test.sh --no-build ...  reuse existing ISOs
+# Exit code: 0 = all passed, 1 = at least one failed.
+set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/qemu-common.sh"
 
 BUILD_FIRST=1
-EXTRA=()
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --no-build) BUILD_FIRST=0; shift ;;
-        --expect) EXTRA+=(--expect "$2"); shift 2 ;;
-        --screenshot) EXTRA+=(--screenshot "$2"); shift 2 ;;
-        *) echo "Opțiune necunoscută: $1" >&2; exit 2 ;;
+ONLY=()
+for arg in "$@"; do
+    case "$arg" in
+        --no-build) BUILD_FIRST=0 ;;
+        -*) echo "Opțiune necunoscută: $arg" >&2; exit 2 ;;
+        *) ONLY+=("$arg") ;;
     esac
 done
 
-if (( BUILD_FIRST )); then
-    mkdir -p "$BUILD"
-    if ! "$ROOT/tools/build.sh" --test > "$BUILD/build-test.log" 2>&1; then
-        echo "[test] build eșuat:"; tail -30 "$BUILD/build-test.log"; exit 1
+find_ovmf || exit 1
+mkdir -p "$BUILD"
+trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; echo "${s%"${s##*[![:space:]]}"}"; }
+
+passed=0; failed=0; failed_names=()
+while IFS='|' read -r name features ending expects screenshot; do
+    name="$(trim "$name")"
+    [[ -z "$name" || "$name" == \#* ]] && continue
+    if (( ${#ONLY[@]} )) && [[ ! " ${ONLY[*]} " == *" $name "* ]]; then continue; fi
+    features="$(trim "$features")"; ending="$(trim "$ending")"
+    expects="$(trim "$expects")"; screenshot="$(trim "${screenshot:-}")"
+
+    echo "== scenariu: $name"
+    build_args=(--test); [[ -n "$features" ]] && build_args+=(--features "$features")
+    iso="$BUILD/cyber-universe-test.iso"
+    [[ -n "$features" ]] && iso="$BUILD/cyber-universe-test-$(echo "$features" | tr ',' '-').iso"
+    if (( BUILD_FIRST )); then
+        if ! "$ROOT/tools/build.sh" "${build_args[@]}" > "$BUILD/build-$name.log" 2>&1; then
+            echo "[test] build eșuat:"; tail -30 "$BUILD/build-$name.log"
+            failed=$((failed+1)); failed_names+=("$name"); continue
+        fi
     fi
-fi
 
-find_ovmf
-mapfile -t ARGS < <(qemu_args "$BUILD/cyber-universe-test.iso")
-# qemutest.py adds -cdrom itself; drop it from the common arguments.
-FILTERED=()
-skip=0
-for a in "${ARGS[@]}"; do
-    if (( skip )); then skip=0; continue; fi
-    if [[ "$a" == "-cdrom" ]]; then skip=1; continue; fi
-    FILTERED+=("$a")
-done
+    mapfile -t ARGS < <(qemu_args "$iso")
+    QARGS=(); skip=0
+    for a in "${ARGS[@]}"; do
+        if (( skip )); then skip=0; continue; fi
+        if [[ "$a" == "-cdrom" ]]; then skip=1; continue; fi
+        QARGS+=("$a")
+    done
+    PY=(--iso "$iso" --log "$BUILD/serial-$name.log" --timeout 60 --expect-exit "$ending")
+    IFS=$'\n' read -r -d '' -a lines < <(echo "$expects" | sed 's/;;/\n/g' && printf '\0')
+    for l in "${lines[@]}"; do l="$(trim "$l")"; [[ -n "$l" ]] && PY+=(--expect "$l"); done
+    [[ -n "$screenshot" ]] && PY+=(--screenshot "$ROOT/$screenshot")
 
-python3 "$ROOT/tools/qemutest.py" \
-    --iso "$BUILD/cyber-universe-test.iso" \
-    --log "$BUILD/serial.log" \
-    --timeout 60 \
-    --expect "CYBER UNIVERSE OS: BOOT OK" \
-    "${EXTRA[@]}" \
-    --expect "TEST READY" \
-    -- "${FILTERED[@]}"
+    if python3 "$ROOT/tools/qemutest.py" "${PY[@]}" -- "${QARGS[@]}"; then
+        passed=$((passed+1))
+    else
+        failed=$((failed+1)); failed_names+=("$name")
+    fi
+done < "$ROOT/tests/scenarios.txt"
+
+echo "== rezultat: $passed trecute, $failed eșuate${failed_names:+ (${failed_names[*]})}"
+(( failed == 0 && passed > 0 ))

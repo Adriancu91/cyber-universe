@@ -15,6 +15,7 @@ const LINE_CTRL: u16 = COM1 + 3;
 const MODEM_CTRL: u16 = COM1 + 4;
 const LINE_STATUS: u16 = COM1 + 5;
 
+#[allow(dead_code)] // used by test builds now, by keyboard input over serial later
 const LSR_DATA_READY: u8 = 1 << 0;
 const LSR_THR_EMPTY: u8 = 1 << 5;
 
@@ -65,6 +66,7 @@ fn write_byte(byte: u8) {
 }
 
 /// Returns a received byte, if one is waiting.
+#[allow(dead_code)] // used by test builds now, by keyboard input over serial later
 pub fn try_read_byte() -> Option<u8> {
     if !is_present() {
         return None;
@@ -90,6 +92,12 @@ pub fn write_str(s: &str) {
         }
         write_byte(b);
     }
+    LOCK.store(false, Ordering::Release);
+}
+
+/// Releases the output lock unconditionally. Only for the panic handler: the panicking code
+/// may have been interrupted while holding the lock, and a stuck lock would hide the panic message.
+pub fn force_unlock() {
     LOCK.store(false, Ordering::Release);
 }
 
