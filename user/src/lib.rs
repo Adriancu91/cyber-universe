@@ -49,6 +49,7 @@ pub mod term {
 }
 
 pub mod gfx;
+pub mod net;
 pub mod settings;
 pub mod text;
 
@@ -75,6 +76,11 @@ pub fn error_text(e: i64) -> &'static str {
         -14 => "modulul nu merge",
         -15 => "pachet stricat",
         -16 => "modulul nu are program",
+        -17 => "nu a raspuns la timp",
+        -18 => "conexiune refuzata sau intrerupta",
+        -19 => "reteaua nu are adresa",
+        -20 => "conexiune inchisa",
+        -21 => "numele nu exista",
         _ => "eroare",
     }
 }

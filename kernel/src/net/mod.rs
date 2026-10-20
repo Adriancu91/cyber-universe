@@ -61,6 +61,19 @@ fn ip_text(a: Ipv4) -> alloc::string::String {
     alloc::format!("{}.{}.{}.{}", a[0], a[1], a[2], a[3])
 }
 
+/// Timer tick at which the DHCP lease runs out (0 = no lease).
+static LEASE_UNTIL: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+fn apic_ticks() -> u64 {
+    crate::arch::x86_64::apic::ticks()
+}
+
+/// Seconds left on the DHCP lease (0 = none).
+pub fn lease_left_s() -> u32 {
+    let until = LEASE_UNTIL.load(core::sync::atomic::Ordering::Relaxed);
+    (until.saturating_sub(apic_ticks()) / crate::arch::x86_64::apic::HZ) as u32
+}
+
 /// Gets the address by DHCP (or uses the fallback), then renews the lease at half its time.
 fn dhcp_thread() {
     let mut lease = match dhcp::obtain() {
@@ -72,6 +85,7 @@ fn dhcp_thread() {
         }
     };
     loop {
+        LEASE_UNTIL.store(apic_ticks() + lease.seconds as u64 * crate::arch::x86_64::apic::HZ, core::sync::atomic::Ordering::Relaxed);
         crate::info!(
             "net: DHCP: adresa {}, masca {}, ruta {}, DNS {}, pentru {} s",
             ip_text(lease.ip),

@@ -14,6 +14,17 @@ static PORTS: Mutex<Vec<(u16, VecDeque<Datagram>)>> = Mutex::new(Vec::new());
 static ARRIVED: WaitQueue = WaitQueue::new();
 const QUEUE_MAX: usize = 64;
 
+static NEXT_TEMP: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU16::new(0);
+
+/// A candidate temporary port (49152..65535); `bind` tells whether it is free.
+pub fn temp_port() -> u16 {
+    use core::sync::atomic::Ordering;
+    if NEXT_TEMP.load(Ordering::Relaxed) == 0 {
+        NEXT_TEMP.store((apic::ticks() % 8192) as u16 + 1, Ordering::Relaxed);
+    }
+    49152 + NEXT_TEMP.fetch_add(1, Ordering::Relaxed) % 16384
+}
+
 /// Opens `port` for receiving. False if it is already open.
 pub fn bind(port: u16) -> bool {
     let mut ports = PORTS.lock();

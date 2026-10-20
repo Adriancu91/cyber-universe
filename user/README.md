@@ -22,6 +22,12 @@
   salvate în `/disk/config/settings.toml` (`src/settings.rs` le citește). Test: scenariul `editor`.
 - `terminal` — shell-ul nucleului într-o fereastră (aceleași comenzi ca în consolă); programele pornite cu `run`
   scriu tot acolo; `exit` sau închiderea ferestrei îl termină. Test: scenariul `terminal`.
+- `network` (P5-05) — aplicația „Rețea”: placa (MAC), adresa, masca, ruta, DNS-ul, cât mai ține adresa DHCP, pachetele;
+  o căsuță pentru ping (adresă sau nume, Enter = 4 ping-uri). Test: scenariul `appnet` (captura `tests/screens/appnet.png`).
+- `fetch <nume> [port] [cale]` (P5-05) — descarcă o pagină web prin HTTP (TCP) și o scrie (fără antet); cod 0 dacă serverul a răspuns 200.
+- `udp <adresă> <port> <text>` (P5-05) — trimite textul într-o datagramă UDP și scrie răspunsul (așteaptă 3 s).
+- **Rețea (`src/net.rs`):** `resolve(nume)`, `TcpStream::connect/write_all/read`, `UdpSocket::bind/send_to/recv_from`,
+  `info()`, `ping()`, `parse_ip()`; fără heap. Socket-urile se închid când obiectul dispare (și când programul iese).
 - **Ferestre (`src/gfx.rs`):** `Window::open(titlu, l, î)`, `Canvas` (imaginea în memoria programului, `fill`),
   `present`/`present_all`, `draw` (o imagine mică oriunde în fereastră), `fill`, `Canvas::text` (același font ca
   nucleul), `Window::open_desktop`, `wait_event_for(ms)`, `wait_event()` → `Event::Key(c)` sau `Event::Click { x, y, buttons }`, `close()`.

@@ -38,6 +38,8 @@ test-net = ["qemu-test"]
 test-dns = ["qemu-test"]
 # P5-04: TCP against the harness's web server (tools/before-tcp.sh) at 10.0.2.2:18080.
 test-tcp = ["qemu-test"]
+# P5-05: /bin/fetch and /bin/udp against tools/before-appnet.sh (web server + UDP echo).
+test-appnet = ["qemu-test"]
 # P4-01: the harness moves the mouse and clicks; the kernel must receive both events.
 test-mouse = ["qemu-test"]
 # P4-04: two windows; the harness types keys and drags the top one by its title bar with the mouse.

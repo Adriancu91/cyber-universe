@@ -24,10 +24,30 @@ const ARGS_MAX: usize = PAGE_SIZE as usize;
 pub const FIRST_FD: usize = 3;
 const MAX_FILES: usize = 32;
 
-/// A file opened by a program.
+/// A file (or network socket) opened by a program.
 pub struct OpenFile {
     pub path: String,
     pub offset: u64,
+    /// Set for a network socket (`path` is then empty).
+    pub socket: Option<Socket>,
+}
+
+/// A network socket held in the descriptor table: a TCP connection or an open UDP port.
+#[derive(Clone, Copy, Debug)]
+pub enum Socket {
+    Tcp(u32),
+    Udp(u16),
+}
+
+impl Drop for OpenFile {
+    /// A program's sockets close with its descriptor (by `close` or when the program ends).
+    fn drop(&mut self) {
+        match self.socket {
+            Some(Socket::Tcp(id)) => crate::net::tcp::close(id, 0),
+            Some(Socket::Udp(port)) => crate::net::udp::unbind(port),
+            None => {}
+        }
+    }
 }
 
 struct Process {

@@ -234,6 +234,8 @@ fn run_tests() -> ! {
     test_dns();
     #[cfg(feature = "test-tcp")]
     test_tcp();
+    #[cfg(feature = "test-appnet")]
+    test_appnet();
     #[cfg(feature = "test-usb")]
     assert!(boot::medium() == boot::Medium::Disk, "test: pornit de pe {:?}, nu de pe stick", boot::medium());
     #[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
@@ -1135,6 +1137,44 @@ fn test_tcp() {
     info!("tcp: port inchis -> conexiune refuzata (corect)");
 }
 
+/// Programs on the network (P5-05): /bin/fetch downloads the test page over TCP, /bin/udp talks to the UDP
+/// echo server (both started by tools/before-appnet.sh); their output goes to the serial port.
+#[cfg(feature = "test-appnet")]
+fn test_appnet() {
+    assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
+    for (args, what) in [
+        (&["fetch", "10.0.2.2", "18080", "/mic.txt"][..], "fetch"),
+        (&["fetch", "10.0.2.2", "18080", "/lipsa.txt"][..], "fetch (pagina lipsa)"),
+        (&["udp", "10.0.2.2", "15354", "salut"][..], "udp"),
+    ] {
+        let id = proc::spawn_path(alloc::format!("/bin/{}", args[0]).as_str(), args).expect("test: program de retea");
+        let code = proc::wait_child(id);
+        info!("test: {} a iesit cu codul {}", what, code);
+    }
+    // The Network app: clear the address box, type the gateway, Enter = four pings; then Esc.
+    use drivers::keyboard::{Key, push_key};
+    let app = proc::spawn_path("/bin/network", &["network"]).expect("test: network");
+    let deadline = arch::x86_64::apic::ticks() + 10 * arch::x86_64::apic::HZ;
+    while !ui::top_window().is_some_and(|(o, _)| o == app) {
+        assert!(arch::x86_64::apic::ticks() < deadline, "test: aplicatia Retea nu porneste");
+        sched::sleep_ms(10);
+    }
+    sched::sleep_ms(300);
+    for _ in 0..10 {
+        push_key(Key::Backspace);
+    }
+    for c in "10.0.2.2".chars() {
+        push_key(Key::Char(c));
+    }
+    push_key(Key::Enter);
+    sched::sleep_ms(1500); // four pings, 200 ms apart at most in QEMU
+    info!("NETWORK: captura");
+    sched::sleep_ms(1000);
+    push_key(Key::Escape);
+    assert!(proc::wait(app) == 0, "test: aplicatia Retea nu s-a inchis");
+    info!("test: aplicatia Retea OK");
+}
+
 /// Draws a known scene in a back buffer, checks pixels, the changed area and the copy to the screen,
 /// and measures how many full-screen frames per second the CPU can draw and copy.
 #[cfg(feature = "qemu-test")]
@@ -1402,10 +1442,10 @@ fn test_desktop() {
     );
     serial_println!("TASTATURA: astept taste"); // the harness moves the mouse onto Start and clicks
     wait_for("meniul nu se deschide", &|| screen(150, h - 32 - 6) == Some(MENU));
-    // Menu items from the top: cat, demo, editor, files, hello, modules, monitor, settings, terminal
+    // Menu items from the top: the programs in /bin except the desktop, sorted (cat, demo, ...)
     // (24 pixels each, 4 of margin, the bar is 32 high); the cursor is on Start (46, h - 16); `demo` is
     // the second.
-    let items = 9;
+    let items = fs::list("/bin").expect("test: /bin").iter().filter(|(n, _)| n != "desktop").count();
     let demo_y = h - 32 - (items * 24 + 8) + 4 + 24 + 12;
     push_mouse(MouseEvent { dx: 4, dy: demo_y as i16 - (h - 16) as i16, buttons: 0 });
     push_mouse(MouseEvent { dx: 0, dy: 0, buttons: 1 });

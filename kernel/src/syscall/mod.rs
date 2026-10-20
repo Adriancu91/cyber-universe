@@ -29,7 +29,15 @@ pub const SYS_MODULE: u64 = 21;
 pub const SYS_TERM_OPEN: u64 = 22;
 pub const SYS_TERM_READ: u64 = 23;
 pub const SYS_TERM_WRITE: u64 = 24;
+pub const SYS_RESOLVE: u64 = 25;
+pub const SYS_TCP_CONNECT: u64 = 26;
+pub const SYS_UDP_OPEN: u64 = 27;
+pub const SYS_UDP_SEND: u64 = 28;
+pub const SYS_UDP_RECV: u64 = 29;
+pub const SYS_NET_INFO: u64 = 30;
+pub const SYS_PING: u64 = 31;
 
+mod net;
 mod ui;
 
 /// Error results (negative, like the convention most systems use).
@@ -107,6 +115,13 @@ fn call(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64, a5: u64) -> i64 {
             }
             Err(e) => e,
         },
+        SYS_RESOLVE => net::resolve(a1, a2),
+        SYS_TCP_CONNECT => net::tcp_connect(a1, a2, _a3),
+        SYS_UDP_OPEN => net::udp_open(a1),
+        SYS_UDP_SEND => net::udp_send(a1, a2, _a3, a4, a5),
+        SYS_UDP_RECV => net::udp_recv(a1, a2, _a3, a4, a5),
+        SYS_NET_INFO => net::net_info(a1, a2),
+        SYS_PING => net::ping(a1, a2, _a3),
         _ => E_INVALID,
     }
 }
@@ -151,6 +166,11 @@ fn write(fd: u64, buf: u64, len: u64) -> i64 {
     // SAFETY: the whole range was just checked to be mapped user memory of the current address space.
     let bytes = unsafe { core::slice::from_raw_parts(buf as *const u8, len as usize) };
     if fd >= crate::proc::FIRST_FD as u64 {
+        match net::socket_of(fd) {
+            Some(crate::proc::Socket::Tcp(id)) => return net::tcp_write(id, &alloc::vec::Vec::from(bytes)),
+            Some(crate::proc::Socket::Udp(_)) => return E_INVALID, // datagrams: udp_send
+            None => {}
+        }
         let index = fd as usize - crate::proc::FIRST_FD;
         let Some(Some((path, offset))) =
             crate::proc::with_files(|f| f.get(index).and_then(|o| o.as_ref()).map(|o| (o.path.clone(), o.offset)))
@@ -217,7 +237,7 @@ fn open(ptr: u64, len: u64) -> i64 {
         Ok(crate::fs::Kind::Dir) => return E_IS_DIR,
         Err(e) => return fs_error(e),
     }
-    match crate::proc::add_file(crate::proc::OpenFile { path, offset: 0 }) {
+    match crate::proc::add_file(crate::proc::OpenFile { path, offset: 0, socket: None }) {
         Some(fd) => fd as i64,
         None => E_TOO_MANY,
     }
@@ -230,6 +250,19 @@ fn read(fd: u64, buf: u64, len: u64) -> i64 {
         return E_FAULT;
     }
     let Some(index) = (fd as usize).checked_sub(crate::proc::FIRST_FD) else { return E_BAD_FD };
+    match net::socket_of(fd) {
+        Some(crate::proc::Socket::Tcp(id)) => {
+            let mut data = alloc::vec![0u8; len as usize];
+            let n = net::tcp_read(id, &mut data);
+            if n > 0 {
+                // SAFETY: [buf, buf + len) was checked to be writable user memory; n <= len.
+                unsafe { core::ptr::copy_nonoverlapping(data.as_ptr(), buf as *mut u8, n as usize) };
+            }
+            return n;
+        }
+        Some(crate::proc::Socket::Udp(_)) => return E_INVALID, // datagrams: udp_recv
+        None => {}
+    }
     let Some(Some((path, offset))) =
         crate::proc::with_files(|f| f.get(index).and_then(|o| o.as_ref()).map(|o| (o.path.clone(), o.offset)))
     else {

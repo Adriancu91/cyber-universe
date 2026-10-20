@@ -136,7 +136,7 @@ Generate la închiderea Fazei 4 (P4-11, 2026-10-20). Fiecare are plan în `docs/
 - [x] **P5-02** UDP și DHCP. Dep: P5-01.
 - [x] **P5-03** DNS. Dep: P5-02.
 - [x] **P5-04** TCP (client). Dep: P5-01.
-- [ ] **P5-05** Rețea pentru programe (socket-uri) și aplicația „Rețea”. Dep: P5-03, P5-04.
+- [x] **P5-05** Rețea pentru programe (socket-uri) și aplicația „Rețea”. Dep: P5-03, P5-04.
 - [ ] **P5-06** HTTPS de bază (TLS 1.3) — **cere o decizie de la Adrian** (criptografie proprie sau bibliotecă). Dep: P5-05.
 - [ ] **P5-07** Suita office ca modul (după ce citim proiectul din Cyber Hub). Dep: P4-11.
 - [ ] **P5-08** Kronos ca modul. Dep: P5-07.
