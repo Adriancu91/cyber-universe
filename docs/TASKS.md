@@ -17,7 +17,7 @@ Reguli:
   Dep: P0-01. Test: `cargo build` pe un crate gol `no_std` reușește.
 - [x] **P0-03** Nucleu minim `kernel/`: `no_std`, `no_main`, punct de intrare, buclă `hlt`, handler de panică.
   Dep: P0-02. Test: se construiește fără erori.
-- [ ] **P0-04** `tools/build.sh`: construiește nucleul, descarcă Limine (versiune fixată în DECISIONS), creează `build/cyber-universe.iso`.
+- [x] **P0-04** `tools/build.sh`: construiește nucleul, descarcă Limine (versiune fixată în DECISIONS), creează `build/cyber-universe.iso`.
   Dep: P0-03. Test: fișierul ISO există și are peste 1 MB.
 - [ ] **P0-05** Ieșire pe portul serial COM1: nucleul scrie `CYBER UNIVERSE OS: BOOT OK`.
   Dep: P0-04.

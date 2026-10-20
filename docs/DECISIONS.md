@@ -18,6 +18,11 @@ Bootloader existent, open source (licență BSD), care pornește nucleul direct 
 harta memoriei și framebuffer. Nu scriem bootloader propriu acum; poate deveni o fază ulterioară.
 Versiunea exactă se fixează la P0-04 și se notează aici ca D-004a.
 
+### D-004a — Versiunea Limine fixată (2026-10-20)
+Limine **v12.9.4**, arhiva `limine-binary.tar.gz` din GitHub Releases,
+SHA-256 `847334bc4bc142de996fbd132806b89ed73ac9ab34dbc1e90cfebf1fcc68c2b1` (verificată de `tools/build.sh`).
+Crate Rust `limine = "=0.5.0"`. Confirmă D-009.
+
 ### D-005 — Licență: MIT (2026-10-20)
 Codul propriu e MIT. Nu se copiază cod GPL în proiect (vezi `CLEAN_ROOM.md`).
 
