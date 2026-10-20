@@ -80,7 +80,8 @@ DISK_ROOT="$BUILD/disk-$MODE"
 rm -rf "$DISK_ROOT" && mkdir -p "$DISK_ROOT"
 cp -r "$ROOT/boot/disk/." "$DISK_ROOT/"
 python3 - "$DISK_ROOT/docs" <<'PY'
-import sys
+import os, sys
+os.makedirs(sys.argv[1], exist_ok=True)  # boot/disk/docs/ is empty in git, so it may not exist
 data = bytes(((i * 7) ^ (i >> 8)) & 0xFF for i in range(100 * 1024))
 h = 0xcbf29ce484222325  # FNV-1a 64
 for b in data:
