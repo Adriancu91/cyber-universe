@@ -7,6 +7,7 @@ pub mod bignum;
 pub mod chacha20;
 pub mod hkdf;
 pub mod hmac;
+pub mod p256;
 pub mod poly1305;
 pub mod rsa;
 pub mod sha2;
