@@ -32,7 +32,7 @@ Reguli:
 
 ## Faza 1 — Nucleul de bază
 
-- [ ] **P1-01** Jurnal (logger) unificat: serial + ecran, niveluri INFO/WARN/ERR. Dep: P0-09.
+- [~] **P1-01** Jurnal (logger) unificat: serial + ecran, niveluri INFO/WARN/ERR. Dep: P0-09.
 - [ ] **P1-02** GDT + TSS. Dep: P1-01.
 - [ ] **P1-03** IDT + excepții (div zero, page fault, double fault cu stivă separată) cu mesaj clar. Dep: P1-02.
   Test: test care provoacă intenționat o excepție și verifică mesajul.
