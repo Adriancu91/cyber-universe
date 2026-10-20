@@ -36,6 +36,8 @@ test-net = ["qemu-test"]
 test-mouse = ["qemu-test"]
 # P4-04: two windows; the harness types keys and drags the top one by its title bar with the mouse.
 test-windows = ["qemu-test"]
+# P4-05: /bin/demo opens a window through system calls; the harness clicks in it and types q.
+test-appwindow = ["qemu-test"]
 # P1-13: a write to .rodata must fault (the kernel image keeps its per-segment rights).
 test-rodata = ["qemu-test"]
 # Stability test (P1-11): 5 minutes; the quick variant runs the same loop for 15 seconds.

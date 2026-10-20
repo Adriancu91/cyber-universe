@@ -182,6 +182,7 @@ pub fn on_exit(id: u64, code: i64) {
         procs.iter().position(|p| p.thread == id).map(|i| procs.swap_remove(i))
     };
     drop(process); // switches to the kernel's tables first if they were in use (see AddressSpace::drop)
+    crate::ui::close_owned(id);
     EXITED.lock().push((id, code));
     EXIT_WAIT.wake_all();
 }

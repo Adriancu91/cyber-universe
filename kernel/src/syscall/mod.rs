@@ -12,6 +12,12 @@ pub const SYS_OPEN: u64 = 4;
 pub const SYS_READ: u64 = 5;
 pub const SYS_CLOSE: u64 = 6;
 pub const SYS_STAT: u64 = 7;
+pub const SYS_WINDOW_CREATE: u64 = 8;
+pub const SYS_WINDOW_PRESENT: u64 = 9;
+pub const SYS_EVENT_WAIT: u64 = 10;
+pub const SYS_WINDOW_CLOSE: u64 = 11;
+
+mod ui;
 
 /// Error results (negative, like the convention most systems use).
 pub const E_INVALID: i64 = -1; // unknown call or bad argument
@@ -42,6 +48,10 @@ pub extern "C" fn dispatch(nr: u64, a1: u64, a2: u64, _a3: u64, _a4: u64, _a5: u
         SYS_READ => read(a1, a2, _a3),
         SYS_CLOSE => close(a1),
         SYS_STAT => stat(a1, a2),
+        SYS_WINDOW_CREATE => ui::window_create(a1, a2, _a3),
+        SYS_WINDOW_PRESENT => ui::window_present(a1, a2, _a3),
+        SYS_EVENT_WAIT => ui::event_wait(a1),
+        SYS_WINDOW_CLOSE => ui::window_close(a1),
         _ => E_INVALID,
     }
 }
@@ -59,7 +69,7 @@ pub fn exit_current(code: i64) -> ! {
 
 /// True if every byte of `[addr, addr + len)` is in the program's half and mapped with USER rights
 /// (and WRITABLE, if `write`) in the current tables.
-fn user_range_ok(addr: u64, len: u64, write: bool) -> bool {
+pub(super) fn user_range_ok(addr: u64, len: u64, write: bool) -> bool {
     let Some(end) = addr.checked_add(len) else { return false };
     if end > USER_END {
         return false;

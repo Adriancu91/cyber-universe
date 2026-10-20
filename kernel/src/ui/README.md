@@ -19,6 +19,12 @@ apoi `pump()` în buclă (citește mouse-ul și tastatura, actualizează ecranul
 (prin monitorul QEMU) cu (100, 50); nucleul citește înapoi pixelii de pe ecran (locul nou, locul vechi, fereastra
 descoperită, culorile barelor), apoi închide prima fereastră cu butonul ei. Captură: `tests/screens/windows.png`.
 
-**Urmează:** ferestre pentru programe prin apeluri de sistem (P4-05), desktopul (P4-06).
+**Ferestre pentru programe (P4-05, `mod.rs`):** un singur server comun, pornit la prima fereastră a unui program
+(preia ecranul) și oprit după ultima (ecranul revine consolei text). Un fir de sistem îi dă mouse-ul și tastatura la
+fiecare 10 ms și trezește programele care așteaptă evenimente. Clicurile din interiorul ferestrei și tastele ajung în
+coada ferestrei (`Event`); ferestrele unui program care iese se închid (`close_owned`, din `proc::on_exit`).
+Apelurile de sistem: `syscall/ui.rs`. Test: scenariul `appwindow`.
+
+**Urmează:** desktopul (P4-06).
 
 **Inspirație:** design propriu.

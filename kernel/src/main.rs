@@ -27,7 +27,6 @@ mod qemu;
 #[cfg(feature = "qemu-test")]
 mod tests;
 mod time;
-#[allow(dead_code)] // the self-test drives it now; programs (P4-05) and the desktop (P4-06) will
 mod ui;
 
 use arch::x86_64::halt_forever;
@@ -210,6 +209,9 @@ fn run_tests() -> ! {
 
     #[cfg(feature = "test-windows")]
     test_windows();
+
+    #[cfg(feature = "test-appwindow")]
+    test_appwindow();
 
     #[cfg(feature = "test-shell")]
     {
@@ -850,7 +852,7 @@ fn test_windows() {
     let mut keys = alloc::vec::Vec::new();
     loop {
         s.pump();
-        while let Some(k) = s.read_key(b) {
+        while let Some(ui::server::Event::Key(k)) = s.next_event(b) {
             keys.push(k);
         }
         let r = s.window(b).unwrap().outer();
@@ -895,6 +897,38 @@ fn test_windows() {
     assert!(s.window(a).is_none() && s.focused() == Some(b), "butonul de inchidere nu a inchis fereastra 1");
     assert!(screen(cx - 100, cy - 100) == Some(DESKTOP) && screen(cx + 100, cy + 100) == Some(ORANGE), "dupa inchidere");
     info!("test: ferestre OK (mutare cu mouse-ul, focus, taste, inchidere; pixeli verificati)");
+}
+
+/// `/bin/demo` opens a window through system calls; the screen must show its picture. The harness clicks
+/// in the middle of the screen (inside the window) and types `q`; the program reports both and exits,
+/// its window closes and the text console gets the screen back.
+#[cfg(feature = "test-appwindow")]
+fn test_appwindow() {
+    let id = proc::spawn_path("/bin/demo", &["demo"]).expect("test: /bin/demo nu porneste");
+    let screen = |x: usize, y: usize| gfx::console::with_console(|c| c.as_mut().and_then(|c| c.framebuffer().pixel(x, y)));
+    let deadline = arch::x86_64::apic::ticks() + 5 * arch::x86_64::apic::HZ;
+    let (ox, oy) = loop {
+        if let Some((x, y)) = ui::window_of(id) {
+            if screen(x + 30, y + 30) == Some(0xE03030) {
+                break (x, y);
+            }
+        }
+        assert!(arch::x86_64::apic::ticks() < deadline, "test: fereastra programului demo nu apare");
+        sched::sleep_ms(10);
+    };
+    assert!(screen(ox + 200, oy + 150) == Some(0x203050) && screen(ox + 119, oy + 79) == Some(0xE03030)
+        && screen(ox + 120, oy + 80) == Some(0x203050), "pixelii ferestrei demo");
+    info!("FEREASTRA PROGRAM: continut la ({}, {}), pixeli corecti", ox, oy);
+    serial_println!("TASTATURA: astept taste"); // the harness clicks, then types q
+    let code = proc::wait(id);
+    assert!(code == 0, "demo a iesit cu {}", code);
+    let deadline = arch::x86_64::apic::ticks() + arch::x86_64::apic::HZ;
+    while ui::running() {
+        assert!(arch::x86_64::apic::ticks() < deadline, "serverul grafic nu s-a oprit dupa ultima fereastra");
+        sched::sleep_ms(10);
+    }
+    println!("Consola a revenit dupa fereastra programului.");
+    info!("test: ferestre pentru programe OK (fereastra prin apeluri de sistem, clic, tasta, inchidere la iesire)");
 }
 
 /// Waits for the keys the test harness types (h, i, Enter) and logs them.

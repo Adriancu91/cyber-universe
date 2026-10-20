@@ -126,6 +126,17 @@ pub fn force_unlock() {
     TEXT_ON_SCREEN.store(true, Ordering::Release);
 }
 
+/// Clears the screen and starts the text again from the top (after the window server gave it back).
+pub fn clear() {
+    with_console(|c| {
+        if let Some(c) = c {
+            c.fb.clear(BACKGROUND);
+            c.col = 0;
+            c.row = 0;
+        }
+    });
+}
+
 /// Turns text output on the screen on or off (the window server turns it off while it draws).
 pub fn set_text_on_screen(on: bool) {
     TEXT_ON_SCREEN.store(on, Ordering::Release);

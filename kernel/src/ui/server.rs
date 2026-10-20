@@ -1,7 +1,8 @@
 //! Window server: a list of windows (bottom to top), each with its own pixel buffer, composed into one
 //! screen-sized back buffer only where something changed, plus the mouse cursor. The left button raises
 //! and focuses a window, drags it by its title bar and closes it with the button in the title bar;
-//! key presses go to the focused (topmost) window.
+//! key presses go to the focused (topmost) window. Clicks inside a window's contents and key presses are
+//! queued as events for the window's program.
 
 use crate::drivers::keyboard::{self, Key};
 use crate::gfx::canvas::{Canvas, Rect};
@@ -31,6 +32,14 @@ const CURSOR_H: usize = 16;
 
 pub type WindowId = u32;
 
+/// Something that happened to a window, for the program that owns it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Event {
+    Key(Key),
+    /// A button pressed inside the window's contents, at (x, y) from their top-left corner.
+    Click { x: usize, y: usize, buttons: u8 },
+}
+
 pub struct Window {
     pub id: WindowId,
     /// Top-left corner of the frame on the screen.
@@ -39,7 +48,9 @@ pub struct Window {
     pub title: String,
     /// The window's contents (without frame and title bar); programs draw here.
     pub client: Canvas,
-    keys: VecDeque<Key>,
+    events: VecDeque<Event>,
+    /// Thread of the program that opened the window (0 = the kernel).
+    pub owner: u64,
 }
 
 impl Window {
@@ -48,7 +59,7 @@ impl Window {
         Rect::new(self.x, self.y, self.client.width + 2 * BORDER, self.client.height + TITLE_H + BORDER)
     }
 
-    fn client_origin(&self) -> (usize, usize) {
+    pub fn client_origin(&self) -> (usize, usize) {
         (self.x + BORDER, self.y + TITLE_H)
     }
 
@@ -91,6 +102,7 @@ impl Server {
         })
     }
 
+    #[allow(dead_code)] // used by the self-tests now, by the desktop (P4-06)
     pub fn cursor(&self) -> (usize, usize) {
         self.cursor
     }
@@ -99,14 +111,32 @@ impl Server {
         self.damage = Some(self.damage.map_or(r, |d| d.union(r)));
     }
 
+    pub fn size(&self) -> (usize, usize) {
+        (self.screen.width, self.screen.height)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.windows.is_empty()
+    }
+
+    pub fn windows(&self) -> impl Iterator<Item = &Window> {
+        self.windows.iter()
+    }
+
     /// Opens a window on top of the others (it gets the focus). `w` x `h` is the size of its contents.
+    #[allow(dead_code)] // used by the self-tests now, by the desktop (P4-06)
     pub fn create(&mut self, title: &str, x: usize, y: usize, w: usize, h: usize) -> WindowId {
+        self.create_for(0, title, x, y, w, h)
+    }
+
+    /// Like `create`, for the program on thread `owner`.
+    pub fn create_for(&mut self, owner: u64, title: &str, x: usize, y: usize, w: usize, h: usize) -> WindowId {
         let id = self.next_id;
         self.next_id += 1;
         if let Some(top) = self.windows.last() {
             self.add_damage(top.title_bar()); // loses the focus color
         }
-        let win = Window { id, x, y, title: String::from(title), client: Canvas::new(w, h, CLIENT_BG), keys: VecDeque::new() };
+        let win = Window { id, x, y, title: String::from(title), client: Canvas::new(w, h, CLIENT_BG), events: VecDeque::new(), owner };
         self.add_damage(win.outer());
         self.windows.push(win);
         id
@@ -137,13 +167,14 @@ impl Server {
         self.windows.iter_mut().find(|w| w.id == id)
     }
 
+    #[allow(dead_code)] // used by the self-tests now, by the desktop (P4-06)
     pub fn focused(&self) -> Option<WindowId> {
         self.windows.last().map(|w| w.id)
     }
 
-    /// Next key press sent to this window.
-    pub fn read_key(&mut self, id: WindowId) -> Option<Key> {
-        self.window_mut(id)?.keys.pop_front()
+    /// Next event for this window (key press or click).
+    pub fn next_event(&mut self, id: WindowId) -> Option<Event> {
+        self.window_mut(id)?.events.pop_front()
     }
 
     fn cursor_rect(&self) -> Rect {
@@ -175,12 +206,15 @@ impl Server {
                         self.add_damage(r);
                     }
                 }
-                let top = self.windows.last().unwrap();
+                let top = self.windows.last_mut().unwrap();
                 let id = top.id;
+                let (ox, oy) = top.client_origin();
                 if top.close_button().contains(cx, cy) {
                     self.close(id);
                 } else if top.title_bar().contains(cx, cy) {
                     self.drag = Some((id, cx - top.x, cy - top.y));
+                } else if Rect::new(ox, oy, top.client.width, top.client.height).contains(cx, cy) {
+                    top.events.push_back(Event::Click { x: cx - ox, y: cy - oy, buttons: e.buttons });
                 }
             }
         }
@@ -206,19 +240,23 @@ impl Server {
     /// Key presses go to the focused window.
     pub fn handle_key(&mut self, k: Key) {
         if let Some(top) = self.windows.last_mut() {
-            top.keys.push_back(k);
+            top.events.push_back(Event::Key(k));
         }
     }
 
-    /// Handles every waiting mouse and keyboard event, then updates the screen.
-    pub fn pump(&mut self) {
+    /// Handles every waiting mouse and keyboard event, then updates the screen. Returns whether there was any.
+    pub fn pump(&mut self) -> bool {
+        let mut any = false;
         while let Some(e) = input::read_mouse() {
             self.handle_mouse(e);
+            any = true;
         }
         while let Some(k) = keyboard::read_key() {
             self.handle_key(k);
+            any = true;
         }
         self.present();
+        any
     }
 
     /// Composes the changed areas (moved windows, cursor, window contents) and copies them to the screen.

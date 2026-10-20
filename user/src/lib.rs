@@ -13,6 +13,12 @@ pub const SYS_OPEN: u64 = 4;
 pub const SYS_READ: u64 = 5;
 pub const SYS_CLOSE: u64 = 6;
 pub const SYS_STAT: u64 = 7;
+pub const SYS_WINDOW_CREATE: u64 = 8;
+pub const SYS_WINDOW_PRESENT: u64 = 9;
+pub const SYS_EVENT_WAIT: u64 = 10;
+pub const SYS_WINDOW_CLOSE: u64 = 11;
+
+pub mod gfx;
 
 /// Negative results of system calls.
 pub const E_NOT_FOUND: i64 = -3;
