@@ -26,6 +26,8 @@ static TAIL: AtomicUsize = AtomicUsize::new(0); // written by the reader
 static SHIFT: AtomicBool = AtomicBool::new(false);
 static CAPS: AtomicBool = AtomicBool::new(false);
 static EXTENDED: AtomicBool = AtomicBool::new(false);
+/// Threads waiting for a key press (see `wait_key`).
+static KEY_WAIT: crate::sched::WaitQueue = crate::sched::WaitQueue::new();
 
 #[rustfmt::skip]
 const NORMAL: [u8; 58] = *b"\0\x1b1234567890-=\x08\tqwertyuiop[]\n\0asdfghjkl;'`\0\\zxcvbnm,./\0*\0 ";
@@ -108,6 +110,7 @@ extern "x86-interrupt" fn handler(_frame: idt::InterruptStackFrame) {
             // SAFETY: only the handler writes slot `head`; the reader only reads slots before HEAD.
             unsafe { (*core::ptr::addr_of_mut!(KEYS))[head] = Some(key) };
             HEAD.store(next, Ordering::Release);
+            KEY_WAIT.wake_all();
         } // queue full: the key is dropped
     }
     apic::eoi();
@@ -154,7 +157,6 @@ pub fn init() -> bool {
 }
 
 /// Returns the next key press, if any.
-#[cfg_attr(all(feature = "qemu-test", not(feature = "test-keyboard")), allow(dead_code))]
 pub fn read_key() -> Option<Key> {
     let tail = TAIL.load(Ordering::Relaxed);
     if tail == HEAD.load(Ordering::Acquire) {
@@ -164,4 +166,14 @@ pub fn read_key() -> Option<Key> {
     let key = unsafe { (*core::ptr::addr_of!(KEYS))[tail] };
     TAIL.store((tail + 1) % QUEUE, Ordering::Release);
     key
+}
+
+/// Waits (sleeping, without using the CPU) for the next key press.
+pub fn wait_key() -> Key {
+    let mut key = None;
+    KEY_WAIT.wait_until(|| {
+        key = read_key();
+        key.is_some()
+    });
+    key.unwrap()
 }

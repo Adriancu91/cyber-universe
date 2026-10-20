@@ -2,7 +2,15 @@
 //! with `yield_now`, and the timer takes it away every tick (10 ms) unless preemption is disabled.
 //! The boot code becomes thread 0 ("main") in `init`.
 
+mod mutex;
 mod switch;
+mod wait;
+
+#[allow(unused_imports)] // Mutex, sleep_ms: used by the self-tests now, by drivers and processes later
+pub use mutex::Mutex;
+pub use wait::WaitQueue;
+#[allow(unused_imports)]
+pub use wait::sleep_ms;
 
 use alloc::{boxed::Box, collections::VecDeque, vec, vec::Vec};
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -13,6 +21,8 @@ const STACK_SIZE: usize = 16 * 1024;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum State {
     Ready,
+    /// Waiting for a `WaitQueue` and/or for the tick `wake_at`.
+    Blocked,
     Exited,
 }
 
@@ -21,6 +31,9 @@ struct Thread {
     state: State,
     /// Saved stack pointer while the thread is not running.
     rsp: u64,
+    /// While blocked: the queue it waits on (its address, 0 = none) and the tick to wake at (0 = none).
+    wait_key: usize,
+    wake_at: u64,
     /// The thread's stack; `None` for the boot thread, which runs on the kernel's boot stack.
     _stack: Option<Box<[u8]>>,
 }
@@ -28,11 +41,18 @@ struct Thread {
 struct Scheduler {
     current: Option<Box<Thread>>,
     ready: VecDeque<Box<Thread>>,
+    /// Blocked threads, in the order they blocked (so wake-ups are first come, first served).
+    blocked: Vec<Box<Thread>>,
+    /// Runs `hlt` when every other thread is blocked; never in the ready queue.
+    idle: Option<Box<Thread>>,
     /// Exited threads whose stacks are freed by the next thread that runs (not on their own stack).
     zombies: Vec<Box<Thread>>,
 }
 
-static mut SCHED: Scheduler = Scheduler { current: None, ready: VecDeque::new(), zombies: Vec::new() };
+static mut SCHED: Scheduler =
+    Scheduler { current: None, ready: VecDeque::new(), blocked: Vec::new(), idle: None, zombies: Vec::new() };
+/// Id of the idle thread.
+const IDLE_ID: u64 = u64::MAX;
 static LOCK: AtomicBool = AtomicBool::new(false);
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 /// Preemption is allowed only while this is 0 (see `preempt_disable`). Starts disabled until `init`.
@@ -53,14 +73,14 @@ fn with_sched<R>(f: impl FnOnce(&mut Scheduler) -> R) -> R {
     r
 }
 
-fn irq_save() -> u64 {
+pub(crate) fn irq_save() -> u64 {
     let flags: u64;
     // SAFETY: reads RFLAGS and masks interrupts on this CPU; restored by `irq_restore`.
     unsafe { core::arch::asm!("pushfq", "pop {}", "cli", out(reg) flags, options(nomem)) }
     flags
 }
 
-fn irq_restore(flags: u64) {
+pub(crate) fn irq_restore(flags: u64) {
     if flags & (1 << 9) != 0 {
         // SAFETY: interrupts were enabled before `irq_save`.
         unsafe { core::arch::asm!("sti", options(nomem, nostack)) }
@@ -71,9 +91,12 @@ fn irq_restore(flags: u64) {
 pub fn init() {
     with_sched(|s| {
         s.ready.reserve(16);
+        s.blocked.reserve(16);
         s.zombies.reserve(16);
-        s.current = Some(Box::new(Thread { id: 0, state: State::Ready, rsp: 0, _stack: None }));
+        s.current = Some(Box::new(Thread { id: 0, state: State::Ready, rsp: 0, wait_key: 0, wake_at: 0, _stack: None }));
     });
+    let idle = new_thread(IDLE_ID, idle_loop);
+    with_sched(|s| s.idle = Some(idle));
     PREEMPT_OFF.store(0, Ordering::Release);
     crate::info!(
         "sched: planificator gata (round-robin, felie {} ms, stiva {} KiB)",
@@ -97,6 +120,8 @@ pub fn preempt_enable() {
 /// Called by the timer interrupt handler (interrupts disabled, EOI already sent): the running thread's
 /// time slice is over, so the next ready thread runs.
 pub fn timer_tick() {
+    let now = crate::arch::x86_64::apic::ticks();
+    with_sched(|s| wake_where(s, usize::MAX, |t| t.wake_at != 0 && t.wake_at <= now));
     if PREEMPT_OFF.load(Ordering::Acquire) == 0 {
         yield_now();
     }
@@ -111,14 +136,26 @@ pub fn switches() -> u64 {
 /// Creates a kernel thread that runs `f` and exits when `f` returns. Returns its id.
 #[allow(dead_code)] // used by the self-tests now, by the shell and processes in Phase 2
 pub fn spawn(f: fn()) -> u64 {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let t = new_thread(id, f);
+    with_sched(|s| s.ready.push_back(t));
+    id
+}
+
+fn new_thread(id: u64, f: fn()) -> Box<Thread> {
     let stack = vec![0u8; STACK_SIZE].into_boxed_slice();
     let top = (stack.as_ptr() as u64 + STACK_SIZE as u64) & !15;
     // SAFETY: the 56 bytes below `top` belong to `stack`, which the new thread owns.
     let rsp = unsafe { switch::initial_stack(top, f as *const () as usize) };
-    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    let t = Box::new(Thread { id, state: State::Ready, rsp, _stack: Some(stack) });
-    with_sched(|s| s.ready.push_back(t));
-    id
+    Box::new(Thread { id, state: State::Ready, rsp, wait_key: 0, wake_at: 0, _stack: Some(stack) })
+}
+
+/// The idle thread: sleeps until an interrupt, then lets whoever was woken run.
+fn idle_loop() {
+    loop {
+        crate::arch::x86_64::hlt();
+        yield_now();
+    }
 }
 
 /// Id of the running thread.
@@ -127,10 +164,49 @@ pub fn current_id() -> u64 {
     with_sched(|s| s.current.as_ref().map_or(0, |t| t.id))
 }
 
-/// Number of threads that have not exited (running + ready).
+/// Number of threads that have not exited (running, ready or blocked; the idle thread is not counted).
 #[allow(dead_code)] // used by the self-tests now
 pub fn alive() -> usize {
-    with_sched(|s| s.ready.len() + s.current.is_some() as usize)
+    with_sched(|s| {
+        let current = s.current.as_ref().is_some_and(|t| t.id != IDLE_ID && t.state != State::Exited);
+        s.ready.len() + s.blocked.len() + current as usize
+    })
+}
+
+/// Moves up to `max` blocked threads for which `matches` is true to the ready queue, oldest first.
+fn wake_where(s: &mut Scheduler, max: usize, matches: impl Fn(&Thread) -> bool) -> usize {
+    let mut woken = 0;
+    let mut i = 0;
+    while i < s.blocked.len() && woken < max {
+        if matches(&s.blocked[i]) {
+            let mut t = s.blocked.remove(i);
+            t.state = State::Ready;
+            t.wait_key = 0;
+            t.wake_at = 0;
+            s.ready.push_back(t);
+            woken += 1;
+        } else {
+            i += 1;
+        }
+    }
+    woken
+}
+
+/// Blocks the current thread until `wake(key)` or the tick `wake_at` (0 = no time limit).
+/// The caller must have disabled interrupts, after checking the condition it waits for (no lost wake-up).
+fn block_current(key: usize, wake_at: u64) {
+    with_sched(|s| {
+        let t = s.current.as_mut().expect("sched: niciun fir curent");
+        t.state = State::Blocked;
+        t.wait_key = key;
+        t.wake_at = wake_at;
+    });
+    yield_now();
+}
+
+/// Wakes up to `max` threads blocked on `key`. Safe to call from interrupt handlers.
+fn wake(key: usize, max: usize) -> usize {
+    with_sched(|s| wake_where(s, max, |t| t.wait_key == key))
 }
 
 /// Gives the CPU to the next ready thread, if any. The current thread goes to the back of the queue
@@ -138,13 +214,19 @@ pub fn alive() -> usize {
 pub fn yield_now() {
     let flags = irq_save();
     let switch = with_sched(|s| {
-        let next = s.ready.pop_front()?;
+        let runnable = s.current.as_ref().is_some_and(|t| t.state == State::Ready);
+        let next = match s.ready.pop_front() {
+            Some(t) => t,
+            None if !runnable => s.idle.take().expect("sched: firul idle lipseste"),
+            None => return None, // nothing else to run: keep going
+        };
         let mut prev = s.current.replace(next).expect("sched: niciun fir curent");
         let old_rsp: *mut u64 = &mut prev.rsp; // the Box keeps this address stable when it moves
-        if prev.state == State::Exited {
-            s.zombies.push(prev);
-        } else {
-            s.ready.push_back(prev);
+        match prev.state {
+            State::Exited => s.zombies.push(prev),
+            State::Blocked => s.blocked.push(prev),
+            State::Ready if prev.id == IDLE_ID => s.idle = Some(prev),
+            State::Ready => s.ready.push_back(prev),
         }
         Some((old_rsp, s.current.as_ref().unwrap().rsp))
     });
@@ -162,7 +244,7 @@ pub fn yield_now() {
 pub fn exit() -> ! {
     with_sched(|s| s.current.as_mut().expect("sched: niciun fir curent").state = State::Exited);
     yield_now();
-    panic!("sched: ultimul fir a iesit si nu mai e nimic de rulat");
+    unreachable!("sched: un fir terminat a fost reluat");
 }
 
 /// Frees the stacks of exited threads. Called right after every switch, never on a zombie's own stack.

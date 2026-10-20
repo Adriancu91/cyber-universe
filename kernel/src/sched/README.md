@@ -8,8 +8,12 @@
   care trece la următorul fir gata. `preempt_disable()` / `preempt_enable()` opresc temporar comutarea automată.
   Încuietorile nucleului (heap, cadre) nu opresc întreruperile: un fir care așteaptă o încuietoare ținută de alt fir
   e comutat la tick-ul următor, deci nu apare blocaj; doar planificatorul își ține încuietoarea cu întreruperile oprite.
+- **Așteptare (P2-03):** `WaitQueue` (`wait_until(condiție)`, `wake_one`, `wake_all` — se poate chema și din întreruperi),
+  `sleep_ms(ms)`, `Mutex<T>` (firul care găsește încuietoarea luată doarme). Firul „idle” face `hlt` când toate celelalte dorm.
+  Tastatura trezește firele care așteaptă în `keyboard::wait_key()`.
 - **Depinde de:** heap (`mem::heap`) pentru stive și cozi.
 - **Cum se testează:** scenariul `log` — `test: fire A1 B1 C1 A2 B2 C2 A3 B3 C3, stive eliberate`
   (trei fire care își cedează rândul; ordinea dovedește round-robin; heap-ul revine exact la valoarea de dinainte)
-  și `test: preemptiune OK` (două fire care nu cedează niciodată procesorul primesc amândouă timp, în proporții apropiate).
+  și `test: preemptiune OK` (două fire care nu cedează niciodată procesorul primesc amândouă timp, în proporții apropiate),
+  `test: sleep_ms(500) = 50 ticks; mutex: 4 fire x 10000 = 40000` și scenariul `keyboard` (care așteaptă tastele dormind).
 - **Surse:** System V AMD64 ABI (registrele păstrate de funcția chemată); OSDev Wiki „Kernel Multitasking” (doar ideea). Cod propriu.

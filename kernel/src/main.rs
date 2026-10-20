@@ -134,18 +134,15 @@ fn report_boot_metrics() {
 /// Until there is a shell (Phase 2): show typed keys on the screen.
 #[cfg(not(feature = "qemu-test"))]
 fn echo_keyboard() -> ! {
-    use drivers::keyboard::{Key, read_key};
+    use drivers::keyboard::{Key, wait_key};
     println!();
     print!("> ");
     loop {
-        while let Some(key) = read_key() {
-            match key {
-                Key::Char(c) => print!("{}", c),
-                Key::Enter => print!("\n> "),
-                _ => {}
-            }
+        match wait_key() {
+            Key::Char(c) => print!("{}", c),
+            Key::Enter => print!("\n> "),
+            _ => {}
         }
-        arch::x86_64::hlt();
     }
 }
 
@@ -167,6 +164,7 @@ fn run_tests() -> ! {
     test_timer();
     test_threads();
     test_preemption();
+    test_sleep_and_mutex();
 
     #[cfg(feature = "test-keyboard")]
     test_keyboard();
@@ -399,24 +397,52 @@ fn test_preemption() {
     info!("test: preemptiune OK ({} comutari intr-o secunda, raport {}:{})", switches, a * 10 / (a + b), b * 10 / (a + b));
 }
 
+/// `sleep_ms` must sleep the requested time (measured in timer ticks); four threads incrementing a counter
+/// under a `Mutex` must not lose any increment.
+#[cfg(feature = "qemu-test")]
+fn test_sleep_and_mutex() {
+    use arch::x86_64::apic;
+    let start = apic::ticks();
+    sched::sleep_ms(500);
+    let slept = apic::ticks() - start;
+    assert!((50..=55).contains(&slept), "sleep_ms(500) a durat {} ticks (asteptat 50)", slept);
+
+    static COUNTER: sched::Mutex<u64> = sched::Mutex::new(0);
+    fn add() {
+        for i in 0..10_000u32 {
+            let mut c = COUNTER.lock();
+            let v = *c;
+            if i % 1000 == 0 {
+                sched::yield_now(); // give the others a chance to find the lock taken
+            }
+            *c = v + 1;
+        }
+    }
+    for _ in 0..4 {
+        sched::spawn(add);
+    }
+    while sched::alive() > 1 {
+        sched::sleep_ms(10);
+    }
+    let total = *COUNTER.lock();
+    assert!(total == 40_000, "mutex: {} in loc de 40000", total);
+    info!("test: sleep_ms(500) = {} ticks; mutex: 4 fire x 10000 = {}", slept, total);
+}
+
 /// Waits for the keys the test harness types (h, i, Enter) and logs them.
 #[cfg(feature = "test-keyboard")]
 fn test_keyboard() {
-    use drivers::keyboard::{Key, read_key};
+    use drivers::keyboard::{Key, wait_key};
     serial_println!("TASTATURA: astept taste");
     let mut got = alloc::vec::Vec::new();
-    let deadline = arch::x86_64::apic::ticks() + 10 * arch::x86_64::apic::HZ;
-    while got.len() < 3 && arch::x86_64::apic::ticks() < deadline {
-        match read_key() {
-            Some(k) => {
-                match k {
-                    Key::Char(c) => info!("KEY: {}", c),
-                    other => info!("KEY: {:?}", other),
-                }
-                got.push(k);
-            }
-            None => arch::x86_64::hlt(),
+    // The harness has a time limit, so a missing key fails the test by timeout.
+    while got.len() < 3 {
+        let k = wait_key();
+        match k {
+            Key::Char(c) => info!("KEY: {}", c),
+            other => info!("KEY: {:?}", other),
         }
+        got.push(k);
     }
     assert!(got == [Key::Char('h'), Key::Char('i'), Key::Enter], "taste primite gresit: {:?}", got);
     info!("test: tastatura OK");
