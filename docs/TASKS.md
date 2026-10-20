@@ -21,9 +21,9 @@ Reguli:
   Dep: P0-03. Test: fișierul ISO există și are peste 1 MB.
 - [x] **P0-05** Ieșire pe portul serial COM1: nucleul scrie `CYBER UNIVERSE OS: BOOT OK`.
   Dep: P0-04.
-- [ ] **P0-06** `tools/run.sh` (QEMU cu ecran, firmware OVMF/UEFI) și `tools/test.sh` (fără ecran, timeout 30 s, caută textul așteptat; cod ieșire 0/1).
+- [x] **P0-06** `tools/run.sh` (QEMU cu ecran, firmware OVMF/UEFI) și `tools/test.sh` (fără ecran, timeout 30 s, caută textul așteptat; cod ieșire 0/1).
   Dep: P0-05. Test: `tools/test.sh` returnează 0.
-- [ ] **P0-07** Ieșire QEMU automată după test (dispozitiv `isa-debug-exit`), ca testele să nu aștepte timeout-ul.
+- [x] **P0-07** Ieșire QEMU automată după test (dispozitiv `isa-debug-exit`), ca testele să nu aștepte timeout-ul.
   Dep: P0-06.
 - [ ] **P0-08** GitHub Actions: la fiecare push → build + `tools/test.sh`.
   Dep: P0-07. Test: insigna verde pe GitHub.
