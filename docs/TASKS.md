@@ -73,7 +73,8 @@ un program separat care citește un fișier. Fiecare sarcină are plan în `docs
   Test: scenariul `log` — `test: ramfs OK`; programele se încarcă din `/bin` (initrd).
 - [x] **P2-08** Apeluri de sistem pentru fișiere (`open`/`read`/`close`) + pornirea programelor din ramfs. Dep: P2-06, P2-07.
   Test: scenariul `log` — `/bin/cat /etc/motd` afișează fișierul; fișiere lipsă → cod 1.
-- [ ] **P2-09** Shell: `help`, `ls`, `cat`, `run`, `mem`, `uptime`, `reboot`. Dep: P2-03, P2-08, P1-10.
+- [x] **P2-09** Shell: `help`, `ls`, `cat`, `run`, `mem`, `uptime`, `reboot`. Dep: P2-03, P2-08, P1-10.
+  Test: scenariul `shell` (taste trimise prin QEMU: help, ls, mem, run cat, comandă greșită, uptime).
 - [ ] **P2-10** Citire FAT32 (doar citire) peste o interfață de disc; imagine de test în memorie. Dep: P2-07.
 - [ ] **P2-11** Închiderea Fazei 2: test complet, stabilitate extinsă, măsurători, generarea sarcinilor Fazei 3. Dep: P2-09, P2-10.
 

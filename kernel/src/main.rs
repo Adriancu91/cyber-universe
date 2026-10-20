@@ -16,6 +16,8 @@ mod log;
 mod mem;
 mod proc;
 mod sched;
+#[cfg(any(not(feature = "qemu-test"), feature = "test-shell"))]
+mod shell;
 mod syscall;
 #[cfg(feature = "qemu-test")]
 mod qemu;
@@ -107,7 +109,9 @@ extern "C" fn kernel_main() -> ! {
     run_tests();
 
     #[cfg(not(feature = "qemu-test"))]
-    echo_keyboard();
+    loop {
+        shell::run();
+    }
 }
 
 /// Logs how long the kernel took to start and how much memory it uses (read by tools/metrics.sh).
@@ -134,21 +138,6 @@ fn report_boot_metrics() {
         heap_mapped / 1024,
         mem::frame::free_frames() * mem::map::PAGE_SIZE / (1024 * 1024)
     );
-}
-
-/// Until there is a shell (Phase 2): show typed keys on the screen.
-#[cfg(not(feature = "qemu-test"))]
-fn echo_keyboard() -> ! {
-    use drivers::keyboard::{Key, wait_key};
-    println!();
-    print!("> ");
-    loop {
-        match wait_key() {
-            Key::Char(c) => print!("{}", c),
-            Key::Enter => print!("\n> "),
-            _ => {}
-        }
-    }
 }
 
 /// Self-tests compiled only into test builds; each scenario in tests/scenarios.txt checks their output.
@@ -178,6 +167,12 @@ fn run_tests() -> ! {
 
     #[cfg(feature = "test-keyboard")]
     test_keyboard();
+
+    #[cfg(feature = "test-shell")]
+    {
+        serial_println!("TASTATURA: astept taste");
+        shell::run();
+    }
 
     #[cfg(feature = "test-stress")]
     tests::stress::run();

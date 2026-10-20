@@ -60,6 +60,13 @@ impl Console {
         match c {
             '\n' => self.newline(),
             '\r' => self.col = 0,
+            '\x08' => {
+                // Backspace: erase the previous character on this line.
+                if self.col > 0 {
+                    self.col -= 1;
+                    self.draw_char(' ');
+                }
+            }
             _ => {
                 if self.col >= self.cols {
                     self.newline();
