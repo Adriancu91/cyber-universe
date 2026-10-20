@@ -69,7 +69,16 @@ Apoi commit + push. Sesiunea următoare pornește DOAR din ce e scris în repo.
   dar NU copia cod în proiect. Scrie implementarea ta. Notează sursa de inspirație în README-ul modulului.
 - Codul nostru e MIT; cod GPL copiat ar obliga tot proiectul la GPL.
 
-## 7. Raport pentru Adrian
+## 7. Cyber Hub (centrul comun al proiectelor)
+
+Acest proiect e conectat la `Adriancu91/cyber-hub`, alături de Kronos și suita office. ID-ul nostru: `cyber-universe`.
+- **La început** (după pasul 1.6): clonează/actualizează hub-ul, citește `REGULI.md`, `PROIECTE.md`, stările celorlalte
+  proiecte din `stare/` și propunerile din `idei/` care ne privesc. Doar context — nu schimbi planul fără aprobarea lui Adrian.
+- **La sfârșit** (după pasul 4): rescrie `stare/cyber-universe.md`, adaugă 1–3 rânduri în `jurnal/cyber-universe.md`,
+  opțional o propunere în `idei/`; commit + push în hub, cum scrie în `REGULI.md` din hub.
+- Nu scrii niciodată în fișierele altui proiect și nu modifici codul altui proiect.
+
+## 8. Raport pentru Adrian
 
 La finalul fiecărei sesiuni, ultimul mesaj e un raport scurt, în română, fără termeni tehnici inutili:
 ce s-a făcut, ce merge acum, ce urmează, dacă e nevoie de ceva de la Adrian.
