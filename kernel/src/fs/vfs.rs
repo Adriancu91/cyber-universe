@@ -18,6 +18,9 @@ pub enum FsError {
     NotEmpty,
     InvalidPath,
     ReadOnly,
+    NoSpace,
+    /// The disk refused a read or a write.
+    Io,
 }
 
 impl FsError {
@@ -30,6 +33,8 @@ impl FsError {
             FsError::NotEmpty => "directorul nu e gol",
             FsError::InvalidPath => "cale invalida",
             FsError::ReadOnly => "doar citire",
+            FsError::NoSpace => "nu mai e loc pe disc",
+            FsError::Io => "eroare de citire sau scriere pe disc",
         }
     }
 }

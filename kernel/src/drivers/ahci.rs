@@ -31,6 +31,7 @@ const CMD_CR: u32 = 1 << 15;
 const SATA_DISK: u32 = 0x0000_0101;
 const ATA_IDENTIFY: u8 = 0xEC;
 const ATA_READ_DMA_EXT: u8 = 0x25;
+const ATA_WRITE_DMA_EXT: u8 = 0x35;
 /// Sectors per command: one 4 KiB DMA buffer.
 const MAX_SECTORS: u64 = PAGE_SIZE / SECTOR as u64;
 const SPIN_LIMIT: u32 = 10_000_000;
@@ -85,14 +86,15 @@ fn dma_frame(s64a: bool) -> Option<u64> {
 }
 
 impl Port {
-    /// Runs one ATA command that reads `count` sectors (<= MAX_SECTORS) into the DMA buffer.
-    fn command(&mut self, ata: u8, lba: u64, count: u64) -> Result<(), BlockError> {
+    /// Runs one ATA command that moves `count` sectors (<= MAX_SECTORS) between the disk and the DMA
+    /// buffer (to the disk if `write`).
+    fn command(&mut self, ata: u8, lba: u64, count: u64, write: bool) -> Result<(), BlockError> {
         let p = self.regs;
         if !wait(|| rd(p + P_TFD) & 0x88 == 0) {
             return Err(BlockError::OutOfRange); // still busy from before
         }
         let bytes = count * SECTOR as u64;
-        // Command header 0: FIS of 5 dwords, read (W = 0), one PRDT entry.
+        // Command header 0: FIS of 5 dwords, W (bit 6) = direction, one PRDT entry.
         let header = phys_to_virt(self.lists) as *mut u32;
         // Command table: command FIS at 0, PRDT at 0x80.
         let table = phys_to_virt(self.table);
@@ -112,7 +114,7 @@ impl Port {
         // SAFETY: the command list and table frames belong to this port and are not in use by the
         // controller (CI is clear); offsets are inside the frames.
         unsafe {
-            header.write_volatile(5 | (1 << 16));
+            header.write_volatile(5 | (write as u32) << 6 | (1 << 16));
             header.add(1).write_volatile(0); // bytes transferred
             header.add(2).write_volatile(self.table as u32);
             header.add(3).write_volatile((self.table >> 32) as u32);
@@ -137,6 +139,11 @@ impl Port {
         // SAFETY: the DMA buffer frame belongs to this port; the controller finished writing it.
         unsafe { core::slice::from_raw_parts(phys_to_virt(self.buffer), PAGE_SIZE as usize) }
     }
+
+    fn buffer_mut(&mut self) -> &mut [u8] {
+        // SAFETY: as above; no command is running, so the controller does not read it now.
+        unsafe { core::slice::from_raw_parts_mut(phys_to_virt(self.buffer), PAGE_SIZE as usize) }
+    }
 }
 
 impl BlockDevice for AhciDisk {
@@ -156,9 +163,29 @@ impl BlockDevice for AhciDisk {
         let mut done = 0;
         while done < total {
             let n = (total - done).min(MAX_SECTORS);
-            port.command(ATA_READ_DMA_EXT, lba + done, n)?;
+            port.command(ATA_READ_DMA_EXT, lba + done, n, false)?;
             let bytes = (n as usize) * SECTOR;
             buf[done as usize * SECTOR..done as usize * SECTOR + bytes].copy_from_slice(&port.buffer()[..bytes]);
+            done += n;
+        }
+        Ok(())
+    }
+
+    fn write(&self, lba: u64, buf: &[u8]) -> Result<(), BlockError> {
+        if buf.len() % SECTOR != 0 {
+            return Err(BlockError::BadBuffer);
+        }
+        let total = (buf.len() / SECTOR) as u64;
+        if lba.checked_add(total).is_none_or(|e| e > self.sectors) {
+            return Err(BlockError::OutOfRange);
+        }
+        let mut port = self.port.lock();
+        let mut done = 0;
+        while done < total {
+            let n = (total - done).min(MAX_SECTORS);
+            let bytes = (n as usize) * SECTOR;
+            port.buffer_mut()[..bytes].copy_from_slice(&buf[done as usize * SECTOR..done as usize * SECTOR + bytes]);
+            port.command(ATA_WRITE_DMA_EXT, lba + done, n, true)?;
             done += n;
         }
         Ok(())
@@ -224,7 +251,7 @@ fn start_port(p: u64, s64a: bool) -> Option<AhciDisk> {
     wr(p + P_CMD, rd(p + P_CMD) | CMD_ST);
 
     let mut port = Port { regs: p, lists, table, buffer };
-    port.command(ATA_IDENTIFY, 0, 1).ok()?;
+    port.command(ATA_IDENTIFY, 0, 1, false).ok()?;
     let id = port.buffer();
     let word = |i: usize| u16::from_le_bytes([id[i * 2], id[i * 2 + 1]]);
     let sectors = (0..4).fold(0u64, |acc, k| acc | (word(100 + k) as u64) << (16 * k));

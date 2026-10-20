@@ -45,7 +45,7 @@ pub fn init() {
     }
 }
 
-/// Finds the FAT partition of `dev` and mounts it (read only) at `at`.
+/// Finds the FAT partition of `dev` and mounts it at `at` (writable only if it has `fat32::WRITE_MARKER`).
 pub fn mount_disk(dev: Box<dyn crate::block::BlockDevice>, at: &str) -> bool {
     let Some(p) = part::find_fat(dev.as_ref()) else {
         crate::warn!("fs: disc fara partitie FAT");
@@ -58,9 +58,10 @@ pub fn mount_disk(dev: Box<dyn crate::block::BlockDevice>, at: &str) -> bool {
             return false;
         }
     };
+    let rw = if fat.writable() { " (scriere permisa)" } else { "" };
     let ok = create_dirs(at).is_ok() && vfs::mount(at, Box::new(fat)).is_ok();
     if ok {
-        crate::info!("fs: FAT32 ({}, {} MiB) montat la {}", p.table, p.sectors * 512 / (1024 * 1024), at);
+        crate::info!("fs: FAT32 ({}, {} MiB) montat la {}{}", p.table, p.sectors * 512 / (1024 * 1024), at, rw);
     }
     ok
 }

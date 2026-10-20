@@ -10,6 +10,8 @@ pub const SECTOR: usize = 512;
 pub enum BlockError {
     OutOfRange,
     BadBuffer,
+    /// The device (or its driver) cannot write.
+    ReadOnly,
 }
 
 pub trait BlockDevice: Send + Sync {
@@ -17,9 +19,13 @@ pub trait BlockDevice: Send + Sync {
     fn sectors(&self) -> u64;
     /// Reads `buf.len() / 512` sectors starting at `lba`. `buf.len()` must be a multiple of 512.
     fn read(&self, lba: u64, buf: &mut [u8]) -> Result<(), BlockError>;
+    /// Writes `buf.len() / 512` sectors starting at `lba`. Devices that cannot write keep this default.
+    fn write(&self, _lba: u64, _buf: &[u8]) -> Result<(), BlockError> {
+        Err(BlockError::ReadOnly)
+    }
 }
 
-/// A disk image in memory (for now: a file loaded by Limine).
+/// A disk image in memory (for now: a file loaded by Limine), read only.
 pub struct MemDisk {
     data: &'static [u8],
 }
@@ -70,5 +76,13 @@ impl BlockDevice for Partition {
             return Err(BlockError::OutOfRange);
         }
         self.dev.read(self.start + lba, buf)
+    }
+
+    fn write(&self, lba: u64, buf: &[u8]) -> Result<(), BlockError> {
+        let count = (buf.len() / SECTOR) as u64;
+        if lba.checked_add(count).is_none_or(|e| e > self.len) {
+            return Err(BlockError::OutOfRange);
+        }
+        self.dev.write(self.start + lba, buf)
     }
 }

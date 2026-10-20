@@ -26,6 +26,7 @@ usb-mouse | test-mouse       | success | mouse (HID) de pe portul;;MOUSE: dx=10 
 windows   | test-windows     | success | TASTATURA: astept taste;;FERESTRE: fereastra 2 mutata la (70, 40), tastele h i primite;;test: ferestre OK;;TEST READY | tests/screens/windows.png | mon=mouse_button:1,mouse_move:100:50,mouse_button:0 keys=h i
 appwindow | test-appwindow   | success | demo: fereastra deschisa;;FEREASTRA PROGRAM: continut la;;TASTATURA: astept taste;;demo: clic la (160, 90);;demo: tasta q, ies;;a iesit cu codul 0;;test: ferestre pentru programe OK;;TEST READY | tests/screens/appwindow.png | mon=mouse_button:1,mouse_button:0,sendkey:q
 desktop   | test-desktop     | success | desktop: pornit (1280x800);;desktop: ceas ;;TASTATURA: astept taste;;desktop: meniu deschis (3 programe);;desktop: pornesc /bin/demo;;demo: fereastra deschisa;;demo: tasta q, ies;;DESKTOP: captura;;desktop: inchis;;test: desktop OK;;TEST READY | tests/screens/desktop.png@DESKTOP: captura | mon=mouse_move:-594:384,mouse_button:1,mouse_button:0
+fatwrite  | test-fatwrite    | success | fs: FAT32 (GPT, 38 MiB) montat la /disk (scriere permisa);;test: scriere FAT32 OK;;TEST READY | | disk=fatwrite.img
 pci-usb   |                  | success | clasa 0c:03:30 controler USB;;pci: 7 dispozitive;;TEST READY | | -device qemu-xhci
 smp       |                  | success | acpi: MADT: 4 procesoare;;TEST READY | | -smp 4
 keyboard  | test-keyboard    | success | TASTATURA: astept taste;;KEY: h;;KEY: i;;KEY: Enter;;test: tastatura OK;;TEST READY | | keys=h i ret

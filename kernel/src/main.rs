@@ -220,6 +220,9 @@ fn run_tests() -> ! {
     #[cfg(feature = "test-desktop")]
     test_desktop();
 
+    #[cfg(feature = "test-fatwrite")]
+    test_fat_write();
+
     #[cfg(feature = "test-shell")]
     {
         serial_println!("TASTATURA: astept taste");
@@ -642,6 +645,57 @@ fn test_disk_files(at: &str) {
     assert!(fs::write(&alloc::format!("{}/salut.txt", at), 0, b"x") == Err(FsError::ReadOnly), "scriere acceptata pe FAT32");
 
     info!("test: disc OK (nume lungi, 100 KiB cu suma {}, doar citire)", hex.trim());
+}
+
+/// Writes on the test disk (a copy marked with `cyber.rw`, through AHCI): new folders and files (short
+/// and long names), writes across clusters, overwrite, a gap, deletion, a folder that grows past one
+/// cluster. tools/after-fatwrite.sh then checks the image with fsck.fat and mtools.
+#[cfg(feature = "test-fatwrite")]
+fn test_fat_write() {
+    use fs::{FsError, Kind};
+    let pattern = |i: usize| ((i * 13) ^ (i >> 7)) as u8;
+    fs::create("/disk/scris", Kind::Dir).expect("test: mkdir /disk/scris");
+    let long = "/disk/scris/Fisier Nou Lung.txt";
+    fs::create(long, Kind::File).expect("test: fisier cu nume lung");
+    let mut want: alloc::vec::Vec<u8> = (0..10_000).map(pattern).collect();
+    assert!(fs::write(long, 0, &want[..3000]) == Ok(3000) && fs::write(long, 3000, &want[3000..]) == Ok(7000), "scriere");
+    assert!(fs::read_all(long).unwrap() == want, "citire dupa scriere");
+    fs::write(long, 5000, b"CYBER").unwrap();
+    want[5000..5005].copy_from_slice(b"CYBER");
+    assert!(fs::read_all(long).unwrap() == want && fs::size(long) == Ok(10_000), "suprascriere la mijloc");
+
+    fs::create("/disk/scris/gol.bin", Kind::File).unwrap();
+    fs::write("/disk/scris/gol.bin", 1500, b"X").unwrap();
+    let gap = fs::read_all("/disk/scris/gol.bin").unwrap();
+    assert!(gap.len() == 1501 && gap[..1500].iter().all(|&b| b == 0) && gap[1500] == b'X', "golul nu e plin cu zerouri");
+
+    fs::create("/disk/SCURT.TXT", Kind::File).unwrap();
+    fs::write("/disk/SCURT.TXT", 0, b"salut din Cyber Universe\n").unwrap();
+    assert!(fs::create("/disk/scurt.txt", Kind::File) == Err(FsError::AlreadyExists), "nume dublu acceptat");
+
+    fs::create("/disk/scris/sterge.txt", Kind::File).unwrap();
+    fs::write("/disk/scris/sterge.txt", 0, &[7u8; 2000]).unwrap();
+    fs::remove("/disk/scris/sterge.txt").expect("test: stergere");
+    assert!(fs::read_all("/disk/scris/sterge.txt") == Err(FsError::NotFound), "fisier sters inca exista");
+
+    fs::create("/disk/scris/sub", Kind::Dir).unwrap();
+    fs::create("/disk/scris/sub/a.txt", Kind::File).unwrap();
+    assert!(fs::remove("/disk/scris/sub") == Err(FsError::NotEmpty), "director plin sters");
+    fs::remove("/disk/scris/sub/a.txt").unwrap();
+    fs::remove("/disk/scris/sub").expect("test: director gol");
+
+    // 512-byte clusters hold 16 entries: 20 files (plus "." and "..") make the folder grow.
+    fs::create("/disk/scris/multe", Kind::Dir).unwrap();
+    for i in 0..20 {
+        let p = alloc::format!("/disk/scris/multe/fisier-{:02}.txt", i);
+        fs::create(&p, Kind::File).unwrap();
+        fs::write(&p, 0, p.as_bytes()).unwrap();
+    }
+    let list = fs::list("/disk/scris/multe").unwrap();
+    assert!(list.len() == 20, "{} fisiere in /disk/scris/multe", list.len());
+    assert!(fs::read_all("/disk/scris/multe/fisier-19.txt").unwrap() == b"/disk/scris/multe/fisier-19.txt", "ultimul fisier");
+    assert!(fs::read_all("/disk/salut.txt").unwrap() == b"salut de pe disc\n", "fisierele vechi s-au stricat");
+    info!("test: scriere FAT32 OK (nume scurte si lungi, 10000 octeti peste clustere, gol, stergere, director marit)");
 }
 
 /// The same partition must also be found through an MBR (the disk image seen with a different sector 0).

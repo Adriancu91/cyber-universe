@@ -40,6 +40,8 @@ test-windows = ["qemu-test"]
 test-appwindow = ["qemu-test"]
 # P4-06: the desktop: bar, clock, Start menu (clicked by the harness), a program started from the menu.
 test-desktop = ["qemu-test"]
+# P4-07: writing on a copy of the test disk marked for writing (the harness checks it with fsck.fat).
+test-fatwrite = ["qemu-test"]
 # P1-13: a write to .rodata must fault (the kernel image keeps its per-segment rights).
 test-rodata = ["qemu-test"]
 # Stability test (P1-11): 5 minutes; the quick variant runs the same loop for 15 seconds.

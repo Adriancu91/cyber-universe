@@ -19,6 +19,7 @@ const SPIN_LIMIT: u32 = 20_000_000;
 const ADMIN_CREATE_SQ: u8 = 0x01;
 const ADMIN_CREATE_CQ: u8 = 0x05;
 const ADMIN_IDENTIFY: u8 = 0x06;
+const IO_WRITE: u8 = 0x01;
 const IO_READ: u8 = 0x02;
 
 /// A submission queue and its completion queue.
@@ -136,6 +137,11 @@ impl Controller {
         // SAFETY: the buffer frame belongs to this controller; the last command finished writing it.
         unsafe { core::slice::from_raw_parts(phys_to_virt(self.buffer), PAGE_SIZE as usize) }
     }
+
+    fn buffer_mut(&mut self) -> &mut [u8] {
+        // SAFETY: as above; no command is running, so the controller does not read it now.
+        unsafe { core::slice::from_raw_parts_mut(phys_to_virt(self.buffer), PAGE_SIZE as usize) }
+    }
 }
 
 impl BlockDevice for NvmeDisk {
@@ -163,6 +169,31 @@ impl BlockDevice for NvmeDisk {
             }
             let bytes = n as usize * SECTOR;
             buf[done as usize * SECTOR..done as usize * SECTOR + bytes].copy_from_slice(&c.buffer()[..bytes]);
+            done += n;
+        }
+        Ok(())
+    }
+
+    fn write(&self, lba: u64, buf: &[u8]) -> Result<(), BlockError> {
+        if buf.len() % SECTOR != 0 {
+            return Err(BlockError::BadBuffer);
+        }
+        let total = (buf.len() / SECTOR) as u64;
+        if lba.checked_add(total).is_none_or(|e| e > self.sectors) {
+            return Err(BlockError::OutOfRange);
+        }
+        let mut c = self.ctrl.lock();
+        let mut done = 0;
+        while done < total {
+            let n = (total - done).min(MAX_SECTORS);
+            let start = lba + done;
+            let bytes = n as usize * SECTOR;
+            c.buffer_mut()[..bytes].copy_from_slice(&buf[done as usize * SECTOR..done as usize * SECTOR + bytes]);
+            let buffer = c.buffer;
+            if let Err(status) = c.run(true, IO_WRITE, 1, buffer, [start as u32, (start >> 32) as u32, (n - 1) as u32, 0, 0, 0]) {
+                crate::warn!("nvme: scrierea la LBA {} a esuat (stare {:#x})", start, status);
+                return Err(BlockError::OutOfRange);
+            }
             done += n;
         }
         Ok(())

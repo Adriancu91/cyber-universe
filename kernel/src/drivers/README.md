@@ -13,7 +13,10 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   (o actualizare la mijloc nu le poate amesteca), BCD sau binar, 12 sau 24 de ore. La pornire: `rtc: AAAA-LL-ZZ hh:mm:ss`
   în jurnal (scenariul `log`); programele o citesc cu apelul `time` (ceasul desktopului). Ora e cea ținută de calculator
   (de obicei ora locală sub Windows, UTC sub Linux; în QEMU: UTC).
-- `ahci.rs` — discuri SATA prin controlerul AHCI (P3-02), doar citire, o comandă odată (cu așteptare activă):
+- **Scriere pe disc (P4-07):** AHCI (`WRITE DMA EXT`), NVMe (`Write`) și stick-uri USB (`WRITE(10)`) pot scrie; sistemul de
+  fișiere scrie doar pe partițiile marcate (vezi `fs/README.md`). Încă nu se trimite comanda de golire a memoriei cache a
+  discului (FLUSH) — de adăugat înainte de scrieri pe discuri reale importante.
+- `ahci.rs` — discuri SATA prin controlerul AHCI (P3-02), citire și scriere, o comandă odată (cu așteptare activă):
   preia controlerul de la firmware, pornește primul port cu disc, `IDENTIFY` (model, mărime), `READ DMA EXT` în bucăți de 4 KiB.
   Implementează `block::BlockDevice`; discul dă `/disk` (prima partiție FAT32).
 - `nvme.rs` — SSD-uri NVMe (P3-03), doar citire: resetare, coada de administrare, `Identify` (model, mărime),

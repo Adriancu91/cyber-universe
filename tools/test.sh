@@ -44,6 +44,17 @@ while IFS='|' read -r name features ending expects screenshot qextra; do
         fi
     fi
 
+    # disk=NAME: the test disk is a fresh copy (build/NAME) marked for writing (fat32::WRITE_MARKER),
+    # attached without snapshot; tools/after-<scenario>.sh then checks it.
+    DISK_IMG=""
+    if [[ "$qextra" =~ (^|[[:space:]])disk=([^[:space:]]+) ]]; then
+        DISK_IMG="$BUILD/${BASH_REMATCH[2]}"
+        qextra="${qextra/disk=${BASH_REMATCH[2]}/}"
+        cp "$BUILD/disk.img" "$DISK_IMG"
+        echo "scriere permisa" > "$BUILD/cyber.rw"
+        MTOOLS_SKIP_CHECK=1 mcopy -o -i "$DISK_IMG@@1M" "$BUILD/cyber.rw" ::/cyber.rw
+    fi
+    export DISK_IMG
     mapfile -t ARGS < <(qemu_args "$iso")
     QARGS=(); skip=0
     for a in "${ARGS[@]}"; do
@@ -69,7 +80,12 @@ while IFS='|' read -r name features ending expects screenshot qextra; do
     [[ -n "$keys" ]] && PY+=(--keys "$keys")
     [[ -n "$mon" ]] && PY+=(--monitor "$mon")
 
-    if python3 "$ROOT/tools/qemutest.py" "${PY[@]}" -- "${QARGS[@]}"; then
+    ok=0
+    python3 "$ROOT/tools/qemutest.py" "${PY[@]}" -- "${QARGS[@]}" && ok=1
+    if (( ok )) && [[ -x "$ROOT/tools/after-$name.sh" ]]; then
+        "$ROOT/tools/after-$name.sh" "$DISK_IMG" || ok=0
+    fi
+    if (( ok )); then
         passed=$((passed+1))
     else
         failed=$((failed+1)); failed_names+=("$name")
