@@ -47,6 +47,8 @@ Reguli:
 - [ ] **P1-11** Test de stabilitate: nucleul rulează 5 minute în QEMU, temporizator activ, fără erori. Dep: P1-09.
 - [ ] **P1-12** Măsurători: timp de pornire și memorie folosită, scrise în `docs/METRICS.md`. Dep: P1-11.
 
+- [ ] **P1-13** Tabele de pagini proprii (în locul celor Limine) + recuperarea memoriei bootloader-ului. Dep: P1-07. Plan: `docs/plans/P1-13.md`.
+
 ## Faza 2 și următoarele
 
 Sarcinile se generează de Claude Code din `ROADMAP.md` când Faza 1 e aproape gata (ultimele 2 sarcini),

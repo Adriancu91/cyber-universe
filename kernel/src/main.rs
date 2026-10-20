@@ -63,7 +63,13 @@ extern "C" fn kmain() -> ! {
 
     #[cfg(not(feature = "qemu-test"))]
     {
-        info!("sistem: pornire completa");
+        let (heap_used, heap_mapped) = mem::heap::stats();
+        info!(
+            "sistem: pornire completa; memorie libera {} MiB, heap {} / {} KiB",
+            mem::frame::free_frames() * mem::map::PAGE_SIZE / (1024 * 1024),
+            heap_used / 1024,
+            heap_mapped / 1024
+        );
         halt_forever();
     }
 }

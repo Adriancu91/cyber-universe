@@ -85,6 +85,7 @@ pub fn map(virt: u64, phys: u64, flags: u64) -> Result<(), MapError> {
     Ok(())
 }
 
+#[allow(dead_code)] // API used by tests now, by process memory in Phase 2
 /// Removes the mapping of `virt` and returns the physical frame it pointed to (the frame is NOT freed).
 pub fn unmap(virt: u64) -> Option<u64> {
     let idx = indices(virt);
@@ -105,6 +106,7 @@ pub fn unmap(virt: u64) -> Option<u64> {
     Some(entry & ADDR_MASK)
 }
 
+#[allow(dead_code)] // API used by tests now, by process memory in Phase 2
 /// Physical address that `virt` currently maps to, following huge pages too.
 pub fn translate(virt: u64) -> Option<u64> {
     let idx = indices(virt);
