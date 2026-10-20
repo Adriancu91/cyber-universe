@@ -22,12 +22,12 @@ mkdir -p "$BUILD"
 trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; echo "${s%"${s##*[![:space:]]}"}"; }
 
 passed=0; failed=0; failed_names=()
-while IFS='|' read -r name features ending expects screenshot; do
+while IFS='|' read -r name features ending expects screenshot qextra; do
     name="$(trim "$name")"
     [[ -z "$name" || "$name" == \#* ]] && continue
     if (( ${#ONLY[@]} )) && [[ ! " ${ONLY[*]} " == *" $name "* ]]; then continue; fi
     features="$(trim "$features")"; ending="$(trim "$ending")"
-    expects="$(trim "$expects")"; screenshot="$(trim "${screenshot:-}")"
+    expects="$(trim "$expects")"; screenshot="$(trim "${screenshot:-}")"; qextra="$(trim "${qextra:-}")"
 
     echo "== scenariu: $name"
     build_args=(--test); [[ -n "$features" ]] && build_args+=(--features "$features")
@@ -47,6 +47,8 @@ while IFS='|' read -r name features ending expects screenshot; do
         if [[ "$a" == "-cdrom" ]]; then skip=1; continue; fi
         QARGS+=("$a")
     done
+    # shellcheck disable=SC2206
+    [[ -n "$qextra" ]] && QARGS+=($qextra)
     PY=(--iso "$iso" --log "$BUILD/serial-$name.log" --timeout 60 --expect-exit "$ending")
     IFS=$'\n' read -r -d '' -a lines < <(echo "$expects" | sed 's/;;/\n/g' && printf '\0')
     for l in "${lines[@]}"; do l="$(trim "$l")"; [[ -n "$l" ]] && PY+=(--expect "$l"); done

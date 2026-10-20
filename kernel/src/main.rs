@@ -6,6 +6,7 @@
 
 extern crate alloc;
 
+mod acpi;
 mod arch;
 mod boot;
 mod drivers;
@@ -56,6 +57,10 @@ extern "C" fn kmain() -> ! {
     if !mem::init() {
         error!("mem: nucleul nu poate gestiona memoria, opresc");
         panic!("initializarea memoriei a esuat");
+    }
+
+    if acpi::init() {
+        acpi::madt::init();
     }
 
     #[cfg(feature = "qemu-test")]

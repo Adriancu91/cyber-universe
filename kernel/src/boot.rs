@@ -1,7 +1,7 @@
 //! Limine boot protocol requests. Limine fills in the responses before jumping to `kmain`.
 
 use limine::BaseRevision;
-use limine::request::{FramebufferRequest, HhdmRequest, MemoryMapRequest, RequestsEndMarker, RequestsStartMarker};
+use limine::request::{FramebufferRequest, HhdmRequest, MemoryMapRequest, RsdpRequest, RequestsEndMarker, RequestsStartMarker};
 
 /// Highest base revision supported by the `limine` crate (0.5.0).
 #[used]
@@ -22,6 +22,11 @@ pub static MEMORY_MAP: MemoryMapRequest = MemoryMapRequest::new();
 #[used]
 #[unsafe(link_section = ".requests")]
 pub static HHDM: HhdmRequest = HhdmRequest::new();
+
+/// ACPI root pointer.
+#[used]
+#[unsafe(link_section = ".requests")]
+pub static RSDP: RsdpRequest = RsdpRequest::new();
 
 #[used]
 #[unsafe(link_section = ".requests_start_marker")]

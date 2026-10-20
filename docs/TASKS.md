@@ -40,7 +40,7 @@ Reguli:
 - [x] **P1-05** Alocator de cadre fizice (bitmap). Dep: P1-04. Test: alocă/eliberează 10.000 de cadre fără scurgeri.
 - [x] **P1-06** Paginare: mapare/demapare pagini, tabele proprii. Dep: P1-05.
 - [x] **P1-07** Heap pentru nucleu (`alloc`: `Vec`, `Box`). Dep: P1-06. Test: `Vec` cu 1 milion de elemente.
-- [ ] **P1-08** ACPI: găsire tabele (RSDP, MADT). Dep: P1-06.
+- [x] **P1-08** ACPI: găsire tabele (RSDP, MADT). Dep: P1-06.
 - [ ] **P1-09** APIC local + temporizator, ceas al sistemului (ticks). Dep: P1-03, P1-08.
 - [ ] **P1-10** Tastatură PS/2 (scancode → caractere, aranjament US). Dep: P1-03, P1-08.
   Test: QEMU `sendkey` trimite taste, nucleul le afișează pe serial.
