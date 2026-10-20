@@ -53,7 +53,7 @@ echo "[build] Construiesc nucleul ($MODE)..."
 ( cd "$ROOT/kernel" && cargo build --release "${FEATURES[@]}" --target-dir "$BUILD/target-$MODE" )
 KERNEL="$BUILD/target-$MODE/x86_64-unknown-none/release/cyber_kernel"
 
-# 2b. User programs (user/src/bin/*.rs), loaded by Limine as modules
+# 2b. User programs (user/src/bin/*.rs), put in the initrd
 echo "[build] Construiesc programele utilizator..."
 ( cd "$ROOT/user" && cargo build --release --target-dir "$BUILD/target-user" )
 USER_BIN="$BUILD/target-user/x86_64-unknown-none/release"
@@ -65,12 +65,14 @@ ISO_ROOT="$BUILD/iso-$MODE"
 rm -rf "$ISO_ROOT"
 mkdir -p "$ISO_ROOT/boot/limine" "$ISO_ROOT/EFI/BOOT"
 cp "$KERNEL" "$ISO_ROOT/boot/kernel"
-mkdir -p "$ISO_ROOT/boot/bin"
 cp "$ROOT/boot/limine/limine.conf" "$ISO_ROOT/boot/limine/"
-for p in "${PROGRAMS[@]}"; do
-    cp "$USER_BIN/$p" "$ISO_ROOT/boot/bin/$p"
-    echo "    module_path: boot():/boot/bin/$p" >> "$ISO_ROOT/boot/limine/limine.conf"
-done
+# initrd: the root file system (ramfs) = boot/initrd/ + the programs in /bin, as a ustar archive
+INITRD_ROOT="$BUILD/initrd-$MODE"
+rm -rf "$INITRD_ROOT" && mkdir -p "$INITRD_ROOT/bin"
+cp -r "$ROOT/boot/initrd/." "$INITRD_ROOT/"
+for p in "${PROGRAMS[@]}"; do cp "$USER_BIN/$p" "$INITRD_ROOT/bin/$p"; done
+( cd "$INITRD_ROOT" && tar --format=ustar --owner=0 --group=0 --sort=name -cf "$ISO_ROOT/boot/initrd.tar" * )
+echo "    module_path: boot():/boot/initrd.tar" >> "$ISO_ROOT/boot/limine/limine.conf"
 cp "$LIMINE_DIR/limine-uefi-cd.bin" "$ISO_ROOT/boot/limine/"
 cp "$LIMINE_DIR/BOOTX64.EFI" "$ISO_ROOT/EFI/BOOT/"
 

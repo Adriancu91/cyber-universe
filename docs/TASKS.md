@@ -69,7 +69,8 @@ un program separat care citește un fișier. Fiecare sarcină are plan în `docs
   Test: scenariul `log` — `salut din ring 3`, cod 7; programul cu eroare e oprit, nucleul continuă.
 - [x] **P2-06** Încărcarea programelor ELF64 (programe în `user/`, puse în ISO). Dep: P2-05.
   Test: scenariul `log` — `hello din ELF`, `test: ELF OK` (fișiere stricate refuzate, memoria eliberată).
-- [ ] **P2-07** VFS + ramfs, fișiere inițiale dintr-o arhivă `tar` (initrd). Dep: P1-07.
+- [x] **P2-07** VFS + ramfs, fișiere inițiale dintr-o arhivă `tar` (initrd). Dep: P1-07.
+  Test: scenariul `log` — `test: ramfs OK`; programele se încarcă din `/bin` (initrd).
 - [ ] **P2-08** Apeluri de sistem pentru fișiere (`open`/`read`/`close`) + pornirea programelor din ramfs. Dep: P2-06, P2-07.
 - [ ] **P2-09** Shell: `help`, `ls`, `cat`, `run`, `mem`, `uptime`, `reboot`. Dep: P2-03, P2-08, P1-10.
 - [ ] **P2-10** Citire FAT32 (doar citire) peste o interfață de disc; imagine de test în memorie. Dep: P2-07.

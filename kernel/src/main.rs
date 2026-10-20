@@ -10,6 +10,7 @@ mod acpi;
 mod arch;
 mod boot;
 mod drivers;
+mod fs;
 mod gfx;
 mod log;
 mod mem;
@@ -96,6 +97,7 @@ extern "C" fn kernel_main() -> ! {
         warn!("sistem: fara ceas (APIC indisponibil); continui fara intreruperi");
     }
     boot::collect_files();
+    fs::init();
     // Every Limine response has been read (memory map, HHDM, framebuffer, RSDP, modules): its memory can be reused.
     mem::reclaim_bootloader();
 
@@ -170,6 +172,7 @@ fn run_tests() -> ! {
     test_sleep_and_mutex();
     test_address_spaces();
     test_user_mode();
+    test_files();
     test_elf();
 
     #[cfg(feature = "test-keyboard")]
@@ -536,11 +539,41 @@ fn test_user_mode() {
     info!("test: mod utilizator OK (cod 7; programul cu eroare oprit, nucleul continua)");
 }
 
-/// Runs the `hello` program (an ELF file loaded by Limine) and checks that damaged ELF files are refused.
+/// The initrd is in the root ramfs; files can be created, written, read and removed; bad paths fail cleanly.
+#[cfg(feature = "qemu-test")]
+fn test_files() {
+    use fs::{FsError, Kind};
+    let names = |dir: &str| -> alloc::string::String {
+        let list = fs::list(dir).unwrap_or_default();
+        list.iter().map(|(n, k)| if *k == Kind::Dir { alloc::format!("{}/", n) } else { n.clone() }).collect::<alloc::vec::Vec<_>>().join(" ")
+    };
+    info!("test: / = {}; /bin = {}", names("/"), names("/bin"));
+    let motd = fs::read_all("/etc/motd").expect("test: /etc/motd");
+    assert!(motd == b"Bun venit in Cyber Universe OS!\n", "continut /etc/motd gresit");
+    let (heap_before, _) = mem::heap::stats();
+    fs::create("/tmp", Kind::Dir).expect("test: mkdir /tmp");
+    fs::create("/tmp/nota.txt", Kind::File).expect("test: creare fisier");
+    fs::write("/tmp/nota.txt", 0, b"salut").unwrap();
+    fs::write("/tmp/nota.txt", 5, b", lume").unwrap();
+    assert!(fs::read_all("/tmp/nota.txt").unwrap() == b"salut, lume", "citire gresita");
+    assert!(fs::remove("/tmp") == Err(FsError::NotEmpty), "director plin sters");
+    fs::remove("/tmp/nota.txt").unwrap();
+    fs::remove("/tmp").unwrap();
+    let (heap_after, _) = mem::heap::stats();
+    assert!(heap_after == heap_before, "scurgere in ramfs: {} B", heap_after as i64 - heap_before as i64);
+    assert!(fs::read_all("/nu/exista") == Err(FsError::NotFound), "cale inexistenta");
+    assert!(fs::read_all("/etc") == Err(FsError::IsADirectory), "director citit ca fisier");
+    assert!(fs::create("/etc/motd/x", Kind::File) == Err(FsError::NotADirectory), "fisier folosit ca director");
+    assert!(fs::kind("relativ") == Err(FsError::InvalidPath), "cale relativa acceptata");
+    info!("test: ramfs OK (/etc/motd citit; creare, scriere, citire, stergere; erori: {})", FsError::NotFound.message());
+}
+
+/// Runs the `hello` program (an ELF file from the initrd) and checks that damaged ELF files are refused.
 #[cfg(feature = "qemu-test")]
 fn test_elf() {
     use proc::{SpawnError, elf::ElfError};
-    let hello = boot::file("hello").expect("test: Limine nu a incarcat /boot/bin/hello");
+    let file = fs::read_all("/bin/hello").expect("test: /bin/hello lipseste din initrd");
+    let hello = &file[..];
     let free_before = mem::frame::free_frames();
     let id = proc::spawn_elf(hello).expect("test: hello nu porneste");
     let code = proc::wait(id);
