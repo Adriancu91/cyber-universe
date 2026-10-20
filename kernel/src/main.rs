@@ -15,6 +15,7 @@ mod fs;
 mod gfx;
 mod log;
 mod mem;
+mod pci;
 mod proc;
 mod sched;
 #[cfg(any(not(feature = "qemu-test"), feature = "test-shell"))]
@@ -93,11 +94,15 @@ extern "C" fn kernel_main() -> ! {
     }
     sched::init();
 
-    if acpi::init() && acpi::madt::init() && arch::x86_64::apic::init() {
+    let has_acpi = acpi::init();
+    if has_acpi && acpi::madt::init() && arch::x86_64::apic::init() {
         time::start();
         drivers::keyboard::init();
     } else {
         warn!("sistem: fara ceas (APIC indisponibil); continui fara intreruperi");
+    }
+    if has_acpi {
+        pci::init();
     }
     boot::collect_files();
     fs::init();

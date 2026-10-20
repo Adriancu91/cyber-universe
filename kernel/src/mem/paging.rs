@@ -260,3 +260,19 @@ pub fn user_accessible(root: u64, virt: u64, write: bool) -> bool {
     }
     false
 }
+
+/// Makes the device registers at `[phys, phys + len)` reachable through the HHDM, uncached
+/// (pages already mapped are left as they are). Returns the virtual address of `phys`.
+pub fn map_mmio(phys: u64, len: u64) -> Result<u64, MapError> {
+    const CACHE_DISABLE: u64 = (1 << 3) | (1 << 4); // write-through + cache disable
+    let virt = phys_to_virt(phys) as u64;
+    let mut page = virt & !(PAGE_SIZE - 1);
+    let end = virt + len.max(1);
+    while page < end {
+        if translate(page).is_none() {
+            map(page, phys - (virt - page), WRITABLE | NO_EXECUTE | CACHE_DISABLE)?;
+        }
+        page += PAGE_SIZE;
+    }
+    Ok(virt)
+}

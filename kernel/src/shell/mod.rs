@@ -31,6 +31,7 @@ pub fn run() {
             "cat" => cat(args),
             "run" => run_program(args),
             "mem" => mem(),
+            "lspci" => lspci(),
             "uptime" => uptime(),
             "reboot" => reboot(),
             #[cfg(feature = "qemu-test")]
@@ -70,6 +71,7 @@ fn help() {
     out!("  cat <fisier>...  afiseaza fisiere\n");
     out!("  run <program> [argumente]  porneste un program (din /bin daca nu dai calea)\n");
     out!("  mem              memoria libera si cea folosita\n");
+    out!("  lspci            dispozitivele PCI (discuri, USB, retea...)\n");
     out!("  uptime           de cat timp merge sistemul\n");
     out!("  reboot           reporneste calculatorul\n");
 }
@@ -132,6 +134,12 @@ fn mem() {
         heap_used / 1024,
         heap_mapped / 1024
     );
+}
+
+fn lspci() {
+    for d in crate::pci::devices() {
+        out!("  {:02x}:{:02x}.{}  {:04x}:{:04x}  {}\n", d.bus, d.dev, d.func, d.vendor, d.device, d.kind());
+    }
 }
 
 fn uptime() {

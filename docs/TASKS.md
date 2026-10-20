@@ -86,7 +86,8 @@ Scop (ROADMAP): pornire de pe stick USB pe calculatoare reale. Gata când: porne
 2 calculatoare reale și citește un fișier de pe disc. Toate driverele se testează întâi în QEMU (care emulează
 AHCI, NVMe, XHCI, e1000). Fiecare sarcină are plan în `docs/plans/`.
 
-- [ ] **P3-01** PCI: enumerarea dispozitivelor (ECAM din ACPI MCFG), comanda `lspci`. Dep: P2-11.
+- [x] **P3-01** PCI: enumerarea dispozitivelor (ECAM din ACPI MCFG), comanda `lspci`. Dep: P2-11.
+  Test: scenariile `log`, `pci-usb` (cu `-device qemu-xhci`) și `shell` (`lspci`).
 - [ ] **P3-02** Driver AHCI (SATA), doar citire; `/disk` de pe disc real. Dep: P3-01.
 - [ ] **P3-03** Driver NVMe, doar citire. Dep: P3-01.
 - [ ] **P3-04** Imagine pentru stick USB (`tools/build.sh --usb`) + ghid `docs/USB.md`. Dep: P2-11.

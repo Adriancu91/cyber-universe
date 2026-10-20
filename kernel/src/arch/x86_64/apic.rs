@@ -3,7 +3,6 @@
 //! Written from Intel SDM Vol. 3A ch. 11, the 82093AA I/O APIC datasheet and the OSDev Wiki descriptions.
 
 use super::{inb, outb};
-use crate::mem::map::{PAGE_SIZE, phys_to_virt};
 use crate::mem::paging;
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -29,13 +28,7 @@ static TICKS: AtomicU64 = AtomicU64::new(0);
 
 /// Maps a memory-mapped device page (uncached) and returns its virtual address.
 fn map_mmio(phys: u64) -> u64 {
-    let virt = phys_to_virt(phys) as u64;
-    let page = virt & !(PAGE_SIZE - 1);
-    if paging::translate(page).is_none() {
-        let flags = paging::WRITABLE | paging::NO_EXECUTE | (1 << 3) | (1 << 4); // write-through + cache disable
-        paging::map(page, phys & !(PAGE_SIZE - 1), flags).expect("apic: maparea registrelor a esuat");
-    }
-    virt
+    paging::map_mmio(phys, 4096).expect("apic: maparea registrelor a esuat")
 }
 
 fn lapic_read(reg: usize) -> u32 {
