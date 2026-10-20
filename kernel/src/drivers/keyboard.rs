@@ -157,6 +157,7 @@ pub fn init() -> bool {
 }
 
 /// Returns the next key press, if any.
+#[cfg_attr(all(feature = "qemu-test", not(feature = "test-keyboard")), allow(dead_code))]
 pub fn read_key() -> Option<Key> {
     let tail = TAIL.load(Ordering::Relaxed);
     if tail == HEAD.load(Ordering::Acquire) {
@@ -169,6 +170,7 @@ pub fn read_key() -> Option<Key> {
 }
 
 /// Waits (sleeping, without using the CPU) for the next key press.
+#[cfg_attr(all(feature = "qemu-test", not(feature = "test-keyboard")), allow(dead_code))]
 pub fn wait_key() -> Key {
     let mut key = None;
     KEY_WAIT.wait_until(|| {
