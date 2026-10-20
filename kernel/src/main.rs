@@ -4,6 +4,8 @@
 #![no_main]
 #![feature(abi_x86_interrupt)]
 
+extern crate alloc;
+
 mod arch;
 mod boot;
 mod drivers;
@@ -78,6 +80,8 @@ fn run_tests() -> ! {
     info!("test: dupa breakpoint, nucleul continua");
 
     test_frames();
+    test_paging();
+    test_heap();
 
     #[cfg(feature = "test-divzero")]
     // SAFETY: deliberate #DE for the test scenario; the handler stops the kernel.
@@ -133,6 +137,59 @@ fn test_frames() {
     let after = mem::frame::free_frames();
     assert!(before == after, "scurgere de cadre: {} inainte, {} dupa", before, after);
     info!("test: {} cadre alocate, unice, eliberate; libere inainte={} dupa={}", N, before, after);
+}
+
+/// Maps a fresh frame at an unused address, checks writes are visible through the HHDM, then unmaps it.
+#[cfg(feature = "qemu-test")]
+fn test_paging() {
+    use mem::paging;
+    const VIRT: u64 = 0xFFFF_C000_0000_0000;
+    let f = mem::frame::alloc_frame().expect("test: niciun cadru liber");
+    paging::map(VIRT, f, paging::WRITABLE | paging::NO_EXECUTE).expect("test: maparea a esuat");
+    assert!(paging::translate(VIRT + 0x123) == Some(f + 0x123), "translate gresit");
+    // SAFETY: VIRT was just mapped to frame `f`, which belongs to this test.
+    unsafe { (VIRT as *mut u64).write_volatile(0xC1BE_2026) };
+    // SAFETY: frame `f` is reachable through the HHDM.
+    let seen = unsafe { (mem::map::phys_to_virt(f) as *const u64).read_volatile() };
+    assert!(seen == 0xC1BE_2026, "valoarea scrisa nu apare la adresa fizica");
+    assert!(paging::map(VIRT, f, paging::WRITABLE) == Err(paging::MapError::AlreadyMapped), "mapare dubla acceptata");
+    assert!(paging::unmap(VIRT) == Some(f), "demapare gresita");
+    assert!(paging::translate(VIRT).is_none(), "pagina inca mapata dupa demapare");
+    mem::frame::free_frame(f);
+    info!("test: paginare OK (mapare, scriere, translate, demapare)");
+
+    #[cfg(feature = "test-unmapped")]
+    // SAFETY: deliberate access to the page unmapped above; must raise a page fault.
+    unsafe {
+        (VIRT as *const u64).read_volatile();
+    }
+}
+
+/// Exercises the heap with a large Vec and many small boxes freed in mixed order.
+#[cfg(feature = "qemu-test")]
+fn test_heap() {
+    use alloc::{boxed::Box, vec::Vec};
+    let (used_before, _) = mem::heap::stats();
+    {
+        let v: Vec<u64> = (0..1_000_000u64).collect();
+        let sum: u64 = v.iter().sum();
+        assert!(sum == 999_999 * 1_000_000 / 2, "suma gresita in Vec");
+    }
+    {
+        let mut boxes: Vec<Box<[u8; 48]>> = Vec::new();
+        for i in 0..10_000u32 {
+            boxes.push(Box::new([(i % 251) as u8; 48]));
+        }
+        for i in (0..boxes.len()).rev().step_by(2) {
+            let b = boxes.swap_remove(i);
+            assert!(b[0] == (b[47]), "continut Box stricat");
+        }
+        let s = alloc::format!("{} cutii ramase", boxes.len());
+        assert!(s == "5000 cutii ramase", "String gresit");
+    }
+    let (used_after, mapped) = mem::heap::stats();
+    assert!(used_after == used_before, "scurgere in heap: {} inainte, {} dupa", used_before, used_after);
+    info!("test: heap OK (Vec de 1.000.000, 10.000 Box, String); heap mapat {} KiB", mapped / 1024);
 }
 
 #[panic_handler]

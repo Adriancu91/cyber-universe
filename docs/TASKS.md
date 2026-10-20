@@ -38,8 +38,8 @@ Reguli:
   Test: test care provoacă intenționat o excepție și verifică mesajul.
 - [x] **P1-04** Harta memoriei de la Limine afișată în jurnal. Dep: P1-01.
 - [x] **P1-05** Alocator de cadre fizice (bitmap). Dep: P1-04. Test: alocă/eliberează 10.000 de cadre fără scurgeri.
-- [ ] **P1-06** Paginare: mapare/demapare pagini, tabele proprii. Dep: P1-05.
-- [ ] **P1-07** Heap pentru nucleu (`alloc`: `Vec`, `Box`). Dep: P1-06. Test: `Vec` cu 1 milion de elemente.
+- [x] **P1-06** Paginare: mapare/demapare pagini, tabele proprii. Dep: P1-05.
+- [x] **P1-07** Heap pentru nucleu (`alloc`: `Vec`, `Box`). Dep: P1-06. Test: `Vec` cu 1 milion de elemente.
 - [ ] **P1-08** ACPI: găsire tabele (RSDP, MADT). Dep: P1-06.
 - [ ] **P1-09** APIC local + temporizator, ceas al sistemului (ticks). Dep: P1-03, P1-08.
 - [ ] **P1-10** Tastatură PS/2 (scancode → caractere, aranjament US). Dep: P1-03, P1-08.

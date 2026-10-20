@@ -16,6 +16,7 @@ test-panic = ["qemu-test"]
 test-divzero = ["qemu-test"]
 test-pagefault = ["qemu-test"]
 test-doublefault = ["qemu-test"]
+test-unmapped = ["qemu-test"]
 
 [profile.dev]
 panic = "abort"
