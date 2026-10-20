@@ -46,7 +46,7 @@ Reguli:
   Test: QEMU `sendkey` trimite taste, nucleul le afișează pe serial.
 - [x] **P1-11** Test de stabilitate: nucleul rulează 5 minute în QEMU, temporizator activ, fără erori. Dep: P1-09.
   Test: `tools/test.sh --stress` (5 min, zilnic în `stress.yml`); varianta de 15 s `stress-quick` la fiecare push.
-- [ ] **P1-12** Măsurători: timp de pornire și memorie folosită, scrise în `docs/METRICS.md`. Dep: P1-11.
+- [~] **P1-12** Măsurători: timp de pornire și memorie folosită, scrise în `docs/METRICS.md`. Dep: P1-11.
 
 - [ ] **P1-13** Tabele de pagini proprii (în locul celor Limine) + recuperarea memoriei bootloader-ului. Dep: P1-07. Plan: `docs/plans/P1-13.md`.
 
