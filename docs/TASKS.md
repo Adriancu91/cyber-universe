@@ -49,7 +49,7 @@ Reguli:
 - [x] **P1-12** Măsurători: timp de pornire și memorie folosită, scrise în `docs/METRICS.md`. Dep: P1-11.
   `tools/metrics.sh` (5 porniri, media); sarcinile Fazei 2 generate (P2-01…P2-11, cu planuri).
 
-- [ ] **P1-13** Tabele de pagini proprii (în locul celor Limine) + recuperarea memoriei bootloader-ului. Dep: P1-07. Plan: `docs/plans/P1-13.md`.
+- [~] **P1-13** Tabele de pagini proprii (în locul celor Limine) + recuperarea memoriei bootloader-ului. Dep: P1-07. Plan: `docs/plans/P1-13.md`.
 
 ## Faza 2 — Procese și sistem
 
