@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "wip/**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unelte sistem (QEMU, OVMF, xorriso)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86 ovmf xorriso
+
+      - name: Rust nightly
+        run: rustup toolchain install nightly --profile minimal -c rust-src -t x86_64-unknown-none
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/target-test
+            build/limine-*
+          key: ${{ runner.os }}-cu-${{ hashFiles('kernel/Cargo.toml', 'kernel/Cargo.lock', 'kernel/rust-toolchain.toml') }}
+
+      - name: Verificare mediu
+        run: tools/env-check.sh
+
+      - name: Build + test în QEMU
+        run: tools/test.sh --expect "ECRAN OK" --screenshot build/screen.png
+
+      - name: Rezultate (log serial și captură de ecran)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rezultate-test
+          path: |
+            build/serial.log
+            build/build-test.log
+            build/screen.png
+          if-no-files-found: ignore
