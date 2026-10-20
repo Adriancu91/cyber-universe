@@ -15,6 +15,8 @@ mod log;
 mod mem;
 #[cfg(feature = "qemu-test")]
 mod qemu;
+#[cfg(feature = "qemu-test")]
+mod tests;
 mod time;
 
 use arch::x86_64::halt_forever;
@@ -118,6 +120,9 @@ fn run_tests() -> ! {
 
     #[cfg(feature = "test-keyboard")]
     test_keyboard();
+
+    #[cfg(feature = "test-stress")]
+    tests::stress::run();
 
     #[cfg(feature = "test-divzero")]
     // SAFETY: deliberate #DE for the test scenario; the handler stops the kernel.

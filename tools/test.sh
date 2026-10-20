@@ -3,15 +3,19 @@
 #   tools/test.sh                 all scenarios
 #   tools/test.sh boot log        only the named scenarios
 #   tools/test.sh --no-build ...  reuse existing ISOs
+#   tools/test.sh --stress        5-minute stability test (tests/stress.txt), not run on every push
 # Exit code: 0 = all passed, 1 = at least one failed.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/qemu-common.sh"
 
 BUILD_FIRST=1
+SCENARIOS="$ROOT/tests/scenarios.txt"
+TIMEOUT=60
 ONLY=()
 for arg in "$@"; do
     case "$arg" in
         --no-build) BUILD_FIRST=0 ;;
+        --stress) SCENARIOS="$ROOT/tests/stress.txt"; TIMEOUT=420 ;;
         -*) echo "Opțiune necunoscută: $arg" >&2; exit 2 ;;
         *) ONLY+=("$arg") ;;
     esac
@@ -51,7 +55,7 @@ while IFS='|' read -r name features ending expects screenshot qextra; do
     if [[ "$qextra" == keys=* ]]; then keys="${qextra#keys=}"; qextra=""; fi
     # shellcheck disable=SC2206
     [[ -n "$qextra" ]] && QARGS+=($qextra)
-    PY=(--iso "$iso" --log "$BUILD/serial-$name.log" --timeout 60 --expect-exit "$ending")
+    PY=(--iso "$iso" --log "$BUILD/serial-$name.log" --timeout "$TIMEOUT" --expect-exit "$ending")
     IFS=$'\n' read -r -d '' -a lines < <(echo "$expects" | sed 's/;;/\n/g' && printf '\0')
     for l in "${lines[@]}"; do l="$(trim "$l")"; [[ -n "$l" ]] && PY+=(--expect "$l"); done
     [[ -n "$screenshot" ]] && PY+=(--screenshot "$ROOT/$screenshot")
@@ -62,7 +66,7 @@ while IFS='|' read -r name features ending expects screenshot qextra; do
     else
         failed=$((failed+1)); failed_names+=("$name")
     fi
-done < "$ROOT/tests/scenarios.txt"
+done < "$SCENARIOS"
 
 echo "== rezultat: $passed trecute, $failed eșuate${failed_names:+ (${failed_names[*]})}"
 (( failed == 0 && passed > 0 ))

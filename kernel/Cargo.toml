@@ -18,6 +18,9 @@ test-pagefault = ["qemu-test"]
 test-doublefault = ["qemu-test"]
 test-unmapped = ["qemu-test"]
 test-keyboard = ["qemu-test"]
+# Stability test (P1-11): 5 minutes; the quick variant runs the same loop for 15 seconds.
+test-stress = ["qemu-test"]
+test-stress-quick = ["test-stress"]
 
 [profile.dev]
 panic = "abort"

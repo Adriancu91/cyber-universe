@@ -12,3 +12,4 @@ doublefault | test-doublefault | failed | EXCEPTIE: double fault (#DF);;SISTEM O
 unmapped  | test-unmapped    | failed | test: paginare OK;;page fault la adresa 0xffffc00000000000 (pagina lipsa, citire, mod nucleu);;SISTEM OPRIT |
 smp       |                  | success | acpi: MADT: 4 procesoare;;TEST READY | | -smp 4
 keyboard  | test-keyboard    | success | TASTATURA: astept taste;;KEY: h;;KEY: i;;KEY: Enter;;test: tastatura OK;;TEST READY | | keys=h i ret
+stress-quick | test-stress-quick | success | stres: pornit pentru 15 s;;stres: 10 s;;cadre si heap identice la final;;STRESS OK;;TEST READY |

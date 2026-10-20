@@ -1,0 +1,2 @@
+# Long scenarios run only by `tools/test.sh --stress` (and .github/workflows/stress.yml). Same format as scenarios.txt.
+stress    | test-stress      | success | test: temporizator OK;;stres: pornit pentru 300 s;;stres: 150 s;;stres: 300 s;;cadre si heap identice la final;;STRESS OK;;TEST READY |
