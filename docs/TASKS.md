@@ -117,7 +117,7 @@ cât P3-09 așteaptă testul pe hardware real). Fiecare sarcină are plan în `d
   Test: scenariul `log` — `test: grafica OK` (pixeli, zone schimbate, copiere pe ecran; ~290 cadre/s pe tot ecranul în QEMU).
 - [x] **P4-03** Fonturi: diacritice românești și text UTF-8. Dep: P4-02.
   Test: scenariul `log` (pixelii lui Ș, ă și ai chenarului pentru caractere necunoscute); captura `boot` arată diacriticele. Aranjamentul RO → P4-12.
-- [ ] **P4-04** Server grafic: ferestre și cursor. Dep: P4-01, P4-02, P4-03.
+- [~] **P4-04** Server grafic: ferestre și cursor. Dep: P4-01, P4-02, P4-03.
 - [ ] **P4-05** Ferestre pentru programe (apeluri de sistem, memorie partajată). Dep: P4-04, P2-08.
 - [ ] **P4-06** Desktop „Cyber Universe”. Dep: P4-05.
 - [ ] **P4-07** FAT32: scriere (fișiere noi, modificare, ștergere). Dep: P2-10.
