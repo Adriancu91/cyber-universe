@@ -1,7 +1,7 @@
 //! UDP (RFC 768): datagrams to and from ports. A port is opened with `bind`; what arrives for it waits
 //! in a queue read with `receive`.
 
-use super::{Ipv4, checksum, config, ipv4};
+use super::{Ipv4, config, ipv4};
 use crate::arch::x86_64::apic;
 use crate::sched::{Mutex, WaitQueue};
 use alloc::{collections::VecDeque, vec::Vec};
@@ -28,15 +28,8 @@ pub fn unbind(port: u16) {
     PORTS.lock().retain(|p| p.0 != port);
 }
 
-/// Checksum over the pseudo-header (addresses, protocol, length) and the datagram.
 fn udp_checksum(src: Ipv4, dst: Ipv4, datagram: &[u8]) -> u16 {
-    let mut buf = Vec::with_capacity(12 + datagram.len());
-    buf.extend_from_slice(&src);
-    buf.extend_from_slice(&dst);
-    buf.extend_from_slice(&[0, ipv4::PROTO_UDP]);
-    buf.extend_from_slice(&(datagram.len() as u16).to_be_bytes());
-    buf.extend_from_slice(datagram);
-    checksum(&buf)
+    ipv4::pseudo_checksum(src, dst, ipv4::PROTO_UDP, datagram)
 }
 
 /// Sends `data` from our port `src_port` to `dst`:`dst_port`.

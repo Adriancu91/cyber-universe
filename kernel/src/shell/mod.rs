@@ -52,6 +52,7 @@ pub fn run() {
             "tastatura" => layout(args),
             "ping" => ping(args),
             "host" => host(args),
+            "http" => http(args),
             "mem" => mem(),
             "lspci" => lspci(),
             "lsusb" => lsusb(),
@@ -105,6 +106,7 @@ fn help() {
     out!("  mod list|install <pachet.cum>|start|stop|remove <nume>  module\n");
     out!("  ping <adresa>    trimite 4 ping-uri (ICMP); merge si cu un nume\n");
     out!("  host <nume>      afla adresa IPv4 a unui nume (DNS)\n");
+    out!("  http <nume> [port] [cale]  cere o pagina web (HTTP prin TCP), arata inceputul\n");
     out!("  tastatura [ro|us]  aranjamentul tastaturii (romana standard sau engleza SUA)\n");
     out!("  mem              memoria libera si cea folosita\n");
     out!("  lspci            dispozitivele PCI (discuri, USB, retea...)\n");
@@ -202,6 +204,56 @@ fn host(args: &[&str]) {
             out!("{} are adresa {}.{}.{}.{}{}\n", name, ip[0], ip[1], ip[2], ip[3], if cache { " (din memorie)" } else { "" })
         }
         Err(e) => out!("host: {}: {}\n", name, e.message()),
+    }
+}
+
+/// Fetches a page over plain HTTP (TCP) and shows the start of the answer: a manual check of the
+/// network stack on a real machine.
+fn http(args: &[&str]) {
+    use crate::net::{dns, tcp};
+    let Some(name) = args.first() else {
+        out!("folosire: http <nume> [port] [cale]\n");
+        return;
+    };
+    let port = match args.get(1).map(|p| p.parse::<u16>()) {
+        None => 80,
+        Some(Ok(p)) => p,
+        Some(Err(_)) => {
+            out!("http: port invalid\n");
+            return;
+        }
+    };
+    let path = args.get(2).copied().unwrap_or("/");
+    let ip = match dns::resolve(name) {
+        Ok((ip, _)) => ip,
+        Err(e) => {
+            out!("http: {}: {}\n", name, e.message());
+            return;
+        }
+    };
+    let conn = match tcp::connect(ip, port, 5000) {
+        Ok(c) => c,
+        Err(e) => {
+            out!("http: {}:{}: {}\n", name, port, e.message());
+            return;
+        }
+    };
+    let request = alloc::format!("GET {} HTTP/1.0\r\nHost: {}\r\nUser-Agent: CyberUniverse\r\nConnection: close\r\n\r\n", path, name);
+    let mut body = Vec::new();
+    let mut error = tcp::send(conn, request.as_bytes(), 5000).err();
+    while error.is_none() {
+        match tcp::recv(conn, 4096, 10_000) {
+            Ok(d) if d.is_empty() => break,
+            Ok(d) => body.extend_from_slice(&d),
+            Err(e) => error = Some(e),
+        }
+    }
+    tcp::close(conn, 1000);
+    let shown = &body[..body.len().min(400)];
+    out!("{}\n", String::from_utf8_lossy(shown));
+    match error {
+        Some(e) => out!("http: {} (primiti {} octeti)\n", e.message(), body.len()),
+        None => out!("-- {} octeti primiti\n", body.len()),
     }
 }
 

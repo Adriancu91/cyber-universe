@@ -232,6 +232,8 @@ fn run_tests() -> ! {
     test_network();
     #[cfg(feature = "test-dns")]
     test_dns();
+    #[cfg(feature = "test-tcp")]
+    test_tcp();
     #[cfg(feature = "test-usb")]
     assert!(boot::medium() == boot::Medium::Disk, "test: pornit de pe {:?}, nu de pe stick", boot::medium());
     #[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
@@ -1082,6 +1084,55 @@ fn test_dns() {
     info!("net: DNS: test.cyber din memorie");
     assert!(dns::resolve_via(server, 15353, "rau..nume") == Err(Error::BadName), "test: nume invalid acceptat");
     assert!(dns::resolve("10.0.2.2") == Ok(([10, 0, 2, 2], false)), "test: o adresa trebuie intoarsa direct");
+}
+
+/// TCP against the harness's web server (tools/before-tcp.sh: python's http.server, reached as 10.0.2.2:18080):
+/// a small page, a 200 000-byte file with one received segment "lost" (out-of-order data kept and reassembled),
+/// a request whose first transmission is "lost" (retransmission timer), and a refused connection.
+#[cfg(feature = "test-tcp")]
+fn test_tcp() {
+    use net::tcp;
+    assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
+    let server = [10u8, 0, 2, 2];
+    fn get(server: net::Ipv4, path: &str, lose_request: bool) -> (alloc::vec::Vec<u8>, u32) {
+        let c = tcp::connect(server, 18080, 5000).expect("test: conexiunea TCP nu s-a deschis");
+        if lose_request {
+            tcp::DROP_NEXT_SEND.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        let req = alloc::format!("GET {} HTTP/1.0\r\nHost: test\r\n\r\n", path);
+        tcp::send(c, req.as_bytes(), 5000).expect("test: trimitere TCP");
+        let mut all = alloc::vec::Vec::new();
+        loop {
+            let d = tcp::recv(c, 8192, 10_000).expect("test: primire TCP");
+            if d.is_empty() {
+                break;
+            }
+            all.extend_from_slice(&d);
+        }
+        let retransmits = tcp::retransmissions(c);
+        tcp::close(c, 2000);
+        let body = all.windows(4).position(|w| w == b"\r\n\r\n").map(|i| all[i + 4..].to_vec()).expect("test: raspuns HTTP fara antet");
+        assert!(all.starts_with(b"HTTP/1.0 200"), "test: raspuns HTTP: {:?}", core::str::from_utf8(&all[..all.len().min(40)]));
+        (body, retransmits)
+    }
+    let (small, _) = get(server, "/mic.txt", false);
+    assert!(small == b"Salut de la serverul de test TCP\n", "test: mic.txt gresit");
+    info!("tcp: GET /mic.txt -> {} octeti, text corect", small.len());
+
+    tcp::DROP_RECV_AFTER.store(5, core::sync::atomic::Ordering::Relaxed);
+    let start = arch::x86_64::apic::ticks();
+    let (big, _) = get(server, "/mare.bin", false);
+    let ms = (arch::x86_64::apic::ticks() - start) * 1000 / arch::x86_64::apic::HZ;
+    assert!(big.len() == 200_000, "test: mare.bin are {} octeti", big.len());
+    assert!(big.iter().enumerate().all(|(i, &b)| b == (i % 251) as u8), "test: continutul mare.bin difera");
+    info!("tcp: GET /mare.bin -> 200000 octeti corecti, un segment pierdut si recuperat ({} ms)", ms);
+
+    let (again, retransmits) = get(server, "/mic.txt", true);
+    assert!(again == small && retransmits >= 1, "test: retransmisia ({} retransmisii)", retransmits);
+    info!("tcp: cererea pierduta a fost retrimisa ({} retransmisie)", retransmits);
+
+    assert!(tcp::connect(server, 18081, 3000) == Err(tcp::Error::Refused), "test: portul inchis trebuia refuzat");
+    info!("tcp: port inchis -> conexiune refuzata (corect)");
 }
 
 /// Draws a known scene in a back buffer, checks pixels, the changed area and the copy to the screen,

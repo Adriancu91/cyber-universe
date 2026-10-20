@@ -36,6 +36,8 @@ test-usbdisk = ["qemu-test"]
 test-net = ["qemu-test"]
 # P5-03: names resolved through the harness's DNS server (tools/dns-test-server.py) at 10.0.2.2:15353.
 test-dns = ["qemu-test"]
+# P5-04: TCP against the harness's web server (tools/before-tcp.sh) at 10.0.2.2:18080.
+test-tcp = ["qemu-test"]
 # P4-01: the harness moves the mouse and clicks; the kernel must receive both events.
 test-mouse = ["qemu-test"]
 # P4-04: two windows; the harness types keys and drags the top one by its title bar with the mouse.

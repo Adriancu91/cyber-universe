@@ -5,6 +5,7 @@ use super::{ETH_IPV4, Ipv4, arp, checksum, config, send_frame};
 use core::sync::atomic::{AtomicU16, Ordering};
 
 pub const PROTO_ICMP: u8 = 1;
+pub const PROTO_TCP: u8 = 6;
 pub const PROTO_UDP: u8 = 17;
 
 static NEXT_ID: AtomicU16 = AtomicU16::new(1);
@@ -27,6 +28,18 @@ pub fn send(dst: Ipv4, proto: u8, payload: &[u8]) -> bool {
     p[10..12].copy_from_slice(&sum.to_be_bytes());
     p.extend_from_slice(payload);
     send_frame(mac, ETH_IPV4, &p)
+}
+
+/// The checksum UDP and TCP use: over a pseudo-header (addresses, protocol, length) and the segment.
+/// A segment that carries a correct checksum sums to 0.
+pub fn pseudo_checksum(src: Ipv4, dst: Ipv4, proto: u8, segment: &[u8]) -> u16 {
+    let mut buf = alloc::vec::Vec::with_capacity(12 + segment.len());
+    buf.extend_from_slice(&src);
+    buf.extend_from_slice(&dst);
+    buf.extend_from_slice(&[0, proto]);
+    buf.extend_from_slice(&(segment.len() as u16).to_be_bytes());
+    buf.extend_from_slice(segment);
+    checksum(&buf)
 }
 
 /// A received IPv4 packet.
@@ -54,6 +67,7 @@ pub fn handle(p: &[u8]) {
     match p[9] {
         PROTO_ICMP => super::icmp::handle(src, &p[header..total]),
         PROTO_UDP => super::udp::handle(src, dst, &p[header..total]),
+        PROTO_TCP => super::tcp::handle(src, dst, &p[header..total]),
         _ => {}
     }
 }
