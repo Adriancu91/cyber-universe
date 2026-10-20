@@ -137,7 +137,8 @@ Generate la închiderea Fazei 4 (P4-11, 2026-10-20). Fiecare are plan în `docs/
 - [x] **P5-03** DNS. Dep: P5-02.
 - [x] **P5-04** TCP (client). Dep: P5-01.
 - [x] **P5-05** Rețea pentru programe (socket-uri) și aplicația „Rețea”. Dep: P5-03, P5-04.
-- [ ] **P5-06** HTTPS de bază (TLS 1.3 client, certificate). Criptografie proprie (D-011). Dep: P5-05, P5-10 … P5-15.
+- [~] **P5-06** Client TLS 1.3 (biblioteca `tls/`), testat pe gazdă cu un server OpenSSL. Criptografie proprie (D-011). Dep: P5-10 … P5-15.
+- [ ] **P5-16** HTTPS în OS: `fetch https://…`, rădăcini în initrd, ora din RTC, numere aleatoare. Dep: P5-05, P5-06.
 - [ ] BLOCAT **P5-07** Suita office ca modul (după ce citim proiectul din Cyber Hub). Dep: P4-11.
 - [ ] **P5-08** Kronos ca modul. Dep: P5-07.
 - [x] **P5-10** Criptografie 1: SHA-256, SHA-384, HMAC, HKDF (crate `crypto/`), cu vectorii NIST/RFC. Dep: —.
@@ -146,7 +147,7 @@ Generate la închiderea Fazei 4 (P4-11, 2026-10-20). Fiecare are plan în `docs/
 - [x] **P5-13** Criptografie 4: numere mari și semnături RSA (PKCS#1 v1.5 și PSS). Dep: P5-10.
 - [x] **P5-14** Criptografie 5: semnături ECDSA P-256. Dep: P5-10.
 - [x] **P5-15** Criptografie 6: certificate X.509 (DER) și lanțul de încredere. Dep: P5-13, P5-14.
-- [ ] **P5-09** Închiderea Fazei 5. Dep: P5-01 … P5-08.
+- [ ] **P5-09** Închiderea Fazei 5. Dep: P5-01 … P5-08, P5-16.
 
 ## Faza 6 și următoarele
 
