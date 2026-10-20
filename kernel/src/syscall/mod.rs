@@ -25,6 +25,7 @@ pub const SYS_SYSINFO: u64 = 17;
 pub const SYS_KILL: u64 = 18;
 pub const SYS_CREATE: u64 = 19;
 pub const SYS_REMOVE: u64 = 20;
+pub const SYS_MODULE: u64 = 21;
 
 mod ui;
 
@@ -39,14 +40,21 @@ pub const E_EXISTS: i64 = -7; // a file or folder with that name exists
 pub const E_READ_ONLY: i64 = -8; // the disk is not marked for writing
 pub const E_NOT_EMPTY: i64 = -9; // folder not empty
 pub const E_NO_SPACE: i64 = -10; // disk full
+// Module manager (call 21).
+pub const E_MOD_MISSING_DEPENDENCY: i64 = -11;
+pub const E_MOD_NEEDED: i64 = -12;
+pub const E_MOD_RUNNING: i64 = -13;
+pub const E_MOD_NOT_RUNNING: i64 = -14;
+pub const E_MOD_BAD_PACKAGE: i64 = -15;
+pub const E_MOD_NO_PROGRAM: i64 = -16;
 const PATH_MAX: u64 = 1024;
 
 /// Called from `syscall_entry` with interrupts disabled, on the thread's kernel stack.
-pub extern "C" fn dispatch(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64, _a5: u64) -> i64 {
+pub extern "C" fn dispatch(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64, a5: u64) -> i64 {
     // The kernel may now be interrupted (and preempted) while it serves the call.
     // SAFETY: the IDT and the scheduler are ready long before any program runs.
     unsafe { core::arch::asm!("sti", options(nomem, nostack)) }
-    let result = call(nr, a1, a2, _a3, a4);
+    let result = call(nr, a1, a2, _a3, a4, a5);
     if sched::killed() {
         exit_current(EXIT_KILLED);
     }
@@ -56,7 +64,7 @@ pub extern "C" fn dispatch(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64, _a5: u6
 /// Exit code of a program stopped by `proc::kill`.
 pub const EXIT_KILLED: i64 = -9;
 
-fn call(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64) -> i64 {
+fn call(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64, a5: u64) -> i64 {
     match nr {
         SYS_EXIT => exit_current(a1 as i64),
         SYS_WRITE => write(a1, a2, _a3),
@@ -87,6 +95,7 @@ fn call(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64) -> i64 {
         }
         SYS_CREATE => create(a1, a2, _a3),
         SYS_REMOVE => remove(a1, a2),
+        SYS_MODULE => module(a1, a2, _a3, a4, a5),
         _ => E_INVALID,
     }
 }
@@ -381,4 +390,54 @@ fn sysinfo(kind: u64, buf: u64, len: u64) -> i64 {
     // SAFETY: the range was checked to be writable user memory of this program.
     unsafe { core::ptr::copy_nonoverlapping(data.as_ptr(), buf as *mut u8, data.len()) };
     data.len() as i64
+}
+
+/// module(op, text, text_len, buf, buf_len): the module manager. Op 0 = list: one line per installed
+/// module, `name version running|stopped description`, written to `buf` (returns the bytes written);
+/// op 1 = install the package at path `text`; 2 = start, 3 = stop, 4 = remove the module named `text`.
+fn module(op: u64, ptr: u64, len: u64, buf: u64, buf_len: u64) -> i64 {
+    use crate::modmgr::{self, ModError};
+    let err = |e: ModError| match e {
+        ModError::Fs(e) => fs_error(e),
+        ModError::BadPackage(_) | ModError::Spawn => E_MOD_BAD_PACKAGE,
+        ModError::AlreadyInstalled => E_EXISTS,
+        ModError::NotInstalled => E_NOT_FOUND,
+        ModError::MissingDependency(_) => E_MOD_MISSING_DEPENDENCY,
+        ModError::NeededBy(_) => E_MOD_NEEDED,
+        ModError::Running => E_MOD_RUNNING,
+        ModError::NotRunning => E_MOD_NOT_RUNNING,
+        ModError::NoProgram => E_MOD_NO_PROGRAM,
+    };
+    if op == 0 {
+        let list = match modmgr::installed() {
+            Ok(l) => l,
+            Err(e) => return err(e),
+        };
+        let mut text = alloc::string::String::new();
+        for m in list {
+            let state = if modmgr::is_running(&m.name) { "running" } else { "stopped" };
+            text.push_str(&alloc::format!("{} {} {} {}\n", m.name, m.version, state, m.description));
+        }
+        if text.len() as u64 > buf_len {
+            return E_INVALID;
+        }
+        if !user_range_ok(buf, text.len() as u64, true) {
+            return E_FAULT;
+        }
+        // SAFETY: the range was checked to be writable user memory of this program.
+        unsafe { core::ptr::copy_nonoverlapping(text.as_ptr(), buf as *mut u8, text.len()) };
+        return text.len() as i64;
+    }
+    let arg = match user_path(ptr, len) {
+        Ok(a) => a,
+        Err(e) => return e,
+    };
+    let r = match op {
+        1 => modmgr::install(&arg).map(|_| ()),
+        2 => modmgr::start(&arg).map(|_| ()),
+        3 => modmgr::stop(&arg),
+        4 => modmgr::remove(&arg),
+        _ => return E_INVALID,
+    };
+    r.map_or_else(err, |()| 0)
 }

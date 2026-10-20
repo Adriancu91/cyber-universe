@@ -26,6 +26,7 @@ pub const SYS_SYSINFO: u64 = 17;
 pub const SYS_KILL: u64 = 18;
 pub const SYS_CREATE: u64 = 19;
 pub const SYS_REMOVE: u64 = 20;
+pub const SYS_MODULE: u64 = 21;
 
 pub mod gfx;
 pub mod settings;
@@ -48,6 +49,12 @@ pub fn error_text(e: i64) -> &'static str {
         -8 => "discul nu e marcat pentru scriere",
         -9 => "directorul nu e gol",
         -10 => "nu mai e loc pe disc",
+        -11 => "lipseste un modul necesar",
+        -12 => "alt modul are nevoie de el",
+        -13 => "modulul merge; opreste-l intai",
+        -14 => "modulul nu merge",
+        -15 => "pachet stricat",
+        -16 => "modulul nu are program",
         _ => "eroare",
     }
 }
@@ -74,6 +81,44 @@ pub fn syscall4(nr: u64, a1: u64, a2: u64, a3: u64, a4: u64) -> i64 {
              lateout("rcx") _, lateout("r11") _, options(nostack))
     }
     ret
+}
+
+/// Raw system call with five arguments (the fourth in r10, the fifth in r8).
+#[inline(always)]
+pub fn syscall5(nr: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> i64 {
+    let ret: i64;
+    // SAFETY: as in `syscall3`.
+    unsafe {
+        asm!("syscall", inlateout("rax") nr as i64 => ret, in("rdi") a1, in("rsi") a2, in("rdx") a3, in("r10") a4,
+             in("r8") a5, lateout("rcx") _, lateout("r11") _, options(nostack))
+    }
+    ret
+}
+
+/// The module manager (see kernel/src/syscall/README.md, call 21).
+pub mod modules {
+    use super::{SYS_MODULE, syscall5};
+
+    /// Installed modules, one per line: `name version running|stopped description`.
+    pub fn list(buf: &mut [u8]) -> i64 {
+        syscall5(SYS_MODULE, 0, 0, 0, buf.as_mut_ptr() as u64, buf.len() as u64)
+    }
+    fn op(code: u64, text: &str) -> i64 {
+        syscall5(SYS_MODULE, code, text.as_ptr() as u64, text.len() as u64, 0, 0)
+    }
+    /// Installs the package (.cum) at `path`.
+    pub fn install(path: &str) -> i64 {
+        op(1, path)
+    }
+    pub fn start(name: &str) -> i64 {
+        op(2, name)
+    }
+    pub fn stop(name: &str) -> i64 {
+        op(3, name)
+    }
+    pub fn remove(name: &str) -> i64 {
+        op(4, name)
+    }
 }
 
 /// Starts the program at `path`. Returns its id or a negative error.

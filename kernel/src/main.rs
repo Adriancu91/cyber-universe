@@ -233,6 +233,9 @@ fn run_tests() -> ! {
     #[cfg(feature = "test-editor")]
     test_editor_and_settings();
 
+    #[cfg(feature = "test-phase4")]
+    test_phase4();
+
     #[cfg(feature = "test-shell")]
     {
         serial_println!("TASTATURA: astept taste");
@@ -887,6 +890,43 @@ fn test_editor_and_settings() {
     info!("test: editor si setari OK (taste reale, salvare, setari salvate, deschidere din fisiere)");
 }
 
+/// Phase 4 criterion: a module is installed and uninstalled from the interface. The harness moves the
+/// real (emulated) mouse and clicks in the Modules app: select the package `salut.cum`, Install,
+/// select the module, Start, Stop, Remove; the test then closes the app with `q`.
+#[cfg(feature = "test-phase4")]
+fn test_phase4() {
+    let app = proc::spawn_path("/bin/modules", &["modules"]).expect("test: modules");
+    let deadline = arch::x86_64::apic::ticks() + 10 * arch::x86_64::apic::HZ;
+    while !ui::top_window().is_some_and(|(o, _)| o == app) {
+        assert!(arch::x86_64::apic::ticks() < deadline, "test: aplicatia Module nu porneste");
+        sched::sleep_ms(10);
+    }
+    let (_, origin) = ui::top_window().unwrap();
+    // The harness's clicks are computed for this place (the window centred on a 1280 x 800 screen).
+    assert!(origin == (380, 230) && ui::cursor() == Some((640, 400)), "fereastra Module la {:?}", origin);
+    sched::sleep_ms(300);
+    serial_println!("TASTATURA: astept taste");
+    // Installed (the folder appears), then removed (it disappears) by the clicks.
+    let deadline = arch::x86_64::apic::ticks() + 20 * arch::x86_64::apic::HZ;
+    let mut seen = false;
+    loop {
+        let present = fs::kind("/disk/modules/salut").is_ok();
+        seen |= present;
+        if seen && !present && !modmgr::is_running("salut") {
+            break;
+        }
+        assert!(arch::x86_64::apic::ticks() < deadline, "test: modulul nu a fost instalat si sters din interfata");
+        sched::sleep_ms(50);
+    }
+    sched::sleep_ms(300);
+    serial_println!("PHASE4: captura");
+    sched::sleep_ms(1500); // the harness saves the screen now
+    drivers::keyboard::push_key(drivers::keyboard::Key::Char('q'));
+    assert!(proc::wait(app) == 0, "aplicatia Module nu a iesit cu 0");
+    assert!(modmgr::installed().is_ok_and(|l| l.is_empty()), "au ramas module instalate");
+    info!("test: Faza 4 OK (modul instalat, pornit, oprit si sters din interfata, cu mouse-ul)");
+}
+
 /// The same partition must also be found through an MBR (the disk image seen with a different sector 0).
 #[cfg(feature = "test-disk")]
 fn test_fat32_mbr() {
@@ -1212,9 +1252,9 @@ fn test_desktop() {
     );
     serial_println!("TASTATURA: astept taste"); // the harness moves the mouse onto Start and clicks
     wait_for("meniul nu se deschide", &|| screen(150, h - 32 - 6) == Some(MENU));
-    // Menu items from the top: cat, demo, editor, files, hello, monitor, settings (24 pixels each, 4 of
-    // margin, the bar is 32 high); the cursor is on Start (46, h - 16); `demo` is the second item.
-    let items = 7;
+    // Menu items from the top: cat, demo, editor, files, hello, modules, monitor, settings (24 pixels
+    // each, 4 of margin, the bar is 32 high); the cursor is on Start (46, h - 16); `demo` is the second.
+    let items = 8;
     let demo_y = h - 32 - (items * 24 + 8) + 4 + 24 + 12;
     push_mouse(MouseEvent { dx: 4, dy: demo_y as i16 - (h - 16) as i16, buttons: 0 });
     push_mouse(MouseEvent { dx: 0, dy: 0, buttons: 1 });
