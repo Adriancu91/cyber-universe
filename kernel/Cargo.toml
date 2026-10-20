@@ -17,6 +17,7 @@ test-divzero = ["qemu-test"]
 test-pagefault = ["qemu-test"]
 test-doublefault = ["qemu-test"]
 test-unmapped = ["qemu-test"]
+test-keyboard = ["qemu-test"]
 
 [profile.dev]
 panic = "abort"

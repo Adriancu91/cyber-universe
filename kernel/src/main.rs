@@ -61,6 +61,7 @@ extern "C" fn kmain() -> ! {
 
     if acpi::init() && acpi::madt::init() && arch::x86_64::apic::init() {
         time::start();
+        drivers::keyboard::init();
     } else {
         warn!("sistem: fara ceas (APIC indisponibil); continui fara intreruperi");
     }
@@ -77,7 +78,25 @@ extern "C" fn kmain() -> ! {
             heap_used / 1024,
             heap_mapped / 1024
         );
-        halt_forever();
+        echo_keyboard();
+    }
+}
+
+/// Until there is a shell (Phase 2): show typed keys on the screen.
+#[cfg(not(feature = "qemu-test"))]
+fn echo_keyboard() -> ! {
+    use drivers::keyboard::{Key, read_key};
+    println!();
+    print!("> ");
+    loop {
+        while let Some(key) = read_key() {
+            match key {
+                Key::Char(c) => print!("{}", c),
+                Key::Enter => print!("\n> "),
+                _ => {}
+            }
+        }
+        arch::x86_64::hlt();
     }
 }
 
@@ -96,6 +115,9 @@ fn run_tests() -> ! {
     test_paging();
     test_heap();
     test_timer();
+
+    #[cfg(feature = "test-keyboard")]
+    test_keyboard();
 
     #[cfg(feature = "test-divzero")]
     // SAFETY: deliberate #DE for the test scenario; the handler stops the kernel.
@@ -219,6 +241,29 @@ fn test_timer() {
     arch::x86_64::hlt();
     assert!(apic::ticks() > before, "hlt nu a fost trezit de temporizator");
     info!("test: temporizator OK ({} intreruperi intr-o secunda)", n);
+}
+
+/// Waits for the keys the test harness types (h, i, Enter) and logs them.
+#[cfg(feature = "test-keyboard")]
+fn test_keyboard() {
+    use drivers::keyboard::{Key, read_key};
+    serial_println!("TASTATURA: astept taste");
+    let mut got = alloc::vec::Vec::new();
+    let deadline = arch::x86_64::apic::ticks() + 10 * arch::x86_64::apic::HZ;
+    while got.len() < 3 && arch::x86_64::apic::ticks() < deadline {
+        match read_key() {
+            Some(k) => {
+                match k {
+                    Key::Char(c) => info!("KEY: {}", c),
+                    other => info!("KEY: {:?}", other),
+                }
+                got.push(k);
+            }
+            None => arch::x86_64::hlt(),
+        }
+    }
+    assert!(got == [Key::Char('h'), Key::Char('i'), Key::Enter], "taste primite gresit: {:?}", got);
+    info!("test: tastatura OK");
 }
 
 #[panic_handler]

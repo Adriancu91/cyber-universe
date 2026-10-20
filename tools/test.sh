@@ -47,12 +47,15 @@ while IFS='|' read -r name features ending expects screenshot qextra; do
         if [[ "$a" == "-cdrom" ]]; then skip=1; continue; fi
         QARGS+=("$a")
     done
+    keys=""
+    if [[ "$qextra" == keys=* ]]; then keys="${qextra#keys=}"; qextra=""; fi
     # shellcheck disable=SC2206
     [[ -n "$qextra" ]] && QARGS+=($qextra)
     PY=(--iso "$iso" --log "$BUILD/serial-$name.log" --timeout 60 --expect-exit "$ending")
     IFS=$'\n' read -r -d '' -a lines < <(echo "$expects" | sed 's/;;/\n/g' && printf '\0')
     for l in "${lines[@]}"; do l="$(trim "$l")"; [[ -n "$l" ]] && PY+=(--expect "$l"); done
     [[ -n "$screenshot" ]] && PY+=(--screenshot "$ROOT/$screenshot")
+    [[ -n "$keys" ]] && PY+=(--keys "$keys")
 
     if python3 "$ROOT/tools/qemutest.py" "${PY[@]}" -- "${QARGS[@]}"; then
         passed=$((passed+1))
