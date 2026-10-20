@@ -53,6 +53,7 @@ while IFS='|' read -r name features ending expects screenshot qextra; do
     done
     keys=""
     if [[ "$qextra" == keys=* ]]; then keys="${qextra#keys=}"; qextra=""; fi
+    qextra="${qextra//\{BUILD\}/$BUILD}"   # {BUILD} = the build directory (for disk images)
     # shellcheck disable=SC2206
     [[ -n "$qextra" ]] && QARGS+=($qextra)
     PY=(--iso "$iso" --log "$BUILD/serial-$name.log" --timeout "$TIMEOUT" --expect-exit "$ending")

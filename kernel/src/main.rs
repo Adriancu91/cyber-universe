@@ -106,10 +106,12 @@ extern "C" fn kernel_main() -> ! {
     }
     boot::collect_files();
     fs::init();
-    // A real disk (SATA) gives /disk, unless the test disk image already did.
-    if let Some(disk) = drivers::ahci::init() {
+    // A real disk (NVMe first, then SATA) gives /disk, unless the test disk image already did.
+    let nvme = drivers::nvme::init().map(|d| alloc::boxed::Box::new(d) as alloc::boxed::Box<dyn block::BlockDevice>);
+    let sata = drivers::ahci::init().map(|d| alloc::boxed::Box::new(d) as alloc::boxed::Box<dyn block::BlockDevice>);
+    for disk in [nvme, sata].into_iter().flatten() {
         if fs::kind("/disk").is_err() {
-            fs::mount_disk(alloc::boxed::Box::new(disk), "/disk");
+            fs::mount_disk(disk, "/disk");
         }
     }
     // Every Limine response has been read (memory map, HHDM, framebuffer, RSDP, modules): its memory can be reused.
@@ -174,7 +176,7 @@ fn run_tests() -> ! {
     test_address_spaces();
     test_user_mode();
     test_files();
-    #[cfg(any(feature = "test-disk", feature = "test-ahci"))]
+    #[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
     test_disk_files();
     #[cfg(feature = "test-disk")]
     test_fat32_mbr();
@@ -583,7 +585,7 @@ fn test_files() {
 /// The test disk (GPT + FAT32, built by tools/build.sh) is mounted at /disk, from memory (`test-disk`) or
 /// read through the AHCI driver (`test-ahci`): long names, a sub-directory, a 100 KiB file over many
 /// clusters whose checksum matches the one computed at build time, reads from the middle, read-only.
-#[cfg(any(feature = "test-disk", feature = "test-ahci"))]
+#[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
 fn test_disk_files() {
     use fs::{FsError, Kind};
     let list = fs::list("/disk").expect("test: /disk lipseste");

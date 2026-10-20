@@ -12,6 +12,7 @@ doublefault | test-doublefault | failed | EXCEPTIE: double fault (#DF);;SISTEM O
 unmapped  | test-unmapped    | failed | test: paginare OK;;page fault la adresa 0xffffc00000000000 (pagina lipsa, citire, mod nucleu);;SISTEM OPRIT |
 rodata    | test-rodata      | failed | test: toate cele ;;(pagina prezenta, scriere, mod nucleu);;EXCEPTIE: page fault (#PF);;SISTEM OPRIT |
 ahci      | test-ahci        | success | ahci: disc SATA pe portul 0: QEMU HARDDISK (40 MiB);;fs: FAT32 (GPT, 38 MiB) montat la /disk;;test: /disk = Un nume lung de fisier.txt, docs/, salut.txt;;test: disc OK;;TEST READY |
+nvme      | test-nvme        | success | nvme: disc QEMU NVMe Ctrl (40 MiB);;ahci: disc SATA pe portul 0;;fs: FAT32 (GPT, 38 MiB) montat la /disk;;test: disc OK;;TEST READY | | -drive if=none,id=nv,format=raw,snapshot=on,file={BUILD}/disk.img -device nvme,serial=cu1,drive=nv
 pci-usb   |                  | success | clasa 0c:03:30 controler USB;;pci: 7 dispozitive;;TEST READY | | -device qemu-xhci
 smp       |                  | success | acpi: MADT: 4 procesoare;;TEST READY | | -smp 4
 keyboard  | test-keyboard    | success | TASTATURA: astept taste;;KEY: h;;KEY: i;;KEY: Enter;;test: tastatura OK;;TEST READY | | keys=h i ret
