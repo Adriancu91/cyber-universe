@@ -133,7 +133,7 @@ cât P3-09 așteaptă testul pe hardware real). Fiecare sarcină are plan în `d
 Generate la închiderea Fazei 4 (P4-11, 2026-10-20). Fiecare are plan în `docs/plans/`.
 
 - [x] **P5-01** Stiva de rețea: Ethernet, ARP, IPv4, ICMP (ping). Dep: P3-08.
-- [ ] **P5-02** UDP și DHCP. Dep: P5-01.
+- [x] **P5-02** UDP și DHCP. Dep: P5-01.
 - [ ] **P5-03** DNS. Dep: P5-02.
 - [ ] **P5-04** TCP (client). Dep: P5-01.
 - [ ] **P5-05** Rețea pentru programe (socket-uri) și aplicația „Rețea”. Dep: P5-03, P5-04.

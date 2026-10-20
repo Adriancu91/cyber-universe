@@ -14,6 +14,11 @@
 - **Oprire și timp de procesor (P4-08, P4-09):** `kill(id)` marchează un fir („oprește-te”) și îl trezește dacă doarme;
   așteptările cu limită (`wait_until_or`, `sleep_ms`) renunță pentru un fir marcat. `cpu_ticks(id)` — câte tick-uri a
   rulat firul (și firul idle: timpul liber al procesorului, din care monitorul calculează gradul de ocupare).
+- **Felie minimă de timp (P5-02):** un fir care a pornit la mijlocul unui tick (după ce altul s-a blocat) nu e întrerupt
+  la tick-ul următor dacă a rulat sub 5 ms; altfel firele care urmează mereu după unul scurt (ex. firul de rețea care
+  verifică placa la fiecare tick) ar primi doar resturi (testul de preempțiune a prins asta).
+- **Ieșirea unui proces:** firul trece întâi definitiv pe tabelele nucleului (`use_kernel_tables`), apoi spațiul de adrese
+  e distrus — o comutare la mijloc nu mai poate încărca tabele eliberate.
 - **Fire de sistem:** `spawn_system(f)` — fire care merg cât nucleul (ex. cel care citește tastaturile USB); nu sunt numărate de `alive()`.
 - **Spații de adrese (P2-04):** fiecare fir are tabelele lui de pagini (`spawn_in(root, f)`); la comutare se încarcă `CR3` doar dacă diferă.
 - **Depinde de:** heap (`mem::heap`) pentru stive și cozi.

@@ -170,6 +170,10 @@ fn ping(args: &[&str]) {
         out!("ping: nicio placa de retea\n");
         return;
     }
+    if !crate::net::ready() {
+        out!("ping: reteaua nu are inca adresa (DHCP)\n");
+        return;
+    }
     for seq in 1..=4u16 {
         match crate::net::icmp::ping(ip, seq, 2000) {
             Some(ms) => out!("raspuns de la {}.{}.{}.{}: seq={} timp={} ms\n", ip[0], ip[1], ip[2], ip[3], seq, ms),
@@ -253,6 +257,10 @@ fn net() {
             let m = n.mac;
             out!("  {}  MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}\n", n.name, m[0], m[1], m[2], m[3], m[4], m[5]);
             out!("  pachete trimise {}, primite {}\n", n.sent, n.received);
+            if let Some(c) = crate::net::config().filter(|c| c.ip != [0; 4]) {
+                let ip = |a: [u8; 4]| format!("{}.{}.{}.{}", a[0], a[1], a[2], a[3]);
+                out!("  IPv4 {}  masca {}  ruta {}  DNS {}\n", ip(c.ip), ip(c.mask), ip(c.gateway), ip(c.dns));
+            }
         }
         None => out!("(nicio placa de retea cunoscuta)\n"),
     }

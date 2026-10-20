@@ -9,13 +9,16 @@
 - `ipv4.rs` — trimite pachete (direct în rețeaua noastră sau prin ruta implicită), verifică pachetele primite
   (versiune, sumă de control, destinație); pachetele fragmentate se ignoră deocamdată (cu mesaj în jurnal).
 - `icmp.rs` — răspunde la ping și trimite ping-uri (`ping`, comanda `ping <ip>` din shell).
+- `udp.rs` (P5-02) — datagrame pe porturi: `bind`, `send`, `receive` (cu limită de timp), suma de control cu pseudo-antet.
+- `dhcp.rs` (P5-02) — clientul DHCP: DISCOVER → OFFER → REQUEST → ACK la pornire (fir de sistem), reînnoire la jumătatea
+  duratei; adresa, masca, ruta și DNS-ul se văd cu `net` în shell. Fără răspuns: 10.0.2.15/24 prin 10.0.2.2.
 
 **Abatere de la plan:** primirea se face printr-un fir care verifică placa des, nu prin întreruperi: rutarea întreruperilor
 PCI cere tabelele ACPI de rutare (AML) sau MSI; se va reveni la întreruperi când va conta consumul procesorului.
 
 **Depinde de:** `drivers::e1000`, `sched` (fir de sistem, așteptări cu limită), ceasul APIC.
 
-**Test:** scenariile `net` (e1000e) și `net-e1000` — ARP către 10.0.2.2, verificarea sumei de control ICMP, ping la
+**Test:** scenariile `net` (e1000e) și `net-e1000` — DHCP de la QEMU (10.0.2.15, ruta 10.0.2.2, DNS 10.0.2.3), ARP către 10.0.2.2, verificarea sumei de control ICMP, ping la
 10.0.2.2 cu răspuns (`net: ping 10.0.2.2: raspuns in N ms`).
 
-**Surse:** RFC 826 (ARP), RFC 791 (IPv4), RFC 792 (ICMP), RFC 1071 (suma de control). Cod propriu.
+**Surse:** RFC 768 (UDP), RFC 2131 și 2132 (DHCP), RFC 826 (ARP), RFC 791 (IPv4), RFC 792 (ICMP), RFC 1071 (suma de control). Cod propriu.

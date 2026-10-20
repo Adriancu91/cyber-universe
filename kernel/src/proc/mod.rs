@@ -185,6 +185,9 @@ pub fn add_file(file: OpenFile) -> Option<usize> {
 
 /// Called when the program on thread `id` ends: frees its memory and files, records the exit code.
 pub fn on_exit(id: u64, code: i64) {
+    if sched::current_id() == id {
+        sched::use_kernel_tables(); // the process's tables are freed below
+    }
     let process = {
         let mut procs = PROCS.lock();
         // Recorded while PROCS is held, so `wait_child` always finds the program in one of the lists.

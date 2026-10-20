@@ -560,12 +560,15 @@ fn test_address_spaces() {
         assert!(fa != fb && a.translate(VIRT) == Some(fa) && b.translate(VIRT) == Some(fb), "translate gresit");
         assert!(paging::translate(VIRT).is_none(), "adresa utilizator vizibila in tabelele nucleului");
         for (space, value) in [(&a, 0xAAAA_u64), (&b, 0xBBBB)] {
+            // Interrupts off: a thread switch in between would load this thread's own tables again.
+            let flags = sched::irq_save();
             // SAFETY: VIRT is mapped, writable, in `space`, which shares the kernel half with the current tables.
             unsafe {
                 paging::load(space.root());
                 (VIRT as *mut u64).write_volatile(value);
                 paging::load(paging::kernel_root());
             }
+            sched::irq_restore(flags);
         }
         // Threads read VIRT in their own space; the scheduler switches CR3 for them.
         fn read_user(i: usize) {

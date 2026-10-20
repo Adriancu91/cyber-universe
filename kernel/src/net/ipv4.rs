@@ -5,13 +5,14 @@ use super::{ETH_IPV4, Ipv4, arp, checksum, config, send_frame};
 use core::sync::atomic::{AtomicU16, Ordering};
 
 pub const PROTO_ICMP: u8 = 1;
+pub const PROTO_UDP: u8 = 17;
 
 static NEXT_ID: AtomicU16 = AtomicU16::new(1);
 
 /// Sends `payload` as protocol `proto` to `dst`. False if the neighbour did not answer ARP.
 pub fn send(dst: Ipv4, proto: u8, payload: &[u8]) -> bool {
     let Some(cfg) = config() else { return false };
-    let same_net = (0..4).all(|i| dst[i] & cfg.mask[i] == cfg.ip[i] & cfg.mask[i]);
+    let same_net = cfg.ip != [0; 4] && (0..4).all(|i| dst[i] & cfg.mask[i] == cfg.ip[i] & cfg.mask[i]);
     let hop = if same_net || dst == [255; 4] { dst } else { cfg.gateway };
     let Some(mac) = arp::resolve(hop, 2000) else { return false };
     let total = 20 + payload.len();
@@ -40,7 +41,8 @@ pub fn handle(p: &[u8]) {
         return;
     }
     let dst: Ipv4 = p[16..20].try_into().unwrap();
-    if dst != cfg.ip && dst != [255; 4] {
+    // Without an address yet (DHCP running) everything addressed to this card is accepted.
+    if dst != cfg.ip && dst != [255; 4] && cfg.ip != [0; 4] {
         return;
     }
     let fragment = u16::from_be_bytes([p[6], p[7]]);
@@ -49,7 +51,9 @@ pub fn handle(p: &[u8]) {
         return;
     }
     let src: Ipv4 = p[12..16].try_into().unwrap();
-    if p[9] == PROTO_ICMP {
-        super::icmp::handle(src, &p[header..total]);
+    match p[9] {
+        PROTO_ICMP => super::icmp::handle(src, &p[header..total]),
+        PROTO_UDP => super::udp::handle(src, dst, &p[header..total]),
+        _ => {}
     }
 }

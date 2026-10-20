@@ -1,11 +1,13 @@
-//! Network stack (Phase 5): Ethernet frames from the network card, ARP, IPv4 and ICMP (ping).
-//! A system thread takes the received frames from the card every few milliseconds and hands them to
-//! the protocol that owns them. Addresses: fixed 10.0.2.15/24, gateway 10.0.2.2 (QEMU's user network)
-//! until DHCP (P5-02) sets them.
+//! Network stack (Phase 5): Ethernet frames from the network card, ARP, IPv4, ICMP (ping), UDP and
+//! DHCP. A system thread takes the received frames from the card every few milliseconds and hands them
+//! to the protocol that owns them. The address comes from DHCP; without an answer the stack falls
+//! back to 10.0.2.15/24 through 10.0.2.2 (QEMU's user network).
 
 pub mod arp;
+pub mod dhcp;
 pub mod icmp;
 pub mod ipv4;
+pub mod udp;
 
 use crate::drivers::e1000::NIC;
 use crate::sched::{self, Mutex};
@@ -23,6 +25,7 @@ pub struct Config {
     pub ip: Ipv4,
     pub mask: Ipv4,
     pub gateway: Ipv4,
+    pub dns: Ipv4,
 }
 
 static CONFIG: Mutex<Option<Config>> = Mutex::new(None);
@@ -35,9 +38,68 @@ pub fn config() -> Option<Config> {
 /// Starts the stack on the network card found at start-up (if any).
 pub fn init() {
     let Some(mac) = NIC.lock().as_ref().map(|n| n.mac) else { return };
-    *CONFIG.lock() = Some(Config { mac, ip: [10, 0, 2, 15], mask: [255, 255, 255, 0], gateway: [10, 0, 2, 2] });
+    *CONFIG.lock() = Some(Config { mac, ip: [0; 4], mask: [0; 4], gateway: [0; 4], dns: [0; 4] });
     sched::spawn_system(receive_thread);
-    crate::info!("net: IPv4 10.0.2.15/24, ruta prin 10.0.2.2");
+    sched::spawn_system(dhcp_thread);
+}
+
+/// Sets our address, mask, gateway and name server.
+pub fn set_config(ip: Ipv4, mask: Ipv4, gateway: Ipv4, dns: Ipv4) {
+    if let Some(c) = CONFIG.lock().as_mut() {
+        (c.ip, c.mask, c.gateway, c.dns) = (ip, mask, gateway, dns);
+    }
+}
+
+/// Whether the interface has an address (from DHCP or the fallback).
+pub fn ready() -> bool {
+    config().is_some_and(|c| c.ip != [0; 4])
+}
+
+fn ip_text(a: Ipv4) -> alloc::string::String {
+    alloc::format!("{}.{}.{}.{}", a[0], a[1], a[2], a[3])
+}
+
+/// Gets the address by DHCP (or uses the fallback), then renews the lease at half its time.
+fn dhcp_thread() {
+    let mut lease = match dhcp::obtain() {
+        Some(l) => l,
+        None => {
+            set_config([10, 0, 2, 15], [255, 255, 255, 0], [10, 0, 2, 2], [10, 0, 2, 3]);
+            crate::warn!("net: DHCP nu raspunde; folosesc 10.0.2.15/24, ruta 10.0.2.2");
+            return;
+        }
+    };
+    loop {
+        crate::info!(
+            "net: DHCP: adresa {}, masca {}, ruta {}, DNS {}, pentru {} s",
+            ip_text(lease.ip),
+            ip_text(lease.mask),
+            ip_text(lease.gateway),
+            ip_text(lease.dns),
+            lease.seconds
+        );
+        sched::sleep_ms(lease.seconds.max(60) as u64 * 1000 / 2);
+        match dhcp::renew(&lease) {
+            Some(l) => lease = l,
+            None => match dhcp::obtain() {
+                Some(l) => lease = l,
+                None => crate::warn!("net: DHCP: reinnoirea a esuat, pastrez adresa"),
+            },
+        }
+    }
+}
+
+/// Waits until the interface has an address (at most `timeout_ms`).
+#[cfg(feature = "qemu-test")]
+pub fn wait_ready(timeout_ms: u64) -> bool {
+    let deadline = crate::arch::x86_64::apic::ticks() + timeout_ms * crate::arch::x86_64::apic::HZ / 1000;
+    while !ready() {
+        if crate::arch::x86_64::apic::ticks() >= deadline {
+            return false;
+        }
+        sched::sleep_ms(10);
+    }
+    true
 }
 
 /// Sends `payload` in an Ethernet frame of type `ethertype` to `dst`.
