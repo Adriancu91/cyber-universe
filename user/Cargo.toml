@@ -1,0 +1,16 @@
+[package]
+name = "cyber_user"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Cyber Universe OS user programs and their small runtime library"
+
+[lib]
+path = "src/lib.rs"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+opt-level = "s"

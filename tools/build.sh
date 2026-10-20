@@ -53,12 +53,24 @@ echo "[build] Construiesc nucleul ($MODE)..."
 ( cd "$ROOT/kernel" && cargo build --release "${FEATURES[@]}" --target-dir "$BUILD/target-$MODE" )
 KERNEL="$BUILD/target-$MODE/x86_64-unknown-none/release/cyber_kernel"
 
+# 2b. User programs (user/src/bin/*.rs), loaded by Limine as modules
+echo "[build] Construiesc programele utilizator..."
+( cd "$ROOT/user" && cargo build --release --target-dir "$BUILD/target-user" )
+USER_BIN="$BUILD/target-user/x86_64-unknown-none/release"
+PROGRAMS=()
+for src in "$ROOT"/user/src/bin/*.rs; do PROGRAMS+=("$(basename "$src" .rs)"); done
+
 # 3. ISO tree
 ISO_ROOT="$BUILD/iso-$MODE"
 rm -rf "$ISO_ROOT"
 mkdir -p "$ISO_ROOT/boot/limine" "$ISO_ROOT/EFI/BOOT"
 cp "$KERNEL" "$ISO_ROOT/boot/kernel"
+mkdir -p "$ISO_ROOT/boot/bin"
 cp "$ROOT/boot/limine/limine.conf" "$ISO_ROOT/boot/limine/"
+for p in "${PROGRAMS[@]}"; do
+    cp "$USER_BIN/$p" "$ISO_ROOT/boot/bin/$p"
+    echo "    module_path: boot():/boot/bin/$p" >> "$ISO_ROOT/boot/limine/limine.conf"
+done
 cp "$LIMINE_DIR/limine-uefi-cd.bin" "$ISO_ROOT/boot/limine/"
 cp "$LIMINE_DIR/BOOTX64.EFI" "$ISO_ROOT/EFI/BOOT/"
 

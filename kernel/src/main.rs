@@ -95,7 +95,8 @@ extern "C" fn kernel_main() -> ! {
     } else {
         warn!("sistem: fara ceas (APIC indisponibil); continui fara intreruperi");
     }
-    // Every Limine response has been read (memory map, HHDM, framebuffer, RSDP): its memory can be reused.
+    boot::collect_files();
+    // Every Limine response has been read (memory map, HHDM, framebuffer, RSDP, modules): its memory can be reused.
     mem::reclaim_bootloader();
 
     report_boot_metrics();
@@ -169,6 +170,7 @@ fn run_tests() -> ! {
     test_sleep_and_mutex();
     test_address_spaces();
     test_user_mode();
+    test_elf();
 
     #[cfg(feature = "test-keyboard")]
     test_keyboard();
@@ -532,6 +534,35 @@ fn test_user_mode() {
     let free_after = mem::frame::free_frames();
     assert!(free_after == free_before, "cadre pierdute dupa procese: {} inainte, {} dupa", free_before, free_after);
     info!("test: mod utilizator OK (cod 7; programul cu eroare oprit, nucleul continua)");
+}
+
+/// Runs the `hello` program (an ELF file loaded by Limine) and checks that damaged ELF files are refused.
+#[cfg(feature = "qemu-test")]
+fn test_elf() {
+    use proc::{SpawnError, elf::ElfError};
+    let hello = boot::file("hello").expect("test: Limine nu a incarcat /boot/bin/hello");
+    let free_before = mem::frame::free_frames();
+    let id = proc::spawn_elf(hello).expect("test: hello nu porneste");
+    let code = proc::wait(id);
+    assert!(code == 0, "hello a iesit cu {}", code);
+
+    let mut bad = alloc::vec::Vec::from(hello);
+    bad[18] = 0x28; // machine: ARM
+    let r = proc::spawn_elf(&bad);
+    assert!(matches!(r, Err(SpawnError::BadElf(ElfError::NotX86_64))), "ELF stricat acceptat: {:?}", r);
+    info!("test: ELF stricat refuzat ({})", ElfError::NotX86_64.message());
+    bad[18] = 0x3E;
+    bad[0] = 0;
+    assert!(matches!(proc::spawn_elf(&bad), Err(SpawnError::BadElf(ElfError::NotElf))), "fisier non-ELF acceptat");
+    drop(bad);
+    assert!(matches!(proc::spawn_elf(&hello[..40]), Err(SpawnError::BadElf(ElfError::TooSmall))), "fisier trunchiat acceptat");
+
+    while sched::alive() > 1 {
+        sched::sleep_ms(10);
+    }
+    let free_after = mem::frame::free_frames();
+    assert!(free_after == free_before, "cadre pierdute dupa ELF: {} inainte, {} dupa", free_before, free_after);
+    info!("test: ELF OK (hello a iesit cu 0, fisierele stricate refuzate, memoria eliberata)");
 }
 
 /// Waits for the keys the test harness types (h, i, Enter) and logs them.
