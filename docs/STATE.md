@@ -3,29 +3,31 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
-- **Data:** 2026-10-20, 20:41–22:00 UTC (23:41–01:00 ora României), sesiune programată în cloud, fără Adrian.
-- **Terminate (4 sarcini):** P5-12 (ChaCha20-Poly1305), P5-13 (numere mari + semnături RSA PKCS#1 v1.5 și PSS),
-  P5-14 (semnături ECDSA P-256), P5-15 (certificate X.509 + verificarea lanțului). P5-13 inițial a fost împărțit în
-  P5-13 … P5-15 (cu planuri), cum permitea planul lui.
-- **Blocate (au nevoie de Adrian):** P3-09 (B-001, test pe un calculator real; P3-10 după el), P5-07 (B-003, mai târziu).
-- **Ce merge acum (rezumat pentru Adrian):** toată criptografia de care are nevoie HTTPS e scrisă de noi și verificată:
-  amprente (SHA-2), chei de sesiune (HKDF, X25519), criptarea datelor (ChaCha20-Poly1305), verificarea semnăturilor
-  (RSA, ECDSA) și a certificatelor site-urilor (lanțul până la o rădăcină de încredere, numele site-ului, data).
-  Lipsește doar „conversația” TLS 1.3 propriu-zisă (P5-06).
+- **Data:** 2026-10-20, 20:41–22:25 UTC (23:41–01:25 ora României), sesiune programată în cloud, fără Adrian.
+- **Terminate (6 sarcini):** P5-12 (ChaCha20-Poly1305), P5-13 (numere mari + semnături RSA PKCS#1 v1.5 și PSS),
+  P5-14 (semnături ECDSA P-256), P5-15 (certificate X.509 + verificarea lanțului), P5-06 (client TLS 1.3, crate `tls/`),
+  P5-16 (HTTPS în OS: `fetch https://…`). P5-13 inițial a fost împărțit în P5-13 … P5-15, iar P5-06 în P5-06 + P5-16
+  (cu planuri), cum permiteau planurile lor.
+- **Blocate (au nevoie de Adrian):** P3-09 (B-001, test pe un calculator real; P3-10 după el), P5-07 (B-003, suita office),
+  P5-08 și P5-09 depind de P5-07. **Nu mai există nicio sarcină liberă** → sesiunea s-a oprit (CLAUDE.md §3).
+- **Ce merge acum (rezumat pentru Adrian):** Cyber Universe poate descărca pagini prin **HTTPS**, cu criptografie scrisă
+  integral de noi: `fetch https://nume/cale`. Certificatul site-ului e verificat (lanț până la o rădăcină de încredere,
+  numele, data); unul greșit e refuzat. În emulator: o pagină de 18 KB în ~1,3 s.
 - **Build:** OK, fără avertismente.
-- **Teste:** `tools/test.sh` → **40 de scenarii trecute**; scenariul `crypto` are acum **108 verificări** (erau 39).
-  `cd crypto && cargo test --release` trece (și în CI). Verificări încrucișate cu OpenSSL, în afara repo-ului:
-  300 de mesaje ChaCha20-Poly1305, 116 semnături RSA (40 de chei), 200 de semnături ECDSA, lanțurile cu `openssl verify` —
-  zero diferențe. CI verde pe commit-urile verificate (cele mai noi încă rulau la final).
+- **Teste:** `tools/test.sh` → **41 de scenarii trecute** (nou: `https`); `crypto` are 108 verificări; `cd crypto && cargo test
+  --release` și `cd tls && cargo test --release` (clientul nostru față de un server OpenSSL real) trec, și în CI.
+  Verificări încrucișate cu OpenSSL, în afara repo-ului: 300 de mesaje ChaCha20-Poly1305, 116 semnături RSA, 200 ECDSA,
+  lanțurile cu `openssl verify` — zero diferențe. CI verde pe toate commit-urile terminate (ultimele încă rulau la final).
 
 ## Următoarea sarcină
-**P5-06** — HTTPS de bază (client TLS 1.3). Plan: `docs/plans/P5-06.md`. E mare: propunerea mea e să o împarți la început
-(ex. 1) programarea cheilor + înregistrările criptate, verificate cu RFC 8448; 2) strângerea de mână cu un server Python
-`ssl` pe gazdă, suita TLS_CHACHA20_POLY1305_SHA256 + X25519; 3) `fetch https://…` + certificat greșit refuzat).
-Atenție: programele n-au heap și au stiva de 64 KiB — bufferele TLS (înregistrări de 16 KiB, certificate) trebuie să fie
-`static mut`; verificarea RSA folosește ~3 KiB de stivă. Funcțiile utile: `x509::verify_chain`, `x509::verify_signature`
-(și pentru CertificateVerify), `aead::seal/open`, `hkdf::expand_label`, `x25519`.
+**Niciuna liberă.** Ce poate debloca (decizia lui Adrian, întrebarea e în hub):
+1. Închiderea Fazei 5 fără P5-07/P5-08 (suita office și Kronos ca module se mută într-o fază ulterioară) → P5-09, apoi
+   sarcinile Fazei 6 din `docs/ROADMAP.md`.
+2. Sau sarcini noi aprobate prin `COMENZI.md` din hub (ex. rădăcinile reale de încredere — ISRG Root X1 etc. — ca
+   `fetch https://` să meargă cu site-uri adevărate; azi `/etc/certs/` e gol în imaginea normală).
 Când Adrian trimite rezultatele de pe stick (B-001): P3-09, apoi P3-10. Suita office gata (B-003): P5-07, P5-08.
+Atenție: dacă 3 sesiuni la rând nu termină nimic, regula de oprire cere „OPRIT: necesită analiza lui Adrian” (aici motivul
+e lipsa sarcinilor, nu un eșec).
 
 ## Mediu (verificat la P0-01, sesiune cloud)
 | Unealtă | Versiune |
@@ -63,7 +65,12 @@ Când Adrian trimite rezultatele de pe stick (B-001): P3-09, apoi P3-10. Suita o
 - Build-ul normal pornește desktopul; build-ul de test nu (testele pornesc ce le trebuie).
 - Scenariile cu servere de test pe gazdă: `tools/before-<scenariu>.sh` pornește înainte de QEMU și e oprit după
   (`dns`: server DNS 15353; `tcp`: server web 18080; `appnet`: amândouă + ecou UDP 15354). Nucleul le vede la 10.0.2.2.
-- Criptografia e în crate-ul `crypto/` (fără dependențe); nucleul îl ia doar cu feature-ul `test-crypto`. Vectorii noi
+- Criptografia e în crate-ul `crypto/` (fără dependențe); nucleul o folosește pentru `random` (SHA-256) și testul `crypto`.
+  Clientul TLS 1.3 e în `tls/` (folosit de `/bin/fetch`). Numerele aleatoare: `kernel/src/random.rs` — fără RDRAND (QEMU-ul
+  de test) se bazează doar pe TSC: bune pentru teste, slabe în fața unui atacator serios.
+- Scenariul `https` pornește `tools/before-https.sh` (serverul OpenSSL din `tls/tests/server.py`, 10.0.2.2:18443); rădăcina
+  de test e scrisă în `/etc/certs/` doar de test (cheia ei privată e publică în repo — nu o pune niciodată în imaginea normală).
+- Criptografia: `crypto/` (fără dependențe). Vectorii noi
   se adaugă în `crypto/src/vectors.rs` și se actualizează numărul din scenariul `crypto`.
 - Valorile așteptate ale vectorilor se verifică mereu cu Python `cryptography` (OpenSSL) înainte să fie scrise în cod.
   Certificatele de test: `crypto/src/testcerts/` (scriptul `make.py`); OpenSSL face uneori chei RSA cu un bit mai puțin
