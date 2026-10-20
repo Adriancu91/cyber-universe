@@ -3,31 +3,28 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
-- **Data:** 2026-10-20, 17:41–20:05 UTC (20:41–23:05 ora României), sesiune programată în cloud, fără Adrian.
-  (S-a suprapus până la 18:05 cu sesiunea anterioară: amândouă au făcut P5-02; am păstrat varianta ei și am pus DNS peste.)
-- **Terminate (5 sarcini):** P5-03 (DNS), P5-04 (TCP), P5-05 (rețea pentru programe + aplicația „Rețea”),
-  P5-10 (SHA-256/384/512, HMAC, HKDF), P5-11 (X25519) — criptografie proprie în crate-ul `crypto/`.
-- **Adrian a răspuns „da”** (22:35) la criptografia scrisă de noi → D-011; P5-06 împărțit: P5-10 … P5-13 (cu planuri).
-- **Blocate (au nevoie de Adrian):** P3-09 (B-001, test pe un calculator real; P3-10 după el), **P5-07** (B-003: codul
-  suitei office e doar pe laptop; mai târziu). P5-08 și P5-09 depind de ele.
-- **Ce merge acum (rezumat pentru Adrian):**
-  - Rețea completă pentru pagini web simple: adresă automată (DHCP), nume → adresă (DNS, `host <nume>`),
-    conexiuni TCP sigure (retransmisie, pachete pierdute recuperate), `http <nume>` în shell.
-  - Programele pot folosi rețeaua: `fetch` (descarcă o pagină), `udp`, aplicația grafică **Rețea** (adresă, rută, DNS,
-    pachete, ping la o adresă sau un nume) — apare în meniul Start.
+- **Data:** 2026-10-20, 20:41–22:00 UTC (23:41–01:00 ora României), sesiune programată în cloud, fără Adrian.
+- **Terminate (4 sarcini):** P5-12 (ChaCha20-Poly1305), P5-13 (numere mari + semnături RSA PKCS#1 v1.5 și PSS),
+  P5-14 (semnături ECDSA P-256), P5-15 (certificate X.509 + verificarea lanțului). P5-13 inițial a fost împărțit în
+  P5-13 … P5-15 (cu planuri), cum permitea planul lui.
+- **Blocate (au nevoie de Adrian):** P3-09 (B-001, test pe un calculator real; P3-10 după el), P5-07 (B-003, mai târziu).
+- **Ce merge acum (rezumat pentru Adrian):** toată criptografia de care are nevoie HTTPS e scrisă de noi și verificată:
+  amprente (SHA-2), chei de sesiune (HKDF, X25519), criptarea datelor (ChaCha20-Poly1305), verificarea semnăturilor
+  (RSA, ECDSA) și a certificatelor site-urilor (lanțul până la o rădăcină de încredere, numele site-ului, data).
+  Lipsește doar „conversația” TLS 1.3 propriu-zisă (P5-06).
 - **Build:** OK, fără avertismente.
-- **Teste:** `tools/test.sh` → **40 de scenarii trecute** (noi: `dns`, `tcp`, `appnet`, `crypto` — 39 de vectori oficiali);
-  plus `cd crypto && cargo test --release` (și în CI). Testul de stres: vezi mai jos.
-  `tools/test.sh --stress` (5 min) trecut după schimbarea din planificator. CI verde pe toate commit-urile împinse.
-- **Reparat pe drum:** testul de preempțiune pica 7:1 în `sysapps`/`fatwrite`. Nici „felia minimă” a sesiunii anterioare,
-  nici varianta mea pe tick-uri nu erau cauza (o simulare arată că rotația simplă e corectă); testul judecă acum după
-  tick-urile planificatorului (iterațiile depind și de emulator), iar felia minimă a fost scoasă.
-  Detalii: `kernel/src/sched/README.md`. Mai multe rulări complete: 34:34 tick-uri peste tot.
+- **Teste:** `tools/test.sh` → **40 de scenarii trecute**; scenariul `crypto` are acum **108 verificări** (erau 39).
+  `cd crypto && cargo test --release` trece (și în CI). Verificări încrucișate cu OpenSSL, în afara repo-ului:
+  300 de mesaje ChaCha20-Poly1305, 116 semnături RSA (40 de chei), 200 de semnături ECDSA, lanțurile cu `openssl verify` —
+  zero diferențe. CI verde pe commit-urile verificate (cele mai noi încă rulau la final).
 
 ## Următoarea sarcină
-**P5-12** — ChaCha20-Poly1305. Plan: `docs/plans/P5-12.md`. Apoi P5-13 (semnături + certificate; mare, se poate împărți),
-apoi P5-06 (TLS 1.3 client). Valorile așteptate ale vectorilor: verifică-le și cu Python (`cryptography`/OpenSSL e
-instalat pe gazdă) — o valoare scrisă din memorie a fost greșită la P5-11.
+**P5-06** — HTTPS de bază (client TLS 1.3). Plan: `docs/plans/P5-06.md`. E mare: propunerea mea e să o împarți la început
+(ex. 1) programarea cheilor + înregistrările criptate, verificate cu RFC 8448; 2) strângerea de mână cu un server Python
+`ssl` pe gazdă, suita TLS_CHACHA20_POLY1305_SHA256 + X25519; 3) `fetch https://…` + certificat greșit refuzat).
+Atenție: programele n-au heap și au stiva de 64 KiB — bufferele TLS (înregistrări de 16 KiB, certificate) trebuie să fie
+`static mut`; verificarea RSA folosește ~3 KiB de stivă. Funcțiile utile: `x509::verify_chain`, `x509::verify_signature`
+(și pentru CertificateVerify), `aead::seal/open`, `hkdf::expand_label`, `x25519`.
 Când Adrian trimite rezultatele de pe stick (B-001): P3-09, apoi P3-10. Suita office gata (B-003): P5-07, P5-08.
 
 ## Mediu (verificat la P0-01, sesiune cloud)
@@ -68,6 +65,9 @@ Când Adrian trimite rezultatele de pe stick (B-001): P3-09, apoi P3-10. Suita o
   (`dns`: server DNS 15353; `tcp`: server web 18080; `appnet`: amândouă + ecou UDP 15354). Nucleul le vede la 10.0.2.2.
 - Criptografia e în crate-ul `crypto/` (fără dependențe); nucleul îl ia doar cu feature-ul `test-crypto`. Vectorii noi
   se adaugă în `crypto/src/vectors.rs` și se actualizează numărul din scenariul `crypto`.
+- Valorile așteptate ale vectorilor se verifică mereu cu Python `cryptography` (OpenSSL) înainte să fie scrise în cod.
+  Certificatele de test: `crypto/src/testcerts/` (scriptul `make.py`); OpenSSL face uneori chei RSA cu un bit mai puțin
+  decât s-a cerut (2049 → 2048), deci verifică lungimea reală.
 - Cârlige de test pentru pierderi TCP: `tcp::DROP_NEXT_SEND`, `tcp::DROP_RECV_AFTER` (doar în build-ul de test).
 - **`tools/test.sh --no-build` nu construiește imaginile de test** — folosește-l doar după o rulare completă.
 - **Atenție: la 17:41 UTC a pornit o ALTĂ sesiune programată în paralel** (a marcat P5-02 „în lucru” în timp ce
