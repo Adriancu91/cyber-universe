@@ -13,7 +13,9 @@ mod drivers;
 mod gfx;
 mod log;
 mod mem;
+mod proc;
 mod sched;
+mod syscall;
 #[cfg(feature = "qemu-test")]
 mod qemu;
 #[cfg(feature = "qemu-test")]
@@ -166,6 +168,7 @@ fn run_tests() -> ! {
     test_preemption();
     test_sleep_and_mutex();
     test_address_spaces();
+    test_user_mode();
 
     #[cfg(feature = "test-keyboard")]
     test_keyboard();
@@ -472,6 +475,63 @@ fn test_address_spaces() {
     let free_after = mem::frame::free_frames();
     assert!(free_after == free_before, "cadre pierdute: {} inainte, {} dupa", free_before, free_after);
     info!("test: spatii de adrese separate OK (A vede 0xaaaa, B vede 0xbbbb, cadre eliberate)");
+}
+
+// Two tiny ring-3 test programs (position-independent machine code, copied into a process).
+#[cfg(feature = "qemu-test")]
+core::arch::global_asm!(
+    ".pushsection .rodata.usertest, \"a\"",
+    ".global user_hello_start", ".global user_hello_end",
+    ".global user_fault_start", ".global user_fault_end",
+    // write(1, msg, 17); exit(7)
+    "user_hello_start:",
+    "mov eax, 1", "mov edi, 1", "lea rsi, [rip + 2f]", "mov edx, 17", "syscall",
+    "mov eax, 0", "mov edi, 7", "syscall",
+    "ud2",
+    "2: .ascii \"salut din ring 3\\n\"",
+    "user_hello_end:",
+    // a bad pointer to write (kernel memory), then a read of kernel memory: must stop only this program
+    "user_fault_start:",
+    "mov eax, 1", "mov edi, 1", "movabs rsi, 0xffffffff80000000", "mov edx, 8", "syscall",
+    "cmp rax, -2", "je 3f", "mov eax, 0", "mov edi, 99", "syscall", // not refused with E_FAULT: exit(99)
+    "3: movabs rax, 0xffffffff80000000", "mov rax, [rax]",
+    "ud2",
+    "user_fault_end:",
+    ".popsection",
+);
+
+/// Runs the ring-3 test programs: one prints through `write` and exits with 7; the other passes a kernel
+/// pointer to `write` (must be refused with E_FAULT, else it exits with 99) and then reads kernel memory (stopped by a page fault, kernel unharmed).
+#[cfg(feature = "qemu-test")]
+fn test_user_mode() {
+    unsafe extern "C" {
+        static user_hello_start: u8;
+        static user_hello_end: u8;
+        static user_fault_start: u8;
+        static user_fault_end: u8;
+    }
+    fn blob(start: *const u8, end: *const u8) -> &'static [u8] {
+        // SAFETY: both symbols delimit one block of bytes in .rodata, defined above.
+        unsafe { core::slice::from_raw_parts(start, end as usize - start as usize) }
+    }
+    let hello = blob(core::ptr::addr_of!(user_hello_start), core::ptr::addr_of!(user_hello_end));
+    let fault = blob(core::ptr::addr_of!(user_fault_start), core::ptr::addr_of!(user_fault_end));
+    let free_before = mem::frame::free_frames();
+
+    let id = proc::spawn_flat(hello).expect("test: nu pot porni programul");
+    let code = proc::wait(id);
+    assert!(code == 7, "programul a iesit cu {} in loc de 7", code);
+
+    let id = proc::spawn_flat(fault).expect("test: nu pot porni programul");
+    let code = proc::wait(id);
+    assert!(code == -1, "programul cu eroare a iesit cu {} in loc de -1", code);
+
+    while sched::alive() > 1 {
+        sched::sleep_ms(10); // let the exited threads be reaped
+    }
+    let free_after = mem::frame::free_frames();
+    assert!(free_after == free_before, "cadre pierdute dupa procese: {} inainte, {} dupa", free_before, free_after);
+    info!("test: mod utilizator OK (cod 7; programul cu eroare oprit, nucleul continua)");
 }
 
 /// Waits for the keys the test harness types (h, i, Enter) and logs them.

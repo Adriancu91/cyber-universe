@@ -65,7 +65,8 @@ un program separat care citește un fișier. Fiecare sarcină are plan în `docs
   Test: scenariul `log` — `sleep_ms(500) = 50 ticks; mutex: 4 fire x 10000 = 40000`; `keyboard` așteaptă tastele dormind.
 - [x] **P2-04** Spații de adrese separate pentru procese. Dep: P1-13, P2-01.
   Test: scenariul `log` — `test: spatii de adrese separate OK`.
-- [ ] **P2-05** Mod utilizator (ring 3) + apeluri de sistem (`syscall`): `write`, `exit`, `yield`, `sleep_ms`. Dep: P2-02, P2-04.
+- [x] **P2-05** Mod utilizator (ring 3) + apeluri de sistem (`syscall`): `write`, `exit`, `yield`, `sleep_ms`. Dep: P2-02, P2-04.
+  Test: scenariul `log` — `salut din ring 3`, cod 7; programul cu eroare e oprit, nucleul continuă.
 - [ ] **P2-06** Încărcarea programelor ELF64 (programe în `user/`, puse în ISO). Dep: P2-05.
 - [ ] **P2-07** VFS + ramfs, fișiere inițiale dintr-o arhivă `tar` (initrd). Dep: P1-07.
 - [ ] **P2-08** Apeluri de sistem pentru fișiere (`open`/`read`/`close`) + pornirea programelor din ramfs. Dep: P2-06, P2-07.

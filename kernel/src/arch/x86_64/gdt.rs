@@ -10,9 +10,7 @@ use core::mem::size_of;
 
 pub const KERNEL_CODE: u16 = 0x08;
 pub const KERNEL_DATA: u16 = 0x10;
-#[allow(dead_code)] // used from Phase 2 (user mode)
 pub const USER_DATA: u16 = 0x18 | 3;
-#[allow(dead_code)] // used from Phase 2 (user mode)
 pub const USER_CODE: u16 = 0x20 | 3;
 pub const TSS_SELECTOR: u16 = 0x28;
 
@@ -109,6 +107,13 @@ pub fn init() {
 
         asm!("ltr {:x}", in(reg) TSS_SELECTOR, options(nostack, preserves_flags));
     }
+}
+
+/// Sets the stack the CPU switches to when an interrupt or exception arrives in ring 3 (TSS.RSP0).
+pub fn set_privilege_stack(top: u64) {
+    // SAFETY: a single aligned-enough 64-bit store into the TSS; the CPU reads RSP0 only on a ring change,
+    // and this runs with interrupts disabled (scheduler switch).
+    unsafe { core::ptr::addr_of_mut!(TSS.privilege_stacks).cast::<u64>().write_unaligned(top) }
 }
 
 /// Current code segment selector.

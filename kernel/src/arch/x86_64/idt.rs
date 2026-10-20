@@ -106,6 +106,11 @@ pub fn set_handler(vector: u8, handler: u64) {
 
 /// Logs a fatal exception and stops the kernel (or reports failure to QEMU in test builds).
 fn fatal(name: &str, frame: &InterruptStackFrame, code: Option<u64>) -> ! {
+    if frame.cs & 3 == 3 {
+        // The fault happened in a user program: only that program stops; the kernel goes on.
+        crate::error!("proces oprit: {} la RIP={:#x}", name, frame.rip);
+        crate::syscall::exit_current(-1);
+    }
     crate::drivers::serial::force_unlock();
     crate::gfx::console::force_unlock();
     crate::error!("EXCEPTIE: {}", name);

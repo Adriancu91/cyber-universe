@@ -32,6 +32,14 @@ impl<T> Mutex<T> {
         });
         MutexGuard { mutex: self }
     }
+
+    /// Takes the lock only if it is free right now (never sleeps).
+    pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
+        self.locked
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+            .then_some(MutexGuard { mutex: self })
+    }
 }
 
 impl<T> Deref for MutexGuard<'_, T> {

@@ -3,6 +3,7 @@
 pub mod apic;
 pub mod gdt;
 pub mod idt;
+pub mod syscall;
 
 use core::arch::asm;
 
@@ -10,6 +11,7 @@ use core::arch::asm;
 pub fn init() {
     gdt::init();
     idt::init();
+    syscall::init();
 }
 
 /// Writes one byte to an I/O port.

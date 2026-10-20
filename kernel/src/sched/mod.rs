@@ -36,6 +36,8 @@ struct Thread {
     wake_at: u64,
     /// PML4 the thread runs with (0 = the kernel's own tables).
     root: u64,
+    /// Top of the thread's kernel stack (0 for the boot thread): where ring 3 enters the kernel.
+    kstack_top: u64,
     /// The thread's stack; `None` for the boot thread, which runs on the kernel's boot stack.
     _stack: Option<Box<[u8]>>,
 }
@@ -95,7 +97,7 @@ pub fn init() {
         s.ready.reserve(16);
         s.blocked.reserve(16);
         s.zombies.reserve(16);
-        s.current = Some(Box::new(Thread { id: 0, state: State::Ready, rsp: 0, wait_key: 0, wake_at: 0, root: 0, _stack: None }));
+        s.current = Some(Box::new(Thread { id: 0, state: State::Ready, rsp: 0, wait_key: 0, wake_at: 0, root: 0, kstack_top: 0, _stack: None }));
     });
     let idle = new_thread(IDLE_ID, idle_loop);
     with_sched(|s| s.idle = Some(idle));
@@ -156,7 +158,7 @@ fn new_thread(id: u64, f: fn()) -> Box<Thread> {
     let top = (stack.as_ptr() as u64 + STACK_SIZE as u64) & !15;
     // SAFETY: the 56 bytes below `top` belong to `stack`, which the new thread owns.
     let rsp = unsafe { switch::initial_stack(top, f as *const () as usize) };
-    Box::new(Thread { id, state: State::Ready, rsp, wait_key: 0, wake_at: 0, root: 0, _stack: Some(stack) })
+    Box::new(Thread { id, state: State::Ready, rsp, wait_key: 0, wake_at: 0, root: 0, kstack_top: top, _stack: Some(stack) })
 }
 
 /// The idle thread: sleeps until an interrupt, then lets whoever was woken run.
@@ -238,9 +240,12 @@ pub fn yield_now() {
             State::Ready => s.ready.push_back(prev),
         }
         let next = s.current.as_ref().unwrap();
-        Some((old_rsp, next.rsp, next.root))
+        Some((old_rsp, next.rsp, next.root, next.kstack_top))
     });
-    if let Some((old_rsp, new_rsp, root)) = switch {
+    if let Some((old_rsp, new_rsp, root, kstack_top)) = switch {
+        if kstack_top != 0 {
+            crate::arch::x86_64::syscall::set_kernel_stack(kstack_top);
+        }
         SWITCHES.fetch_add(1, Ordering::Relaxed);
         // SAFETY: every root shares the kernel's upper half, where this code and every kernel stack live.
         unsafe { crate::mem::paging::load(if root == 0 { crate::mem::paging::kernel_root() } else { root }) };

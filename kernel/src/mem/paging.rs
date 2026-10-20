@@ -11,7 +11,6 @@ use core::arch::asm;
 
 pub const PRESENT: u64 = 1 << 0;
 pub const WRITABLE: u64 = 1 << 1;
-#[allow(dead_code)] // used from Phase 2 (user mode)
 pub const USER: u64 = 1 << 2;
 const HUGE: u64 = 1 << 7;
 pub const NO_EXECUTE: u64 = 1 << 63;
@@ -241,4 +240,23 @@ pub fn free_lower_half(root: u64) -> u64 {
     let mut count = 0;
     free_level(root, 4, &mut count);
     count
+}
+
+/// True if `virt` is a 4 KiB page mapped with USER rights at every level (and WRITABLE, if `write`)
+/// in the tables at `root`: the check done before the kernel touches memory a program pointed to.
+pub fn user_accessible(root: u64, virt: u64, write: bool) -> bool {
+    let need = PRESENT | USER | if write { WRITABLE } else { 0 };
+    let idx = indices(virt);
+    let mut t = table(root);
+    for (level, &i) in idx.iter().enumerate() {
+        let e = t[i];
+        if e & need != need || (level < 3 && e & HUGE != 0) {
+            return false;
+        }
+        if level == 3 {
+            return true;
+        }
+        t = table(e & ADDR_MASK);
+    }
+    false
 }
