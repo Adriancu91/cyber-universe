@@ -1,5 +1,7 @@
 //! Stability test (P1-11): allocates/frees heap memory and maps/unmaps pages in a loop while the
 //! timer interrupts the work, for a duration measured by the kernel's own clock.
+//! Once a second it also starts a user process (`/bin/cat` without arguments) and waits for it, so
+//! address spaces, ELF loading and process exit are stressed too (P2-11).
 //! Every 10 seconds it logs a summary; at the end it checks that no frames and no heap bytes leaked.
 
 use alloc::{boxed::Box, vec::Vec};
@@ -67,31 +69,51 @@ fn round(rng: &mut Rng) {
     }
 }
 
+/// Starts `/bin/cat` (no arguments: prints nothing, exits with 0) and waits for it.
+fn run_process() {
+    let id = crate::proc::spawn_path("/bin/cat", &["cat"]).expect("stres: /bin/cat nu porneste");
+    let code = crate::proc::wait(id);
+    assert!(code == 0, "stres: procesul a iesit cu {}", code);
+    // Let the scheduler free the exited thread's stack before memory is compared.
+    while crate::sched::alive() > 1 {
+        crate::sched::yield_now();
+    }
+}
+
 /// Runs the stability test; panics (test failure) on any inconsistency or leak.
 pub fn run() {
     let mut rng = Rng(0xC1BE_2026_0000_0001);
-    // Warm-up: lets the heap and the page tables for VIRT_BASE reach their working size once,
-    // so the baseline below does not count them as a leak.
+    // Warm-up: lets the heap, the process tables and the page tables for VIRT_BASE reach their
+    // working size once, so the baseline below does not count them as a leak.
     round(&mut rng);
+    run_process();
     let frames_start = mem::frame::free_frames();
     let (heap_start, _) = mem::heap::stats();
     let t0 = apic::ticks();
     let end = t0 + DURATION_S * apic::HZ;
     let mut next_report = t0 + REPORT_EVERY_S * apic::HZ;
     let mut rounds: u64 = 0;
+    let mut processes: u64 = 0;
+    let mut next_process = t0 + apic::HZ;
     let mut last_ticks = t0;
     crate::info!("stres: pornit pentru {} s; cadre libere {}, heap folosit {} B", DURATION_S, frames_start, heap_start);
 
     loop {
         round(&mut rng);
         rounds += 1;
+        if apic::ticks() >= next_process {
+            run_process();
+            processes += 1;
+            next_process += apic::HZ;
+        }
         let now = apic::ticks();
         if now >= next_report {
             let (heap_used, heap_mapped) = mem::heap::stats();
             crate::info!(
-                "stres: {} s, {} runde, {} intreruperi ceas (+{}), cadre libere {}, heap {} B / {} KiB",
+                "stres: {} s, {} runde, {} procese, {} intreruperi ceas (+{}), cadre libere {}, heap {} B / {} KiB",
                 (now - t0) / apic::HZ,
                 rounds,
+                processes,
                 now - t0,
                 now - last_ticks,
                 mem::frame::free_frames(),
@@ -110,6 +132,6 @@ pub fn run() {
     let (heap_end, _) = mem::heap::stats();
     assert!(frames_end == frames_start, "stres: scurgere de cadre: {} la inceput, {} la final", frames_start, frames_end);
     assert!(heap_end == heap_start, "stres: scurgere in heap: {} B la inceput, {} B la final", heap_start, heap_end);
-    crate::info!("stres: {} runde in {} s, cadre si heap identice la final", rounds, DURATION_S);
+    crate::info!("stres: {} runde si {} procese in {} s, cadre si heap identice la final", rounds, processes, DURATION_S);
     crate::serial_println!("STRESS OK");
 }

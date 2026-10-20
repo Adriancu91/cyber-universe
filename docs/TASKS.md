@@ -77,9 +77,27 @@ un program separat care citește un fișier. Fiecare sarcină are plan în `docs
   Test: scenariul `shell` (taste trimise prin QEMU: help, ls, mem, run cat, comandă greșită, uptime).
 - [x] **P2-10** Citire FAT32 (doar citire) peste o interfață de disc; imagine de test în memorie. Dep: P2-07.
   Test: scenariul `log` — `test: FAT32 OK` (GPT și MBR, nume lungi, 100 KiB cu suma corectă); `shell` face `ls /disk`.
-- [~] **P2-11** Închiderea Fazei 2: test complet, stabilitate extinsă, măsurători, generarea sarcinilor Fazei 3. Dep: P2-09, P2-10.
+- [x] **P2-11** Închiderea Fazei 2: test complet, stabilitate extinsă, măsurători, generarea sarcinilor Fazei 3. Dep: P2-09, P2-10.
+  Test: scenariul `phase2` (shell → `run cat /disk/salut.txt`), stres 5 min cu 300 de procese, rând nou în METRICS.md, sarcinile P3 generate.
 
-## Faza 3 și următoarele
+## Faza 3 — Hardware real
 
-Sarcinile se generează de Claude Code din `ROADMAP.md` la închiderea fazei anterioare (P2-11),
-în același format, cu ID-uri `P3-xx`, `P4-xx` etc.
+Scop (ROADMAP): pornire de pe stick USB pe calculatoare reale. Gata când: pornește de pe stick pe cel puțin
+2 calculatoare reale și citește un fișier de pe disc. Toate driverele se testează întâi în QEMU (care emulează
+AHCI, NVMe, XHCI, e1000). Fiecare sarcină are plan în `docs/plans/`.
+
+- [ ] **P3-01** PCI: enumerarea dispozitivelor (ECAM din ACPI MCFG), comanda `lspci`. Dep: P2-11.
+- [ ] **P3-02** Driver AHCI (SATA), doar citire; `/disk` de pe disc real. Dep: P3-01.
+- [ ] **P3-03** Driver NVMe, doar citire. Dep: P3-01.
+- [ ] **P3-04** Imagine pentru stick USB (`tools/build.sh --usb`) + ghid `docs/USB.md`. Dep: P2-11.
+- [ ] **P3-05** Controler USB XHCI: pornire și enumerarea dispozitivelor, `lsusb`. Dep: P3-01.
+- [ ] **P3-06** Tastatură USB (HID boot protocol). Dep: P3-05.
+- [ ] **P3-07** Stick USB (Mass Storage, Bulk-Only + SCSI) ca dispozitiv de blocuri, montat la `/usb`. Dep: P3-05.
+- [ ] **P3-08** Placă de rețea Intel e1000/e1000e: cadre Ethernet, test ARP. Dep: P3-01.
+- [ ] **P3-09** Test pe calculatoare reale (ThinkPad L15 Gen 2 + încă unul), `docs/HARDWARE.md`. **Are nevoie de Adrian.** Dep: P3-02, P3-03, P3-04, P3-06.
+- [ ] **P3-10** Închiderea Fazei 3: măsurători, generarea sarcinilor Fazei 4. Dep: P3-09.
+
+## Faza 4 și următoarele
+
+Sarcinile se generează de Claude Code din `ROADMAP.md` la închiderea fazei anterioare (P3-10),
+în același format, cu ID-uri `P4-xx`, `P5-xx` etc.

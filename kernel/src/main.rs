@@ -163,6 +163,7 @@ fn run_tests() -> ! {
     test_address_spaces();
     test_user_mode();
     test_files();
+    #[cfg(feature = "test-disk")]
     test_fat32();
     test_elf();
     test_user_files();
@@ -566,10 +567,10 @@ fn test_files() {
     info!("test: ramfs OK (/etc/motd citit; creare, scriere, citire, stergere; erori: {})", FsError::NotFound.message());
 }
 
-/// The test disk (GPT + FAT32, built by tools/build.sh) is mounted at /disk: long names, a sub-directory,
+/// The test disk (GPT + FAT32, built by tools/build.sh with `test-disk`) is mounted at /disk: long names, a sub-directory,
 /// a 100 KiB file over many clusters whose checksum matches the one computed at build time, read-only.
 /// The same partition is then found through an MBR (the disk seen with a different sector 0).
-#[cfg(feature = "qemu-test")]
+#[cfg(feature = "test-disk")]
 fn test_fat32() {
     use fs::{FsError, Kind};
     let list = fs::list("/disk").expect("test: /disk lipseste");
