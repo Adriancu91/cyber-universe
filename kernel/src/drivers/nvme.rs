@@ -43,7 +43,6 @@ struct Controller {
 pub struct NvmeDisk {
     ctrl: crate::sched::Mutex<Controller>,
     sectors: u64,
-    pub model: alloc::string::String,
 }
 
 fn rd32(a: u64) -> u32 {
@@ -213,5 +212,5 @@ pub fn init() -> Option<NvmeDisk> {
     ctrl.run(false, ADMIN_CREATE_CQ, 0, cq, [size << 16 | 1, 1, 0, 0, 0, 0]).ok()?;
     ctrl.run(false, ADMIN_CREATE_SQ, 0, sq, [size << 16 | 1, 1 << 16 | 1, 0, 0, 0, 0]).ok()?;
     crate::info!("nvme: disc {} ({} MiB)", model, sectors / 2048);
-    Some(NvmeDisk { ctrl: crate::sched::Mutex::new(ctrl), sectors, model })
+    Some(NvmeDisk { ctrl: crate::sched::Mutex::new(ctrl), sectors })
 }
