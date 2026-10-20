@@ -30,6 +30,7 @@ pub fn run() {
             "ls" => ls(args.first().copied().unwrap_or("/")),
             "cat" => cat(args),
             "run" => run_program(args),
+            "desktop" => run_program(&["desktop"]),
             "mem" => mem(),
             "lspci" => lspci(),
             "lsusb" => lsusb(),
@@ -72,6 +73,7 @@ fn help() {
     out!("  ls [director]    continutul unui director (implicit /)\n");
     out!("  cat <fisier>...  afiseaza fisiere\n");
     out!("  run <program> [argumente]  porneste un program (din /bin daca nu dai calea)\n");
+    out!("  desktop          porneste desktopul (Esc il inchide si revine aici)\n");
     out!("  mem              memoria libera si cea folosita\n");
     out!("  lspci            dispozitivele PCI (discuri, USB, retea...)\n");
     out!("  lsusb            dispozitivele USB conectate\n");

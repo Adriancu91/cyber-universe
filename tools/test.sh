@@ -61,7 +61,11 @@ while IFS='|' read -r name features ending expects screenshot qextra; do
     PY=(--iso "$iso" --log "$BUILD/serial-$name.log" --timeout "$TIMEOUT" --expect-exit "$ending")
     IFS=$'\n' read -r -d '' -a lines < <(echo "$expects" | sed 's/;;/\n/g' && printf '\0')
     for l in "${lines[@]}"; do l="$(trim "$l")"; [[ -n "$l" ]] && PY+=(--expect "$l"); done
-    [[ -n "$screenshot" ]] && PY+=(--screenshot "$ROOT/$screenshot")
+    if [[ "$screenshot" == *@* ]]; then   # file@line: take it when the kernel prints that line
+        PY+=(--screenshot "$ROOT/${screenshot%%@*}" --screenshot-when "${screenshot#*@}")
+    elif [[ -n "$screenshot" ]]; then
+        PY+=(--screenshot "$ROOT/$screenshot")
+    fi
     [[ -n "$keys" ]] && PY+=(--keys "$keys")
     [[ -n "$mon" ]] && PY+=(--monitor "$mon")
 

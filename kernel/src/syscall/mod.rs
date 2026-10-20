@@ -16,6 +16,11 @@ pub const SYS_WINDOW_CREATE: u64 = 8;
 pub const SYS_WINDOW_PRESENT: u64 = 9;
 pub const SYS_EVENT_WAIT: u64 = 10;
 pub const SYS_WINDOW_CLOSE: u64 = 11;
+pub const SYS_SPAWN: u64 = 12;
+pub const SYS_WAIT: u64 = 13;
+pub const SYS_LIST: u64 = 14;
+pub const SYS_TIME: u64 = 15;
+pub const SYS_SCREEN_SIZE: u64 = 16;
 
 mod ui;
 
@@ -29,7 +34,7 @@ pub const E_TOO_MANY: i64 = -6; // too many open files
 const PATH_MAX: u64 = 1024;
 
 /// Called from `syscall_entry` with interrupts disabled, on the thread's kernel stack.
-pub extern "C" fn dispatch(nr: u64, a1: u64, a2: u64, _a3: u64, _a4: u64, _a5: u64) -> i64 {
+pub extern "C" fn dispatch(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64, _a5: u64) -> i64 {
     // The kernel may now be interrupted (and preempted) while it serves the call.
     // SAFETY: the IDT and the scheduler are ready long before any program runs.
     unsafe { core::arch::asm!("sti", options(nomem, nostack)) }
@@ -49,9 +54,14 @@ pub extern "C" fn dispatch(nr: u64, a1: u64, a2: u64, _a3: u64, _a4: u64, _a5: u
         SYS_CLOSE => close(a1),
         SYS_STAT => stat(a1, a2),
         SYS_WINDOW_CREATE => ui::window_create(a1, a2, _a3),
-        SYS_WINDOW_PRESENT => ui::window_present(a1, a2, _a3),
-        SYS_EVENT_WAIT => ui::event_wait(a1),
+        SYS_WINDOW_PRESENT => ui::window_present(a1, a2, _a3, a4),
+        SYS_EVENT_WAIT => ui::event_wait(a1, a2),
         SYS_WINDOW_CLOSE => ui::window_close(a1),
+        SYS_SPAWN => spawn(a1, a2),
+        SYS_WAIT => crate::proc::wait_child(a1),
+        SYS_LIST => list(a1, a2, _a3, a4),
+        SYS_TIME => time(),
+        SYS_SCREEN_SIZE => ui::screen_size(),
         _ => E_INVALID,
     }
 }
@@ -186,5 +196,67 @@ fn stat(ptr: u64, len: u64) -> i64 {
         Ok(crate::fs::Kind::Dir) => E_IS_DIR,
         Ok(crate::fs::Kind::File) => crate::fs::size(&path).map(|s| s as i64).unwrap_or_else(fs_error),
         Err(e) => fs_error(e),
+    }
+}
+
+/// spawn(path, length) -> id of the new program (it gets its path as its only argument).
+fn spawn(ptr: u64, len: u64) -> i64 {
+    let path = match user_path(ptr, len) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    match crate::proc::spawn_path(&path, &[&path]) {
+        Ok(id) => id as i64,
+        Err(crate::proc::SpawnError::NotFound(e)) => fs_error(e),
+        Err(_) => E_INVALID,
+    }
+}
+
+/// list(path, length, buf, buf_len): the names in a directory, one per line ('/' after directories),
+/// as many whole lines as fit in `buf`. Returns the number of bytes written.
+fn list(ptr: u64, len: u64, buf: u64, buf_len: u64) -> i64 {
+    let path = match user_path(ptr, len) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if !user_range_ok(buf, buf_len, true) {
+        return E_FAULT;
+    }
+    let entries = match crate::fs::list(&path) {
+        Ok(e) => e,
+        Err(e) => return fs_error(e),
+    };
+    // SAFETY: the range was checked to be writable user memory of this program.
+    let out = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, buf_len as usize) };
+    let mut n = 0;
+    for (name, kind) in entries {
+        let dir = kind == crate::fs::Kind::Dir;
+        let need = name.len() + dir as usize + 1;
+        if n + need > out.len() {
+            break;
+        }
+        out[n..n + name.len()].copy_from_slice(name.as_bytes());
+        n += name.len();
+        if dir {
+            out[n] = b'/';
+            n += 1;
+        }
+        out[n] = b'\n';
+        n += 1;
+    }
+    n as i64
+}
+
+/// time() -> date and time from the computer's clock: year << 40 | month << 32 | day << 24 | hour << 16 |
+/// minute << 8 | second.
+fn time() -> i64 {
+    match crate::drivers::rtc::now() {
+        Some(t) => ((t.year as i64) << 40)
+            | ((t.month as i64) << 32)
+            | ((t.day as i64) << 24)
+            | ((t.hour as i64) << 16)
+            | ((t.minute as i64) << 8)
+            | t.second as i64,
+        None => E_NOT_FOUND,
     }
 }

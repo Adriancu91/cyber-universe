@@ -33,6 +33,23 @@ impl WaitQueue {
         }
     }
 
+    /// Like `wait_until`, but gives up at timer tick `deadline` (0 = never). Returns whether `ready` became true.
+    pub fn wait_until_or(&self, deadline: u64, mut ready: impl FnMut() -> bool) -> bool {
+        loop {
+            let flags = irq_save();
+            if ready() {
+                irq_restore(flags);
+                return true;
+            }
+            if deadline != 0 && apic::ticks() >= deadline {
+                irq_restore(flags);
+                return false;
+            }
+            block_current(self.key(), deadline);
+            irq_restore(flags);
+        }
+    }
+
     /// Wakes the thread that has waited longest. Returns whether there was one.
     pub fn wake_one(&self) -> bool {
         wake(self.key(), 1) > 0

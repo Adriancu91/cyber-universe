@@ -25,6 +25,8 @@ fiecare 10 ms și trezește programele care așteaptă evenimente. Clicurile din
 coada ferestrei (`Event`); ferestrele unui program care iese se închid (`close_owned`, din `proc::on_exit`).
 Apelurile de sistem: `syscall/ui.rs`. Test: scenariul `appwindow`.
 
-**Urmează:** desktopul (P4-06).
+**Desktop (P4-06):** o fereastră de fundal (`create_background`): tot ecranul, fără ramă, mereu sub celelalte, nu se mută;
+clicurile pe ea ajung la programul `desktop`. Când ea rămâne singură, primește tastele (Esc o închide).
+Test: scenariul `desktop` (captura `tests/screens/desktop.png`).
 
 **Inspirație:** design propriu.

@@ -26,3 +26,11 @@ mai ales din cele 256 de tabele de pagini prealocate pentru spațiile de adrese 
 |---|---|---|
 | 2026-10-20 | `tools/test.sh --stress` — 5 minute, alocări + paginare continue, ceas 100 Hz | trecut: 2.231.660 runde, 30.000 întreruperi de ceas, 0 cadre și 0 octeți de heap pierduți |
 | 2026-10-20 | `tools/test.sh --stress` (Faza 2) — în plus, un proces nou pornit și oprit în fiecare secundă, preempțiune activă | trecut: 1.894.934 runde, 300 de procese, 0 cadre și 0 octeți de heap pierduți |
+
+## Desktop (P4-06)
+| Data | Ce | Rezultat |
+|---|---|---|
+| 2026-10-20 | memoria totală folosită cu desktopul pornit (scenariul `desktop`, ecran 1280×800, QEMU) | **10 MiB** (țintă: sub 32 MiB). Heap ~8 MiB, din care ~4 MiB imaginea ecranului din serverul grafic și ~4 MiB imaginea ferestrei desktopului; programul `desktop` are ~26 KiB pe disc și ~700 KiB în memorie (imaginile barei și ale meniului). |
+
+Unde se poate câștiga mai târziu, dacă e nevoie: fereastra desktopului nu are nevoie de o imagine proprie cât tot ecranul
+(fundalul e o singură culoare) — ar economisi ~4 MiB la 1280×800.

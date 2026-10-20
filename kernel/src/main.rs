@@ -108,6 +108,10 @@ extern "C" fn kernel_main() -> ! {
     if has_acpi {
         pci::init();
     }
+    match drivers::rtc::now() {
+        Some(t) => info!("rtc: {:04}-{:02}-{:02} {:02}:{:02}:{:02}", t.year, t.month, t.day, t.hour, t.minute, t.second),
+        None => warn!("rtc: ceasul calculatorului nu raspunde"),
+    }
     boot::collect_files();
     fs::init();
     if time::uptime_ms().is_some() {
@@ -212,6 +216,9 @@ fn run_tests() -> ! {
 
     #[cfg(feature = "test-appwindow")]
     test_appwindow();
+
+    #[cfg(feature = "test-desktop")]
+    test_desktop();
 
     #[cfg(feature = "test-shell")]
     {
@@ -929,6 +936,55 @@ fn test_appwindow() {
     }
     println!("Consola a revenit dupa fereastra programului.");
     info!("test: ferestre pentru programe OK (fereastra prin apeluri de sistem, clic, tasta, inchidere la iesire)");
+}
+
+/// The desktop program: its bar appears; the harness clicks Start with the mouse; the menu opens; a
+/// (simulated) click on `demo` starts it; `q` closes it; a screenshot is taken; Escape closes the desktop.
+#[cfg(feature = "test-desktop")]
+fn test_desktop() {
+    use drivers::keyboard::{Key, push_key};
+    use input::{MouseEvent, push_mouse};
+    const BAR: u32 = 0x0D1520;
+    const START: u32 = 0x2070C0;
+    const MENU: u32 = 0x24303C;
+    let screen = |x: usize, y: usize| gfx::console::with_console(|c| c.as_mut().and_then(|c| c.framebuffer().pixel(x, y)));
+    let wait_for = |what: &str, ok: &dyn Fn() -> bool| {
+        let deadline = arch::x86_64::apic::ticks() + 10 * arch::x86_64::apic::HZ;
+        while !ok() {
+            assert!(arch::x86_64::apic::ticks() < deadline, "test desktop: {}", what);
+            sched::sleep_ms(10);
+        }
+    };
+    let used_before = mem::frame::used_frames();
+    let id = proc::spawn_path("/bin/desktop", &["desktop"]).expect("test: /bin/desktop nu porneste");
+    let (_, h) = ui::screen_size().expect("test: fara ecran");
+    wait_for("bara de jos nu apare", &|| screen(2, h - 2) == Some(BAR) && screen(10, h - 16) == Some(START));
+    let (heap_used, heap_mapped) = mem::heap::stats();
+    info!(
+        "metrici: desktop pornit: +{} KiB memorie (program + server grafic); heap {} / {} KiB; total folosit {} MiB",
+        (mem::frame::used_frames() - used_before) * mem::map::PAGE_SIZE / 1024,
+        heap_used / 1024,
+        heap_mapped / 1024,
+        mem::frame::used_frames() * mem::map::PAGE_SIZE / (1024 * 1024)
+    );
+    serial_println!("TASTATURA: astept taste"); // the harness moves the mouse onto Start and clicks
+    wait_for("meniul nu se deschide", &|| screen(150, h - 32 - 6) == Some(MENU));
+    // Menu items from the top: cat, demo, hello; `demo` is the second (24 pixels each).
+    push_mouse(MouseEvent { dx: 4, dy: -56, buttons: 0 });
+    push_mouse(MouseEvent { dx: 0, dy: 0, buttons: 1 });
+    push_mouse(MouseEvent { dx: 0, dy: 0, buttons: 0 });
+    let demo_up = || ui::top_window().is_some_and(|(o, (x, y))| o != id && screen(x + 30, y + 30) == Some(0xE03030));
+    wait_for("programul demo nu porneste din meniu", &demo_up);
+    assert!(screen(150, h - 32 - 6) != Some(MENU), "meniul a ramas deschis");
+    push_key(Key::Char('q'));
+    wait_for("demo nu se inchide", &|| ui::top_window().is_some_and(|(o, _)| o == id));
+    sched::sleep_ms(100);
+    serial_println!("DESKTOP: captura");
+    sched::sleep_ms(1500); // the harness saves the screen now
+    push_key(Key::Escape);
+    assert!(proc::wait(id) == 0, "desktopul nu a iesit cu 0");
+    wait_for("serverul grafic nu se opreste", &|| !ui::running());
+    info!("test: desktop OK (bara, ceas, meniu Start cu mouse-ul, pornire program din meniu, Esc)");
 }
 
 /// Waits for the keys the test harness types (h, i, Enter) and logs them.

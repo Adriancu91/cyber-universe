@@ -17,6 +17,11 @@ pub const SYS_WINDOW_CREATE: u64 = 8;
 pub const SYS_WINDOW_PRESENT: u64 = 9;
 pub const SYS_EVENT_WAIT: u64 = 10;
 pub const SYS_WINDOW_CLOSE: u64 = 11;
+pub const SYS_SPAWN: u64 = 12;
+pub const SYS_WAIT: u64 = 13;
+pub const SYS_LIST: u64 = 14;
+pub const SYS_TIME: u64 = 15;
+pub const SYS_SCREEN_SIZE: u64 = 16;
 
 pub mod gfx;
 
@@ -47,6 +52,61 @@ pub fn syscall3(nr: u64, a1: u64, a2: u64, a3: u64) -> i64 {
              lateout("rcx") _, lateout("r11") _, options(nostack))
     }
     ret
+}
+
+/// Raw system call with four arguments (the fourth goes in r10).
+#[inline(always)]
+pub fn syscall4(nr: u64, a1: u64, a2: u64, a3: u64, a4: u64) -> i64 {
+    let ret: i64;
+    // SAFETY: as in `syscall3`.
+    unsafe {
+        asm!("syscall", inlateout("rax") nr as i64 => ret, in("rdi") a1, in("rsi") a2, in("rdx") a3, in("r10") a4,
+             lateout("rcx") _, lateout("r11") _, options(nostack))
+    }
+    ret
+}
+
+/// Starts the program at `path`. Returns its id or a negative error.
+pub fn spawn(path: &str) -> i64 {
+    syscall3(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, 0)
+}
+
+/// Waits for the program `id` to end and returns its exit code (negative error if there is no such program).
+pub fn wait(id: i64) -> i64 {
+    syscall3(SYS_WAIT, id as u64, 0, 0)
+}
+
+/// Writes the names in directory `path` into `buf`, one per line ('/' after directories).
+/// Returns the bytes written or a negative error.
+pub fn list(path: &str, buf: &mut [u8]) -> i64 {
+    syscall4(SYS_LIST, path.as_ptr() as u64, path.len() as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
+}
+
+/// Date and time from the computer's clock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DateTime {
+    pub year: u16,
+    pub month: u8,
+    pub day: u8,
+    pub hour: u8,
+    pub minute: u8,
+    pub second: u8,
+}
+
+/// The current date and time, if the computer has a clock.
+pub fn time() -> Option<DateTime> {
+    let r = syscall3(SYS_TIME, 0, 0, 0);
+    if r < 0 {
+        return None;
+    }
+    let b = |shift: u32| (r >> shift) as u8;
+    Some(DateTime { year: (r >> 40) as u16, month: b(32), day: b(24), hour: b(16), minute: b(8), second: b(0) })
+}
+
+/// Width and height of the screen in pixels.
+pub fn screen_size() -> Option<(usize, usize)> {
+    let r = syscall3(SYS_SCREEN_SIZE, 0, 0, 0);
+    (r > 0).then(|| ((r as u64 & 0xFFFF_FFFF) as usize, (r as u64 >> 32) as usize))
 }
 
 /// Ends the program with `code`.

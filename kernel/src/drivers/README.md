@@ -9,6 +9,10 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
 
 - `mouse.rs` — mouse PS/2 pe portul 2 al controlerului 8042 (IRQ 12), pachete de 3 octeți → `input::MouseEvent` (P4-01).
   Pornirea se face cu întreruperile oprite (altfel răspunsurile controlerului ar fi luate de handler-ul tastaturii).
+- `rtc.rs` — ceasul calculatorului (CMOS, compatibil MC146818, P4-06): data și ora, citite de două ori până coincid
+  (o actualizare la mijloc nu le poate amesteca), BCD sau binar, 12 sau 24 de ore. La pornire: `rtc: AAAA-LL-ZZ hh:mm:ss`
+  în jurnal (scenariul `log`); programele o citesc cu apelul `time` (ceasul desktopului). Ora e cea ținută de calculator
+  (de obicei ora locală sub Windows, UTC sub Linux; în QEMU: UTC).
 - `ahci.rs` — discuri SATA prin controlerul AHCI (P3-02), doar citire, o comandă odată (cu așteptare activă):
   preia controlerul de la firmware, pornește primul port cu disc, `IDENTIFY` (model, mărime), `READ DMA EXT` în bucăți de 4 KiB.
   Implementează `block::BlockDevice`; discul dă `/disk` (prima partiție FAT32).

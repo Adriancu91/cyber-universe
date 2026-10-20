@@ -51,23 +51,31 @@ pub struct Window {
     events: VecDeque<Event>,
     /// Thread of the program that opened the window (0 = the kernel).
     pub owner: u64,
+    /// The desktop: covers the screen, no frame, always below the other windows.
+    pub background: bool,
 }
 
 impl Window {
     /// Frame, title bar and contents together, on the screen.
     pub fn outer(&self) -> Rect {
+        if self.background {
+            return Rect::new(self.x, self.y, self.client.width, self.client.height);
+        }
         Rect::new(self.x, self.y, self.client.width + 2 * BORDER, self.client.height + TITLE_H + BORDER)
     }
 
     pub fn client_origin(&self) -> (usize, usize) {
-        (self.x + BORDER, self.y + TITLE_H)
+        if self.background { (self.x, self.y) } else { (self.x + BORDER, self.y + TITLE_H) }
     }
 
     fn title_bar(&self) -> Rect {
-        Rect::new(self.x, self.y, self.outer().w, TITLE_H)
+        Rect::new(self.x, self.y, if self.background { 0 } else { self.outer().w }, TITLE_H)
     }
 
     fn close_button(&self) -> Rect {
+        if self.background {
+            return Rect::new(0, 0, 0, 0);
+        }
         let o = self.outer();
         Rect::new(o.x + o.w - CLOSE - 3, o.y + (TITLE_H - CLOSE) / 2, CLOSE, CLOSE)
     }
@@ -136,10 +144,25 @@ impl Server {
         if let Some(top) = self.windows.last() {
             self.add_damage(top.title_bar()); // loses the focus color
         }
-        let win = Window { id, x, y, title: String::from(title), client: Canvas::new(w, h, CLIENT_BG), events: VecDeque::new(), owner };
+        let win = Window { id, x, y, title: String::from(title), client: Canvas::new(w, h, CLIENT_BG), events: VecDeque::new(), owner, background: false };
         self.add_damage(win.outer());
         self.windows.push(win);
         id
+    }
+
+    /// Opens the desktop window for the program on thread `owner`: the whole screen, below every other
+    /// window. `None` if there is one already.
+    pub fn create_background(&mut self, owner: u64) -> Option<WindowId> {
+        if self.windows.iter().any(|w| w.background) {
+            return None;
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        let (w, h) = (self.screen.width, self.screen.height);
+        let win = Window { id, x: 0, y: 0, title: String::new(), client: Canvas::new(w, h, DESKTOP), events: VecDeque::new(), owner, background: true };
+        self.add_damage(win.outer());
+        self.windows.insert(0, win);
+        Some(id)
     }
 
     pub fn close(&mut self, id: WindowId) {
@@ -196,8 +219,8 @@ impl Server {
         self.buttons = e.buttons;
         let (cx, cy) = self.cursor;
         if pressed {
-            if let Some(i) = self.windows.iter().rposition(|w| w.outer().contains(cx, cy)) {
-                if i + 1 != self.windows.len() {
+            if let Some(mut i) = self.windows.iter().rposition(|w| w.outer().contains(cx, cy)) {
+                if i + 1 != self.windows.len() && !self.windows[i].background {
                     let previous = self.windows.last().map(|w| w.title_bar());
                     let win = self.windows.remove(i);
                     self.add_damage(win.outer());
@@ -205,8 +228,9 @@ impl Server {
                     if let Some(r) = previous {
                         self.add_damage(r);
                     }
+                    i = self.windows.len() - 1;
                 }
-                let top = self.windows.last_mut().unwrap();
+                let top = &mut self.windows[i];
                 let id = top.id;
                 let (ox, oy) = top.client_origin();
                 if top.close_button().contains(cx, cy) {
@@ -287,6 +311,10 @@ impl Server {
         for (i, w) in self.windows.iter().enumerate() {
             let o = w.outer();
             if o.intersect(area).is_none() {
+                continue;
+            }
+            if w.background {
+                s.copy(o.x, o.y, o.w, o.h, w.client.pixels());
                 continue;
             }
             s.outline(o, BORDER, FRAME);

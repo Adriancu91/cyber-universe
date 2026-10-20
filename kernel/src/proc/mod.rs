@@ -179,12 +179,26 @@ pub fn add_file(file: OpenFile) -> Option<usize> {
 pub fn on_exit(id: u64, code: i64) {
     let process = {
         let mut procs = PROCS.lock();
+        // Recorded while PROCS is held, so `wait_child` always finds the program in one of the lists.
+        EXITED.lock().push((id, code));
         procs.iter().position(|p| p.thread == id).map(|i| procs.swap_remove(i))
     };
     drop(process); // switches to the kernel's tables first if they were in use (see AddressSpace::drop)
     crate::ui::close_owned(id);
-    EXITED.lock().push((id, code));
     EXIT_WAIT.wake_all();
+}
+
+/// `wait` for a program asking through a system call: only for programs that are running or have
+/// ended and not been collected yet (anything else would wait forever).
+pub fn wait_child(id: u64) -> i64 {
+    let known = {
+        let procs = PROCS.lock();
+        procs.iter().any(|p| p.thread == id) || EXITED.lock().iter().any(|&(t, _)| t == id)
+    };
+    if !known {
+        return crate::syscall::E_NOT_FOUND;
+    }
+    wait(id)
 }
 
 /// Waits until the program on thread `id` ends and returns its exit code.

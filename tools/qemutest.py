@@ -69,6 +69,7 @@ def main():
     ap.add_argument("--expect", action="append", default=[], help="text that must appear on serial (in order)")
     ap.add_argument("--timeout", type=float, default=60)
     ap.add_argument("--screenshot", help="save a PNG of the screen at TEST READY and check it is not blank")
+    ap.add_argument("--screenshot-when", help="take the screenshot when the kernel prints this line instead")
     ap.add_argument("--log", default="build/serial.log")
     ap.add_argument("--keys", help="QEMU key names to type (space-separated) once the kernel prints --keys-when")
     ap.add_argument("--keys-when", default="TASTATURA: astept taste")
@@ -96,6 +97,7 @@ def main():
     keys_sent = not (a.keys or a.monitor)
     screen_msg = None
     screen_ok = True
+    shot = False
     while time.time() < deadline and proc.poll() is None:
         try:
             chunk = proc.stdout.read(4096)
@@ -115,18 +117,19 @@ def main():
                     s.sendall(f"{c}\n".encode())
                     time.sleep(0.15)
             keys_sent = True
+        if a.screenshot and not shot and (a.screenshot_when or READY) in text:
+            shot = True
+            ppm = os.path.join(tmp, "screen.ppm")
+            with socket.socket(socket.AF_UNIX) as s:
+                s.connect(mon_path)
+                s.sendall(f"screendump {ppm}\n".encode())
+                for _ in range(100):
+                    if os.path.exists(ppm) and os.path.getsize(ppm) > 0:
+                        time.sleep(0.2)
+                        break
+                    time.sleep(0.05)
+            screen_ok, screen_msg = check_screen(ppm, a.screenshot)
         if not acked and READY in text:
-            if a.screenshot:
-                ppm = os.path.join(tmp, "screen.ppm")
-                with socket.socket(socket.AF_UNIX) as s:
-                    s.connect(mon_path)
-                    s.sendall(f"screendump {ppm}\n".encode())
-                    for _ in range(100):
-                        if os.path.exists(ppm) and os.path.getsize(ppm) > 0:
-                            time.sleep(0.2)
-                            break
-                        time.sleep(0.05)
-                screen_ok, screen_msg = check_screen(ppm, a.screenshot)
             proc.stdin.write(b"k")  # acknowledge -> kernel exits QEMU
             acked = True
         if acked:

@@ -7,8 +7,12 @@
   și le pune în ISO la `/boot/bin/`, încărcate de Limine ca module.
 - **Programe:** `hello` — scrie „hello din ELF” și iese cu 0; `cat <fișier>...` — afișează fișiere (cod 1 dacă unul lipsește).
 - `demo` — deschide o fereastră 320×200 cu un dreptunghi roșu, marchează clicurile, iese la tasta `q` (scenariul `appwindow`).
+- `desktop` — desktopul „Cyber Universe”: fundal cu numele, bară jos cu butonul Start (meniu cu programele din `/bin`,
+  clic = pornește programul) și ceasul (din ceasul calculatorului, actualizat la fiecare minut). Esc îl închide.
+  Din shell: comanda `desktop`. Test: scenariul `desktop`.
 - **Ferestre (`src/gfx.rs`):** `Window::open(titlu, l, î)`, `Canvas` (imaginea în memoria programului, `fill`),
-  `present`/`present_all`, `wait_event()` → `Event::Key(c)` sau `Event::Click { x, y, buttons }`, `close()`.
-- **Biblioteca** are și `open`, `read`, `close`, `stat`, `args()` (argumentele programului) și `error_text`.
+  `present`/`present_all`, `draw` (o imagine mică oriunde în fereastră), `fill`, `Canvas::text` (același font ca
+  nucleul), `Window::open_desktop`, `wait_event_for(ms)`, `wait_event()` → `Event::Key(c)` sau `Event::Click { x, y, buttons }`, `close()`.
+- **Biblioteca** are și `spawn`, `wait`, `list`, `time`, `screen_size`, și `open`, `read`, `close`, `stat`, `args()` (argumentele programului) și `error_text`.
 - **Cum se testează:** scenariul `log` (`hello din ELF`, `test: ELF OK`).
 - **Depinde de:** apelurile de sistem ale nucleului (`kernel/src/syscall/README.md`).

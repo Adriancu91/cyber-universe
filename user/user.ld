@@ -19,6 +19,7 @@ SECTIONS
 
     . = ALIGN(4096);
     .data : { *(.data .data.*) } :data
+    .got  : { *(.got .got.*) } :data      /* before .bss, or .bss would be stored in the file as zeros */
     .bss  : { *(.bss .bss.*) *(COMMON) } :data
 
     /DISCARD/ : { *(.eh_frame*) *(.note .note.*) *(.comment) }

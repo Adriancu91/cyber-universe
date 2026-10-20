@@ -6,5 +6,6 @@ pub mod e1000;
 pub mod keyboard;
 pub mod mouse;
 pub mod nvme;
+pub mod rtc;
 pub mod serial;
 pub mod usb;
