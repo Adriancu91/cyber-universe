@@ -714,6 +714,14 @@ fn test_canvas() {
     c.fill(Rect::new(30, 40, 5, 5), 0x808080);
     assert!(c.present_dirty_for_test() == Some(Rect::new(30, 40, 5, 5)), "doar zona noua");
 
+    // Romanian letters: the comma below Ș, the breve over ă, and a box for a character the font lacks.
+    let mut t = Canvas::new(40, 10, 0);
+    t.text(0, 0, "Șă€", 0xFFFFFF, 1);
+    let lit = |x, y| t.pixel(x, y) == Some(0xFFFFFF);
+    assert!(lit(2, 8) && lit(1, 9) && !lit(2, 0), "Ș: virgula de dedesubt");
+    assert!(lit(6, 0) && lit(10, 0) && lit(7, 1) && lit(6, 6), "ă: caciula");
+    assert!((12..17).all(|x| lit(x, 1)) && lit(12, 4) && !lit(14, 4), "caracter necunoscut: chenar");
+
     // Copy to the screen (bottom-right corner) and read it back.
     let on_screen = gfx::console::with_console(|slot| {
         let fb = slot.as_mut()?.framebuffer();
@@ -741,7 +749,8 @@ fn test_canvas() {
         }
         Some(frames * 2)
     });
-    info!("test: grafica OK (desen in memorie, zone schimbate, copiere pe ecran; {} cadre/s pe tot ecranul)", fps.unwrap_or(0));
+    info!("test: grafica OK (desen in memorie, zone schimbate, diacritice, copiere pe ecran; {} cadre/s pe tot ecranul)", fps.unwrap_or(0));
+    println!("Diacritice: ă â î ș ț  Ă Â Î Ș Ț");
 }
 
 /// Runs the `hello` program (an ELF file from the initrd) and checks that damaged ELF files are refused.

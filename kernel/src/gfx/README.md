@@ -8,7 +8,8 @@ linii, imagini cu transparență, text; ține minte zona schimbată și `present
 
 **Depinde de:** cererea `FRAMEBUFFER` din `boot.rs`; doar ecrane de 32 de biți pe pixel.
 
-**Font:** 5×7, desenat pentru acest proiect (MIT), mărit de 2 ori în celule de 12×20 pixeli.
+**Font:** 5×7, desenat pentru acest proiect (MIT), cu literele românești ă â î ș ț (și majusculele; ş ţ cu sedilă se afișează
+cu virgulă); 10 rânduri pe glifă (accente sus, virgula jos); consola îl mărește de 2 ori în celule de 12×22 pixeli.
 
 **Test grafică:** scenariul `log` — `test: grafica OK` (pixeli verificați, zona schimbată, copierea pe ecran citită înapoi, viteza).
 

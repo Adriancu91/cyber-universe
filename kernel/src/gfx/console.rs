@@ -13,7 +13,7 @@ pub const ACCENT: u32 = 0x0040_D0FF;
 const SCALE: usize = 2;
 /// Character cell: glyph plus spacing.
 const CELL_W: usize = (GLYPH_W + 1) * SCALE;
-const CELL_H: usize = (GLYPH_H + 3) * SCALE;
+const CELL_H: usize = (GLYPH_H + 1) * SCALE;
 const MARGIN: usize = 16;
 
 pub struct Console {

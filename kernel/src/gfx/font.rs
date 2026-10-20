@@ -1,21 +1,35 @@
-//! Cyber Universe bitmap font: 5x7 glyphs for printable ASCII (32..=126), drawn for this
-//! project (MIT). Each glyph is 7 rows; in each row bit 4 is the leftmost pixel.
-//! The console draws glyphs scaled into a larger character cell.
+//! Cyber Universe bitmap font, drawn for this project (MIT): 5x7 glyphs for printable ASCII (32..=126)
+//! and the Romanian letters ă â î ș ț (and capitals). A glyph has 10 rows: row 0 for accents on
+//! capitals, rows 1-7 for the letter, rows 8-9 for the comma below ș and ț. In each row bit 4 is
+//! the leftmost pixel. The console and `Canvas` draw glyphs scaled.
 
 pub const GLYPH_W: usize = 5;
-pub const GLYPH_H: usize = 7;
+pub const GLYPH_H: usize = 10;
 
-/// Returns the 7 row bitmaps for `c`, or a filled box for unsupported characters.
-pub fn glyph(c: char) -> &'static [u8; GLYPH_H] {
+/// Returns the row bitmaps for `c`, or a box for characters the font does not have.
+pub fn glyph(c: char) -> [u8; GLYPH_H] {
     let code = c as u32;
     if (32..=126).contains(&code) {
-        &GLYPHS[(code - 32) as usize]
-    } else {
-        &UNKNOWN
+        let g = &GLYPHS[(code - 32) as usize];
+        return [0, g[0], g[1], g[2], g[3], g[4], g[5], g[6], 0, 0];
+    }
+    match c {
+        // The cedilla forms (ş ţ), still common in old texts, are shown as the correct comma forms.
+        'ă' => [0x11, 0x0E, 0x00, 0x0E, 0x01, 0x0F, 0x11, 0x0F, 0, 0],
+        'â' => [0x04, 0x0A, 0x00, 0x0E, 0x01, 0x0F, 0x11, 0x0F, 0, 0],
+        'î' => [0x04, 0x0A, 0x00, 0x0C, 0x04, 0x04, 0x04, 0x0E, 0, 0],
+        'ș' | 'ş' => [0, 0, 0, 0x0E, 0x10, 0x0E, 0x01, 0x1E, 0x04, 0x08],
+        'ț' | 'ţ' => [0, 0x08, 0x08, 0x1C, 0x08, 0x08, 0x09, 0x06, 0x04, 0x08],
+        'Ă' => [0x11, 0x0E, 0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0, 0],
+        'Â' => [0x0A, 0x0E, 0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0, 0],
+        'Î' => [0x0A, 0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E, 0, 0],
+        'Ș' | 'Ş' => [0, 0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E, 0x04, 0x08],
+        'Ț' | 'Ţ' => [0, 0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x08],
+        _ => UNKNOWN,
     }
 }
 
-const UNKNOWN: [u8; 7] = [0b11111, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11111];
+const UNKNOWN: [u8; GLYPH_H] = [0, 0x1F, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1F, 0, 0];
 
 #[rustfmt::skip]
 static GLYPHS: [[u8; 7]; 95] = [
