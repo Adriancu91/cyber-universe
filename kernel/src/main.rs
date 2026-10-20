@@ -117,6 +117,9 @@ extern "C" fn kernel_main() -> ! {
             fs::mount_disk(disk, "/disk");
         }
     }
+    if let Some(stick) = drivers::usb::take_disk() {
+        fs::mount_disk(alloc::boxed::Box::new(stick), "/usb");
+    }
     // Every Limine response has been read (memory map, HHDM, framebuffer, RSDP, modules): its memory can be reused.
     mem::reclaim_bootloader();
 
@@ -182,7 +185,9 @@ fn run_tests() -> ! {
     #[cfg(feature = "test-usb")]
     assert!(boot::medium() == boot::Medium::Disk, "test: pornit de pe {:?}, nu de pe stick", boot::medium());
     #[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
-    test_disk_files();
+    test_disk_files("/disk");
+    #[cfg(feature = "test-usbdisk")]
+    test_disk_files("/usb");
     #[cfg(feature = "test-disk")]
     test_fat32_mbr();
     test_elf();
@@ -590,27 +595,27 @@ fn test_files() {
 /// The test disk (GPT + FAT32, built by tools/build.sh) is mounted at /disk, from memory (`test-disk`) or
 /// read through the AHCI driver (`test-ahci`): long names, a sub-directory, a 100 KiB file over many
 /// clusters whose checksum matches the one computed at build time, reads from the middle, read-only.
-#[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
-fn test_disk_files() {
+#[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme", feature = "test-usbdisk"))]
+fn test_disk_files(at: &str) {
     use fs::{FsError, Kind};
-    let list = fs::list("/disk").expect("test: /disk lipseste");
+    let list = fs::list(at).expect("test: discul lipseste");
     let names: alloc::vec::Vec<_> = list.iter().map(|(n, k)| if *k == Kind::Dir { alloc::format!("{}/", n) } else { n.clone() }).collect();
-    info!("test: /disk = {}", names.join(", "));
-    assert!(fs::read_all("/disk/salut.txt").unwrap() == b"salut de pe disc\n", "salut.txt gresit");
-    assert!(fs::read_all("/disk/Un nume lung de fisier.txt").is_ok(), "nume lung negasit");
-    assert!(fs::read_all("/disk/SALUT.TXT").is_ok(), "numele nu sunt comparate fara majuscule");
-    let data = fs::read_all("/disk/docs/mare.bin").expect("test: mare.bin");
+    info!("test: {} = {}", at, names.join(", "));
+    assert!(fs::read_all(&alloc::format!("{}/salut.txt", at)).unwrap() == b"salut de pe disc\n", "salut.txt gresit");
+    assert!(fs::read_all(&alloc::format!("{}/Un nume lung de fisier.txt", at)).is_ok(), "nume lung negasit");
+    assert!(fs::read_all(&alloc::format!("{}/SALUT.TXT", at)).is_ok(), "numele nu sunt comparate fara majuscule");
+    let data = fs::read_all(&alloc::format!("{}/docs/mare.bin", at)).expect("test: mare.bin");
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for &b in &data {
         h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
     }
-    let expected = fs::read_all("/disk/docs/mare.fnv").unwrap();
+    let expected = fs::read_all(&alloc::format!("{}/docs/mare.fnv", at)).unwrap();
     let hex = alloc::format!("{:016x}\n", h);
     assert!(data.len() == 100 * 1024 && hex.as_bytes() == &expected[..], "mare.bin: {} octeti, suma {}", data.len(), hex.trim());
     let mut part = [0u8; 1000];
-    assert!(fs::read("/disk/docs/mare.bin", 50_000, &mut part) == Ok(1000), "citire de la mijloc");
+    assert!(fs::read(&alloc::format!("{}/docs/mare.bin", at), 50_000, &mut part) == Ok(1000), "citire de la mijloc");
     assert!(part.iter().enumerate().all(|(i, &b)| b == (((50_000 + i) * 7) ^ ((50_000 + i) >> 8)) as u8), "continut gresit la mijloc");
-    assert!(fs::write("/disk/salut.txt", 0, b"x") == Err(FsError::ReadOnly), "scriere acceptata pe FAT32");
+    assert!(fs::write(&alloc::format!("{}/salut.txt", at), 0, b"x") == Err(FsError::ReadOnly), "scriere acceptata pe FAT32");
 
     info!("test: disc OK (nume lungi, 100 KiB cu suma {}, doar citire)", hex.trim());
 }

@@ -16,6 +16,7 @@ nvme      | test-nvme        | success | nvme: disc QEMU NVMe Ctrl (40 MiB);;ahc
 usb       | test-usb         | success | boot: pornit de pe disc;;TEST READY | | -device qemu-xhci -drive if=none,id=u,format=raw,snapshot=on,file={BUILD}/cyber-universe-test-test-usb-usb.img -device usb-storage,drive=u,bootindex=0
 usb-enum  |                  | success | 46f4:0001 stocare (Mass Storage);;0627:0001 tastatura (HID);;usb: controler XHCI pornit, 8 porturi, 2 dispozitive;;TEST READY | | -device qemu-xhci -device usb-kbd -drive if=none,id=st,format=raw,snapshot=on,file={BUILD}/disk.img -device usb-storage,drive=st
 usb-kbd   | test-keyboard    | success | usb: tastatura de pe portul;;TASTATURA: astept taste;;usb: prima tasta de la tastatura USB;;KEY: h;;KEY: i;;KEY: Enter;;test: tastatura OK;;TEST READY | | -device qemu-xhci -device usb-kbd keys=h i ret
+usb-disk  | test-usbdisk     | success | usb: stocare QEMU QEMU HARDDISK (40 MiB);;fs: FAT32 (GPT, 38 MiB) montat la /usb;;test: /usb = Un nume lung de fisier.txt, docs/, salut.txt;;test: disc OK;;TEST READY | | -device qemu-xhci -drive if=none,id=st,format=raw,snapshot=on,file={BUILD}/disk.img -device usb-storage,drive=st
 pci-usb   |                  | success | clasa 0c:03:30 controler USB;;pci: 7 dispozitive;;TEST READY | | -device qemu-xhci
 smp       |                  | success | acpi: MADT: 4 procesoare;;TEST READY | | -smp 4
 keyboard  | test-keyboard    | success | TASTATURA: astept taste;;KEY: h;;KEY: i;;KEY: Enter;;test: tastatura OK;;TEST READY | | keys=h i ret

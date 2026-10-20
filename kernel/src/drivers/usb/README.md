@@ -8,9 +8,12 @@
 - `hid.rs` — tastaturi USB (P3-06) prin protocolul HID „boot”: `SET_CONFIGURATION`, `SET_PROTOCOL(boot)`, endpoint-ul
   de întreruperi (`Configure Endpoint`), rapoarte de 8 octeți → aceleași taste ca la PS/2 (aceeași coadă, `wait_key`).
   Un fir de sistem verifică la fiecare 8 ms transferurile terminate (fără întreruperi încă).
-- **Urmează:** stick-ul USB ca disc (P3-07).
+- `storage.rs` — stick-uri USB (P3-07): clasa Mass Storage, Bulk-Only Transport, comenzi SCSI `INQUIRY`,
+  `READ CAPACITY(10)`, `READ(10)`; implementează `block::BlockDevice`, montat la `/usb` (prima partiție FAT32).
+- Evenimentele de transfer sunt păstrate de `Xhci` până le cere driverul lor (`take_transfer`/`wait_transfer`),
+  așa că tastatura și stick-ul pot lucra în același timp.
 - **Depinde de:** `pci`, `mem` (cadre pentru DMA, `map_mmio`), `sched::sleep_ms`.
 - **Cum se testează:** scenariul `usb-enum` — QEMU cu `-device qemu-xhci -device usb-kbd -device usb-storage`:
   jurnalul arată tastatura (0627:0001, HID) și stick-ul (46f4:0001, Mass Storage); `usb-kbd` — QEMU tastează pe tastatura
-  USB și nucleul primește tastele; `shell` (`lsusb` fără dispozitive).
-- **Surse:** USB HID 1.11 (anexa B) și HID Usage Tables; eXtensible Host Controller Interface for USB (xHCI) 1.2 (Intel, publică); USB 2.0 Specification, cap. 9. Cod propriu.
+  USB și nucleul primește tastele; `usb-disk` — discul de test ca stick USB → `/usb` citit corect; `shell` (`lsusb` fără dispozitive).
+- **Surse:** USB Mass Storage Bulk-Only Transport 1.0, SCSI Primary/Block Commands (descrieri publice); USB HID 1.11 (anexa B) și HID Usage Tables; eXtensible Host Controller Interface for USB (xHCI) 1.2 (Intel, publică); USB 2.0 Specification, cap. 9. Cod propriu.

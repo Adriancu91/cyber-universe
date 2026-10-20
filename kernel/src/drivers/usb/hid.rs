@@ -3,7 +3,7 @@
 //! specification (appendix B, boot protocol; SET_CONFIGURATION, SET_PROTOCOL) and the HID Usage Tables
 //! (keyboard page).
 
-use super::xhci::{Ring, Transfer, UsbDevice, Xhci};
+use super::xhci::{Ring, UsbDevice, Xhci};
 use crate::drivers::keyboard::{Key, push_key};
 use crate::mem::{frame, map::phys_to_virt};
 
@@ -39,19 +39,22 @@ impl Keyboard {
     pub fn start(x: &mut Xhci, dev: &UsbDevice) -> Option<Keyboard> {
         x.control_out(dev.slot, [0x00, 9, dev.config, 0, 0, 0, 0, 0]).ok()?; // SET_CONFIGURATION
         x.control_out(dev.slot, [0x21, 0x0B, 0, 0, dev.interface, 0, 0, 0]).ok()?; // SET_PROTOCOL(boot)
-        let (dci, ring) = x.configure_interrupt_in(dev)?;
+        let ep = dev.endpoint(super::xhci::INTERRUPT, true)?;
+        let (dci, ring) = x.configure_endpoints(dev, &[ep])?.pop()?;
         let buffer = frame::alloc_frame()?;
         let mut k = Keyboard { slot: dev.slot, dci, ring, buffer, previous: [0; 8] };
-        x.queue_in(k.slot, k.dci, &mut k.ring, k.buffer, 8);
+        x.queue(k.slot, k.dci, &mut k.ring, k.buffer, 8);
         Some(k)
     }
 
-    /// Handles a finished transfer, if it is ours: new keys go to the keyboard queue; the next report is queued.
-    pub fn on_transfer(&mut self, x: &mut Xhci, t: Transfer) {
-        let (slot, dci, _code, _left) = t;
-        if slot != self.slot || dci != self.dci {
-            return;
+    /// Handles every finished report: new keys go to the keyboard queue; the next report is queued.
+    pub fn poll(&mut self, x: &mut Xhci) {
+        while x.take_transfer(self.slot, self.dci).is_some() {
+            self.on_report(x);
         }
+    }
+
+    fn on_report(&mut self, x: &mut Xhci) {
         // SAFETY: the report buffer frame belongs to this driver; the controller finished writing it.
         let report: [u8; 8] = unsafe { *(phys_to_virt(self.buffer) as *const [u8; 8]) };
         let shift = report[0] & 0x22 != 0; // left or right Shift
@@ -66,6 +69,6 @@ impl Keyboard {
             }
         }
         self.previous = report;
-        x.queue_in(self.slot, self.dci, &mut self.ring, self.buffer, 8);
+        x.queue(self.slot, self.dci, &mut self.ring, self.buffer, 8);
     }
 }
