@@ -9,6 +9,7 @@ mod boot;
 mod drivers;
 mod gfx;
 mod log;
+mod mem;
 #[cfg(feature = "qemu-test")]
 mod qemu;
 mod time;
@@ -50,6 +51,11 @@ extern "C" fn kmain() -> ! {
         arch::x86_64::gdt::current_tr()
     );
 
+    if !mem::init() {
+        error!("mem: nucleul nu poate gestiona memoria, opresc");
+        panic!("initializarea memoriei a esuat");
+    }
+
     #[cfg(feature = "qemu-test")]
     run_tests();
 
@@ -70,6 +76,8 @@ fn run_tests() -> ! {
     // SAFETY: int3 only raises #BP, whose handler returns.
     unsafe { core::arch::asm!("int3") }
     info!("test: dupa breakpoint, nucleul continua");
+
+    test_frames();
 
     #[cfg(feature = "test-divzero")]
     // SAFETY: deliberate #DE for the test scenario; the handler stops the kernel.
@@ -95,6 +103,36 @@ fn run_tests() -> ! {
 
     #[allow(unreachable_code)]
     qemu::finish_test()
+}
+
+/// Allocates 10,000 frames, checks they are distinct by writing a marker into each one through the HHDM,
+/// frees them and checks the free count returns to its starting value.
+#[cfg(feature = "qemu-test")]
+fn test_frames() {
+    const N: usize = 10_000;
+    static mut FRAMES: [u64; N] = [0; N];
+    // SAFETY: test-only static used by this single-threaded function.
+    let frames = unsafe { &mut *core::ptr::addr_of_mut!(FRAMES) };
+    let before = mem::frame::free_frames();
+    for (i, slot) in frames.iter_mut().enumerate() {
+        let f = mem::frame::alloc_frame().expect("test: memorie insuficienta pentru 10000 de cadre");
+        assert!(f % mem::map::PAGE_SIZE == 0, "cadru nealiniat");
+        // SAFETY: the frame was just allocated to us and is reachable through the HHDM.
+        unsafe { (mem::map::phys_to_virt(f) as *mut u64).write_volatile(i as u64) };
+        *slot = f;
+    }
+    for (i, &f) in frames.iter().enumerate() {
+        // SAFETY: same frames as above, still owned by this test.
+        let v = unsafe { (mem::map::phys_to_virt(f) as *const u64).read_volatile() };
+        assert!(v == i as u64, "cadrul {:#x} a fost dat de doua ori", f);
+    }
+    for &f in frames.iter() {
+        mem::frame::free_frame(f);
+    }
+    mem::frame::free_frame(frames[0]); // deliberate double free: must be refused
+    let after = mem::frame::free_frames();
+    assert!(before == after, "scurgere de cadre: {} inainte, {} dupa", before, after);
+    info!("test: {} cadre alocate, unice, eliberate; libere inainte={} dupa={}", N, before, after);
 }
 
 #[panic_handler]

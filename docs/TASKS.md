@@ -36,8 +36,8 @@ Reguli:
 - [x] **P1-02** GDT + TSS. Dep: P1-01.
 - [x] **P1-03** IDT + excepții (div zero, page fault, double fault cu stivă separată) cu mesaj clar. Dep: P1-02.
   Test: test care provoacă intenționat o excepție și verifică mesajul.
-- [ ] **P1-04** Harta memoriei de la Limine afișată în jurnal. Dep: P1-01.
-- [ ] **P1-05** Alocator de cadre fizice (bitmap). Dep: P1-04. Test: alocă/eliberează 10.000 de cadre fără scurgeri.
+- [x] **P1-04** Harta memoriei de la Limine afișată în jurnal. Dep: P1-01.
+- [x] **P1-05** Alocator de cadre fizice (bitmap). Dep: P1-04. Test: alocă/eliberează 10.000 de cadre fără scurgeri.
 - [ ] **P1-06** Paginare: mapare/demapare pagini, tabele proprii. Dep: P1-05.
 - [ ] **P1-07** Heap pentru nucleu (`alloc`: `Vec`, `Box`). Dep: P1-06. Test: `Vec` cu 1 milion de elemente.
 - [ ] **P1-08** ACPI: găsire tabele (RSDP, MADT). Dep: P1-06.

@@ -1,7 +1,7 @@
 //! Limine boot protocol requests. Limine fills in the responses before jumping to `kmain`.
 
 use limine::BaseRevision;
-use limine::request::{FramebufferRequest, RequestsEndMarker, RequestsStartMarker};
+use limine::request::{FramebufferRequest, HhdmRequest, MemoryMapRequest, RequestsEndMarker, RequestsStartMarker};
 
 /// Highest base revision supported by the `limine` crate (0.5.0).
 #[used]
@@ -12,6 +12,16 @@ pub static BASE_REVISION: BaseRevision = BaseRevision::new();
 #[used]
 #[unsafe(link_section = ".requests")]
 pub static FRAMEBUFFER: FramebufferRequest = FramebufferRequest::new();
+
+/// Physical memory map.
+#[used]
+#[unsafe(link_section = ".requests")]
+pub static MEMORY_MAP: MemoryMapRequest = MemoryMapRequest::new();
+
+/// Offset of the higher-half direct map (all physical memory mapped at `phys + offset`).
+#[used]
+#[unsafe(link_section = ".requests")]
+pub static HHDM: HhdmRequest = HhdmRequest::new();
 
 #[used]
 #[unsafe(link_section = ".requests_start_marker")]
