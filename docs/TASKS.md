@@ -19,7 +19,7 @@ Reguli:
   Dep: P0-02. Test: se construiește fără erori.
 - [x] **P0-04** `tools/build.sh`: construiește nucleul, descarcă Limine (versiune fixată în DECISIONS), creează `build/cyber-universe.iso`.
   Dep: P0-03. Test: fișierul ISO există și are peste 1 MB.
-- [ ] **P0-05** Ieșire pe portul serial COM1: nucleul scrie `CYBER UNIVERSE OS: BOOT OK`.
+- [x] **P0-05** Ieșire pe portul serial COM1: nucleul scrie `CYBER UNIVERSE OS: BOOT OK`.
   Dep: P0-04.
 - [ ] **P0-06** `tools/run.sh` (QEMU cu ecran, firmware OVMF/UEFI) și `tools/test.sh` (fără ecran, timeout 30 s, caută textul așteptat; cod ieșire 0/1).
   Dep: P0-05. Test: `tools/test.sh` returnează 0.
