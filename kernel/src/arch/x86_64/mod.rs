@@ -37,7 +37,8 @@ pub unsafe fn inb(port: u16) -> u8 {
 /// Reads the CPU time-stamp counter.
 #[inline]
 pub fn rdtsc() -> u64 {
-    core::arch::x86_64::_rdtsc()
+    // SAFETY: `rdtsc` only reads a CPU counter.
+    unsafe { core::arch::x86_64::_rdtsc() }
 }
 
 /// Halts the CPU until the next interrupt.

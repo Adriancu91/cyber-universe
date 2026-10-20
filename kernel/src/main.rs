@@ -84,8 +84,8 @@ fn report_boot_metrics() {
         static __kernel_start: u8;
         static __kernel_end: u8;
     }
-    // SAFETY: only the addresses of the linker symbols are taken, never their contents.
-    let image = unsafe { core::ptr::addr_of!(__kernel_end) as u64 - core::ptr::addr_of!(__kernel_start) as u64 };
+    // Only the addresses of the linker symbols are taken, never their contents.
+    let image = core::ptr::addr_of!(__kernel_end) as u64 - core::ptr::addr_of!(__kernel_start) as u64;
     let used = mem::frame::used_frames() * mem::map::PAGE_SIZE;
     let (heap_used, heap_mapped) = mem::heap::stats();
     let boot = match time::since_boot_us() {
