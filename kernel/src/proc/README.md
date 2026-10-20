@@ -5,7 +5,8 @@
   mapează fiecare segment cu drepturile lui — cod executabil, date fără execuție, `.bss` pus pe zero);
   `spawn_flat(cod)` încarcă cod mașină simplu (pentru teste). Stiva programului: 16 KiB sub `0x7fff_fff0_0000`.
   `wait(id)` așteaptă (dormind) terminarea și dă codul de ieșire; la ieșire toată memoria procesului se eliberează.
-- **Urmează:** argumente și fișiere deschise (P2-08).
+- **Argumente (P2-08):** `spawn_path(cale, argumente)`; la pornire programul primește `rdi = argc`, `rsi` = tabel de perechi
+  (adresă, lungime) pe stiva lui. Fiecare proces are tabelul lui de fișiere deschise (închise automat la ieșire).
 - **Depinde de:** `mem::address_space`, `sched`, `arch::x86_64::syscall::enter_user`, `boot::file` (programele de la Limine).
 - **Cum se testează:** scenariul `log` (`test: mod utilizator OK`, `test: ELF OK`: `hello` iese cu 0, fișiere ELF stricate
   sunt refuzate cu mesaj clar, cadrele libere revin exact).

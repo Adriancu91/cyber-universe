@@ -174,6 +174,7 @@ fn run_tests() -> ! {
     test_user_mode();
     test_files();
     test_elf();
+    test_user_files();
 
     #[cfg(feature = "test-keyboard")]
     test_keyboard();
@@ -575,20 +576,20 @@ fn test_elf() {
     let file = fs::read_all("/bin/hello").expect("test: /bin/hello lipseste din initrd");
     let hello = &file[..];
     let free_before = mem::frame::free_frames();
-    let id = proc::spawn_elf(hello).expect("test: hello nu porneste");
+    let id = proc::spawn_elf(hello, &["hello"]).expect("test: hello nu porneste");
     let code = proc::wait(id);
     assert!(code == 0, "hello a iesit cu {}", code);
 
     let mut bad = alloc::vec::Vec::from(hello);
     bad[18] = 0x28; // machine: ARM
-    let r = proc::spawn_elf(&bad);
+    let r = proc::spawn_elf(&bad, &[]);
     assert!(matches!(r, Err(SpawnError::BadElf(ElfError::NotX86_64))), "ELF stricat acceptat: {:?}", r);
     info!("test: ELF stricat refuzat ({})", ElfError::NotX86_64.message());
     bad[18] = 0x3E;
     bad[0] = 0;
-    assert!(matches!(proc::spawn_elf(&bad), Err(SpawnError::BadElf(ElfError::NotElf))), "fisier non-ELF acceptat");
+    assert!(matches!(proc::spawn_elf(&bad, &[]), Err(SpawnError::BadElf(ElfError::NotElf))), "fisier non-ELF acceptat");
     drop(bad);
-    assert!(matches!(proc::spawn_elf(&hello[..40]), Err(SpawnError::BadElf(ElfError::TooSmall))), "fisier trunchiat acceptat");
+    assert!(matches!(proc::spawn_elf(&hello[..40], &[]), Err(SpawnError::BadElf(ElfError::TooSmall))), "fisier trunchiat acceptat");
 
     while sched::alive() > 1 {
         sched::sleep_ms(10);
@@ -596,6 +597,23 @@ fn test_elf() {
     let free_after = mem::frame::free_frames();
     assert!(free_after == free_before, "cadre pierdute dupa ELF: {} inainte, {} dupa", free_before, free_after);
     info!("test: ELF OK (hello a iesit cu 0, fisierele stricate refuzate, memoria eliberata)");
+}
+
+/// `/bin/cat` (a separate program) opens and reads files through system calls; a missing file gives exit 1.
+#[cfg(feature = "qemu-test")]
+fn test_user_files() {
+    let free_before = mem::frame::free_frames();
+    let id = proc::spawn_path("/bin/cat", &["cat", "/etc/motd"]).expect("test: /bin/cat nu porneste");
+    assert!(proc::wait(id) == 0, "cat /etc/motd nu a iesit cu 0");
+    let id = proc::spawn_path("/bin/cat", &["cat", "/nu/exista", "/etc"]).expect("test: /bin/cat nu porneste");
+    assert!(proc::wait(id) == 1, "cat pe fisiere lipsa nu a iesit cu 1");
+    assert!(matches!(proc::spawn_path("/bin/lipsa", &[]), Err(proc::SpawnError::NotFound(_))), "program lipsa pornit");
+    while sched::alive() > 1 {
+        sched::sleep_ms(10);
+    }
+    let free_after = mem::frame::free_frames();
+    assert!(free_after == free_before, "cadre pierdute dupa cat: {} inainte, {} dupa", free_before, free_after);
+    info!("test: fisiere din programe OK (cat /etc/motd; erori: cod 1)");
 }
 
 /// Waits for the keys the test harness types (h, i, Enter) and logs them.

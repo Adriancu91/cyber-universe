@@ -89,12 +89,12 @@ unsafe extern "C" fn syscall_entry() {
 }
 
 /// Leaves the kernel for good on this thread: continues in ring 3 at `entry` with the stack `user_rsp`,
-/// interrupts enabled and every general register zeroed.
+/// interrupts enabled, rdi = `arg0`, rsi = `arg1` and every other general register zeroed.
 ///
 /// # Safety
 /// `entry` and `user_rsp` must be user addresses mapped (USER) in the current address space, and the
 /// kernel stack of this thread must be the one set with `set_kernel_stack`.
-pub unsafe fn enter_user(entry: u64, user_rsp: u64) -> ! {
+pub unsafe fn enter_user(entry: u64, user_rsp: u64, arg0: u64, arg1: u64) -> ! {
     // SAFETY: builds the frame `iretq` expects (SS, RSP, RFLAGS, CS, RIP) with ring-3 selectors.
     unsafe {
         asm!(
@@ -103,8 +103,7 @@ pub unsafe fn enter_user(entry: u64, user_rsp: u64) -> ! {
             "push 0x202", // IF set
             "push {cs}",
             "push {rip}",
-            "xor eax, eax", "xor ebx, ebx", "xor ecx, ecx", "xor edx, edx",
-            "xor esi, esi", "xor edi, edi", "xor ebp, ebp",
+            "xor eax, eax", "xor ebx, ebx", "xor ecx, ecx", "xor edx, edx", "xor ebp, ebp",
             "xor r8d, r8d", "xor r9d, r9d", "xor r10d, r10d", "xor r11d, r11d",
             "xor r12d, r12d", "xor r13d, r13d", "xor r14d, r14d", "xor r15d, r15d",
             "iretq",
@@ -112,6 +111,8 @@ pub unsafe fn enter_user(entry: u64, user_rsp: u64) -> ! {
             rsp = in(reg) user_rsp,
             cs = in(reg) gdt::USER_CODE as u64,
             rip = in(reg) entry,
+            in("rdi") arg0,
+            in("rsi") arg1,
             options(noreturn)
         )
     }
