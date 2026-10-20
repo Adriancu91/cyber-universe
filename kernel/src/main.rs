@@ -1183,7 +1183,7 @@ fn test_crypto() {
     use cyber_crypto::{Digest, sha2::Sha256};
     let ticks = arch::x86_64::apic::ticks();
     match cyber_crypto::vectors::self_test() {
-        Ok(n) => info!("crypto: {} vectori oficiali trecuti (SHA-256/384/512, HMAC, HKDF, TLS 1.3, X25519)", n),
+        Ok(n) => info!("crypto: {} vectori oficiali trecuti (SHA-256/384/512, HMAC, HKDF, TLS 1.3, X25519, ChaCha20-Poly1305)", n),
         Err(name) => panic!("crypto: vectorul {} a esuat", name),
     }
     let ms = (arch::x86_64::apic::ticks() - ticks) * 1000 / arch::x86_64::apic::HZ;
@@ -1195,7 +1195,16 @@ fn test_crypto() {
     }
     core::hint::black_box(h.finish());
     let t = ((arch::x86_64::apic::ticks() - start) * 1000 / arch::x86_64::apic::HZ).max(1);
-    info!("crypto: vectori in {} ms; SHA-256: {} MiB/s (in emulare)", ms, 4 * 1000 / t);
+    // ChaCha20-Poly1305 over 4 MiB, in 16 KiB pieces (the largest TLS record).
+    let mut block = block;
+    let start = arch::x86_64::apic::ticks();
+    for _ in 0..4 {
+        for piece in block.chunks_mut(16 * 1024) {
+            core::hint::black_box(cyber_crypto::aead::seal(&[7; 32], &[1; 12], &[], piece));
+        }
+    }
+    let t2 = ((arch::x86_64::apic::ticks() - start) * 1000 / arch::x86_64::apic::HZ).max(1);
+    info!("crypto: vectori in {} ms; SHA-256: {} MiB/s, ChaCha20-Poly1305: {} MiB/s (in emulare)", ms, 4 * 1000 / t, 4 * 1000 / t2);
 }
 
 /// Draws a known scene in a back buffer, checks pixels, the changed area and the copy to the screen,

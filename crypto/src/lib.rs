@@ -2,8 +2,11 @@
 //! the official test vectors. `no_std`, no heap, no dependencies. Not audited: see crypto/README.md.
 #![cfg_attr(not(test), no_std)]
 
+pub mod aead;
+pub mod chacha20;
 pub mod hkdf;
 pub mod hmac;
+pub mod poly1305;
 pub mod sha2;
 pub mod vectors;
 pub mod x25519;

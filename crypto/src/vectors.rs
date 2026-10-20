@@ -1,10 +1,11 @@
-//! The official test vectors (FIPS 180-4 examples, RFC 4231, RFC 5869, RFC 8448), run by `self_test`:
+//! The official test vectors (FIPS 180-4 examples, RFC 4231, RFC 5869, RFC 7748, RFC 8439, RFC 8448), run by `self_test`:
 //! on the host by `cargo test`, in QEMU by the kernel's `crypto` scenario.
 
 use crate::hkdf;
 use crate::hmac::hmac;
 use crate::sha2::{Sha256, Sha384, Sha512};
 use crate::x25519::{x25519, x25519_base};
+use crate::{aead, chacha20, poly1305::Poly1305};
 use crate::{Digest, ct_eq};
 
 /// Hex text -> bytes in `out`; returns the length.
@@ -60,6 +61,19 @@ const HMAC_CASES: [(&[u8], &[u8], &str, &str); 6] = [
     (&[0xaa; 131], b"This is a test using a larger than block-size key and a larger than block-size data. The key needs to be hashed before being used by the HMAC algorithm.",
      "9b09ffa71b942fcb27635fbcd5b0e944bfdc63644f0713938a7f51535c3a35e2",
      "6617178e941f020d351e2f254e8fd32c602420feb0b8fb9adccebb82461e99c5a678cc31e799176d3860e6110c46523e"),
+];
+
+const SUNSCREEN: &[u8] = b"Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
+
+/// RFC 8439 A.3 #5-#11: (key = r || s, message, tag); they push h through the final reduction mod 2^130 - 5.
+const POLY_EDGE: [(&str, &str, &str); 7] = [
+    ("0200000000000000000000000000000000000000000000000000000000000000", "ffffffffffffffffffffffffffffffff", "03000000000000000000000000000000"),
+    ("02000000000000000000000000000000ffffffffffffffffffffffffffffffff", "02000000000000000000000000000000", "03000000000000000000000000000000"),
+    ("0100000000000000000000000000000000000000000000000000000000000000", "fffffffffffffffffffffffffffffffff0ffffffffffffffffffffffffffffff11000000000000000000000000000000", "05000000000000000000000000000000"),
+    ("0100000000000000000000000000000000000000000000000000000000000000", "fffffffffffffffffffffffffffffffffbfefefefefefefefefefefefefefefe01010101010101010101010101010101", "00000000000000000000000000000000"),
+    ("0200000000000000000000000000000000000000000000000000000000000000", "fdffffffffffffffffffffffffffffff", "faffffffffffffffffffffffffffffff"),
+    ("0100000000000000040000000000000000000000000000000000000000000000", "e33594d7505e43b900000000000000003394d7505e4379cd01000000000000000000000000000000000000000000000001000000000000000000000000000000", "14000000000000005500000000000000"),
+    ("0100000000000000040000000000000000000000000000000000000000000000", "e33594d7505e43b900000000000000003394d7505e4379cd010000000000000000000000000000000000000000000000", "13000000000000000000000000000000"),
 ];
 
 /// Runs every vector. `Ok(count)` or `Err(name of the first one that failed)`.
@@ -154,6 +168,62 @@ pub fn self_test() -> Result<usize, &'static str> {
     let (sa, sb) = (x25519(&alice, &pb), x25519(&bob, &pa));
     check(sa == sb && same(&sa, "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742"), "x25519 secret comun")?;
 
+    // ChaCha20 (RFC 8439 §2.3.2, §2.4.2, A.1 #1 and #3).
+    let k0: [u8; 32] = core::array::from_fn(|i| i as u8);
+    let mut n12 = [0u8; 12];
+    unhex("000000090000004a00000000", &mut n12);
+    check(same(&chacha20::block(&k0, 1, &n12), "10f1e7e4d13b5915500fdd1fa32071c4c7d1f4c733c068030422aa9ac3d46c4ed2826446079faa0914c2d705d98b02a2b5129cd1de164eb9cbd083e8a2503c4e"), "chacha20 bloc (2.3.2)")?;
+    check(same(&chacha20::block(&[0; 32], 0, &[0; 12]), "76b8e0ada0f13d90405d6ae55386bd28bdd219b8a08ded1aa836efcc8b770dc7da41597c5157488d7724e03fb8d84a376a43b8f41518a11cc387b669b2ee6586"), "chacha20 bloc zero (A.1)")?;
+    let mut k1 = [0u8; 32];
+    k1[31] = 1;
+    check(same(&chacha20::block(&k1, 1, &[0; 12]), "3aeb5224ecf849929b9d828db1ced4dd832025e8018b8160b82284f3c949aa5a8eca00bbb4a73bdad192b5c42f73f2fd4e273644c8b36125a64addeb006c13a0"), "chacha20 bloc cheie 1 (A.1)")?;
+    let mut buf = [0u8; 128];
+    let len = SUNSCREEN.len();
+    buf[..len].copy_from_slice(SUNSCREEN);
+    unhex("000000000000004a00000000", &mut n12);
+    chacha20::xor(&k0, 1, &n12, &mut buf[..len]);
+    check(same(&buf[..len], "6e2e359a2568f98041ba0728dd0d6981e97e7aec1d4360c20a27afccfd9fae0bf91b65c5524733ab8f593dabcd62b3571639d624e65152ab8f530c359f0861d807ca0dbf500d6a6156a38e088a22b65e52bc514d16ccf806818ce91ab77937365af90bbf74a35be6b40b8eedf2785e42874d"), "chacha20 criptare (2.4.2)")?;
+
+    // Poly1305 (RFC 8439 §2.5.2, the reduction edge cases of A.3 #5-#11), then split input.
+    let pk = hex32("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b");
+    check(same(&Poly1305::mac(&pk, b"Cryptographic Forum Research Group"), "a8061dc1305136c6c22b8baf0c0127a9"), "poly1305 (2.5.2)")?;
+    for (key, msg, want) in POLY_EDGE {
+        let n = unhex(msg, &mut buf);
+        check(same(&Poly1305::mac(&hex32(key), &buf[..n]), want), "poly1305 caz limita (A.3)")?;
+    }
+    let big: [u8; 1000] = core::array::from_fn(|i| (i * 7 + 3) as u8);
+    let mut p = Poly1305::new(&pk);
+    for part in big.chunks(13) {
+        p.update(part);
+    }
+    check(same(&p.finish(), "1a0426ce6ec6e1323ffcca66044d6815"), "poly1305 pe bucati")?;
+
+    // ChaCha20-Poly1305 AEAD (RFC 8439 §2.6.2 one-time key, §2.8.2), a 1000-byte message, tampering.
+    let k8: [u8; 32] = core::array::from_fn(|i| 0x80 + i as u8);
+    unhex("000000000001020304050607", &mut n12);
+    check(same(&chacha20::block(&k8, 0, &n12)[..32], "8ad5a08b905f81cc815040274ab29471a833b637e3fd0da508dbb8e2fdd1a646"), "poly1305 cheia unica (2.6.2)")?;
+    unhex("070000004041424344454647", &mut n12);
+    let mut aad = [0u8; 12];
+    unhex("50515253c0c1c2c3c4c5c6c7", &mut aad);
+    buf[..len].copy_from_slice(SUNSCREEN);
+    let tag = aead::seal(&k8, &n12, &aad, &mut buf[..len]);
+    check(same(&buf[..len], "d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d63dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b3692ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc3ff4def08e4b7a9de576d26586cec64b6116"), "aead text criptat (2.8.2)")?;
+    check(same(&tag, "1ae10b594f09e26a7e902ecbd0600691"), "aead eticheta (2.8.2)")?;
+    check(aead::open(&k8, &n12, &aad, &mut buf[..len], &tag) && &buf[..len] == SUNSCREEN, "aead deschidere")?;
+    let mut msg = big;
+    let aad2: [u8; 37] = core::array::from_fn(|i| i as u8);
+    let tag = aead::seal(&k8, &n12, &aad2, &mut msg);
+    check(same(&Sha256::digest(&msg), "5ba834c792459a1800e686605a5018ed7c1be47269247a01e00b3350c4c55184") && same(&tag, "f8d37df945a700d43a416719671d106f"), "aead 1000 de octeti")?;
+    msg[500] ^= 0x10;
+    let before = msg;
+    check(!aead::open(&k8, &n12, &aad2, &mut msg, &tag) && msg == before, "aead: bit schimbat in text acceptat")?;
+    msg[500] ^= 0x10;
+    let mut bad = tag;
+    bad[15] ^= 1;
+    check(!aead::open(&k8, &n12, &aad2, &mut msg, &bad), "aead: eticheta gresita acceptata")?;
+    check(!aead::open(&k8, &n12, &aad2[..36], &mut msg, &tag), "aead: date aditionale schimbate acceptate")?;
+    check(aead::open(&k8, &n12, &aad2, &mut msg, &tag) && msg == big, "aead 1000 de octeti deschidere")?;
+
     // Constant-time comparison.
     check(ct_eq(b"abc", b"abc") && !ct_eq(b"abc", b"abd") && !ct_eq(b"abc", b"ab"), "ct_eq")?;
     Ok(n)
@@ -163,6 +233,8 @@ pub fn self_test() -> Result<usize, &'static str> {
 mod tests {
     #[test]
     fn official_vectors() {
-        assert_eq!(super::self_test().map(|n| n > 30), Ok(true));
+        let r = super::self_test();
+        assert!(matches!(r, Ok(n) if n > 30), "{:?}", r);
+        println!("vectori: {:?}", r);
     }
 }
