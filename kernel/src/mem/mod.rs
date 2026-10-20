@@ -11,5 +11,18 @@ pub fn init() -> bool {
         return false;
     }
     paging::init();
+    match paging::adopt_tables() {
+        Ok(n) => crate::info!("mem: tabele de pagini proprii active ({} tabele copiate de la Limine)", n),
+        Err(e) => {
+            crate::error!("mem: nu pot copia tabelele de pagini: {:?}", e);
+            return false;
+        }
+    }
     heap::init()
+}
+
+/// Gives the bootloader's memory to the frame allocator. Must run after everything that reads Limine responses.
+pub fn reclaim_bootloader() {
+    let bytes = frame::reclaim_bootloader();
+    crate::info!("mem: recuperat {} KiB din memoria bootloader-ului", bytes / 1024);
 }

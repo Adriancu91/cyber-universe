@@ -3,7 +3,8 @@
 **Ce face:**
 - `map.rs` — copiază harta memoriei fizice și adresa HHDM (toată memoria fizică mapată de Limine) și le raportează în jurnal.
 - `frame.rs` — alocatorul de cadre fizice (4 KiB): o hartă de biți, câte un bit pe cadru.
-- `paging.rs` — paginare pe 4 niveluri: mapare, demapare, traducere adresă virtuală → fizică (inclusiv pagini mari); activează bitul NX.
+- `paging.rs` — paginare pe 4 niveluri: mapare, demapare, traducere adresă virtuală → fizică (inclusiv pagini mari); activează bitul NX și CR0.WP.
+  La pornire copiază tabelele Limine în cadre proprii (`adopt_tables`), ca memoria bootloader-ului să poată fi recuperată.
 - `heap.rs` — heap-ul nucleului (`Box`, `Vec`, `String`): listă de blocuri libere sortată, cu unire; crește la nevoie de la `0xffff_9000_0000_0000`, maxim 256 MiB.
 
 **Depinde de:** cererile `MEMORY_MAP` și `HHDM` din `boot.rs`.
@@ -13,6 +14,8 @@
 
 **Teste suplimentare:** `test: paginare OK`, `test: heap OK` (Vec de 1.000.000 de elemente, 10.000 de Box eliberate amestecat, fără scurgeri) și scenariul `unmapped` (acces la o pagină demapată → page fault).
 
-**Urmează:** tabele de pagini complet proprii (în locul celor de la Limine) și recuperarea memoriei „bootloader recuperabile” — sarcină de adăugat înainte de Faza 2.
+**Recuperare (P1-13):** `frame::reclaim_bootloader` dă alocatorului memoria „bootloader recuperabilă” (~43 MiB în QEMU),
+după ce nucleul are tabele și stivă proprii. Teste: `test: toate cele N cadre libere scrise si eliberate` (scenariul `log`)
+și scenariul `rodata` (scriere în `.rodata` → page fault).
 
 **Inspirație:** specificația protocolului Limine; OSDev Wiki „Page Frame Allocation” (doar descrierea).

@@ -1,8 +1,7 @@
 //! Physical frame allocator: one bit per 4 KiB frame (1 = used, 0 = free).
 //!
-//! Only `Usable` regions are handed out. Bootloader-reclaimable memory stays reserved for now, because
-//! Limine's page tables and the memory map itself live there (it can be reclaimed once the kernel has
-//! its own page tables, task P1-06).
+//! Only `Usable` regions are handed out at first. Bootloader-reclaimable memory (Limine's page tables,
+//! boot stack and responses) is added by `reclaim_bootloader` once the kernel no longer needs any of it.
 
 use super::map::{self, Kind, PAGE_SIZE};
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -50,7 +49,13 @@ impl Bitmap {
 /// Builds the bitmap from the memory map. Must run after `map::init`.
 pub fn init() -> bool {
     let regions = map::regions();
-    let top = regions.iter().filter(|r| r.kind == Kind::Usable).map(|r| r.end()).max().unwrap_or(0);
+    // Bootloader memory is RAM too: the bitmap covers it so it can be reclaimed later.
+    let top = regions
+        .iter()
+        .filter(|r| matches!(r.kind, Kind::Usable | Kind::BootloaderReclaimable))
+        .map(|r| r.end())
+        .max()
+        .unwrap_or(0);
     let frames = top / PAGE_SIZE;
     let bitmap_bytes = frames.div_ceil(8);
     let bitmap_frames = bitmap_bytes.div_ceil(PAGE_SIZE);
@@ -135,6 +140,25 @@ pub fn free_frame(addr: u64) {
     if !ok {
         crate::warn!("mem: eliberare invalida sau dubla a cadrului {:#x}, ignorata", addr);
     }
+}
+
+/// Frees every whole frame of the `BootloaderReclaimable` regions. Returns the number of bytes reclaimed.
+/// Call only after the kernel runs on its own page tables and stack and has copied every Limine response.
+pub fn reclaim_bootloader() -> u64 {
+    let mut reclaimed = 0;
+    with_bitmap(|b| {
+        for r in map::regions().iter().filter(|r| r.kind == Kind::BootloaderReclaimable) {
+            for f in r.base.div_ceil(PAGE_SIZE)..(r.end() / PAGE_SIZE).min(b.frames) {
+                if b.is_used(f) {
+                    b.set(f, false);
+                    b.free += 1;
+                    reclaimed += 1;
+                }
+            }
+        }
+    });
+    USABLE.fetch_add(reclaimed, Ordering::Relaxed);
+    reclaimed * PAGE_SIZE
 }
 
 /// Frames of usable RAM currently taken (bitmap, page tables, heap, anything allocated).

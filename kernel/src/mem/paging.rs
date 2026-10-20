@@ -1,7 +1,8 @@
 //! 4-level paging (x86_64): map, unmap and translate virtual addresses.
 //!
-//! For now the kernel keeps the page tables Limine built (kernel image + HHDM) and adds its own mappings
-//! on top. Table frames come from the frame allocator and are accessed through the HHDM.
+//! At boot the kernel copies the page tables Limine built (kernel image with per-segment rights + HHDM) into
+//! frames it owns (`adopt_tables`), so the bootloader's memory can be reclaimed afterwards. Table frames come
+//! from the frame allocator and are accessed through the HHDM.
 //! Written from Intel SDM Vol. 3A ch. 4 and the OSDev Wiki "Paging" description.
 
 use super::frame;
@@ -46,8 +47,15 @@ fn invlpg(virt: u64) {
     unsafe { asm!("invlpg [{}]", in(reg) virt, options(nostack, preserves_flags)) }
 }
 
-/// Turns on the no-execute bit support (EFER.NXE), so `NO_EXECUTE` can be used in mappings.
+/// Turns on the no-execute bit support (EFER.NXE), so `NO_EXECUTE` can be used in mappings, and CR0.WP,
+/// so read-only pages are read-only for the kernel too.
 pub fn init() {
+    // SAFETY: setting CR0.WP only makes writes to read-only pages fault in ring 0.
+    unsafe {
+        let cr0: u64;
+        asm!("mov {}, cr0", out(reg) cr0, options(nomem, nostack, preserves_flags));
+        asm!("mov cr0, {}", in(reg) cr0 | (1 << 16), options(nostack, preserves_flags));
+    }
     const IA32_EFER: u32 = 0xC000_0080;
     // SAFETY: EFER exists on every x86_64 CPU; setting NXE only enables the NX bit in page tables.
     unsafe {
@@ -130,4 +138,36 @@ pub fn translate(virt: u64) -> Option<u64> {
         return Some((entry & ADDR_MASK & !offset_mask) | (virt & offset_mask));
     }
     None
+}
+
+/// Recursively copies the table at `phys` (paging level `level`: 4 = PML4 ... 1 = PT) into fresh frames.
+/// Leaf entries (4 KiB pages and huge pages) are copied as they are. Returns the new table's address.
+fn clone_table(phys: u64, level: u8, copied: &mut u64) -> Result<u64, MapError> {
+    let new = frame::alloc_frame().ok_or(MapError::NoMemory)?;
+    *copied += 1;
+    let (src, dst) = (table(phys), table(new));
+    // The lower half (user space, entries 0..256 of the PML4) is not copied: the kernel lives in the upper half.
+    let first = if level == 4 { 256 } else { 0 };
+    for i in 0..512 {
+        let e = src[i];
+        dst[i] = if i < first || e & PRESENT == 0 {
+            0
+        } else if level == 1 || e & HUGE != 0 {
+            e
+        } else {
+            (e & !ADDR_MASK) | clone_table(e & ADDR_MASK, level - 1, copied)?
+        };
+    }
+    Ok(new)
+}
+
+/// Replaces Limine's page tables by an identical copy in kernel-owned frames and loads it into CR3.
+/// Returns the number of table frames copied. After this, no page table lives in bootloader memory.
+pub fn adopt_tables() -> Result<u64, MapError> {
+    let mut copied = 0;
+    let new = clone_table(cr3(), 4, &mut copied)?;
+    // SAFETY: the new PML4 maps exactly what the current one maps in the upper half (kernel image, HHDM,
+    // heap, MMIO); the code, stack and data in use are all in the upper half.
+    unsafe { asm!("mov cr3, {}", in(reg) new, options(nostack, preserves_flags)) }
+    Ok(copied)
 }

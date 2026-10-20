@@ -24,9 +24,32 @@ use arch::x86_64::halt_forever;
 /// Kernel version shown at boot.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Kernel entry point, called by Limine in 64-bit long mode.
+/// Size of the kernel's own boot stack (Limine's stack is in bootloader memory, which is reclaimed).
+const BOOT_STACK_SIZE: usize = 128 * 1024;
+
+#[repr(C, align(16))]
+struct BootStack([u8; BOOT_STACK_SIZE]);
+
+static mut BOOT_STACK: BootStack = BootStack([0; BOOT_STACK_SIZE]);
+
+/// Kernel entry point, called by Limine in 64-bit long mode. Moves to the kernel's own stack at once.
 #[unsafe(no_mangle)]
 extern "C" fn kmain() -> ! {
+    // SAFETY: BOOT_STACK is used only from here on, as the stack of `kernel_main`, which never returns;
+    // its top is 16-byte aligned, so after `call` the stack has the alignment the System V ABI expects.
+    unsafe {
+        core::arch::asm!(
+            "mov rsp, {top}",
+            "xor ebp, ebp",
+            "call {main}",
+            top = in(reg) (core::ptr::addr_of_mut!(BOOT_STACK) as *mut u8).add(BOOT_STACK_SIZE),
+            main = sym kernel_main,
+            options(noreturn)
+        )
+    }
+}
+
+extern "C" fn kernel_main() -> ! {
     time::mark_boot();
     drivers::serial::init();
 
@@ -68,6 +91,8 @@ extern "C" fn kmain() -> ! {
     } else {
         warn!("sistem: fara ceas (APIC indisponibil); continui fara intreruperi");
     }
+    // Every Limine response has been read (memory map, HHDM, framebuffer, RSDP): its memory can be reused.
+    mem::reclaim_bootloader();
 
     report_boot_metrics();
 
@@ -134,6 +159,7 @@ fn run_tests() -> ! {
     info!("test: dupa breakpoint, nucleul continua");
 
     test_frames();
+    test_all_frames();
     test_paging();
     test_heap();
     test_timer();
@@ -198,6 +224,34 @@ fn test_frames() {
     let after = mem::frame::free_frames();
     assert!(before == after, "scurgere de cadre: {} inainte, {} dupa", before, after);
     info!("test: {} cadre alocate, unice, eliberate; libere inainte={} dupa={}", N, before, after);
+}
+
+/// Allocates every free frame (including the reclaimed bootloader memory), writes to each one and frees
+/// them all: proves nothing still in use (page tables, stack, Limine data) was handed to the allocator.
+#[cfg(feature = "qemu-test")]
+fn test_all_frames() {
+    let before = mem::frame::free_frames();
+    // Reserve the list first, so the heap does not need to grow while every frame is taken.
+    let mut frames = alloc::vec::Vec::with_capacity(before as usize);
+    while let Some(f) = mem::frame::alloc_frame() {
+        // SAFETY: the frame was just allocated to this test and is reachable through the HHDM.
+        unsafe { core::ptr::write_bytes(mem::map::phys_to_virt(f), 0xA5, mem::map::PAGE_SIZE as usize) };
+        frames.push(f);
+    }
+    let n = frames.len() as u64;
+    for f in frames.drain(..) {
+        mem::frame::free_frame(f);
+    }
+    drop(frames);
+    assert!(mem::frame::free_frames() == before, "cadre pierdute dupa testul complet");
+    info!("test: toate cele {} cadre libere scrise si eliberate", n);
+
+    #[cfg(feature = "test-rodata")]
+    {
+        static READ_ONLY: u64 = 0xC1BE;
+        // SAFETY: deliberate write to a read-only kernel page; must raise a page fault.
+        unsafe { (core::ptr::addr_of!(READ_ONLY) as *mut u64).write_volatile(0) };
+    }
 }
 
 /// Maps a fresh frame at an unused address, checks writes are visible through the HHDM, then unmaps it.
