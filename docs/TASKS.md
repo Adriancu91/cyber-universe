@@ -124,11 +124,25 @@ cât P3-09 așteaptă testul pe hardware real). Fiecare sarcină are plan în `d
 - [x] **P4-08** Manager de module (modmgr). Dep: P4-07, P2-08.
 - [x] **P4-09** Aplicații de sistem: monitor sistem și fișiere. Dep: P4-06, P4-08.
 - [x] **P4-10** Aplicații de sistem: editor de text și setări. Dep: P4-09.
-- [ ] **P4-11** Module din interfață și închiderea Fazei 4. Dep: P4-10.
+- [x] **P4-11** Module din interfață și închiderea Fazei 4. Dep: P4-10.
 - [ ] **P4-12** Aranjamentul românesc de tastatură + literele cu „coadă” (g, j, p, q, y). Dep: P4-03.
 - [ ] **P4-13** Terminal (shell-ul) ca aplicație în fereastră; desktopul pornește automat după nucleu. Dep: P4-06.
 
-## Faza 5 și următoarele
+## Faza 5 — Rețea și aplicațiile proprii
 
-Sarcinile se generează de Claude Code din `ROADMAP.md` la închiderea fazei anterioare (P4-11),
-în același format, cu ID-uri `P5-xx`, `P6-xx` etc.
+Generate la închiderea Fazei 4 (P4-11, 2026-10-20). Fiecare are plan în `docs/plans/`.
+
+- [ ] **P5-01** Stiva de rețea: Ethernet, ARP, IPv4, ICMP (ping). Dep: P3-08.
+- [ ] **P5-02** UDP și DHCP. Dep: P5-01.
+- [ ] **P5-03** DNS. Dep: P5-02.
+- [ ] **P5-04** TCP (client). Dep: P5-01.
+- [ ] **P5-05** Rețea pentru programe (socket-uri) și aplicația „Rețea”. Dep: P5-03, P5-04.
+- [ ] **P5-06** HTTPS de bază (TLS 1.3) — **cere o decizie de la Adrian** (criptografie proprie sau bibliotecă). Dep: P5-05.
+- [ ] **P5-07** Suita office ca modul (după ce citim proiectul din Cyber Hub). Dep: P4-11.
+- [ ] **P5-08** Kronos ca modul. Dep: P5-07.
+- [ ] **P5-09** Închiderea Fazei 5. Dep: P5-01 … P5-08.
+
+## Faza 6 și următoarele
+
+Sarcinile se generează de Claude Code din `ROADMAP.md` la închiderea fazei anterioare (P5-09),
+în același format, cu ID-uri `P6-xx`, `P7-xx` etc.

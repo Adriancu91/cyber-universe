@@ -15,11 +15,16 @@
 |---|---|---|---|---|---|---|
 | 2026-10-20 | 0.1.0 (e8faab3), sfârșitul Fazei 1 | TCG (fără accelerare) | 3563 ms | 39.6 ms | 1124 KiB | 1126 KiB |
 | 2026-10-20 | 0.1.0 (59a4e7a), sfârșitul Fazei 2 | TCG (fără accelerare) | 3978 ms | 57.2 ms | 2412 KiB | 2072 KiB |
+| 2026-10-20 | 0.1.0 (a7ecb26), sfârșitul Fazei 4 | TCG (fără accelerare) | 4862 ms | 114.3 ms | 2680 KiB | 2973 KiB |
 
 Faza 2 față de Faza 1: nucleul face mai mult la pornire (planificator, sistem de fișiere din initrd), iar memoria crește
 mai ales din cele 256 de tabele de pagini prealocate pentru spațiile de adrese (1 MiB, vezi P2-04). Din pornirea totală,
 ~3,9 s sunt firmware-ul UEFI și Limine în emulare; discul de test (40 MiB) NU e în build-ul normal, pentru că doar
 încărcarea lui ar adăuga ~13 s în emulare (va fi citit de pe disc de driverul AHCI, P3-02).
+
+Faza 4 față de Faza 2: pornirea nucleului include acum drivere (PCI, AHCI, NVMe, USB/XHCI cu așteptarea legăturilor USB 3,
+e1000) și citirea ceasului; memoria nucleului crește puțin (2,6 MiB). Interfața grafică (server + desktop) nu pornește la boot;
+cu desktopul pornit memoria totală e ~10 MiB (secțiunea „Desktop” de mai jos).
 
 ## Stabilitate
 | Data | Test | Rezultat |
