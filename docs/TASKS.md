@@ -111,7 +111,8 @@ Scop (ROADMAP): un sistem folosibil de un om, nu doar de programator. Gata când
 dezinstala un modul din interfață. ROADMAP: Faza 4 merge în paralel cu Faza 3 (sarcinile au fost generate mai devreme,
 cât P3-09 așteaptă testul pe hardware real). Fiecare sarcină are plan în `docs/plans/`.
 
-- [ ] **P4-01** Mouse (PS/2 și USB). Dep: P3-06.
+- [x] **P4-01** Mouse (PS/2 și USB). Dep: P3-06.
+  Test: scenariile `mouse` (PS/2) și `usb-mouse` (QEMU mișcă mouse-ul și face clic).
 - [ ] **P4-02** Bibliotecă grafică: buffer dublu și desen rapid. Dep: P2-11.
 - [ ] **P4-03** Fonturi: diacritice românești și text UTF-8. Dep: P4-02.
 - [ ] **P4-04** Server grafic: ferestre și cursor. Dep: P4-01, P4-02, P4-03.

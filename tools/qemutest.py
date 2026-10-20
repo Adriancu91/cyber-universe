@@ -72,6 +72,7 @@ def main():
     ap.add_argument("--log", default="build/serial.log")
     ap.add_argument("--keys", help="QEMU key names to type (space-separated) once the kernel prints --keys-when")
     ap.add_argument("--keys-when", default="TASTATURA: astept taste")
+    ap.add_argument("--monitor", help="QEMU monitor commands to send at --keys-when, separated by ',' (':' = space)")
     ap.add_argument("--expect-exit", choices=["success", "failed"], default="success",
                     help="how the kernel must end: success (code 33) or a reported failure (code 35)")
     ap.add_argument("qemu_args", nargs=argparse.REMAINDER)
@@ -92,7 +93,7 @@ def main():
     out = b""
     deadline = time.time() + a.timeout
     acked = False
-    keys_sent = not a.keys
+    keys_sent = not (a.keys or a.monitor)
     screen_msg = None
     screen_ok = True
     while time.time() < deadline and proc.poll() is None:
@@ -106,10 +107,12 @@ def main():
             time.sleep(0.05)
         text = out.decode("utf-8", "replace").replace("\r", "")
         if not keys_sent and a.keys_when in text:
+            commands = [f"sendkey {k}" for k in (a.keys or "").split()]
+            commands += [c.replace(":", " ") for c in (a.monitor or "").split(",") if c]
             with socket.socket(socket.AF_UNIX) as s:
                 s.connect(mon_path)
-                for k in a.keys.split():
-                    s.sendall(f"sendkey {k}\n".encode())
+                for c in commands:
+                    s.sendall(f"{c}\n".encode())
                     time.sleep(0.15)
             keys_sent = True
         if not acked and READY in text:

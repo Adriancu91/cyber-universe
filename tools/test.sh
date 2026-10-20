@@ -53,6 +53,8 @@ while IFS='|' read -r name features ending expects screenshot qextra; do
     done
     keys=""
     if [[ "$qextra" == *keys=* ]]; then keys="${qextra#*keys=}"; qextra="${qextra%%keys=*}"; fi
+    mon=""
+    if [[ "$qextra" == *mon=* ]]; then mon="${qextra#*mon=}"; qextra="${qextra%%mon=*}"; fi
     qextra="${qextra//\{BUILD\}/$BUILD}"   # {BUILD} = the build directory (for disk images)
     # shellcheck disable=SC2206
     [[ -n "$qextra" ]] && QARGS+=($qextra)
@@ -61,6 +63,7 @@ while IFS='|' read -r name features ending expects screenshot qextra; do
     for l in "${lines[@]}"; do l="$(trim "$l")"; [[ -n "$l" ]] && PY+=(--expect "$l"); done
     [[ -n "$screenshot" ]] && PY+=(--screenshot "$ROOT/$screenshot")
     [[ -n "$keys" ]] && PY+=(--keys "$keys")
+    [[ -n "$mon" ]] && PY+=(--monitor "$mon")
 
     if python3 "$ROOT/tools/qemutest.py" "${PY[@]}" -- "${QARGS[@]}"; then
         passed=$((passed+1))

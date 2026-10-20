@@ -13,6 +13,7 @@ mod boot;
 mod drivers;
 mod fs;
 mod gfx;
+mod input;
 mod log;
 mod mem;
 mod pci;
@@ -97,7 +98,9 @@ extern "C" fn kernel_main() -> ! {
     let has_acpi = acpi::init();
     if has_acpi && acpi::madt::init() && arch::x86_64::apic::init() {
         time::start();
-        drivers::keyboard::init();
+        if drivers::keyboard::init() {
+            drivers::mouse::init();
+        }
     } else {
         warn!("sistem: fara ceas (APIC indisponibil); continui fara intreruperi");
     }
@@ -198,6 +201,9 @@ fn run_tests() -> ! {
 
     #[cfg(feature = "test-keyboard")]
     test_keyboard();
+
+    #[cfg(feature = "test-mouse")]
+    test_mouse();
 
     #[cfg(feature = "test-shell")]
     {
@@ -730,6 +736,25 @@ fn test_user_files() {
     let free_after = mem::frame::free_frames();
     assert!(free_after == free_before, "cadre pierdute dupa cat: {} inainte, {} dupa", free_before, free_after);
     info!("test: fisiere din programe OK (cat /etc/motd; erori: cod 1)");
+}
+
+/// Waits for the mouse events the test harness sends (a movement, then a left click) and logs them.
+#[cfg(feature = "test-mouse")]
+fn test_mouse() {
+    serial_println!("TASTATURA: astept taste"); // the harness sends its monitor commands now
+    let deadline = arch::x86_64::apic::ticks() + 10 * arch::x86_64::apic::HZ;
+    let mut got = alloc::vec::Vec::new();
+    while got.len() < 2 && arch::x86_64::apic::ticks() < deadline {
+        match input::read_mouse() {
+            Some(e) => {
+                info!("MOUSE: dx={} dy={} butoane={}", e.dx, e.dy, e.buttons);
+                got.push(e);
+            }
+            None => sched::sleep_ms(10),
+        }
+    }
+    assert!(got.len() == 2, "test: {} evenimente de mouse primite (asteptat 2)", got.len());
+    info!("test: mouse OK");
 }
 
 /// Waits for the keys the test harness types (h, i, Enter) and logs them.

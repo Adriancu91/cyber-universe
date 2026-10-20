@@ -20,13 +20,13 @@ pub fn init() {
     let Some(mut x) = xhci::init() else { return };
     let devices = x.devices.clone();
     let mut keyboards = Vec::new();
-    for d in devices.iter().filter(|d| d.class == (0x03, 0x01, 0x01)) {
+    for d in devices.iter().filter(|d| d.class == (0x03, 0x01, 0x01) || d.class == (0x03, 0x01, 0x02)) {
         match hid::Keyboard::start(&mut x, d) {
             Some(k) => {
-                crate::info!("usb: tastatura de pe portul {} pornita", d.port);
+                crate::info!("usb: {} de pe portul {} pornit(a)", d.kind(), d.port);
                 keyboards.push(k);
             }
-            None => crate::warn!("usb: tastatura de pe portul {} nu porneste", d.port),
+            None => crate::warn!("usb: {} de pe portul {} nu porneste", d.kind(), d.port),
         }
     }
     let mut disks = Vec::new();

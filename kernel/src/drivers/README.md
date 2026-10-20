@@ -7,6 +7,8 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   (cel românesc vine ca sarcină separată). Pe laptopuri moderne tastatura internă poate să nu fie PS/2:
   pe hardware real folosește la început o tastatură USB (driver XHCI în Faza 3).
 
+- `mouse.rs` — mouse PS/2 pe portul 2 al controlerului 8042 (IRQ 12), pachete de 3 octeți → `input::MouseEvent` (P4-01).
+  Pornirea se face cu întreruperile oprite (altfel răspunsurile controlerului ar fi luate de handler-ul tastaturii).
 - `ahci.rs` — discuri SATA prin controlerul AHCI (P3-02), doar citire, o comandă odată (cu așteptare activă):
   preia controlerul de la firmware, pornește primul port cu disc, `IDENTIFY` (model, mărime), `READ DMA EXT` în bucăți de 4 KiB.
   Implementează `block::BlockDevice`; discul dă `/disk` (prima partiție FAT32).

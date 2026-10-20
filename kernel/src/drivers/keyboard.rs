@@ -5,7 +5,7 @@
 use crate::arch::x86_64::{apic, idt, inb, outb};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-const DATA: u16 = 0x60;
+pub(super) const DATA: u16 = 0x60;
 const STATUS_CMD: u16 = 0x64;
 const IRQ: u8 = 1;
 
@@ -34,7 +34,7 @@ const NORMAL: [u8; 58] = *b"\0\x1b1234567890-=\x08\tqwertyuiop[]\n\0asdfghjkl;'`
 #[rustfmt::skip]
 const SHIFTED: [u8; 58] = *b"\0\x1b!@#$%^&*()_+\x08\tQWERTYUIOP{}\n\0ASDFGHJKL:\"~\0|ZXCVBNM<>?\0*\0 ";
 
-fn wait_write() {
+pub(super) fn wait_write() {
     // SAFETY: reading the 8042 status register has no side effects.
     for _ in 0..100_000 {
         if unsafe { inb(STATUS_CMD) } & 0x02 == 0 {
@@ -44,7 +44,7 @@ fn wait_write() {
     }
 }
 
-fn wait_read() -> bool {
+pub(super) fn wait_read() -> bool {
     for _ in 0..100_000 {
         // SAFETY: as above.
         if unsafe { inb(STATUS_CMD) } & 0x01 != 0 {
@@ -55,7 +55,7 @@ fn wait_read() -> bool {
     false
 }
 
-fn command(cmd: u8) {
+pub(super) fn command(cmd: u8) {
     wait_write();
     // SAFETY: documented 8042 controller command.
     unsafe { outb(STATUS_CMD, cmd) }

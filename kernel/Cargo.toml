@@ -32,6 +32,8 @@ test-usb = ["qemu-test"]
 test-usbdisk = ["qemu-test"]
 # P3-08: ARP request through the network card, answer from QEMU's virtual gateway.
 test-net = ["qemu-test"]
+# P4-01: the harness moves the mouse and clicks; the kernel must receive both events.
+test-mouse = ["qemu-test"]
 # P1-13: a write to .rodata must fault (the kernel image keeps its per-segment rights).
 test-rodata = ["qemu-test"]
 # Stability test (P1-11): 5 minutes; the quick variant runs the same loop for 15 seconds.

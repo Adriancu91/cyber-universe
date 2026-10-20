@@ -5,7 +5,7 @@
   Pentru fiecare port cu ceva conectat: reset (la USB 2), `Enable Slot`, `Address Device`, apoi descriptorul de dispozitiv
   (corectând mărimea pachetelor la USB 1/2) și descriptorul de configurație (clasa primei interfețe).
   Totul cu așteptare activă (fără întreruperi încă). În shell: `lsusb`.
-- `hid.rs` — tastaturi USB (P3-06) prin protocolul HID „boot”: `SET_CONFIGURATION`, `SET_PROTOCOL(boot)`, endpoint-ul
+- `hid.rs` — tastaturi USB (P3-06) și mouse-uri USB (P4-01, rapoarte de 3 octeți → `input::MouseEvent`) prin protocolul HID „boot”: `SET_CONFIGURATION`, `SET_PROTOCOL(boot)`, endpoint-ul
   de întreruperi (`Configure Endpoint`), rapoarte de 8 octeți → aceleași taste ca la PS/2 (aceeași coadă, `wait_key`).
   Un fir de sistem verifică la fiecare 8 ms transferurile terminate (fără întreruperi încă).
 - `storage.rs` — stick-uri USB (P3-07): clasa Mass Storage, Bulk-Only Transport, comenzi SCSI `INQUIRY`,
