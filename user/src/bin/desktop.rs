@@ -94,7 +94,7 @@ impl Desktop {
         c.fill(0, 0, w, BAR_H, BAR);
         c.fill(START_X, 4, START_W, BAR_H - 8, if self.menu_open { LOGO } else { START });
         c.text(START_X + 12, (BAR_H - 2 * GLYPH_H) / 2 + 1, "Start", TEXT, 2);
-        self.clock = time().map(|t| (t.hour, t.minute));
+        self.clock = local_time();
         let mut s = [b'-', b'-', b':', b'-', b'-'];
         if let Some((h, m)) = self.clock {
             s = [b'0' + h / 10, b'0' + h % 10, b':', b'0' + m / 10, b'0' + m % 10];
@@ -152,6 +152,13 @@ impl Desktop {
     }
 }
 
+/// Hour and minute of the computer's clock moved by the time zone from the settings (`settings` app).
+fn local_time() -> Option<(u8, u8)> {
+    let mut buf = [0u8; 512];
+    let zone = cyber_user::settings::time_zone(cyber_user::settings::read(&mut buf));
+    time().map(|t| ((t.hour as i32 + zone).rem_euclid(24) as u8, t.minute))
+}
+
 fn main() -> i64 {
     let win = match Window::open_desktop() {
         Ok(w) => w,
@@ -174,7 +181,7 @@ fn main() -> i64 {
             Ok(Some(Event::Key('\u{1b}'))) => break,
             Ok(Some(Event::Click { x, y, buttons })) if buttons & 1 != 0 => d.click(x, y),
             Ok(_) => {
-                if time().map(|t| (t.hour, t.minute)) != d.clock {
+                if local_time() != d.clock {
                     d.draw_bar();
                 }
             }

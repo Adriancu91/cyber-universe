@@ -62,12 +62,14 @@ pub fn window_present(id: u64, pixels: u64, area: u64, stride: u64) -> i64 {
 }
 
 /// event_wait(id, timeout_ms) -> next event, packed: kind << 48 | data. Kind 1 = key (data = the
-/// character; Enter = '\n', Backspace = 8, Tab = '\t', Escape = 27); kind 2 = click (buttons << 32 |
-/// x << 16 | y); 0 = no event within `timeout_ms` (0 = wait without limit). E_NOT_FOUND once the
+/// character; Enter = '\n', Backspace = 8, Tab = '\t', Escape = 27, arrows U+F700..U+F703 (up, down,
+/// left, right), Delete U+F728, Home U+F729, End U+F72B); kind 2 = click (buttons << 32 | x << 16 | y);
+/// kind 3 = a letter with Ctrl; 0 = no event within `timeout_ms` (0 = wait without limit). E_NOT_FOUND once the
 /// window is closed.
 pub fn event_wait(id: u64, timeout_ms: u64) -> i64 {
     match ui::wait_event(sched::current_id(), id as u32, timeout_ms) {
         Ok(None) => 0,
+        Ok(Some(Event::Key(Key::Ctrl(c)))) => (3 << 48 | c as u64) as i64,
         Ok(Some(Event::Key(k))) => {
             let c = match k {
                 Key::Char(c) => c as u64,
@@ -75,6 +77,15 @@ pub fn event_wait(id: u64, timeout_ms: u64) -> i64 {
                 Key::Backspace => 8,
                 Key::Tab => '\t' as u64,
                 Key::Escape => 27,
+                // The cursor keys as private-use characters (the codes other systems use too).
+                Key::Up => 0xF700,
+                Key::Down => 0xF701,
+                Key::Left => 0xF702,
+                Key::Right => 0xF703,
+                Key::Delete => 0xF728,
+                Key::Home => 0xF729,
+                Key::End => 0xF72B,
+                Key::Ctrl(_) => unreachable!(),
             };
             (1 << 48 | c) as i64
         }

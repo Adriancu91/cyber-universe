@@ -1,4 +1,5 @@
-//! File manager: browse folders, open (folders, programs), copy, paste and delete files.
+//! File manager: browse folders, open (folders, programs; other files in the editor), copy, paste and
+//! delete files.
 //! Mouse: click selects; the buttons at the top act on the selection. Keys: Enter = open,
 //! Backspace = up one folder, j / k = next / previous, c = copy, v = paste, s = delete, q = quit.
 //! The first argument is the folder to start in (default `/`).
@@ -209,8 +210,13 @@ impl Files {
                     self.say("pornit: ").push(p.as_str());
                 }
             } else {
-                let size = cyber_user::stat(p.as_str());
-                self.say(e.name()).push(": ").num(size.max(0) as u64).push(" octeti (nicio aplicatie pentru el inca)");
+                // Everything else opens in the text editor.
+                let r = cyber_user::spawn_with("/bin/editor", p.as_str());
+                if r < 0 {
+                    self.say("editorul nu porneste: ").push(error_text(r));
+                } else {
+                    self.say("deschis in editor: ").push(p.as_str());
+                }
             }
         }
     }
@@ -362,7 +368,7 @@ fn main() -> i64 {
         let go_on = match e {
             Event::Key(k) => f.key(k),
             Event::Click { x, y, buttons } if buttons & 1 != 0 => f.click(x, y),
-            Event::Click { .. } => true,
+            Event::Click { .. } | Event::Ctrl(_) => true,
         };
         if !go_on {
             break;

@@ -28,6 +28,7 @@ pub const SYS_CREATE: u64 = 19;
 pub const SYS_REMOVE: u64 = 20;
 
 pub mod gfx;
+pub mod settings;
 pub mod text;
 
 /// Negative results of system calls.
@@ -77,7 +78,12 @@ pub fn syscall4(nr: u64, a1: u64, a2: u64, a3: u64, a4: u64) -> i64 {
 
 /// Starts the program at `path`. Returns its id or a negative error.
 pub fn spawn(path: &str) -> i64 {
-    syscall3(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, 0)
+    syscall4(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, 0, 0)
+}
+
+/// Starts the program at `path` with one argument (e.g. the file to open).
+pub fn spawn_with(path: &str, arg: &str) -> i64 {
+    syscall4(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, arg.as_ptr() as u64, arg.len() as u64)
 }
 
 /// Waits for the program `id` to end and returns its exit code (negative error if there is no such program).

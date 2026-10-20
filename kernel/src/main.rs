@@ -230,6 +230,9 @@ fn run_tests() -> ! {
     #[cfg(feature = "test-sysapps")]
     test_system_apps();
 
+    #[cfg(feature = "test-editor")]
+    test_editor_and_settings();
+
     #[cfg(feature = "test-shell")]
     {
         serial_println!("TASTATURA: astept taste");
@@ -816,6 +819,74 @@ fn test_system_apps() {
     info!("test: aplicatii de sistem OK (monitor: lista si oprire; fisiere: copiere, lipire, stergere, navigare)");
 }
 
+/// The editor gets real key presses from QEMU (letters, Enter, arrows, Home, End, Backspace, Delete,
+/// Shift, Ctrl+S, Ctrl+Q) and saves a new file; the settings app saves a time zone and a layout
+/// (simulated clicks); the file manager opens a text file in the editor.
+#[cfg(feature = "test-editor")]
+fn test_editor_and_settings() {
+    use drivers::keyboard::{Key, push_key};
+    use input::{MouseEvent, push_mouse};
+    let wait_for = |what: &str, ok: &dyn Fn() -> bool| {
+        let deadline = arch::x86_64::apic::ticks() + 10 * arch::x86_64::apic::HZ;
+        while !ok() {
+            assert!(arch::x86_64::apic::ticks() < deadline, "test editor: {}", what);
+            sched::sleep_ms(10);
+        }
+    };
+    let click = |x: usize, y: usize| {
+        let (cx, cy) = ui::cursor().expect("test: serverul grafic nu merge");
+        push_mouse(MouseEvent { dx: (x as isize - cx as isize) as i16, dy: (y as isize - cy as isize) as i16, buttons: 0 });
+        push_mouse(MouseEvent { dx: 0, dy: 0, buttons: 1 });
+        push_mouse(MouseEvent { dx: 0, dy: 0, buttons: 0 });
+        sched::sleep_ms(250);
+    };
+    let key = |k: Key| {
+        push_key(k);
+        sched::sleep_ms(250);
+    };
+    let top_is = |id: u64| ui::top_window().is_some_and(|(o, _)| o == id);
+
+    let editor = proc::spawn_path("/bin/editor", &["editor", "/disk/nou.txt"]).expect("test: editor");
+    wait_for("editorul nu porneste", &|| top_is(editor));
+    sched::sleep_ms(200);
+    serial_println!("TASTATURA: astept taste");
+    assert!(proc::wait(editor) == 0, "editorul nu a iesit cu 0");
+    let text = fs::read_all("/disk/nou.txt").expect("test: /disk/nou.txt lipseste");
+    assert!(text == b"sal!\nolume", "continut salvat: {:?}", core::str::from_utf8(&text));
+
+    let settings = proc::spawn_path("/bin/settings", &["settings"]).expect("test: settings");
+    wait_for("setarile nu pornesc", &|| top_is(settings));
+    sched::sleep_ms(200);
+    let (_, (sx, sy)) = ui::top_window().unwrap();
+    click(sx + 330, sy + 48); // +
+    click(sx + 330, sy + 48); // +
+    click(sx + 300, sy + 88); // keyboard layout
+    click(sx + 60, sy + 160); // save
+    wait_for("setarile nu s-au salvat", &|| {
+        fs::read_all("/disk/config/settings.toml").is_ok_and(|t| {
+            let t = alloc::string::String::from_utf8_lossy(&t).into_owned();
+            t.contains("fus_orar = \"+2\"") && t.contains("tastatura = \"ro\"")
+        })
+    });
+    key(Key::Char('q'));
+    assert!(proc::wait(settings) == 0, "setarile nu au iesit cu 0");
+
+    // Files: rows .., config/, docs/, pachete/, cyber.rw, nou.txt, ...: open nou.txt in the editor.
+    let files = proc::spawn_path("/bin/files", &["files", "/disk"]).expect("test: files");
+    wait_for("managerul de fisiere nu porneste", &|| top_is(files));
+    sched::sleep_ms(200);
+    let (_, (fx, fy)) = ui::top_window().unwrap();
+    click(fx + 100, fy + 48 + 5 * 20 + 10);
+    key(Key::Enter);
+    wait_for("fisierul nu se deschide in editor", &|| ui::top_window().is_some_and(|(o, _)| o != files));
+    key(Key::Ctrl('q'));
+    wait_for("editorul deschis din fisiere nu se inchide", &|| top_is(files));
+    key(Key::Char('q'));
+    assert!(proc::wait(files) == 0, "files nu a iesit cu 0");
+    wait_for("serverul grafic nu se opreste", &|| !ui::running());
+    info!("test: editor si setari OK (taste reale, salvare, setari salvate, deschidere din fisiere)");
+}
+
 /// The same partition must also be found through an MBR (the disk image seen with a different sector 0).
 #[cfg(feature = "test-disk")]
 fn test_fat32_mbr() {
@@ -1141,9 +1212,9 @@ fn test_desktop() {
     );
     serial_println!("TASTATURA: astept taste"); // the harness moves the mouse onto Start and clicks
     wait_for("meniul nu se deschide", &|| screen(150, h - 32 - 6) == Some(MENU));
-    // Menu items from the top: cat, demo, files, hello, monitor (24 pixels each, 4 of margin, the bar
-    // is 32 high); the cursor is on Start (46, h - 16); `demo` is the second item.
-    let items = 5;
+    // Menu items from the top: cat, demo, editor, files, hello, monitor, settings (24 pixels each, 4 of
+    // margin, the bar is 32 high); the cursor is on Start (46, h - 16); `demo` is the second item.
+    let items = 7;
     let demo_y = h - 32 - (items * 24 + 8) + 4 + 24 + 12;
     push_mouse(MouseEvent { dx: 4, dy: demo_y as i16 - (h - 16) as i16, buttons: 0 });
     push_mouse(MouseEvent { dx: 0, dy: 0, buttons: 1 });

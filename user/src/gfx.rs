@@ -50,11 +50,21 @@ impl Canvas<'_> {
     }
 }
 
+pub const KEY_UP: char = '\u{F700}';
+pub const KEY_DOWN: char = '\u{F701}';
+pub const KEY_LEFT: char = '\u{F702}';
+pub const KEY_RIGHT: char = '\u{F703}';
+pub const KEY_DELETE: char = '\u{F728}';
+pub const KEY_HOME: char = '\u{F729}';
+pub const KEY_END: char = '\u{F72B}';
+
 /// Something that happened to the window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
-    /// A key press (Enter = '\n', Backspace = '\u{8}', Escape = '\u{1b}').
+    /// A key press (Enter = '\n', Backspace = '\u{8}', Escape = '\u{1b}', and the `KEY_*` characters).
     Key(char),
+    /// A letter pressed with Ctrl (lower case).
+    Ctrl(char),
     /// A click at (x, y) inside the window; bit 0 of `buttons` = left.
     Click { x: usize, y: usize, buttons: u8 },
 }
@@ -145,6 +155,7 @@ impl Window {
         let r = r as u64;
         Ok(Some(match r >> 48 {
             1 => Event::Key(char::from_u32((r & 0xFFFF_FFFF) as u32).unwrap_or('?')),
+            3 => Event::Ctrl(char::from_u32((r & 0xFFFF_FFFF) as u32).unwrap_or('?')),
             _ => Event::Click { x: ((r >> 16) & 0xFFFF) as usize, y: (r & 0xFFFF) as usize, buttons: (r >> 32) as u8 },
         }))
     }

@@ -46,6 +46,8 @@ test-fatwrite = ["qemu-test"]
 test-modules = ["qemu-test"]
 # P4-09: system monitor and file manager driven with simulated clicks and keys.
 test-sysapps = ["qemu-test"]
+# P4-10: text editor (keys typed by QEMU), settings, opening a text file from the file manager.
+test-editor = ["qemu-test"]
 # P1-13: a write to .rodata must fault (the kernel image keeps its per-segment rights).
 test-rodata = ["qemu-test"]
 # Stability test (P1-11): 5 minutes; the quick variant runs the same loop for 15 seconds.

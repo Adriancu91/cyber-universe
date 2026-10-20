@@ -13,7 +13,10 @@
   (0x00RRGGBB; rândul i începe la `pixeli + i × pas`; pas 0 = același rând repetat, adică o culoare) la (x, y) în fereastră
   și o arată; `10 event_wait(id, ms)` → tip << 48 | date (1 = tastă: caracterul; 2 = clic: butoane << 32 | x << 16 | y;
   0 = nimic în `ms` milisecunde, 0 = fără limită); `-3` când fereastra a fost închisă; `11 window_close(id)`.
-- **Programe și sistem (P4-06):** `12 spawn(cale, lungime)` → id-ul programului nou; `13 wait(id)` → codul lui de ieșire
+- **Taste speciale (P4-10):** în `event_wait`, săgețile sunt caracterele U+F700 (sus), U+F701 (jos), U+F702 (stânga),
+  U+F703 (dreapta), Delete U+F728, Home U+F729, End U+F72B; o literă apăsată cu Ctrl are tipul 3.
+- **Programe și sistem (P4-06):** `12 spawn(cale, lungime, arg, lungime_arg)` → id-ul programului nou (argumente: calea
+  și, dacă `lungime_arg` > 0, textul `arg`); `13 wait(id)` → codul lui de ieșire
   (`-3` dacă nu există); `14 list(cale, lungime, buf, mărime)` → numele din director, câte unul pe rând (`/` după directoare);
   `15 time()` → an << 40 | lună << 32 | zi << 24 | oră << 16 | minut << 8 | secundă (`-3` fără ceas);
   `16 screen_size()` → lățime | înălțime << 32.

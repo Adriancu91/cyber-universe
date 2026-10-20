@@ -24,8 +24,21 @@ pub struct Keyboard {
 const PLAIN: &[u8; 53] = b"abcdefghijklmnopqrstuvwxyz1234567890\n\x1b\x08\t -=[]\\\0;'`,./";
 const SHIFTED: &[u8; 53] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()\n\x1b\x08\t _+{}|\0:\"~<>?";
 
-fn key_for(usage: u8, shift: bool) -> Option<Key> {
+fn key_for(usage: u8, shift: bool, ctrl: bool) -> Option<Key> {
+    match usage {
+        0x50 => return Some(Key::Left),
+        0x4F => return Some(Key::Right),
+        0x52 => return Some(Key::Up),
+        0x51 => return Some(Key::Down),
+        0x4A => return Some(Key::Home),
+        0x4D => return Some(Key::End),
+        0x4C => return Some(Key::Delete),
+        _ => {}
+    }
     let i = usage.checked_sub(4)? as usize;
+    if ctrl && i < 26 {
+        return Some(Key::Ctrl(PLAIN[i] as char));
+    }
     let c = *if shift { SHIFTED } else { PLAIN }.get(i)?;
     match c {
         0 => None,
@@ -68,9 +81,10 @@ impl Keyboard {
             return;
         }
         let shift = report[0] & 0x22 != 0; // left or right Shift
+        let ctrl = report[0] & 0x11 != 0; // left or right Ctrl
         for &usage in &report[2..8] {
             if usage >= 4 && !self.previous[2..8].contains(&usage) {
-                if let Some(key) = key_for(usage, shift) {
+                if let Some(key) = key_for(usage, shift, ctrl) {
                     if !FIRST_KEY.swap(true, core::sync::atomic::Ordering::Relaxed) {
                         crate::info!("usb: prima tasta de la tastatura USB");
                     }

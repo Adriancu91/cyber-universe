@@ -76,7 +76,7 @@ fn call(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64) -> i64 {
         SYS_WINDOW_PRESENT => ui::window_present(a1, a2, _a3, a4),
         SYS_EVENT_WAIT => ui::event_wait(a1, a2),
         SYS_WINDOW_CLOSE => ui::window_close(a1),
-        SYS_SPAWN => spawn(a1, a2),
+        SYS_SPAWN => spawn(a1, a2, _a3, a4),
         SYS_WAIT => crate::proc::wait_child(a1),
         SYS_LIST => list(a1, a2, _a3, a4),
         SYS_TIME => time(),
@@ -249,13 +249,23 @@ fn stat(ptr: u64, len: u64) -> i64 {
     }
 }
 
-/// spawn(path, length) -> id of the new program (it gets its path as its only argument).
-fn spawn(ptr: u64, len: u64) -> i64 {
+/// spawn(path, length, arg, arg_length) -> id of the new program. Its arguments are its path and, if
+/// `arg_length` > 0, the text `arg`.
+fn spawn(ptr: u64, len: u64, arg: u64, arg_len: u64) -> i64 {
     let path = match user_path(ptr, len) {
         Ok(p) => p,
         Err(e) => return e,
     };
-    match crate::proc::spawn_path(&path, &[&path]) {
+    let arg = if arg_len == 0 {
+        None
+    } else {
+        match user_path(arg, arg_len) {
+            Ok(a) => Some(a),
+            Err(e) => return e,
+        }
+    };
+    let args: alloc::vec::Vec<&str> = core::iter::once(path.as_str()).chain(arg.as_deref()).collect();
+    match crate::proc::spawn_path(&path, &args) {
         Ok(id) => id as i64,
         Err(crate::proc::SpawnError::NotFound(e)) => fs_error(e),
         Err(_) => E_INVALID,

@@ -4,7 +4,8 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
 
 - `serial.rs` — port serial COM1 (16550): canalul principal de jurnal și de test. Detectează dacă portul există.
 - `keyboard.rs` — tastatură PS/2 prin controlerul 8042, IRQ 1 rutat prin I/O APIC; aranjament US
-  (cel românesc vine ca sarcină separată). Pe laptopuri moderne tastatura internă poate să nu fie PS/2:
+  (cel românesc vine ca sarcină separată). Recunoaște și săgețile, Home, End, Delete (coduri E0) și Ctrl+literă
+  (`Key::Ctrl`), la fel și tastatura USB (P4-10, testate în scenariul `editor` cu taste trimise de QEMU). Pe laptopuri moderne tastatura internă poate să nu fie PS/2:
   pe hardware real folosește la început o tastatură USB (driver XHCI în Faza 3).
 
 - `mouse.rs` — mouse PS/2 pe portul 2 al controlerului 8042 (IRQ 12), pachete de 3 octeți → `input::MouseEvent` (P4-01).

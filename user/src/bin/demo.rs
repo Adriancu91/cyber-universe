@@ -35,6 +35,7 @@ fn main() -> i64 {
                 return 0;
             }
             Event::Key(k) => println!("demo: tasta {:?}", k),
+            Event::Ctrl(k) => println!("demo: Ctrl+{}", k),
             Event::Click { x, y, .. } => {
                 println!("demo: clic la ({}, {})", x, y);
                 c.fill(x.saturating_sub(3), y.saturating_sub(3), 7, 7, 0x00_30_D0_60);

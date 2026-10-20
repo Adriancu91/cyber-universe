@@ -17,6 +17,15 @@ pub enum Key {
     Backspace,
     Tab,
     Escape,
+    Left,
+    Right,
+    Up,
+    Down,
+    Home,
+    End,
+    Delete,
+    /// A letter pressed with Ctrl held (always lower case).
+    Ctrl(char),
 }
 
 const QUEUE: usize = 64;
@@ -26,6 +35,7 @@ static TAIL: AtomicUsize = AtomicUsize::new(0); // written by the reader
 static SHIFT: AtomicBool = AtomicBool::new(false);
 static CAPS: AtomicBool = AtomicBool::new(false);
 static EXTENDED: AtomicBool = AtomicBool::new(false);
+static CTRL: AtomicBool = AtomicBool::new(false);
 /// Threads waiting for a key press (see `wait_key`).
 static KEY_WAIT: crate::sched::WaitQueue = crate::sched::WaitQueue::new();
 
@@ -66,12 +76,34 @@ fn decode(scancode: u8) -> Option<Key> {
         EXTENDED.store(true, Ordering::Relaxed);
         return None;
     }
-    if EXTENDED.swap(false, Ordering::Relaxed) {
-        return None; // arrows, keypad Enter etc.: not handled yet
-    }
     let released = scancode & 0x80 != 0;
     let code = scancode & 0x7F;
+    if EXTENDED.swap(false, Ordering::Relaxed) {
+        // E0-prefixed keys: the cursor block and the right Ctrl.
+        if code == 0x1D {
+            CTRL.store(!released, Ordering::Relaxed);
+            return None;
+        }
+        if released {
+            return None;
+        }
+        return match code {
+            0x4B => Some(Key::Left),
+            0x4D => Some(Key::Right),
+            0x48 => Some(Key::Up),
+            0x50 => Some(Key::Down),
+            0x47 => Some(Key::Home),
+            0x4F => Some(Key::End),
+            0x53 => Some(Key::Delete),
+            0x1C => Some(Key::Enter), // keypad Enter
+            _ => None,
+        };
+    }
     match code {
+        0x1D => {
+            CTRL.store(!released, Ordering::Relaxed);
+            return None;
+        }
         0x2A | 0x36 => {
             SHIFT.store(!released, Ordering::Relaxed);
             return None;
@@ -86,6 +118,9 @@ fn decode(scancode: u8) -> Option<Key> {
         return None;
     }
     let shift = SHIFT.load(Ordering::Relaxed);
+    if CTRL.load(Ordering::Relaxed) && NORMAL[code as usize].is_ascii_lowercase() {
+        return Some(Key::Ctrl(NORMAL[code as usize] as char));
+    }
     let mut c = if shift { SHIFTED[code as usize] } else { NORMAL[code as usize] };
     if CAPS.load(Ordering::Relaxed) && c.is_ascii_alphabetic() {
         c = if shift { c.to_ascii_lowercase() } else { c.to_ascii_uppercase() };

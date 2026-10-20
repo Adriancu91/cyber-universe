@@ -15,9 +15,14 @@
 - `files` — managerul de fișiere: navigare, deschidere (directoare, programe), copiere/lipire, ștergere; butoane sus
   și taste (Enter, Backspace, j/k, c, v, s, q). Primul argument = directorul de pornire.
   Test pentru amândouă: scenariul `sysapps` (clicuri și taste simulate, captura `tests/screens/sysapps.png`).
+- `editor [fișier]` — editor de text: scriere, săgeți, Home, End, Backspace, Delete; Ctrl+S salvează, Ctrl+Q iese
+  (de două ori dacă sunt modificări nesalvate); fișiere UTF-8 până la 64 KiB. Managerul de fișiere deschide aici
+  fișierele care nu sunt programe.
+- `settings` — setări: fusul orar al ceasului (desktopul îl folosește) și aranjamentul tastaturii (se aplică după P4-12),
+  salvate în `/disk/config/settings.toml` (`src/settings.rs` le citește). Test: scenariul `editor`.
 - **Ferestre (`src/gfx.rs`):** `Window::open(titlu, l, î)`, `Canvas` (imaginea în memoria programului, `fill`),
   `present`/`present_all`, `draw` (o imagine mică oriunde în fereastră), `fill`, `Canvas::text` (același font ca
   nucleul), `Window::open_desktop`, `wait_event_for(ms)`, `wait_event()` → `Event::Key(c)` sau `Event::Click { x, y, buttons }`, `close()`.
-- **Biblioteca** are și `text::Line` (text fără heap), `mem_info`, `programs`, `kill`, `create`, `remove`, `spawn`, `wait`, `list`, `time`, `screen_size`, și `open`, `read`, `close`, `stat`, `args()` (argumentele programului) și `error_text`.
+- **Biblioteca** are și `text::Line` (text fără heap), `mem_info`, `programs`, `kill`, `create`, `remove`, `spawn`, `spawn_with` (program + un argument), `wait`, `settings` (citirea setărilor), `list`, `time`, `screen_size`, și `open`, `read`, `close`, `stat`, `args()` (argumentele programului) și `error_text`.
 - **Cum se testează:** scenariul `log` (`hello din ELF`, `test: ELF OK`).
 - **Depinde de:** apelurile de sistem ale nucleului (`kernel/src/syscall/README.md`).
