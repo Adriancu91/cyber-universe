@@ -57,7 +57,7 @@ struct DescriptorPointer {
     base: u64,
 }
 
-type Handler = extern "x86-interrupt" fn(InterruptStackFrame);
+pub type Handler = extern "x86-interrupt" fn(InterruptStackFrame);
 type HandlerWithCode = extern "x86-interrupt" fn(InterruptStackFrame, u64);
 type DivergingWithCode = extern "x86-interrupt" fn(InterruptStackFrame, u64) -> !;
 
@@ -93,6 +93,15 @@ pub fn init() {
     };
     // SAFETY: the IDT is a static that lives forever and every installed entry points at a valid handler.
     unsafe { asm!("lidt [{}]", in(reg) &ptr, options(readonly, nostack, preserves_flags)) }
+}
+
+/// Installs (or replaces) the handler of one vector after the IDT is loaded (used by device drivers).
+pub fn set_handler(vector: u8, handler: u64) {
+    // SAFETY: a single aligned 16-byte entry is replaced while interrupts for this vector are not yet enabled.
+    unsafe {
+        let entry = &raw mut (*core::ptr::addr_of_mut!(IDT))[vector as usize];
+        entry.write_volatile(Entry::new(handler, 0));
+    }
 }
 
 /// Logs a fatal exception and stops the kernel (or reports failure to QEMU in test builds).

@@ -59,8 +59,10 @@ extern "C" fn kmain() -> ! {
         panic!("initializarea memoriei a esuat");
     }
 
-    if acpi::init() {
-        acpi::madt::init();
+    if acpi::init() && acpi::madt::init() && arch::x86_64::apic::init() {
+        time::start();
+    } else {
+        warn!("sistem: fara ceas (APIC indisponibil); continui fara intreruperi");
     }
 
     #[cfg(feature = "qemu-test")]
@@ -93,6 +95,7 @@ fn run_tests() -> ! {
     test_frames();
     test_paging();
     test_heap();
+    test_timer();
 
     #[cfg(feature = "test-divzero")]
     // SAFETY: deliberate #DE for the test scenario; the handler stops the kernel.
@@ -201,6 +204,21 @@ fn test_heap() {
     let (used_after, mapped) = mem::heap::stats();
     assert!(used_after == used_before, "scurgere in heap: {} inainte, {} dupa", used_before, used_after);
     info!("test: heap OK (Vec de 1.000.000, 10.000 Box, String); heap mapat {} KiB", mapped / 1024);
+}
+
+/// Checks the APIC timer against the PIT: in 1 second (measured by the PIT) there must be ~100 ticks.
+#[cfg(feature = "qemu-test")]
+fn test_timer() {
+    use arch::x86_64::apic;
+    let start = apic::ticks();
+    apic::pit_sleep_ms(1000);
+    let n = apic::ticks() - start;
+    assert!((90..=110).contains(&n), "temporizator: {} intreruperi intr-o secunda (asteptat 100)", n);
+    // `hlt` must wake up on the next timer interrupt.
+    let before = apic::ticks();
+    arch::x86_64::hlt();
+    assert!(apic::ticks() > before, "hlt nu a fost trezit de temporizator");
+    info!("test: temporizator OK ({} intreruperi intr-o secunda)", n);
 }
 
 #[panic_handler]

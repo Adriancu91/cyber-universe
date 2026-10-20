@@ -1,5 +1,6 @@
 //! x86_64-specific primitives: port I/O and CPU control.
 
+pub mod apic;
 pub mod gdt;
 pub mod idt;
 
