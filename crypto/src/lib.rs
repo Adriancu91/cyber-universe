@@ -6,6 +6,7 @@ pub mod hkdf;
 pub mod hmac;
 pub mod sha2;
 pub mod vectors;
+pub mod x25519;
 
 /// A hash function usable by HMAC and HKDF.
 pub trait Digest: Sized {

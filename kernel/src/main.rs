@@ -1183,7 +1183,7 @@ fn test_crypto() {
     use cyber_crypto::{Digest, sha2::Sha256};
     let ticks = arch::x86_64::apic::ticks();
     match cyber_crypto::vectors::self_test() {
-        Ok(n) => info!("crypto: {} vectori oficiali trecuti (SHA-256/384/512, HMAC, HKDF, TLS 1.3)", n),
+        Ok(n) => info!("crypto: {} vectori oficiali trecuti (SHA-256/384/512, HMAC, HKDF, TLS 1.3, X25519)", n),
         Err(name) => panic!("crypto: vectorul {} a esuat", name),
     }
     let ms = (arch::x86_64::apic::ticks() - ticks) * 1000 / arch::x86_64::apic::HZ;

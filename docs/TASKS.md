@@ -141,7 +141,7 @@ Generate la închiderea Fazei 4 (P4-11, 2026-10-20). Fiecare are plan în `docs/
 - [ ] BLOCAT **P5-07** Suita office ca modul (după ce citim proiectul din Cyber Hub). Dep: P4-11.
 - [ ] **P5-08** Kronos ca modul. Dep: P5-07.
 - [x] **P5-10** Criptografie 1: SHA-256, SHA-384, HMAC, HKDF (crate `crypto/`), cu vectorii NIST/RFC. Dep: —.
-- [~] **P5-11** Criptografie 2: X25519 (schimb de chei, RFC 7748). Dep: P5-10.
+- [x] **P5-11** Criptografie 2: X25519 (schimb de chei, RFC 7748). Dep: P5-10.
 - [ ] **P5-12** Criptografie 3: ChaCha20-Poly1305 (RFC 8439). Dep: P5-10.
 - [ ] **P5-13** Criptografie 4: verificarea semnăturilor din certificate (RSA PKCS#1 v1.5/PSS, ECDSA P-256) și citirea certificatelor X.509 (DER). Dep: P5-10.
 - [ ] **P5-09** Închiderea Fazei 5. Dep: P5-01 … P5-08.
