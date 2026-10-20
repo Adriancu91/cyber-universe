@@ -37,6 +37,16 @@ jobs:
       - name: Build + test în QEMU
         run: tools/test.sh
 
+      - name: Imagine pentru stick USB (docs/USB.md)
+        run: tools/build.sh --usb
+
+      - name: Imaginea pentru stick
+        uses: actions/upload-artifact@v4
+        with:
+          name: stick-usb
+          path: build/cyber-universe-usb.img
+          if-no-files-found: error
+
       - name: Rezultate (log serial și captură de ecran)
         if: always()
         uses: actions/upload-artifact@v4

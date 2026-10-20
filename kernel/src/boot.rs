@@ -2,7 +2,8 @@
 
 use limine::BaseRevision;
 use limine::request::{
-    FramebufferRequest, HhdmRequest, MemoryMapRequest, ModuleRequest, RequestsEndMarker, RequestsStartMarker, RsdpRequest,
+    ExecutableFileRequest, FramebufferRequest, HhdmRequest, MemoryMapRequest, ModuleRequest, RequestsEndMarker,
+    RequestsStartMarker, RsdpRequest,
 };
 
 /// Highest base revision supported by the `limine` crate (0.5.0).
@@ -35,6 +36,27 @@ pub static RSDP: RsdpRequest = RsdpRequest::new();
 #[unsafe(link_section = ".requests")]
 pub static MODULES: ModuleRequest = ModuleRequest::new();
 
+/// The kernel file itself: tells where the system was started from (CD, disk/USB stick, network).
+#[used]
+#[unsafe(link_section = ".requests")]
+pub static EXECUTABLE_FILE: ExecutableFileRequest = ExecutableFileRequest::new();
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Medium {
+    Unknown,
+    Cd,
+    Disk,
+    Network,
+}
+
+static MEDIUM: crate::sched::Mutex<Medium> = crate::sched::Mutex::new(Medium::Unknown);
+
+/// Where the kernel was loaded from (known after `collect_files`).
+#[allow(dead_code)] // used by the self-tests now, by the shell later
+pub fn medium() -> Medium {
+    *MEDIUM.lock()
+}
+
 /// One file loaded by Limine. The data stays valid forever (Limine's "executable and modules" memory is
 /// never reclaimed); the name is copied, because the response itself is in reclaimable memory.
 pub struct BootFile {
@@ -47,6 +69,21 @@ static FILES: crate::sched::Mutex<alloc::vec::Vec<BootFile>> = crate::sched::Mut
 /// Copies the module list from Limine's response. Must run after the heap is ready and before
 /// `mem::reclaim_bootloader`.
 pub fn collect_files() {
+    if let Some(r) = EXECUTABLE_FILE.get_response() {
+        use limine::file::MediaType;
+        let m = match r.file().media_type() {
+            MediaType::OPTICAL => Medium::Cd,
+            MediaType::TFTP => Medium::Network,
+            _ => Medium::Disk, // "generic": a hard disk, an SSD or a USB stick
+        };
+        *MEDIUM.lock() = m;
+        let name = match m {
+            Medium::Cd => "CD",
+            Medium::Network => "retea",
+            _ => "disc (hard disk, SSD sau stick USB)",
+        };
+        crate::info!("boot: pornit de pe {}", name);
+    }
     let Some(response) = MODULES.get_response() else {
         crate::info!("boot: niciun fisier incarcat de Limine");
         return;

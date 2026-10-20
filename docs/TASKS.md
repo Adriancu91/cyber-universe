@@ -92,7 +92,8 @@ AHCI, NVMe, XHCI, e1000). Fiecare sarcină are plan în `docs/plans/`.
   Test: scenariul `ahci` (discul de test ca SATA → `/disk` prin AHCI); `shell` și `phase2` citesc tot prin AHCI.
 - [x] **P3-03** Driver NVMe, doar citire. Dep: P3-01.
   Test: scenariul `nvme` (discul de test ca NVMe → `/disk`).
-- [ ] **P3-04** Imagine pentru stick USB (`tools/build.sh --usb`) + ghid `docs/USB.md`. Dep: P2-11.
+- [x] **P3-04** Imagine pentru stick USB (`tools/build.sh --usb`) + ghid `docs/USB.md`. Dep: P2-11.
+  Test: scenariul `usb` (QEMU pornește de pe imaginea de stick prin XHCI + usb-storage); imaginea se descarcă din CI (artefactul `stick-usb`).
 - [ ] **P3-05** Controler USB XHCI: pornire și enumerarea dispozitivelor, `lsusb`. Dep: P3-01.
 - [ ] **P3-06** Tastatură USB (HID boot protocol). Dep: P3-05.
 - [ ] **P3-07** Stick USB (Mass Storage, Bulk-Only + SCSI) ca dispozitiv de blocuri, montat la `/usb`. Dep: P3-05.

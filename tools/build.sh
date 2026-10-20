@@ -2,6 +2,7 @@
 # Builds the kernel and a UEFI-bootable ISO.
 #   tools/build.sh           -> build/cyber-universe.iso
 #   tools/build.sh --test    -> build/cyber-universe-test.iso (kernel built with the `qemu-test` feature)
+#   tools/build.sh --usb     -> also build/cyber-universe-usb.img, to write on a USB stick (docs/USB.md)
 #   tools/build.sh --test --features "test-panic"
 #                            -> build/cyber-universe-test-test-panic.iso (extra scenario features)
 set -euo pipefail
@@ -14,12 +15,14 @@ LIMINE_SHA256="847334bc4bc142de996fbd132806b89ed73ac9ab34dbc1e90cfebf1fcc68c2b1"
 LIMINE_URL="https://github.com/limine-bootloader/limine/releases/download/${LIMINE_VERSION}/limine-binary.tar.gz"
 
 MODE="normal"
+USB=0
 FEATURES=()
 ISO_NAME="cyber-universe.iso"
 EXTRA_FEATURES=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --test) MODE="test"; shift ;;
+        --usb) USB=1; shift ;;
         --features) EXTRA_FEATURES="$2"; shift 2 ;;
         *) echo "Opțiune necunoscută: $1" >&2; exit 2 ;;
     esac
@@ -110,3 +113,14 @@ xorriso -as mkisofs -R -r -J \
     "$ISO_ROOT" -o "$BUILD/$ISO_NAME" 2>/dev/null
 
 echo "[build] Gata: build/$ISO_NAME ($(du -h "$BUILD/$ISO_NAME" | cut -f1))"
+
+# 5. USB stick image (UEFI): GPT with one EFI system partition (FAT32) holding the same files as the ISO.
+if (( USB )) || [[ ",$EXTRA_FEATURES," == *",test-usb,"* ]]; then
+    USB_IMG="$BUILD/${ISO_NAME%.iso}-usb.img"
+    rm -f "$USB_IMG" && truncate -s 64M "$USB_IMG"
+    printf 'label: gpt\nstart=2048, size=62M, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name="CYBER UNIVERSE"\n' \
+        | PATH="$PATH:/usr/sbin:/sbin" sfdisk -q "$USB_IMG"
+    PATH="$PATH:/usr/sbin:/sbin" mkfs.fat -F 32 -s 1 -n CYBERUNIV --offset 2048 "$USB_IMG" $((62 * 1024)) >/dev/null 2>&1
+    MTOOLS_SKIP_CHECK=1 mcopy -s -i "$USB_IMG@@1M" "$ISO_ROOT/EFI" "$ISO_ROOT/boot" ::/
+    echo "[build] Gata: build/$(basename "$USB_IMG") (de scris pe stick, vezi docs/USB.md)"
+fi

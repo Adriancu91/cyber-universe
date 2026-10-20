@@ -176,6 +176,8 @@ fn run_tests() -> ! {
     test_address_spaces();
     test_user_mode();
     test_files();
+    #[cfg(feature = "test-usb")]
+    assert!(boot::medium() == boot::Medium::Disk, "test: pornit de pe {:?}, nu de pe stick", boot::medium());
     #[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
     test_disk_files();
     #[cfg(feature = "test-disk")]
