@@ -47,3 +47,11 @@ Handler-ele de excepții folosesc convenția `x86-interrupt` din Rust nightly (`
 nu stub-uri scrise în assembly. Motiv: mai puțin cod `unsafe`, compilatorul salvează registrele corect.
 GDT, TSS și IDT sunt scrise de noi (fără crate-ul `x86_64`), după Intel SDM. Dacă vreodată convenția dispare
 din nightly, înlocuirea e un set de stub-uri în assembly (o sarcină nouă).
+
+### D-011 — Criptografia pentru HTTPS e scrisă de noi (2026-10-20)
+Adrian a răspuns „da” (2026-10-20, 22:35 ora României) la întrebarea din B-002: criptografia pentru TLS 1.3
+(SHA-256, HMAC/HKDF, X25519, ChaCha20-Poly1305, verificarea semnăturilor din certificate) se scrie în proiect,
+după standardele publice (RFC, FIPS), fără biblioteci externe. Condiții: fiecare funcție trece vectorii de test
+oficiali (NIST, RFC) într-un scenariu QEMU; codul nu e auditat de specialiști — nu se folosește pentru date sensibile
+până la o verificare separată. Codul stă în crate-ul propriu `crypto/` (no_std, fără dependențe), folosit de nucleu și de programe.
+În acord cu decizia din Cyber Hub (2026-10-20 19:40: „de la zero, fără alte licențe”).
