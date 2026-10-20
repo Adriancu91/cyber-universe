@@ -227,6 +227,9 @@ fn run_tests() -> ! {
     #[cfg(feature = "test-modules")]
     test_modules();
 
+    #[cfg(feature = "test-sysapps")]
+    test_system_apps();
+
     #[cfg(feature = "test-shell")]
     {
         serial_println!("TASTATURA: astept taste");
@@ -744,6 +747,75 @@ fn test_modules() {
     info!("test: module OK (dependente, instalare, pornire, oprire, stergere)");
 }
 
+/// System apps with simulated mouse clicks and keys: the monitor lists the running programs and stops
+/// one; the file manager copies a file into another folder, deletes it and goes back up (on a copy of
+/// the test disk marked for writing).
+#[cfg(feature = "test-sysapps")]
+fn test_system_apps() {
+    use drivers::keyboard::{Key, push_key};
+    use input::{MouseEvent, push_mouse};
+    let wait_for = |what: &str, ok: &dyn Fn() -> bool| {
+        let deadline = arch::x86_64::apic::ticks() + 10 * arch::x86_64::apic::HZ;
+        while !ok() {
+            assert!(arch::x86_64::apic::ticks() < deadline, "test aplicatii: {}", what);
+            sched::sleep_ms(10);
+        }
+    };
+    // Moves the cursor to (x, y) and clicks the left button.
+    let click = |x: usize, y: usize| {
+        let (cx, cy) = ui::cursor().expect("test: serverul grafic nu merge");
+        push_mouse(MouseEvent { dx: (x as isize - cx as isize) as i16, dy: (y as isize - cy as isize) as i16, buttons: 0 });
+        push_mouse(MouseEvent { dx: 0, dy: 0, buttons: 1 });
+        push_mouse(MouseEvent { dx: 0, dy: 0, buttons: 0 });
+        sched::sleep_ms(250);
+    };
+    let key = |c: Key| {
+        push_key(c);
+        sched::sleep_ms(250);
+    };
+    let top_is = |id: u64| ui::top_window().is_some_and(|(o, _)| o == id);
+
+    // Monitor: two programs; stop the first (demo).
+    let demo = proc::spawn_path("/bin/demo", &["demo"]).expect("test: demo");
+    wait_for("demo nu porneste", &|| top_is(demo));
+    let monitor = proc::spawn_path("/bin/monitor", &["monitor"]).expect("test: monitor");
+    wait_for("monitorul nu porneste", &|| top_is(monitor));
+    sched::sleep_ms(300);
+    let (_, (mx, my)) = ui::top_window().unwrap();
+    click(mx + 40, my + 60 + 10); // row 0 = demo
+    key(Key::Char('o'));
+    assert!(proc::wait(demo) == syscall::EXIT_KILLED, "demo nu a fost oprit de monitor");
+
+    // Files, started in /disk: rows .., docs/, pachete/, cyber.rw, salut.txt, Un nume lung de fisier.txt
+    let files = proc::spawn_path("/bin/files", &["files", "/disk"]).expect("test: files");
+    wait_for("managerul de fisiere nu porneste", &|| top_is(files));
+    sched::sleep_ms(300);
+    let (_, (fx, fy)) = ui::top_window().unwrap();
+    let row = |i: usize| (fx + 100, fy + 48 + i * 20 + 10);
+    let (x, y) = row(4);
+    click(x, y);
+    key(Key::Char('c'));
+    let (x, y) = row(1);
+    click(x, y);
+    key(Key::Enter);
+    key(Key::Char('v'));
+    wait_for("copierea nu a ajuns pe disc", &|| fs::read_all("/disk/docs/salut.txt").is_ok_and(|d| d == b"salut de pe disc\n"));
+    let (x, y) = row(3); // in /disk/docs: .., mare.bin, mare.fnv, salut.txt
+    click(x, y);
+    key(Key::Char('s'));
+    wait_for("stergerea nu a ajuns pe disc", &|| fs::kind("/disk/docs/salut.txt") == Err(fs::FsError::NotFound));
+    click(fx + 20, fy + 14); // the "Sus" button
+    serial_println!("SYSAPPS: captura");
+    sched::sleep_ms(1500); // the harness saves the screen now
+    key(Key::Char('q'));
+    assert!(proc::wait(files) == 0, "files nu a iesit cu 0");
+    wait_for("monitorul nu e deasupra", &|| top_is(monitor));
+    key(Key::Char('q'));
+    assert!(proc::wait(monitor) == 0, "monitorul nu a iesit cu 0");
+    wait_for("serverul grafic nu se opreste", &|| !ui::running());
+    info!("test: aplicatii de sistem OK (monitor: lista si oprire; fisiere: copiere, lipire, stergere, navigare)");
+}
+
 /// The same partition must also be found through an MBR (the disk image seen with a different sector 0).
 #[cfg(feature = "test-disk")]
 fn test_fat32_mbr() {
@@ -1069,8 +1141,11 @@ fn test_desktop() {
     );
     serial_println!("TASTATURA: astept taste"); // the harness moves the mouse onto Start and clicks
     wait_for("meniul nu se deschide", &|| screen(150, h - 32 - 6) == Some(MENU));
-    // Menu items from the top: cat, demo, hello; `demo` is the second (24 pixels each).
-    push_mouse(MouseEvent { dx: 4, dy: -56, buttons: 0 });
+    // Menu items from the top: cat, demo, files, hello, monitor (24 pixels each, 4 of margin, the bar
+    // is 32 high); the cursor is on Start (46, h - 16); `demo` is the second item.
+    let items = 5;
+    let demo_y = h - 32 - (items * 24 + 8) + 4 + 24 + 12;
+    push_mouse(MouseEvent { dx: 4, dy: demo_y as i16 - (h - 16) as i16, buttons: 0 });
     push_mouse(MouseEvent { dx: 0, dy: 0, buttons: 1 });
     push_mouse(MouseEvent { dx: 0, dy: 0, buttons: 0 });
     let demo_up = || ui::top_window().is_some_and(|(o, (x, y))| o != id && screen(x + 30, y + 30) == Some(0xE03030));

@@ -22,8 +22,13 @@ pub const SYS_WAIT: u64 = 13;
 pub const SYS_LIST: u64 = 14;
 pub const SYS_TIME: u64 = 15;
 pub const SYS_SCREEN_SIZE: u64 = 16;
+pub const SYS_SYSINFO: u64 = 17;
+pub const SYS_KILL: u64 = 18;
+pub const SYS_CREATE: u64 = 19;
+pub const SYS_REMOVE: u64 = 20;
 
 pub mod gfx;
+pub mod text;
 
 /// Negative results of system calls.
 pub const E_NOT_FOUND: i64 = -3;
@@ -38,6 +43,10 @@ pub fn error_text(e: i64) -> &'static str {
         E_IS_DIR => "e director",
         -5 => "descriptor inchis",
         -6 => "prea multe fisiere deschise",
+        -7 => "exista deja",
+        -8 => "discul nu e marcat pentru scriere",
+        -9 => "directorul nu e gol",
+        -10 => "nu mai e loc pe disc",
         _ => "eroare",
     }
 }
@@ -82,6 +91,53 @@ pub fn list(path: &str, buf: &mut [u8]) -> i64 {
     syscall4(SYS_LIST, path.as_ptr() as u64, path.len() as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
 }
 
+/// Memory and time figures from the kernel.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MemInfo {
+    pub total: u64,
+    pub used: u64,
+    pub heap_used: u64,
+    pub heap_reserved: u64,
+    pub uptime_ms: u64,
+    /// Processor time when nothing else had work, in ticks.
+    pub idle_ticks: u64,
+    pub ticks_per_second: u64,
+}
+
+pub fn mem_info() -> Option<MemInfo> {
+    let mut v = [0u64; 7];
+    let r = syscall3(SYS_SYSINFO, 0, v.as_mut_ptr() as u64, 56);
+    (r == 56).then(|| MemInfo {
+        total: v[0],
+        used: v[1],
+        heap_used: v[2],
+        heap_reserved: v[3],
+        uptime_ms: v[4],
+        idle_ticks: v[5],
+        ticks_per_second: v[6],
+    })
+}
+
+/// The running programs, one per line: `id processor_ticks name`. Returns the bytes written to `buf`.
+pub fn programs(buf: &mut [u8]) -> i64 {
+    syscall3(SYS_SYSINFO, 1, buf.as_mut_ptr() as u64, buf.len() as u64)
+}
+
+/// Stops the program `id` (it ends with code -9).
+pub fn kill(id: u64) -> i64 {
+    syscall3(SYS_KILL, id, 0, 0)
+}
+
+/// Creates an empty file, or a folder if `dir`.
+pub fn create(path: &str, dir: bool) -> i64 {
+    syscall3(SYS_CREATE, path.as_ptr() as u64, path.len() as u64, dir as u64)
+}
+
+/// Deletes a file or an empty folder.
+pub fn remove(path: &str) -> i64 {
+    syscall3(SYS_REMOVE, path.as_ptr() as u64, path.len() as u64, 0)
+}
+
 /// Date and time from the computer's clock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DateTime {
@@ -115,7 +171,7 @@ pub fn exit(code: i64) -> ! {
     unreachable!()
 }
 
-/// Writes `bytes` to the file descriptor `fd` (1 = console). Returns bytes written or a negative error.
+/// Writes `bytes` to the file descriptor `fd` (1 = console; an open file: at its position). Returns bytes written or a negative error.
 pub fn write(fd: u64, bytes: &[u8]) -> i64 {
     syscall3(SYS_WRITE, fd, bytes.as_ptr() as u64, bytes.len() as u64)
 }

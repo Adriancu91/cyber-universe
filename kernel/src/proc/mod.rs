@@ -16,7 +16,8 @@ use alloc::{string::String, vec::Vec};
 pub const CODE_BASE: u64 = 0x0000_0000_0040_0000;
 /// Top of the user stack (it grows down from here).
 pub const STACK_TOP: u64 = 0x0000_7FFF_FFF0_0000;
-const STACK_PAGES: u64 = 4;
+/// 64 KiB: programs have no heap, so their tables and buffers live on the stack.
+const STACK_PAGES: u64 = 16;
 /// Space at the top of the stack for the arguments.
 const ARGS_MAX: usize = PAGE_SIZE as usize;
 /// File descriptors 0..3 are the console; files opened by the program start at 3.
@@ -31,6 +32,8 @@ pub struct OpenFile {
 
 struct Process {
     thread: u64,
+    /// Program name (argument 0 without its folder), for lists of running programs.
+    name: String,
     entry: u64,
     rsp: u64,
     argc: u64,
@@ -133,7 +136,8 @@ fn start(mut space: AddressSpace, entry: u64, args: &[&str]) -> Result<u64, Spaw
     // The process is registered before its thread can run (and exit).
     let mut procs = PROCS.lock();
     let thread = sched::spawn_in(space.root(), start_user);
-    procs.push(Process { thread, entry, rsp, argc: args.len() as u64, argv, files: Vec::new(), _space: space });
+    let name = String::from(args.first().map_or("(cod)", |a| a.rsplit('/').next().unwrap_or(a)));
+    procs.push(Process { thread, name, entry, rsp, argc: args.len() as u64, argv, files: Vec::new(), _space: space });
     Ok(thread)
 }
 
@@ -192,6 +196,11 @@ pub fn on_exit(id: u64, code: i64) {
 /// no such program. A program waiting for another one (`wait`) stops only when that wait ends.
 pub fn kill(id: u64) -> bool {
     PROCS.lock().iter().any(|p| p.thread == id) && sched::kill(id)
+}
+
+/// The running programs: (thread id, name).
+pub fn list() -> Vec<(u64, String)> {
+    PROCS.lock().iter().map(|p| (p.thread, p.name.clone())).collect()
 }
 
 /// Whether the program on thread `id` is still running.

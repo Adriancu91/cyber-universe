@@ -21,6 +21,10 @@ pub const SYS_WAIT: u64 = 13;
 pub const SYS_LIST: u64 = 14;
 pub const SYS_TIME: u64 = 15;
 pub const SYS_SCREEN_SIZE: u64 = 16;
+pub const SYS_SYSINFO: u64 = 17;
+pub const SYS_KILL: u64 = 18;
+pub const SYS_CREATE: u64 = 19;
+pub const SYS_REMOVE: u64 = 20;
 
 mod ui;
 
@@ -31,6 +35,10 @@ pub const E_NOT_FOUND: i64 = -3; // no such file or directory
 pub const E_IS_DIR: i64 = -4; // a directory where a file is needed
 pub const E_BAD_FD: i64 = -5; // descriptor not open
 pub const E_TOO_MANY: i64 = -6; // too many open files
+pub const E_EXISTS: i64 = -7; // a file or folder with that name exists
+pub const E_READ_ONLY: i64 = -8; // the disk is not marked for writing
+pub const E_NOT_EMPTY: i64 = -9; // folder not empty
+pub const E_NO_SPACE: i64 = -10; // disk full
 const PATH_MAX: u64 = 1024;
 
 /// Called from `syscall_entry` with interrupts disabled, on the thread's kernel stack.
@@ -73,6 +81,12 @@ fn call(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64) -> i64 {
         SYS_LIST => list(a1, a2, _a3, a4),
         SYS_TIME => time(),
         SYS_SCREEN_SIZE => ui::screen_size(),
+        SYS_SYSINFO => sysinfo(a1, a2, _a3),
+        SYS_KILL => {
+            if crate::proc::kill(a1) { 0 } else { E_NOT_FOUND }
+        }
+        SYS_CREATE => create(a1, a2, _a3),
+        SYS_REMOVE => remove(a1, a2),
         _ => E_INVALID,
     }
 }
@@ -105,9 +119,10 @@ pub(super) fn user_range_ok(addr: u64, len: u64, write: bool) -> bool {
     true
 }
 
-/// write(fd, buf, len): fd 1 and 2 = the console (screen + serial). Returns the number of bytes written.
+/// write(fd, buf, len): fd 1 and 2 = the console (screen + serial); an open file is written at its
+/// position, which then moves on. Returns the number of bytes written.
 fn write(fd: u64, buf: u64, len: u64) -> i64 {
-    if !(1..=2).contains(&fd) || len > 64 * 1024 {
+    if fd == 0 || len > 64 * 1024 {
         return E_INVALID;
     }
     if !user_range_ok(buf, len, false) {
@@ -115,6 +130,26 @@ fn write(fd: u64, buf: u64, len: u64) -> i64 {
     }
     // SAFETY: the whole range was just checked to be mapped user memory of the current address space.
     let bytes = unsafe { core::slice::from_raw_parts(buf as *const u8, len as usize) };
+    if fd >= crate::proc::FIRST_FD as u64 {
+        let index = fd as usize - crate::proc::FIRST_FD;
+        let Some(Some((path, offset))) =
+            crate::proc::with_files(|f| f.get(index).and_then(|o| o.as_ref()).map(|o| (o.path.clone(), o.offset)))
+        else {
+            return E_BAD_FD;
+        };
+        // Copied first, so no file-system lock is held while touching user memory.
+        let data = alloc::vec::Vec::from(bytes);
+        let n = match crate::fs::write(&path, offset, &data) {
+            Ok(n) => n,
+            Err(e) => return fs_error(e),
+        };
+        crate::proc::with_files(|f| {
+            if let Some(Some(o)) = f.get_mut(index) {
+                o.offset += n as u64;
+            }
+        });
+        return n as i64;
+    }
     let text = core::str::from_utf8(bytes).unwrap_or("<text invalid>");
     crate::serial_print!("{}", text);
     crate::print!("{}", text);
@@ -126,6 +161,10 @@ fn fs_error(e: crate::fs::FsError) -> i64 {
     match e {
         FsError::NotFound | FsError::NotADirectory => E_NOT_FOUND,
         FsError::IsADirectory => E_IS_DIR,
+        FsError::AlreadyExists => E_EXISTS,
+        FsError::ReadOnly => E_READ_ONLY,
+        FsError::NotEmpty => E_NOT_EMPTY,
+        FsError::NoSpace => E_NO_SPACE,
         _ => E_INVALID,
     }
 }
@@ -270,4 +309,66 @@ fn time() -> i64 {
             | t.second as i64,
         None => E_NOT_FOUND,
     }
+}
+
+/// create(path, length, kind): a new empty file (kind 0) or folder (kind 1).
+fn create(ptr: u64, len: u64, kind: u64) -> i64 {
+    let path = match user_path(ptr, len) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let kind = match kind {
+        0 => crate::fs::Kind::File,
+        1 => crate::fs::Kind::Dir,
+        _ => return E_INVALID,
+    };
+    crate::fs::create(&path, kind).map_or_else(fs_error, |()| 0)
+}
+
+/// remove(path, length): deletes a file or an empty folder.
+fn remove(ptr: u64, len: u64) -> i64 {
+    match user_path(ptr, len) {
+        Ok(path) => crate::fs::remove(&path).map_or_else(fs_error, |()| 0),
+        Err(e) => e,
+    }
+}
+
+/// sysinfo(kind, buf, len). Kind 0 = memory and time, 7 u64 values: total memory, used memory, kernel
+/// heap used, heap reserved (bytes), uptime (ms), idle processor time (ticks), ticks per second.
+/// Kind 1 = running programs, one per line: `id processor_ticks name`. Returns the bytes written.
+fn sysinfo(kind: u64, buf: u64, len: u64) -> i64 {
+    use crate::mem::{frame, heap, map::PAGE_SIZE};
+    let data: alloc::vec::Vec<u8> = match kind {
+        0 => {
+            let (heap_used, heap_mapped) = heap::stats();
+            let used = frame::used_frames() * PAGE_SIZE;
+            let values = [
+                used + frame::free_frames() * PAGE_SIZE,
+                used,
+                heap_used as u64,
+                heap_mapped as u64,
+                crate::time::uptime_ms().unwrap_or(0),
+                sched::cpu_ticks(sched::IDLE).unwrap_or(0),
+                crate::arch::x86_64::apic::HZ,
+            ];
+            values.iter().flat_map(|v| v.to_le_bytes()).collect()
+        }
+        1 => {
+            let mut text = alloc::string::String::new();
+            for (id, name) in crate::proc::list() {
+                text.push_str(&alloc::format!("{} {} {}\n", id, sched::cpu_ticks(id).unwrap_or(0), name));
+            }
+            text.into_bytes()
+        }
+        _ => return E_INVALID,
+    };
+    if (data.len() as u64) > len {
+        return E_INVALID;
+    }
+    if !user_range_ok(buf, data.len() as u64, true) {
+        return E_FAULT;
+    }
+    // SAFETY: the range was checked to be writable user memory of this program.
+    unsafe { core::ptr::copy_nonoverlapping(data.as_ptr(), buf as *mut u8, data.len()) };
+    data.len() as i64
 }

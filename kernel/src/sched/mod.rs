@@ -42,6 +42,8 @@ struct Thread {
     system: bool,
     /// Asked to stop (`kill`): a user program ends at its next return to ring 3.
     killed: bool,
+    /// Timer ticks during which this thread was running (processor time).
+    cpu_ticks: u64,
     /// The thread's stack; `None` for the boot thread, which runs on the kernel's boot stack.
     _stack: Option<Box<[u8]>>,
 }
@@ -101,7 +103,7 @@ pub fn init() {
         s.ready.reserve(16);
         s.blocked.reserve(16);
         s.zombies.reserve(16);
-        s.current = Some(Box::new(Thread { id: 0, state: State::Ready, rsp: 0, wait_key: 0, wake_at: 0, root: 0, kstack_top: 0, system: false, killed: false, _stack: None }));
+        s.current = Some(Box::new(Thread { id: 0, state: State::Ready, rsp: 0, wait_key: 0, wake_at: 0, root: 0, kstack_top: 0, system: false, killed: false, cpu_ticks: 0, _stack: None }));
     });
     let idle = new_thread(IDLE_ID, idle_loop);
     with_sched(|s| s.idle = Some(idle));
@@ -129,7 +131,12 @@ pub fn preempt_enable() {
 /// time slice is over, so the next ready thread runs.
 pub fn timer_tick() {
     let now = crate::arch::x86_64::apic::ticks();
-    with_sched(|s| wake_where(s, usize::MAX, |t| t.wake_at != 0 && t.wake_at <= now));
+    with_sched(|s| {
+        if let Some(t) = s.current.as_mut() {
+            t.cpu_ticks += 1;
+        }
+        wake_where(s, usize::MAX, |t| t.wake_at != 0 && t.wake_at <= now)
+    });
     if PREEMPT_OFF.load(Ordering::Acquire) == 0 {
         yield_now();
     }
@@ -171,7 +178,7 @@ fn new_thread(id: u64, f: fn()) -> Box<Thread> {
     let top = (stack.as_ptr() as u64 + STACK_SIZE as u64) & !15;
     // SAFETY: the 56 bytes below `top` belong to `stack`, which the new thread owns.
     let rsp = unsafe { switch::initial_stack(top, f as *const () as usize) };
-    Box::new(Thread { id, state: State::Ready, rsp, wait_key: 0, wake_at: 0, root: 0, kstack_top: top, system: false, killed: false, _stack: Some(stack) })
+    Box::new(Thread { id, state: State::Ready, rsp, wait_key: 0, wake_at: 0, root: 0, kstack_top: top, system: false, killed: false, cpu_ticks: 0, _stack: Some(stack) })
 }
 
 /// The idle thread: sleeps until an interrupt, then lets whoever was woken run.
@@ -188,7 +195,7 @@ pub fn current_id() -> u64 {
     with_sched(|s| s.current.as_ref().map_or(0, |t| t.id))
 }
 
-/// Asks thread `id` to stop and wakes it if it sleeps or waits with a time limit. The user program on
+/// Asks thread `id` to stop and wakes it if it is blocked. The user program on
 /// it ends at its next return to ring 3 (`syscall::dispatch`, timer interrupt). Returns whether the
 /// thread exists. System threads and the idle thread cannot be stopped.
 pub fn kill(id: u64) -> bool {
@@ -205,11 +212,28 @@ pub fn kill(id: u64) -> bool {
             || s.ready.iter_mut().any(|t| mark(t))
             || s.blocked.iter_mut().any(|t| mark(t));
         if found {
-            wake_where(s, 1, |t| t.id == id && t.wake_at != 0);
+            // Every wait re-checks its condition after waking, so an early wake-up is harmless; the
+            // waits that give up for a stopped thread (`wait_until_or`, `sleep_ms`) then return.
+            wake_where(s, 1, |t| t.id == id);
         }
         found
     })
 }
+
+/// Processor time of thread `id` in timer ticks (`None` if it does not exist), and of the idle thread
+/// (time when nothing else had work).
+pub fn cpu_ticks(id: u64) -> Option<u64> {
+    with_sched(|s| {
+        let found = |t: &Thread| (t.id == id).then_some(t.cpu_ticks);
+        s.current.as_deref().and_then(found)
+            .or_else(|| s.ready.iter().find_map(|t| found(t)))
+            .or_else(|| s.blocked.iter().find_map(|t| found(t)))
+            .or_else(|| s.idle.as_deref().and_then(found))
+    })
+}
+
+/// Id of the idle thread (for `cpu_ticks`).
+pub const IDLE: u64 = IDLE_ID;
 
 /// Whether the running thread was asked to stop.
 pub fn killed() -> bool {

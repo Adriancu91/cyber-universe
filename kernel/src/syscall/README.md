@@ -17,6 +17,11 @@
   (`-3` dacă nu există); `14 list(cale, lungime, buf, mărime)` → numele din director, câte unul pe rând (`/` după directoare);
   `15 time()` → an << 40 | lună << 32 | zi << 24 | oră << 16 | minut << 8 | secundă (`-3` fără ceas);
   `16 screen_size()` → lățime | înălțime << 32.
+- **Informații, oprire, fișiere (P4-09):** `17 sysinfo(tip, buf, mărime)` — tip 0: 7 numere u64 (memorie totală, folosită,
+  heap folosit, heap rezervat, ms de la pornire, tick-uri libere ale procesorului, tick-uri pe secundă); tip 1: programele
+  care merg, câte un rând `id tick-uri nume`; `18 kill(id)`; `19 create(cale, lungime, tip)` (0 fișier, 1 director);
+  `20 remove(cale, lungime)`; `write(fd ≥ 3, ...)` scrie într-un fișier deschis, la poziția lui.
+  Erori noi: `-7` există deja, `-8` disc nemarcat pentru scriere, `-9` director plin, `-10` disc plin.
   Ferestrele unui program se închid singure când programul iese. Doar programul care a deschis fereastra o poate folosi.
   **Alegere:** imaginea rămâne în memoria programului și se copiază la `window_present` (nu cadre partajate): nimic de
   eliberat de două ori, iar copia unei zone e mică față de desen.

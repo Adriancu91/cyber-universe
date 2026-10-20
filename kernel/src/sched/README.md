@@ -11,6 +11,9 @@
 - **Așteptare (P2-03):** `WaitQueue` (`wait_until(condiție)`, `wake_one`, `wake_all` — se poate chema și din întreruperi),
   `sleep_ms(ms)`, `Mutex<T>` (firul care găsește încuietoarea luată doarme). Firul „idle” face `hlt` când toate celelalte dorm.
   Tastatura trezește firele care așteaptă în `keyboard::wait_key()`.
+- **Oprire și timp de procesor (P4-08, P4-09):** `kill(id)` marchează un fir („oprește-te”) și îl trezește dacă doarme;
+  așteptările cu limită (`wait_until_or`, `sleep_ms`) renunță pentru un fir marcat. `cpu_ticks(id)` — câte tick-uri a
+  rulat firul (și firul idle: timpul liber al procesorului, din care monitorul calculează gradul de ocupare).
 - **Fire de sistem:** `spawn_system(f)` — fire care merg cât nucleul (ex. cel care citește tastaturile USB); nu sunt numărate de `alive()`.
 - **Spații de adrese (P2-04):** fiecare fir are tabelele lui de pagini (`spawn_in(root, f)`); la comutare se încarcă `CR3` doar dacă diferă.
 - **Depinde de:** heap (`mem::heap`) pentru stive și cozi.
