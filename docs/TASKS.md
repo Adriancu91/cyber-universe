@@ -102,10 +102,28 @@ AHCI, NVMe, XHCI, e1000). Fiecare sarcină are plan în `docs/plans/`.
   Test: scenariul `usb-disk` (discul de test ca stick USB → `/usb`, suma fișierului de 100 KiB corectă).
 - [x] **P3-08** Placă de rețea Intel e1000/e1000e: cadre Ethernet, test ARP. Dep: P3-01.
   Test: scenariile `net` (e1000e) și `net-e1000` (cerere ARP → răspuns de la 10.0.2.2); `shell` (`net`).
-- [ ] **P3-09** Test pe calculatoare reale (ThinkPad L15 Gen 2 + încă unul), `docs/HARDWARE.md`. **Are nevoie de Adrian.** Dep: P3-02, P3-03, P3-04, P3-06.
+- [ ] BLOCAT **P3-09** Test pe calculatoare reale (ThinkPad L15 Gen 2 + încă unul), `docs/HARDWARE.md`. **Are nevoie de Adrian.** Dep: P3-02, P3-03, P3-04, P3-06.
 - [ ] **P3-10** Închiderea Fazei 3: măsurători, generarea sarcinilor Fazei 4. Dep: P3-09.
 
-## Faza 4 și următoarele
+## Faza 4 — Interfața și sistemul de module
 
-Sarcinile se generează de Claude Code din `ROADMAP.md` la închiderea fazei anterioare (P3-10),
-în același format, cu ID-uri `P4-xx`, `P5-xx` etc.
+Scop (ROADMAP): un sistem folosibil de un om, nu doar de programator. Gata când: se poate instala și
+dezinstala un modul din interfață. ROADMAP: Faza 4 merge în paralel cu Faza 3 (sarcinile au fost generate mai devreme,
+cât P3-09 așteaptă testul pe hardware real). Fiecare sarcină are plan în `docs/plans/`.
+
+- [ ] **P4-01** Mouse (PS/2 și USB). Dep: P3-06.
+- [ ] **P4-02** Bibliotecă grafică: buffer dublu și desen rapid. Dep: P2-11.
+- [ ] **P4-03** Fonturi: diacritice românești și text UTF-8. Dep: P4-02.
+- [ ] **P4-04** Server grafic: ferestre și cursor. Dep: P4-01, P4-02, P4-03.
+- [ ] **P4-05** Ferestre pentru programe (apeluri de sistem, memorie partajată). Dep: P4-04, P2-08.
+- [ ] **P4-06** Desktop „Cyber Universe”. Dep: P4-05.
+- [ ] **P4-07** FAT32: scriere (fișiere noi, modificare, ștergere). Dep: P2-10.
+- [ ] **P4-08** Manager de module (modmgr). Dep: P4-07, P2-08.
+- [ ] **P4-09** Aplicații de sistem: monitor sistem și fișiere. Dep: P4-06, P4-08.
+- [ ] **P4-10** Aplicații de sistem: editor de text și setări. Dep: P4-09.
+- [ ] **P4-11** Module din interfață și închiderea Fazei 4. Dep: P4-10.
+
+## Faza 5 și următoarele
+
+Sarcinile se generează de Claude Code din `ROADMAP.md` la închiderea fazei anterioare (P4-11),
+în același format, cu ID-uri `P5-xx`, `P6-xx` etc.
