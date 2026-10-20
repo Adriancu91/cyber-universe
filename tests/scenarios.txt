@@ -1,6 +1,8 @@
 # Test scenarios run by tools/test.sh. One per line:
 #   name | extra cargo features | expected end (success/failed) | expected serial lines separated by ;; | screenshot (optional) | extra QEMU args or keys=<QEMU key names> (optional)
 # Every scenario boots the kernel in QEMU. Expected lines must appear in this order.
+#   mon=cmd:arg,... = QEMU monitor commands (":" = space); when a scenario has both, write mon= BEFORE keys=
+#   (keys= takes the rest of the line). Keys are sent first, then the monitor commands.
 # Add a scenario for every new feature (CLAUDE.md, section 5).
 
 boot      |            | success | CYBER UNIVERSE OS: BOOT OK;;ECRAN OK;;TEST READY | tests/screens/boot.png
@@ -21,6 +23,7 @@ net       | test-net         | success | net: placa 82574L (e1000e) pornita, MAC
 net-e1000 | test-net         | success | net: placa 82540EM (e1000) pornita, MAC 52:54:00:12:34:56;;net: ARP: 10.0.2.2 este la 52:55:0a:00:02:02;;TEST READY | | -nic none -netdev user,id=n0 -device e1000,netdev=n0
 mouse     | test-mouse       | success | mouse: PS/2 gata;;MOUSE: dx=10 dy=5 butoane=0;;MOUSE: dx=0 dy=0 butoane=1;;test: mouse OK;;TEST READY | | mon=mouse_move:10:5,mouse_button:1
 usb-mouse | test-mouse       | success | mouse (HID) de pe portul;;MOUSE: dx=10 dy=5 butoane=0;;MOUSE: dx=0 dy=0 butoane=1;;test: mouse OK;;TEST READY | | -device qemu-xhci -device usb-mouse mon=mouse_move:10:5,mouse_button:1
+windows   | test-windows     | success | TASTATURA: astept taste;;FERESTRE: fereastra 2 mutata la (70, 40), tastele h i primite;;test: ferestre OK;;TEST READY | tests/screens/windows.png | mon=mouse_button:1,mouse_move:100:50,mouse_button:0 keys=h i
 pci-usb   |                  | success | clasa 0c:03:30 controler USB;;pci: 7 dispozitive;;TEST READY | | -device qemu-xhci
 smp       |                  | success | acpi: MADT: 4 procesoare;;TEST READY | | -smp 4
 keyboard  | test-keyboard    | success | TASTATURA: astept taste;;KEY: h;;KEY: i;;KEY: Enter;;test: tastatura OK;;TEST READY | | keys=h i ret

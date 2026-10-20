@@ -27,6 +27,8 @@ mod qemu;
 #[cfg(feature = "qemu-test")]
 mod tests;
 mod time;
+#[allow(dead_code)] // the self-test drives it now; programs (P4-05) and the desktop (P4-06) will
+mod ui;
 
 use arch::x86_64::halt_forever;
 
@@ -205,6 +207,9 @@ fn run_tests() -> ! {
 
     #[cfg(feature = "test-mouse")]
     test_mouse();
+
+    #[cfg(feature = "test-windows")]
+    test_windows();
 
     #[cfg(feature = "test-shell")]
     {
@@ -698,7 +703,7 @@ fn test_network() {
 fn test_canvas() {
     use gfx::canvas::{Canvas, Rect};
     let mut c = Canvas::new(200, 100, 0x000000);
-    assert!(c.present_dirty_for_test() == Some(Rect::new(0, 0, 200, 100)), "o panza noua trebuie redesenata toata");
+    assert!(c.take_dirty() == Some(Rect::new(0, 0, 200, 100)), "o panza noua trebuie redesenata toata");
     c.fill(Rect::new(10, 10, 50, 20), 0xFF0000);
     c.outline(Rect::new(100, 10, 40, 30), 2, 0x00FF00);
     c.line(0, 99, 199, 0, 0x0000FF);
@@ -710,9 +715,9 @@ fn test_canvas() {
     assert!(c.pixel(0, 99) == Some(0x0000FF) && c.pixel(199, 0) == Some(0x0000FF), "capetele liniei");
     assert!(c.pixel(180, 80) == Some(0x123456) && c.pixel(181, 80) == Some(0), "imagine cu transparenta");
     assert!(w == 5 * 12, "latimea textului");
-    assert!(c.present_dirty_for_test() == Some(Rect::new(0, 0, 200, 100)), "zona schimbata");
+    assert!(c.take_dirty() == Some(Rect::new(0, 0, 200, 100)), "zona schimbata");
     c.fill(Rect::new(30, 40, 5, 5), 0x808080);
-    assert!(c.present_dirty_for_test() == Some(Rect::new(30, 40, 5, 5)), "doar zona noua");
+    assert!(c.take_dirty() == Some(Rect::new(30, 40, 5, 5)), "doar zona noua");
 
     // Romanian letters: the comma below Ș, the breve over ă, and a box for a character the font lacks.
     let mut t = Canvas::new(40, 10, 0);
@@ -817,6 +822,79 @@ fn test_mouse() {
     }
     assert!(got.len() == 2, "test: {} evenimente de mouse primite (asteptat 2)", got.len());
     info!("test: mouse OK");
+}
+
+/// Two windows; the harness types two keys (they must reach the focused window) and drags the top window by
+/// its title bar with the mouse. The screen is read back to check where each window ended up; then the
+/// first window is closed with its close button (synthetic mouse events).
+#[cfg(feature = "test-windows")]
+fn test_windows() {
+    use gfx::canvas::Rect;
+    use input::MouseEvent;
+    use ui::server::{BORDER, DESKTOP, Server, TITLE_H};
+    const GREEN: u32 = 0x30A050;
+    const ORANGE: u32 = 0xE0A030;
+    let mut s = Server::new().expect("test: niciun ecran pentru ferestre");
+    let (cx, cy) = s.cursor();
+    let a = s.create("Fereastra 1", cx - 250, cy - 150, 300, 180);
+    let b = s.create("Fereastra 2", cx - 30, cy - 10, 300, 180); // the cursor is on its title bar
+    s.window_mut(a).unwrap().client.fill(Rect::new(0, 0, 300, 180), GREEN);
+    s.window_mut(b).unwrap().client.fill(Rect::new(0, 0, 300, 180), ORANGE);
+    s.present();
+    let screen = |x: usize, y: usize| gfx::console::with_console(|c| c.as_mut().and_then(|c| c.framebuffer().pixel(x, y)));
+    assert!(screen(cx, cy + 50) == Some(ORANGE) && screen(cx - 100, cy - 100) == Some(GREEN), "ferestrele nu apar pe ecran");
+
+    serial_println!("TASTATURA: astept taste"); // the harness types h, i, then presses, moves (100, 50), releases
+    let deadline = arch::x86_64::apic::ticks() + 10 * arch::x86_64::apic::HZ;
+    let target = (cx + 70, cy + 40);
+    let mut keys = alloc::vec::Vec::new();
+    loop {
+        s.pump();
+        while let Some(k) = s.read_key(b) {
+            keys.push(k);
+        }
+        let r = s.window(b).unwrap().outer();
+        if (r.x, r.y) == target && keys.len() >= 2 && input::read_mouse().is_none() {
+            break;
+        }
+        assert!(arch::x86_64::apic::ticks() < deadline, "test: fereastra 2 la ({}, {}), asteptat {:?}; taste {:?}", r.x, r.y, target, keys);
+        sched::sleep_ms(10);
+    }
+    sched::sleep_ms(300); // the button release arrives last
+    s.pump();
+    use drivers::keyboard::Key;
+    assert!(keys == [Key::Char('h'), Key::Char('i')], "tastele nu au ajuns la fereastra activa: {:?}", keys);
+    info!("FERESTRE: fereastra 2 mutata la ({}, {}), tastele h i primite", target.0 - cx, target.1 - cy);
+    let ok = [
+        (cx + 100, cy + 100, ORANGE, "fereastra 2 in locul nou"),
+        (cx + 10, cy + 100, DESKTOP, "locul vechi al ferestrei 2 (fundal)"),
+        (cx + 10, cy + 20, GREEN, "fereastra 1 descoperita"),
+        (cx + 70 + 5, cy + 40 + TITLE_H + 5, ORANGE, "coltul ferestrei 2"),
+        (cx + 70 + 5, cy + 40 + 5, ui::server::TITLE_FOCUSED, "bara de titlu activa"),
+    ];
+    for (x, y, want, what) in ok {
+        let got = screen(x, y);
+        assert!(got == Some(want), "{}: pixel ({}, {}) = {:x?}, asteptat {:x}", what, x, y, got, want);
+    }
+    assert!(s.focused() == Some(b), "focus gresit");
+
+    // Click on window 1 (raises it), then on its close button.
+    let click = |s: &mut Server, x: usize, y: usize| {
+        let (px, py) = s.cursor();
+        s.handle_mouse(MouseEvent { dx: (x as isize - px as isize) as i16, dy: (y as isize - py as isize) as i16, buttons: 0 });
+        s.handle_mouse(MouseEvent { dx: 0, dy: 0, buttons: 1 });
+        s.handle_mouse(MouseEvent { dx: 0, dy: 0, buttons: 0 });
+        s.present();
+    };
+    click(&mut s, cx + 10, cy + 20);
+    assert!(s.focused() == Some(a), "clic pe fereastra 1: nu a primit focusul");
+    let (title_a, title_b) = (screen(cx - 250 + 5, cy - 150 + 5), screen(cx + 70 + 5, cy + 40 + 5));
+    assert!(title_a == Some(ui::server::TITLE_FOCUSED) && title_b == Some(ui::server::TITLE_IDLE), "culorile barelor de titlu");
+    let r = s.window(a).unwrap().outer();
+    click(&mut s, r.x + r.w - 3 - 8 - BORDER, r.y + TITLE_H / 2);
+    assert!(s.window(a).is_none() && s.focused() == Some(b), "butonul de inchidere nu a inchis fereastra 1");
+    assert!(screen(cx - 100, cy - 100) == Some(DESKTOP) && screen(cx + 100, cy + 100) == Some(ORANGE), "dupa inchidere");
+    info!("test: ferestre OK (mutare cu mouse-ul, focus, taste, inchidere; pixeli verificati)");
 }
 
 /// Waits for the keys the test harness types (h, i, Enter) and logs them.

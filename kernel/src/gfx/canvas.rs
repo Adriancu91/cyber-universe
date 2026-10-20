@@ -27,8 +27,18 @@ impl Rect {
 
     /// This rectangle cut to a `width` x `height` area (`None` if nothing is left).
     fn clip(self, width: usize, height: usize) -> Option<Rect> {
-        let (r, b) = ((self.x + self.w).min(width), (self.y + self.h).min(height));
-        (self.x < r && self.y < b).then(|| Rect::new(self.x, self.y, r - self.x, b - self.y))
+        self.intersect(Rect::new(0, 0, width, height))
+    }
+
+    /// The common part of two rectangles (`None` if they do not overlap).
+    pub fn intersect(self, o: Rect) -> Option<Rect> {
+        let (x, y) = (self.x.max(o.x), self.y.max(o.y));
+        let (r, b) = ((self.x + self.w).min(o.x + o.w), (self.y + self.h).min(o.y + o.h));
+        (x < r && y < b).then(|| Rect::new(x, y, r - x, b - y))
+    }
+
+    pub fn contains(self, x: usize, y: usize) -> bool {
+        x >= self.x && x < self.x + self.w && y >= self.y && y < self.y + self.h
     }
 }
 
@@ -38,12 +48,28 @@ pub struct Canvas {
     pixels: Vec<u32>,
     /// Area changed since the last `present` (one rectangle around every change).
     dirty: Option<Rect>,
+    /// Drawing outside this area is ignored (the window server redraws one damaged area at a time).
+    clip: Option<Rect>,
 }
 
 #[allow(dead_code)] // used by the self-tests now, by the window server and the desktop (P4-04 and later)
 impl Canvas {
     pub fn new(width: usize, height: usize, color: u32) -> Canvas {
-        Canvas { width, height, pixels: vec![color; width * height], dirty: Some(Rect::new(0, 0, width, height)) }
+        Canvas { width, height, pixels: vec![color; width * height], dirty: Some(Rect::new(0, 0, width, height)), clip: None }
+    }
+
+    /// Limits all drawing to `r` (`None` = the whole canvas).
+    pub fn set_clip(&mut self, r: Option<Rect>) {
+        self.clip = r;
+    }
+
+    /// `r` cut to the canvas and to the clip area.
+    fn visible(&self, r: Rect) -> Option<Rect> {
+        let r = r.clip(self.width, self.height)?;
+        match self.clip {
+            Some(c) => r.intersect(c),
+            None => Some(r),
+        }
     }
 
     fn touch(&mut self, r: Rect) {
@@ -57,14 +83,14 @@ impl Canvas {
     }
 
     pub fn put(&mut self, x: usize, y: usize, color: u32) {
-        if x < self.width && y < self.height {
+        if self.visible(Rect::new(x, y, 1, 1)).is_some() {
             self.pixels[y * self.width + x] = color;
             self.touch(Rect::new(x, y, 1, 1));
         }
     }
 
     pub fn fill(&mut self, r: Rect, color: u32) {
-        let Some(r) = r.clip(self.width, self.height) else { return };
+        let Some(r) = self.visible(r) else { return };
         for y in r.y..r.y + r.h {
             self.pixels[y * self.width + r.x..y * self.width + r.x + r.w].fill(color);
         }
@@ -105,15 +131,28 @@ impl Canvas {
 
     /// Copies a `w` x `h` image to (x, y); pixels equal to `transparent` (if given) are skipped.
     pub fn blit(&mut self, x: usize, y: usize, w: usize, h: usize, image: &[u32], transparent: Option<u32>) {
-        for row in 0..h {
-            for col in 0..w {
+        let Some(v) = self.visible(Rect::new(x, y, w, h)) else { return };
+        for row in v.y - y..v.y - y + v.h {
+            for col in v.x - x..v.x - x + v.w {
                 let c = image[row * w + col];
-                if Some(c) != transparent && x + col < self.width && y + row < self.height {
+                if Some(c) != transparent {
                     self.pixels[(y + row) * self.width + x + col] = c;
                 }
             }
         }
-        self.touch(Rect::new(x, y, w, h));
+        self.touch(v);
+    }
+
+    /// Copies a `w` x `h` opaque image to (x, y) row by row (fast path for window contents).
+    pub fn copy(&mut self, x: usize, y: usize, w: usize, h: usize, image: &[u32]) {
+        let Some(v) = self.visible(Rect::new(x, y, w, h)) else { return };
+        let (cx, cy) = (v.x - x, v.y - y);
+        for row in 0..v.h {
+            let src = (cy + row) * w + cx;
+            let dst = (v.y + row) * self.width + v.x;
+            self.pixels[dst..dst + v.w].copy_from_slice(&image[src..src + v.w]);
+        }
+        self.touch(v);
     }
 
     /// Text with the built-in font, each font pixel drawn as `scale` x `scale` pixels. Returns the width drawn.
@@ -132,10 +171,14 @@ impl Canvas {
         s.chars().count() * advance
     }
 
-    /// Forgets the changed area and returns it (for the self-tests, which have no screen to copy to).
-    #[cfg(feature = "qemu-test")]
-    pub fn present_dirty_for_test(&mut self) -> Option<Rect> {
+    /// Forgets the changed area and returns it (the window server turns it into screen damage).
+    pub fn take_dirty(&mut self) -> Option<Rect> {
         self.dirty.take()
+    }
+
+    /// All pixels, row by row.
+    pub fn pixels(&self) -> &[u32] {
+        &self.pixels
     }
 
     /// Copies the changed area to the screen at (`at_x`, `at_y`) and forgets it. Returns what was copied.

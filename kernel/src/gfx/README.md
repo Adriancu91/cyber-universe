@@ -4,6 +4,7 @@
 
 **Desen în memorie (P4-02):** `canvas.rs` — `Canvas` = imaginea în memorie (buffer de spate): dreptunghiuri, contururi,
 linii, imagini cu transparență, text; ține minte zona schimbată și `present()` copiază pe ecran doar acea zonă, rând cu rând.
+Zonă de decupare (`set_clip`) și copiere rapidă de imagini opace (`copy`), folosite de serverul grafic (`ui/`).
 În QEMU fără accelerare: ~290 de cadre pe secundă pentru tot ecranul de 1280×800 (desen + copiere).
 
 **Depinde de:** cererea `FRAMEBUFFER` din `boot.rs`; doar ecrane de 32 de biți pe pixel.

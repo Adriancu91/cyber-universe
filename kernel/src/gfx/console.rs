@@ -86,6 +86,9 @@ impl Console {
 
 impl fmt::Write for Console {
     fn write_str(&mut self, s: &str) -> fmt::Result {
+        if !TEXT_ON_SCREEN.load(Ordering::Acquire) {
+            return Ok(()); // the window server owns the screen
+        }
         for c in s.chars() {
             self.put_char(c);
         }
@@ -95,6 +98,8 @@ impl fmt::Write for Console {
 
 static mut CONSOLE: Option<Console> = None;
 static LOCK: AtomicBool = AtomicBool::new(false);
+/// `false` while the window server owns the screen: text still goes to the serial port, not to the screen.
+static TEXT_ON_SCREEN: AtomicBool = AtomicBool::new(true);
 
 /// Initialises the console on the boot framebuffer. Returns `false` if there is no usable screen.
 pub fn init() -> bool {
@@ -118,6 +123,12 @@ pub fn with_console<R>(f: impl FnOnce(&mut Option<Console>) -> R) -> R {
 /// Releases the console lock unconditionally. Only for the panic handler (see `serial::force_unlock`).
 pub fn force_unlock() {
     LOCK.store(false, Ordering::Release);
+    TEXT_ON_SCREEN.store(true, Ordering::Release);
+}
+
+/// Turns text output on the screen on or off (the window server turns it off while it draws).
+pub fn set_text_on_screen(on: bool) {
+    TEXT_ON_SCREEN.store(on, Ordering::Release);
 }
 
 #[doc(hidden)]
