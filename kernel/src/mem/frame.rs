@@ -5,7 +5,7 @@
 //! its own page tables, task P1-06).
 
 use super::map::{self, Kind, PAGE_SIZE};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 struct Bitmap {
     bits: *mut u8,
@@ -19,6 +19,8 @@ unsafe impl Send for Bitmap {}
 
 static mut BITMAP: Bitmap = Bitmap { bits: core::ptr::null_mut(), frames: 0, free: 0, next: 0 };
 static LOCK: AtomicBool = AtomicBool::new(false);
+/// Frames in usable regions at boot (free or not), for the memory-use report.
+static USABLE: AtomicU64 = AtomicU64::new(0);
 
 fn with_bitmap<R>(f: impl FnOnce(&mut Bitmap) -> R) -> R {
     while LOCK.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
@@ -78,6 +80,7 @@ pub fn init() -> bool {
                 b.free += 1;
             }
         }
+        USABLE.store(b.free, Ordering::Relaxed);
         let home_frame = home / PAGE_SIZE;
         for f in home_frame..home_frame + bitmap_frames {
             b.set(f, true); // the bitmap's own frames
@@ -132,6 +135,11 @@ pub fn free_frame(addr: u64) {
     if !ok {
         crate::warn!("mem: eliberare invalida sau dubla a cadrului {:#x}, ignorata", addr);
     }
+}
+
+/// Frames of usable RAM currently taken (bitmap, page tables, heap, anything allocated).
+pub fn used_frames() -> u64 {
+    USABLE.load(Ordering::Relaxed) - free_frames()
 }
 
 /// Number of free frames.

@@ -169,8 +169,10 @@ pub fn init() -> bool {
     lapic_write(LAPIC_TIMER_DIVIDE, 0x3); // divide by 16
     lapic_write(LAPIC_LVT_TIMER, 1 << 16); // masked while calibrating
     lapic_write(LAPIC_TIMER_INIT, u32::MAX);
+    let tsc_start = super::rdtsc();
     pit_wait_ms(10);
     let per_10ms = u32::MAX - lapic_read(LAPIC_TIMER_CURRENT);
+    crate::time::set_tsc_per_ms((super::rdtsc() - tsc_start) / 10);
     let per_tick = per_10ms as u64 * 100 / HZ;
 
     lapic_write(LAPIC_LVT_TIMER, TIMER_VECTOR as u32 | (1 << 17)); // periodic

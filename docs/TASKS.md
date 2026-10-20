@@ -46,11 +46,29 @@ Reguli:
   Test: QEMU `sendkey` trimite taste, nucleul le afișează pe serial.
 - [x] **P1-11** Test de stabilitate: nucleul rulează 5 minute în QEMU, temporizator activ, fără erori. Dep: P1-09.
   Test: `tools/test.sh --stress` (5 min, zilnic în `stress.yml`); varianta de 15 s `stress-quick` la fiecare push.
-- [~] **P1-12** Măsurători: timp de pornire și memorie folosită, scrise în `docs/METRICS.md`. Dep: P1-11.
+- [x] **P1-12** Măsurători: timp de pornire și memorie folosită, scrise în `docs/METRICS.md`. Dep: P1-11.
+  `tools/metrics.sh` (5 porniri, media); sarcinile Fazei 2 generate (P2-01…P2-11, cu planuri).
 
 - [ ] **P1-13** Tabele de pagini proprii (în locul celor Limine) + recuperarea memoriei bootloader-ului. Dep: P1-07. Plan: `docs/plans/P1-13.md`.
 
-## Faza 2 și următoarele
+## Faza 2 — Procese și sistem
 
-Sarcinile se generează de Claude Code din `ROADMAP.md` când Faza 1 e aproape gata (ultimele 2 sarcini),
-în același format, cu ID-uri `P2-xx`, `P3-xx` etc.
+Scop (ROADMAP): mai multe programe rulând în paralel, separate de nucleu. Gata când: din shell se poate porni
+un program separat care citește un fișier. Fiecare sarcină are plan în `docs/plans/`.
+
+- [ ] **P2-01** Fire de execuție ale nucleului + comutare de context (cooperativ). Dep: P1-11.
+- [ ] **P2-02** Planificator preemptiv round-robin pe temporizator. Dep: P2-01.
+- [ ] **P2-03** Așteptare și sincronizare: `sleep_ms`, mutex, cozi de așteptare (și pentru tastatură). Dep: P2-02.
+- [ ] **P2-04** Spații de adrese separate pentru procese. Dep: P1-13, P2-01.
+- [ ] **P2-05** Mod utilizator (ring 3) + apeluri de sistem (`syscall`): `write`, `exit`, `yield`, `sleep_ms`. Dep: P2-02, P2-04.
+- [ ] **P2-06** Încărcarea programelor ELF64 (programe în `user/`, puse în ISO). Dep: P2-05.
+- [ ] **P2-07** VFS + ramfs, fișiere inițiale dintr-o arhivă `tar` (initrd). Dep: P1-07.
+- [ ] **P2-08** Apeluri de sistem pentru fișiere (`open`/`read`/`close`) + pornirea programelor din ramfs. Dep: P2-06, P2-07.
+- [ ] **P2-09** Shell: `help`, `ls`, `cat`, `run`, `mem`, `uptime`, `reboot`. Dep: P2-03, P2-08, P1-10.
+- [ ] **P2-10** Citire FAT32 (doar citire) peste o interfață de disc; imagine de test în memorie. Dep: P2-07.
+- [ ] **P2-11** Închiderea Fazei 2: test complet, stabilitate extinsă, măsurători, generarea sarcinilor Fazei 3. Dep: P2-09, P2-10.
+
+## Faza 3 și următoarele
+
+Sarcinile se generează de Claude Code din `ROADMAP.md` la închiderea fazei anterioare (P2-11),
+în același format, cu ID-uri `P3-xx`, `P4-xx` etc.

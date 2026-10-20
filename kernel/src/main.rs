@@ -27,6 +27,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Kernel entry point, called by Limine in 64-bit long mode.
 #[unsafe(no_mangle)]
 extern "C" fn kmain() -> ! {
+    time::mark_boot();
     drivers::serial::init();
 
     if !boot::BASE_REVISION.is_supported() {
@@ -68,20 +69,39 @@ extern "C" fn kmain() -> ! {
         warn!("sistem: fara ceas (APIC indisponibil); continui fara intreruperi");
     }
 
+    report_boot_metrics();
+
     #[cfg(feature = "qemu-test")]
     run_tests();
 
     #[cfg(not(feature = "qemu-test"))]
-    {
-        let (heap_used, heap_mapped) = mem::heap::stats();
-        info!(
-            "sistem: pornire completa; memorie libera {} MiB, heap {} / {} KiB",
-            mem::frame::free_frames() * mem::map::PAGE_SIZE / (1024 * 1024),
-            heap_used / 1024,
-            heap_mapped / 1024
-        );
-        echo_keyboard();
+    echo_keyboard();
+}
+
+/// Logs how long the kernel took to start and how much memory it uses (read by tools/metrics.sh).
+fn report_boot_metrics() {
+    unsafe extern "C" {
+        static __kernel_start: u8;
+        static __kernel_end: u8;
     }
+    // SAFETY: only the addresses of the linker symbols are taken, never their contents.
+    let image = unsafe { core::ptr::addr_of!(__kernel_end) as u64 - core::ptr::addr_of!(__kernel_start) as u64 };
+    let used = mem::frame::used_frames() * mem::map::PAGE_SIZE;
+    let (heap_used, heap_mapped) = mem::heap::stats();
+    let boot = match time::since_boot_us() {
+        Some(us) => alloc::format!("{}.{:03} ms", us / 1000, us % 1000),
+        None => alloc::string::String::from("necunoscut"),
+    };
+    info!(
+        "metrici: pornire {}; memorie nucleu {} KiB (imagine {} KiB + cadre {} KiB, heap {} / {} KiB); libera {} MiB",
+        boot,
+        (image + used) / 1024,
+        image / 1024,
+        used / 1024,
+        heap_used / 1024,
+        heap_mapped / 1024,
+        mem::frame::free_frames() * mem::map::PAGE_SIZE / (1024 * 1024)
+    );
 }
 
 /// Until there is a shell (Phase 2): show typed keys on the screen.

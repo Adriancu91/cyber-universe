@@ -14,6 +14,7 @@ SECTIONS
 {
     /* Limine requires the kernel to live in the top 2 GiB of the address space. */
     . = 0xffffffff80000000;
+    __kernel_start = .;
 
     .limine_requests : {
         KEEP(*(.requests_start_marker))
@@ -30,6 +31,8 @@ SECTIONS
     . = ALIGN(CONSTANT(MAXPAGESIZE));
     .data : { *(.data .data.*) } :data
     .bss  : { *(.bss .bss.*) *(COMMON) } :data
+    . = ALIGN(CONSTANT(MAXPAGESIZE));
+    __kernel_end = .;
 
     /DISCARD/ : { *(.eh_frame*) *(.note .note.*) }
 }
