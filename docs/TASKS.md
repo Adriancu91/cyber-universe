@@ -33,8 +33,8 @@ Reguli:
 ## Faza 1 — Nucleul de bază
 
 - [x] **P1-01** Jurnal (logger) unificat: serial + ecran, niveluri INFO/WARN/ERR. Dep: P0-09.
-- [ ] **P1-02** GDT + TSS. Dep: P1-01.
-- [ ] **P1-03** IDT + excepții (div zero, page fault, double fault cu stivă separată) cu mesaj clar. Dep: P1-02.
+- [x] **P1-02** GDT + TSS. Dep: P1-01.
+- [x] **P1-03** IDT + excepții (div zero, page fault, double fault cu stivă separată) cu mesaj clar. Dep: P1-02.
   Test: test care provoacă intenționat o excepție și verifică mesajul.
 - [ ] **P1-04** Harta memoriei de la Limine afișată în jurnal. Dep: P1-01.
 - [ ] **P1-05** Alocator de cadre fizice (bitmap). Dep: P1-04. Test: alocă/eliberează 10.000 de cadre fără scurgeri.

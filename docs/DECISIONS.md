@@ -41,3 +41,9 @@ Laptopul (WSL2, D-006) rămâne pentru rulare cu ecran și pentru hardware real 
 ### D-009 — Versiuni propuse după studiu (2026-10-20)
 Limine **v12.9.4** (arhiva binară din GitHub Releases) și crate-ul Rust `limine` **0.5.0** (depozitul oficial
 `limine-bootloader/limine-rs`), testate împreună în prototip. Se confirmă definitiv în D-004a la P0-04, cu suma SHA-256.
+
+### D-010 — Tratarea întreruperilor cu `extern "x86-interrupt"` (2026-10-20)
+Handler-ele de excepții folosesc convenția `x86-interrupt` din Rust nightly (`#![feature(abi_x86_interrupt)]`),
+nu stub-uri scrise în assembly. Motiv: mai puțin cod `unsafe`, compilatorul salvează registrele corect.
+GDT, TSS și IDT sunt scrise de noi (fără crate-ul `x86_64`), după Intel SDM. Dacă vreodată convenția dispare
+din nightly, înlocuirea e un set de stub-uri în assembly (o sarcină nouă).

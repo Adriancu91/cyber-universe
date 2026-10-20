@@ -2,6 +2,7 @@
 
 #![no_std]
 #![no_main]
+#![feature(abi_x86_interrupt)]
 
 mod arch;
 mod boot;
@@ -42,6 +43,13 @@ extern "C" fn kmain() -> ! {
 
     info!("jurnal: pornit (nucleu {})", VERSION);
 
+    arch::x86_64::init();
+    info!(
+        "cpu: GDT si IDT incarcate (CS={:#04x}, TR={:#04x})",
+        arch::x86_64::gdt::current_cs(),
+        arch::x86_64::gdt::current_tr()
+    );
+
     #[cfg(feature = "qemu-test")]
     run_tests();
 
@@ -57,6 +65,30 @@ extern "C" fn kmain() -> ! {
 fn run_tests() -> ! {
     warn!("jurnal: test avertisment");
     error!("jurnal: test eroare");
+
+    // Breakpoint: the kernel must log it and continue.
+    // SAFETY: int3 only raises #BP, whose handler returns.
+    unsafe { core::arch::asm!("int3") }
+    info!("test: dupa breakpoint, nucleul continua");
+
+    #[cfg(feature = "test-divzero")]
+    // SAFETY: deliberate #DE for the test scenario; the handler stops the kernel.
+    unsafe {
+        core::arch::asm!("xor edx, edx", "xor eax, eax", "xor ecx, ecx", "div ecx", out("eax") _, out("ecx") _, out("edx") _)
+    }
+
+    #[cfg(feature = "test-pagefault")]
+    // SAFETY: deliberate read from an unmapped address for the test scenario; the handler stops the kernel.
+    unsafe {
+        core::ptr::read_volatile(0x0000_7000_dead_b000 as *const u64);
+    }
+
+    #[cfg(feature = "test-doublefault")]
+    // SAFETY: deliberate: the stack pointer is moved to unmapped memory, so the CPU cannot push the
+    // page-fault frame and raises #DF, which must run on its own IST stack.
+    unsafe {
+        core::arch::asm!("mov rsp, {}", "push rax", in(reg) 0x0000_7000_0000_0000u64, options(noreturn))
+    }
 
     #[cfg(feature = "test-panic")]
     panic!("panica intentionata de test");

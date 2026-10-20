@@ -1,6 +1,15 @@
 //! x86_64-specific primitives: port I/O and CPU control.
 
+pub mod gdt;
+pub mod idt;
+
 use core::arch::asm;
+
+/// Sets up the CPU tables (GDT, TSS, IDT). Must run before anything that can fault or take interrupts.
+pub fn init() {
+    gdt::init();
+    idt::init();
+}
 
 /// Writes one byte to an I/O port.
 ///

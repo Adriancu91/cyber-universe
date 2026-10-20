@@ -13,6 +13,9 @@ limine = "=0.5.0"
 qemu-test = []
 # Test scenarios (tests/scenarios.txt). Each one deliberately triggers a situation and checks the kernel's reaction.
 test-panic = ["qemu-test"]
+test-divzero = ["qemu-test"]
+test-pagefault = ["qemu-test"]
+test-doublefault = ["qemu-test"]
 
 [profile.dev]
 panic = "abort"
