@@ -117,6 +117,7 @@ extern "C" fn kernel_main() -> ! {
             fs::mount_disk(disk, "/disk");
         }
     }
+    drivers::e1000::init_global();
     if let Some(stick) = drivers::usb::take_disk() {
         fs::mount_disk(alloc::boxed::Box::new(stick), "/usb");
     }
@@ -182,6 +183,8 @@ fn run_tests() -> ! {
     test_address_spaces();
     test_user_mode();
     test_files();
+    #[cfg(feature = "test-net")]
+    test_network();
     #[cfg(feature = "test-usb")]
     assert!(boot::medium() == boot::Medium::Disk, "test: pornit de pe {:?}, nu de pe stick", boot::medium());
     #[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
@@ -647,6 +650,39 @@ fn test_fat32_mbr() {
     assert!(fs::mount_disk(alloc::boxed::Box::new(WithMbr(block::MemDisk::new(image), mbr)), "/mbr"), "MBR negasit");
     assert!(fs::read_all("/mbr/salut.txt").unwrap() == b"salut de pe disc\n", "citire prin MBR");
     info!("test: FAT32 OK (partitia gasita si prin GPT, si prin MBR)");
+}
+
+/// Sends an ARP request for QEMU's virtual gateway (10.0.2.2, user networking; our address 10.0.2.15)
+/// and waits for the answer: proves frames go out and come back through the network card.
+#[cfg(feature = "test-net")]
+fn test_network() {
+    let mut guard = drivers::e1000::NIC.lock();
+    let nic = guard.as_mut().expect("test: nicio placa de retea");
+    let mac = nic.mac;
+    let (me, gateway) = ([10u8, 0, 2, 15], [10u8, 0, 2, 2]);
+    let mut frame = alloc::vec::Vec::new();
+    frame.extend_from_slice(&[0xFF; 6]); // broadcast
+    frame.extend_from_slice(&mac);
+    frame.extend_from_slice(&[0x08, 0x06]); // ARP
+    frame.extend_from_slice(&[0, 1, 0x08, 0, 6, 4, 0, 1]); // Ethernet/IPv4, request
+    frame.extend_from_slice(&mac);
+    frame.extend_from_slice(&me);
+    frame.extend_from_slice(&[0; 6]);
+    frame.extend_from_slice(&gateway);
+    assert!(nic.send(&frame), "test: cadrul nu a plecat");
+    let deadline = arch::x86_64::apic::ticks() + arch::x86_64::apic::HZ;
+    let reply = loop {
+        if let Some(p) = nic.receive() {
+            // ARP reply (type 0x0806, operation 2) from the gateway
+            if p.len() >= 42 && p[12..14] == [0x08, 0x06] && p[20..22] == [0, 2] && p[28..32] == gateway {
+                break p;
+            }
+        }
+        assert!(arch::x86_64::apic::ticks() < deadline, "test: niciun raspuns ARP de la 10.0.2.2");
+        core::hint::spin_loop();
+    };
+    let g = &reply[22..28];
+    info!("net: ARP: 10.0.2.2 este la {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", g[0], g[1], g[2], g[3], g[4], g[5]);
 }
 
 /// Runs the `hello` program (an ELF file from the initrd) and checks that damaged ELF files are refused.

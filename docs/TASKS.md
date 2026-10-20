@@ -100,7 +100,8 @@ AHCI, NVMe, XHCI, e1000). Fiecare sarcină are plan în `docs/plans/`.
   Test: scenariul `usb-kbd` (QEMU tastează pe tastatura USB; nucleul primește h, i, Enter).
 - [x] **P3-07** Stick USB (Mass Storage, Bulk-Only + SCSI) ca dispozitiv de blocuri, montat la `/usb`. Dep: P3-05.
   Test: scenariul `usb-disk` (discul de test ca stick USB → `/usb`, suma fișierului de 100 KiB corectă).
-- [ ] **P3-08** Placă de rețea Intel e1000/e1000e: cadre Ethernet, test ARP. Dep: P3-01.
+- [x] **P3-08** Placă de rețea Intel e1000/e1000e: cadre Ethernet, test ARP. Dep: P3-01.
+  Test: scenariile `net` (e1000e) și `net-e1000` (cerere ARP → răspuns de la 10.0.2.2); `shell` (`net`).
 - [ ] **P3-09** Test pe calculatoare reale (ThinkPad L15 Gen 2 + încă unul), `docs/HARDWARE.md`. **Are nevoie de Adrian.** Dep: P3-02, P3-03, P3-04, P3-06.
 - [ ] **P3-10** Închiderea Fazei 3: măsurători, generarea sarcinilor Fazei 4. Dep: P3-09.
 

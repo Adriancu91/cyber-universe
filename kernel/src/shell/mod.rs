@@ -33,6 +33,7 @@ pub fn run() {
             "mem" => mem(),
             "lspci" => lspci(),
             "lsusb" => lsusb(),
+            "net" => net(),
             "uptime" => uptime(),
             "reboot" => reboot(),
             #[cfg(feature = "qemu-test")]
@@ -74,6 +75,7 @@ fn help() {
     out!("  mem              memoria libera si cea folosita\n");
     out!("  lspci            dispozitivele PCI (discuri, USB, retea...)\n");
     out!("  lsusb            dispozitivele USB conectate\n");
+    out!("  net              placa de retea (adresa MAC, pachete)\n");
     out!("  uptime           de cat timp merge sistemul\n");
     out!("  reboot           reporneste calculatorul\n");
 }
@@ -151,6 +153,17 @@ fn lsusb() {
     }
     for d in devices {
         out!("  port {}  {:04x}:{:04x}  {}\n", d.port, d.vendor, d.product, d.kind());
+    }
+}
+
+fn net() {
+    match crate::drivers::e1000::NIC.lock().as_ref() {
+        Some(n) => {
+            let m = n.mac;
+            out!("  {}  MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}\n", n.name, m[0], m[1], m[2], m[3], m[4], m[5]);
+            out!("  pachete trimise {}, primite {}\n", n.sent, n.received);
+        }
+        None => out!("(nicio placa de retea cunoscuta)\n"),
     }
 }
 
