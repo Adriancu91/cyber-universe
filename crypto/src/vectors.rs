@@ -1,10 +1,11 @@
-//! The official test vectors (FIPS 180-4 examples, RFC 4231, RFC 5869, RFC 6979, RFC 7748, RFC 8439, RFC 8448) and OpenSSL-made RSA signatures, run by `self_test`:
+//! The official test vectors (FIPS 180-4 examples, RFC 4231, RFC 5869, RFC 6979, RFC 7748, RFC 8439, RFC 8448) and OpenSSL-made RSA signatures and certificates, run by `self_test`:
 //! on the host by `cargo test`, in QEMU by the kernel's `crypto` scenario.
 
 use crate::hkdf;
 use crate::hmac::hmac;
 use crate::sha2::{Sha256, Sha384, Sha512};
 use crate::x25519::{x25519, x25519_base};
+use crate::x509::{self, Error as XErr};
 use crate::{aead, chacha20, p256, poly1305::Poly1305, rsa::PublicKey, vectors_rsa};
 use crate::{Digest, ct_eq};
 
@@ -82,6 +83,18 @@ const P256_SIGS: [(&[u8], bool, &str); 3] = [
     (b"test", false, "3045022100f1abb023518351cd71d881567b1ea663ed3efcf6c5132b354f28d3b0b7d383670220019f4113742a2b14bd25926b49c649155f267e60d3814b4c0cc84250e46f0083"),
     (b"sample", true, "304402200eafea039b20e9b42309fb1d89e213057cbf973dc0cfc8f129edddc800ef771902204861f0491e6998b9455193e34e7b0d284ddd7149a74b95b9261f13abde940954"),
 ];
+
+// Test certificates (P5-15), made with OpenSSL; see crypto/src/testcerts/README.md.
+const CERT_ROOT_A: &[u8] = include_bytes!("testcerts/root_a.der");
+const CERT_INTER_A: &[u8] = include_bytes!("testcerts/inter_a.der");
+const CERT_LEAF_A: &[u8] = include_bytes!("testcerts/leaf_a.der");
+const CERT_EXPIRED_A: &[u8] = include_bytes!("testcerts/expired_a.der");
+const CERT_CRITEXT_A: &[u8] = include_bytes!("testcerts/critext_a.der");
+const CERT_UNDER_LEAF: &[u8] = include_bytes!("testcerts/under_leaf.der");
+const CERT_INTER2_A: &[u8] = include_bytes!("testcerts/inter2_a.der");
+const CERT_DEEP_LEAF: &[u8] = include_bytes!("testcerts/deep_leaf.der");
+const CERT_ROOT_B: &[u8] = include_bytes!("testcerts/root_b.der");
+const CERT_LEAF_B: &[u8] = include_bytes!("testcerts/leaf_b.der");
 
 /// Runs every vector. `Ok(count)` or `Err(name of the first one that failed)`.
 pub fn self_test() -> Result<usize, &'static str> {
@@ -284,6 +297,35 @@ pub fn self_test() -> Result<usize, &'static str> {
     let mut nm = [0u8; 8];
     unhex("3006020200010201", &mut nm);
     check(p256::parse_der_sig(&nm[..8]).is_none() && p256::parse_der_sig(&[0x30, 6, 2, 1, 1, 2, 1, 1]).is_some(), "ecdsa p256: DER necanonic acceptat")?;
+
+    // X.509 chains (P5-15): certificates made with OpenSSL; the good chains pass, each broken one is refused
+    // for the right reason.
+    let now = 20261020120000;
+    let (ra, rb) = (CERT_ROOT_A, CERT_ROOT_B);
+    let roots: &[&[u8]] = &[ra, rb];
+    let chain = |c: &[&[u8]], host: &[u8]| x509::verify_chain(c, roots, host, now);
+    check(chain(&[CERT_LEAF_A, CERT_INTER_A], b"test.cyber.local") == Ok(()), "x509 lant RSA-PSS + P-256")?;
+    check(chain(&[CERT_LEAF_A, CERT_INTER_A, ra], b"Ceva.Exemplu.RO") == Ok(()), "x509 lant cu radacina si nume *.")?;
+    check(chain(&[CERT_LEAF_B], b"server.b") == Ok(()), "x509 lant P-256 -> RSA (SHA-384)")?;
+    check(chain(&[CERT_LEAF_A, CERT_INTER_A], b"exemplu.ro") == Err(XErr::NameMismatch)
+        && chain(&[CERT_LEAF_A, CERT_INTER_A], b"a.b.exemplu.ro") == Err(XErr::NameMismatch)
+        && chain(&[CERT_LEAF_A, CERT_INTER_A], b"server.b") == Err(XErr::NameMismatch), "x509: nume gresit acceptat")?;
+    check(chain(&[CERT_LEAF_A], b"test.cyber.local") == Err(XErr::UnknownIssuer)
+        && x509::verify_chain(&[CERT_LEAF_A, CERT_INTER_A], &[rb], b"test.cyber.local", now) == Err(XErr::UnknownIssuer), "x509: radacina necunoscuta acceptata")?;
+    check(chain(&[CERT_EXPIRED_A, CERT_INTER_A], b"test.cyber.local") == Err(XErr::Expired)
+        && x509::verify_chain(&[CERT_LEAF_A, CERT_INTER_A], roots, b"test.cyber.local", 20251231235959) == Err(XErr::NotYetValid), "x509: certificat expirat acceptat")?;
+    check(chain(&[CERT_CRITEXT_A, CERT_INTER_A], b"test.cyber.local") == Err(XErr::CriticalExtension), "x509: extensie critica necunoscuta acceptata")?;
+    check(chain(&[CERT_UNDER_LEAF, CERT_LEAF_A, CERT_INTER_A], b"rau.cyber.local") == Err(XErr::NotCa), "x509: certificat de server folosit ca autoritate")?;
+    check(chain(&[CERT_DEEP_LEAF, CERT_INTER2_A, CERT_INTER_A], b"adanc.cyber.local") == Err(XErr::PathTooLong), "x509: lant prea lung acceptat")?;
+    let mut bad = [0u8; 1024];
+    let len = CERT_LEAF_A.len();
+    bad[..len].copy_from_slice(CERT_LEAF_A);
+    bad[len - 5] ^= 1; // inside the signature
+    check(chain(&[&bad[..len], CERT_INTER_A], b"test.cyber.local") == Err(XErr::BadSignature), "x509: semnatura stricata acceptata")?;
+    bad[len - 5] ^= 1;
+    bad[60] ^= 0x40; // inside the signed part
+    check(chain(&[&bad[..len], CERT_INTER_A], b"test.cyber.local").is_err(), "x509: certificat modificat acceptat")?;
+    check(x509::Cert::parse(&CERT_LEAF_A[..len - 1]).is_err() && x509::Cert::parse(&[]).is_err(), "x509: certificat trunchiat acceptat")?;
 
     // Constant-time comparison.
     check(ct_eq(b"abc", b"abc") && !ct_eq(b"abc", b"abd") && !ct_eq(b"abc", b"ab"), "ct_eq")?;

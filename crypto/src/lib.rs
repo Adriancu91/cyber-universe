@@ -5,6 +5,7 @@
 pub mod aead;
 pub mod bignum;
 pub mod chacha20;
+pub mod der;
 pub mod hkdf;
 pub mod hmac;
 pub mod p256;
@@ -12,6 +13,7 @@ pub mod poly1305;
 pub mod rsa;
 pub mod sha2;
 pub mod vectors;
+pub mod x509;
 mod vectors_rsa;
 pub mod x25519;
 
