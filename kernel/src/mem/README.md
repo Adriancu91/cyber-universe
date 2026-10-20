@@ -5,6 +5,9 @@
 - `frame.rs` — alocatorul de cadre fizice (4 KiB): o hartă de biți, câte un bit pe cadru.
 - `paging.rs` — paginare pe 4 niveluri: mapare, demapare, traducere adresă virtuală → fizică (inclusiv pagini mari); activează bitul NX și CR0.WP.
   La pornire copiază tabelele Limine în cadre proprii (`adopt_tables`), ca memoria bootloader-ului să poată fi recuperată.
+- `address_space.rs` — spații de adrese pentru procese (P2-04): fiecare are PML4 propriu; jumătatea de sus (nucleul)
+  e comună, jumătatea de jos e a procesului; la distrugere se eliberează toate cadrele și tabelele lui.
+  Ca jumătatea de sus să rămână identică peste tot, `adopt_tables` creează din start toate cele 256 de tabele de nivel 3 ale nucleului (1 MiB).
 - `heap.rs` — heap-ul nucleului (`Box`, `Vec`, `String`): listă de blocuri libere sortată, cu unire; crește la nevoie de la `0xffff_9000_0000_0000`, maxim 256 MiB.
 
 **Depinde de:** cererile `MEMORY_MAP` și `HHDM` din `boot.rs`.
@@ -17,5 +20,8 @@
 **Recuperare (P1-13):** `frame::reclaim_bootloader` dă alocatorului memoria „bootloader recuperabilă” (~43 MiB în QEMU),
 după ce nucleul are tabele și stivă proprii. Teste: `test: toate cele N cadre libere scrise si eliberate` (scenariul `log`)
 și scenariul `rodata` (scriere în `.rodata` → page fault).
+
+**Spații de adrese:** `test: spatii de adrese separate OK` — aceeași adresă în două spații arată date diferite,
+firele pornite cu `sched::spawn_in` văd datele spațiului lor, iar după distrugere toate cadrele revin.
 
 **Inspirație:** specificația protocolului Limine; OSDev Wiki „Page Frame Allocation” (doar descrierea).

@@ -25,7 +25,15 @@ pub enum MapError {
     NotAligned,
 }
 
-fn cr3() -> u64 {
+static KERNEL_ROOT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+/// Physical address of the kernel's own PML4 (the one built by `adopt_tables`).
+pub fn kernel_root() -> u64 {
+    KERNEL_ROOT.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Physical address of the PML4 in use.
+pub fn cr3() -> u64 {
     let v: u64;
     // SAFETY: reading CR3 has no side effects.
     unsafe { asm!("mov {}, cr3", out(reg) v, options(nomem, nostack, preserves_flags)) }
@@ -65,13 +73,18 @@ pub fn init() {
     }
 }
 
-/// Maps one 4 KiB page `virt` -> `phys` with `flags` (PRESENT is added automatically).
+/// Maps one 4 KiB page `virt` -> `phys` with `flags` (PRESENT is added automatically) in the current tables.
 pub fn map(virt: u64, phys: u64, flags: u64) -> Result<(), MapError> {
+    map_in(cr3(), virt, phys, flags)
+}
+
+/// Like `map`, in the tables whose PML4 is at physical address `root`.
+pub fn map_in(root: u64, virt: u64, phys: u64, flags: u64) -> Result<(), MapError> {
     if virt % PAGE_SIZE != 0 || phys % PAGE_SIZE != 0 {
         return Err(MapError::NotAligned);
     }
     let idx = indices(virt);
-    let mut t = table(cr3());
+    let mut t = table(root);
     for &i in &idx[..3] {
         let entry = t[i];
         if entry & PRESENT == 0 {
@@ -96,8 +109,13 @@ pub fn map(virt: u64, phys: u64, flags: u64) -> Result<(), MapError> {
 #[allow(dead_code)] // API used by tests now, by process memory in Phase 2
 /// Removes the mapping of `virt` and returns the physical frame it pointed to (the frame is NOT freed).
 pub fn unmap(virt: u64) -> Option<u64> {
+    unmap_in(cr3(), virt)
+}
+
+/// Like `unmap`, in the tables whose PML4 is at physical address `root`.
+pub fn unmap_in(root: u64, virt: u64) -> Option<u64> {
     let idx = indices(virt);
-    let mut t = table(cr3());
+    let mut t = table(root);
     for &i in &idx[..3] {
         let entry = t[i];
         if entry & PRESENT == 0 || entry & HUGE != 0 {
@@ -117,8 +135,13 @@ pub fn unmap(virt: u64) -> Option<u64> {
 #[allow(dead_code)] // API used by tests now, by process memory in Phase 2
 /// Physical address that `virt` currently maps to, following huge pages too.
 pub fn translate(virt: u64) -> Option<u64> {
+    translate_in(cr3(), virt)
+}
+
+/// Like `translate`, in the tables whose PML4 is at physical address `root`.
+pub fn translate_in(root: u64, virt: u64) -> Option<u64> {
     let idx = indices(virt);
-    let mut t = table(cr3());
+    let mut t = table(root);
     for (level, &i) in idx.iter().enumerate() {
         let entry = t[i];
         if entry & PRESENT == 0 {
@@ -166,8 +189,56 @@ fn clone_table(phys: u64, level: u8, copied: &mut u64) -> Result<u64, MapError> 
 pub fn adopt_tables() -> Result<u64, MapError> {
     let mut copied = 0;
     let new = clone_table(cr3(), 4, &mut copied)?;
+    // Every upper-half PML4 entry gets its table now, so later kernel mappings never add a PML4 entry
+    // and all address spaces (which copy these 256 entries) keep seeing the same kernel.
+    let pml4 = table(new);
+    for e in pml4.iter_mut().skip(256) {
+        if *e & PRESENT == 0 {
+            let t = frame::alloc_frame().ok_or(MapError::NoMemory)?;
+            // SAFETY: freshly allocated frame, reachable through the HHDM.
+            unsafe { core::ptr::write_bytes(phys_to_virt(t), 0, PAGE_SIZE as usize) };
+            *e = t | PRESENT | WRITABLE;
+        }
+    }
+    KERNEL_ROOT.store(new, core::sync::atomic::Ordering::Relaxed);
     // SAFETY: the new PML4 maps exactly what the current one maps in the upper half (kernel image, HHDM,
     // heap, MMIO); the code, stack and data in use are all in the upper half.
     unsafe { asm!("mov cr3, {}", in(reg) new, options(nostack, preserves_flags)) }
     Ok(copied)
+}
+
+/// Switches to the tables whose PML4 is at `root`, if they are not already in use.
+///
+/// # Safety
+/// `root` must be a PML4 whose upper half is the kernel's (from `kernel_root` or an `AddressSpace`).
+pub unsafe fn load(root: u64) {
+    if cr3() != root {
+        // SAFETY: the caller guarantees the kernel (code, stack, data) stays mapped in `root`.
+        unsafe { asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags)) }
+    }
+}
+
+/// Frees every table and every mapped frame of the lower half of `root`, then `root` itself.
+/// Huge pages are not used in the lower half. Returns the number of frames freed.
+pub fn free_lower_half(root: u64) -> u64 {
+    fn free_level(t: u64, level: u8, count: &mut u64) {
+        let entries = table(t);
+        let end = if level == 4 { 256 } else { 512 };
+        for e in entries.iter_mut().take(end) {
+            if *e & PRESENT != 0 {
+                if level > 1 {
+                    free_level(*e & ADDR_MASK, level - 1, count);
+                } else {
+                    frame::free_frame(*e & ADDR_MASK);
+                    *count += 1;
+                }
+                *e = 0;
+            }
+        }
+        frame::free_frame(t);
+        *count += 1;
+    }
+    let mut count = 0;
+    free_level(root, 4, &mut count);
+    count
 }

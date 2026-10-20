@@ -1,5 +1,6 @@
 //! Memory management: physical memory map, frame allocator, paging and the kernel heap.
 
+pub mod address_space;
 pub mod frame;
 pub mod heap;
 pub mod map;

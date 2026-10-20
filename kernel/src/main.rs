@@ -165,6 +165,7 @@ fn run_tests() -> ! {
     test_threads();
     test_preemption();
     test_sleep_and_mutex();
+    test_address_spaces();
 
     #[cfg(feature = "test-keyboard")]
     test_keyboard();
@@ -427,6 +428,50 @@ fn test_sleep_and_mutex() {
     let total = *COUNTER.lock();
     assert!(total == 40_000, "mutex: {} in loc de 40000", total);
     info!("test: sleep_ms(500) = {} ticks; mutex: 4 fire x 10000 = {}", slept, total);
+}
+
+/// Two address spaces map the same user address to different frames: each one sees only its own data,
+/// threads running in them see the right one, and destroying them gives every frame back.
+#[cfg(feature = "qemu-test")]
+fn test_address_spaces() {
+    use core::sync::atomic::{AtomicU64, Ordering};
+    use mem::{address_space::AddressSpace, paging};
+    const VIRT: u64 = 0x0000_0040_0000_0000;
+    static SEEN: [AtomicU64; 2] = [AtomicU64::new(0), AtomicU64::new(0)];
+    let free_before = mem::frame::free_frames();
+    {
+        let mut a = AddressSpace::new().expect("test: spatiu A");
+        let mut b = AddressSpace::new().expect("test: spatiu B");
+        let fa = a.map_new(VIRT, paging::WRITABLE).expect("test: mapare A");
+        let fb = b.map_new(VIRT, paging::WRITABLE).expect("test: mapare B");
+        assert!(fa != fb && a.translate(VIRT) == Some(fa) && b.translate(VIRT) == Some(fb), "translate gresit");
+        assert!(paging::translate(VIRT).is_none(), "adresa utilizator vizibila in tabelele nucleului");
+        for (space, value) in [(&a, 0xAAAA_u64), (&b, 0xBBBB)] {
+            // SAFETY: VIRT is mapped, writable, in `space`, which shares the kernel half with the current tables.
+            unsafe {
+                paging::load(space.root());
+                (VIRT as *mut u64).write_volatile(value);
+                paging::load(paging::kernel_root());
+            }
+        }
+        // Threads read VIRT in their own space; the scheduler switches CR3 for them.
+        fn read_user(i: usize) {
+            // SAFETY: the thread runs in a space where VIRT is mapped (spawned with `spawn_in`).
+            let v = unsafe { (VIRT as *const u64).read_volatile() };
+            SEEN[i].store(v, Ordering::Relaxed);
+        }
+        sched::spawn_in(a.root(), || read_user(0));
+        sched::spawn_in(b.root(), || read_user(1));
+        while sched::alive() > 1 {
+            sched::yield_now();
+        }
+        assert!(paging::cr3() == paging::kernel_root(), "firul 0 nu a revenit la tabelele nucleului");
+        let seen = (SEEN[0].load(Ordering::Relaxed), SEEN[1].load(Ordering::Relaxed));
+        assert!(seen == (0xAAAA, 0xBBBB), "firele au vazut {:#x} / {:#x}", seen.0, seen.1);
+    }
+    let free_after = mem::frame::free_frames();
+    assert!(free_after == free_before, "cadre pierdute: {} inainte, {} dupa", free_before, free_after);
+    info!("test: spatii de adrese separate OK (A vede 0xaaaa, B vede 0xbbbb, cadre eliberate)");
 }
 
 /// Waits for the keys the test harness types (h, i, Enter) and logs them.

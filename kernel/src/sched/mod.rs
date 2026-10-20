@@ -34,6 +34,8 @@ struct Thread {
     /// While blocked: the queue it waits on (its address, 0 = none) and the tick to wake at (0 = none).
     wait_key: usize,
     wake_at: u64,
+    /// PML4 the thread runs with (0 = the kernel's own tables).
+    root: u64,
     /// The thread's stack; `None` for the boot thread, which runs on the kernel's boot stack.
     _stack: Option<Box<[u8]>>,
 }
@@ -93,7 +95,7 @@ pub fn init() {
         s.ready.reserve(16);
         s.blocked.reserve(16);
         s.zombies.reserve(16);
-        s.current = Some(Box::new(Thread { id: 0, state: State::Ready, rsp: 0, wait_key: 0, wake_at: 0, _stack: None }));
+        s.current = Some(Box::new(Thread { id: 0, state: State::Ready, rsp: 0, wait_key: 0, wake_at: 0, root: 0, _stack: None }));
     });
     let idle = new_thread(IDLE_ID, idle_loop);
     with_sched(|s| s.idle = Some(idle));
@@ -136,8 +138,15 @@ pub fn switches() -> u64 {
 /// Creates a kernel thread that runs `f` and exits when `f` returns. Returns its id.
 #[allow(dead_code)] // used by the self-tests now, by the shell and processes in Phase 2
 pub fn spawn(f: fn()) -> u64 {
+    spawn_in(0, f)
+}
+
+/// Like `spawn`, but the thread runs with the page tables at `root` (an `AddressSpace`; 0 = kernel's).
+/// The address space must outlive the thread.
+pub fn spawn_in(root: u64, f: fn()) -> u64 {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    let t = new_thread(id, f);
+    let mut t = new_thread(id, f);
+    t.root = root;
     with_sched(|s| s.ready.push_back(t));
     id
 }
@@ -147,7 +156,7 @@ fn new_thread(id: u64, f: fn()) -> Box<Thread> {
     let top = (stack.as_ptr() as u64 + STACK_SIZE as u64) & !15;
     // SAFETY: the 56 bytes below `top` belong to `stack`, which the new thread owns.
     let rsp = unsafe { switch::initial_stack(top, f as *const () as usize) };
-    Box::new(Thread { id, state: State::Ready, rsp, wait_key: 0, wake_at: 0, _stack: Some(stack) })
+    Box::new(Thread { id, state: State::Ready, rsp, wait_key: 0, wake_at: 0, root: 0, _stack: Some(stack) })
 }
 
 /// The idle thread: sleeps until an interrupt, then lets whoever was woken run.
@@ -228,10 +237,13 @@ pub fn yield_now() {
             State::Ready if prev.id == IDLE_ID => s.idle = Some(prev),
             State::Ready => s.ready.push_back(prev),
         }
-        Some((old_rsp, s.current.as_ref().unwrap().rsp))
+        let next = s.current.as_ref().unwrap();
+        Some((old_rsp, next.rsp, next.root))
     });
-    if let Some((old_rsp, new_rsp)) = switch {
+    if let Some((old_rsp, new_rsp, root)) = switch {
         SWITCHES.fetch_add(1, Ordering::Relaxed);
+        // SAFETY: every root shares the kernel's upper half, where this code and every kernel stack live.
+        unsafe { crate::mem::paging::load(if root == 0 { crate::mem::paging::kernel_root() } else { root }) };
         // SAFETY: interrupts are off; `old_rsp` points into a Thread kept alive by the scheduler queues;
         // `new_rsp` was saved by `switch_context` or prepared by `initial_stack`.
         unsafe { switch::switch_context(old_rsp, new_rsp) };

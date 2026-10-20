@@ -11,6 +11,7 @@
 - **Așteptare (P2-03):** `WaitQueue` (`wait_until(condiție)`, `wake_one`, `wake_all` — se poate chema și din întreruperi),
   `sleep_ms(ms)`, `Mutex<T>` (firul care găsește încuietoarea luată doarme). Firul „idle” face `hlt` când toate celelalte dorm.
   Tastatura trezește firele care așteaptă în `keyboard::wait_key()`.
+- **Spații de adrese (P2-04):** fiecare fir are tabelele lui de pagini (`spawn_in(root, f)`); la comutare se încarcă `CR3` doar dacă diferă.
 - **Depinde de:** heap (`mem::heap`) pentru stive și cozi.
 - **Cum se testează:** scenariul `log` — `test: fire A1 B1 C1 A2 B2 C2 A3 B3 C3, stive eliberate`
   (trei fire care își cedează rândul; ordinea dovedește round-robin; heap-ul revine exact la valoarea de dinainte)
