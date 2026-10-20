@@ -106,6 +106,12 @@ extern "C" fn kernel_main() -> ! {
     }
     boot::collect_files();
     fs::init();
+    // A real disk (SATA) gives /disk, unless the test disk image already did.
+    if let Some(disk) = drivers::ahci::init() {
+        if fs::kind("/disk").is_err() {
+            fs::mount_disk(alloc::boxed::Box::new(disk), "/disk");
+        }
+    }
     // Every Limine response has been read (memory map, HHDM, framebuffer, RSDP, modules): its memory can be reused.
     mem::reclaim_bootloader();
 
@@ -168,8 +174,10 @@ fn run_tests() -> ! {
     test_address_spaces();
     test_user_mode();
     test_files();
+    #[cfg(any(feature = "test-disk", feature = "test-ahci"))]
+    test_disk_files();
     #[cfg(feature = "test-disk")]
-    test_fat32();
+    test_fat32_mbr();
     test_elf();
     test_user_files();
 
@@ -572,11 +580,11 @@ fn test_files() {
     info!("test: ramfs OK (/etc/motd citit; creare, scriere, citire, stergere; erori: {})", FsError::NotFound.message());
 }
 
-/// The test disk (GPT + FAT32, built by tools/build.sh with `test-disk`) is mounted at /disk: long names, a sub-directory,
-/// a 100 KiB file over many clusters whose checksum matches the one computed at build time, read-only.
-/// The same partition is then found through an MBR (the disk seen with a different sector 0).
-#[cfg(feature = "test-disk")]
-fn test_fat32() {
+/// The test disk (GPT + FAT32, built by tools/build.sh) is mounted at /disk, from memory (`test-disk`) or
+/// read through the AHCI driver (`test-ahci`): long names, a sub-directory, a 100 KiB file over many
+/// clusters whose checksum matches the one computed at build time, reads from the middle, read-only.
+#[cfg(any(feature = "test-disk", feature = "test-ahci"))]
+fn test_disk_files() {
     use fs::{FsError, Kind};
     let list = fs::list("/disk").expect("test: /disk lipseste");
     let names: alloc::vec::Vec<_> = list.iter().map(|(n, k)| if *k == Kind::Dir { alloc::format!("{}/", n) } else { n.clone() }).collect();
@@ -597,6 +605,12 @@ fn test_fat32() {
     assert!(part.iter().enumerate().all(|(i, &b)| b == (((50_000 + i) * 7) ^ ((50_000 + i) >> 8)) as u8), "continut gresit la mijloc");
     assert!(fs::write("/disk/salut.txt", 0, b"x") == Err(FsError::ReadOnly), "scriere acceptata pe FAT32");
 
+    info!("test: disc OK (nume lungi, 100 KiB cu suma {}, doar citire)", hex.trim());
+}
+
+/// The same partition must also be found through an MBR (the disk image seen with a different sector 0).
+#[cfg(feature = "test-disk")]
+fn test_fat32_mbr() {
     // MBR: the same image, with sector 0 replaced by an MBR that points at the same partition.
     struct WithMbr(block::MemDisk, [u8; 512]);
     impl block::BlockDevice for WithMbr {
@@ -620,7 +634,7 @@ fn test_fat32() {
     mbr[511] = 0xAA;
     assert!(fs::mount_disk(alloc::boxed::Box::new(WithMbr(block::MemDisk::new(image), mbr)), "/mbr"), "MBR negasit");
     assert!(fs::read_all("/mbr/salut.txt").unwrap() == b"salut de pe disc\n", "citire prin MBR");
-    info!("test: FAT32 OK (GPT si MBR, nume lungi, 100 KiB cu suma {}, doar citire)", hex.trim());
+    info!("test: FAT32 OK (partitia gasita si prin GPT, si prin MBR)");
 }
 
 /// Runs the `hello` program (an ELF file from the initrd) and checks that damaged ELF files are refused.

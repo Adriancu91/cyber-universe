@@ -11,8 +11,8 @@
   - `mod.rs` — la pornire montează ramfs la `/` și îl umple din `initrd.tar` (încărcat de Limine);
     funcțiile `read_all`, `read`, `write`, `create`, `list`, `remove`, `size`, `kind` pe căi absolute.
 - **Discul de test:** `tools/build.sh` face `disk.img` (GPT, o partiție FAT32 de 38 MiB cu `boot/disk/` + un fișier de 100 KiB
-  și suma lui de control), montat doar-citire la `/disk` — doar în build-urile de test cu `test-disk` (în emulare, încărcarea lui de către Limine
-  durează ~13 s; în build-ul normal `/disk` va veni de pe un disc real prin driverul AHCI, P3-02).
+  și suma lui de control), montat doar-citire la `/disk`. QEMU îl atașează ca disc SATA (`tools/qemu-common.sh`), citit prin driverul AHCI;
+  build-urile cu `test-disk` îl au și în ISO, citit din memorie (încărcarea lui de către Limine durează ~13 s în emulare, de aceea nu e în build-ul normal).
 - **initrd:** `tools/build.sh` pune în arhivă tot din `boot/initrd/` (ex. `/etc/motd`) și programele din `user/` în `/bin`.
 - **Depinde de:** heap, `sched::Mutex`, `boot::file`, `block`.
 - **Cum se testează:** scenariul `log` — `test: / = bin/ etc/; /bin = hello`, `test: ramfs OK`

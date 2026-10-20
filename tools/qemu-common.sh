@@ -29,6 +29,10 @@ qemu_args() {
         -drive "if=pflash,unit=0,format=raw,file=$OVMF_CODE,readonly=on" \
         -drive "if=pflash,unit=1,format=raw,file=$BUILD/ovmf/vars.fd" \
         -cdrom "$iso"
+    # The test disk (made by build.sh) as a SATA disk on the q35 AHCI controller.
+    if [[ -f "$BUILD/disk.img" ]]; then
+        printf '%s\n' -drive "if=none,id=sata0,format=raw,snapshot=on,file=$BUILD/disk.img" -device ide-hd,drive=sata0,bus=ide.0
+    fi
     # Hardware acceleration when available (Linux/WSL2 with KVM); the cloud usually has none.
     if [[ -w /dev/kvm ]]; then printf '%s\n' -enable-kvm -cpu host; fi
 }
