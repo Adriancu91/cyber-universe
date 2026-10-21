@@ -57,6 +57,7 @@ pub fn run() {
             "lspci" => lspci(),
             "lsusb" => lsusb(),
             "net" => net(),
+            "hw" => hw(),
             "uptime" => uptime(),
             "reboot" => reboot(),
             "exit" => match crate::term::of_shell(crate::sched::current_id()) {
@@ -112,6 +113,7 @@ fn help() {
     out!("  lspci            dispozitivele PCI (discuri, USB, retea...)\n");
     out!("  lsusb            dispozitivele USB conectate\n");
     out!("  net              placa de retea (adresa MAC, pachete)\n");
+    out!("  hw               raport hardware pe o pagina (pentru o singura poza)\n");
     out!("  uptime           de cat timp merge sistemul\n");
     out!("  reboot           reporneste calculatorul\n");
     out!("  exit             inchide terminalul (doar in fereastra Terminal)\n");
@@ -337,6 +339,62 @@ fn net() {
             }
         }
         None => out!("(nicio placa de retea cunoscuta)\n"),
+    }
+}
+
+/// One-page hardware report: processor, memory, PCI devices with the driver that handles them, USB, disks, network.
+fn hw() {
+    out!("== raport hardware ==\n");
+    out!("procesor: {}\n", cpu_name());
+    mem();
+    uptime();
+    out!("PCI ([driver] = il folosim, [-] = fara driver):\n");
+    for d in crate::pci::devices() {
+        out!("  {:02x}:{:02x}.{} {:04x}:{:04x} {} [{}]\n", d.bus, d.dev, d.func, d.vendor, d.device, d.kind(), driver_of(&d));
+    }
+    out!("USB:\n");
+    lsusb();
+    for path in ["/disk", "/usb"] {
+        match fs::list(path) {
+            Ok(entries) => out!("{}: montat ({} intrari)\n", path, entries.len()),
+            Err(_) => out!("{}: nemontat\n", path),
+        }
+    }
+    out!("retea:\n");
+    net();
+}
+
+/// The processor's name from CPUID (leaves 0x8000_0002..4), or its vendor if the name is missing.
+fn cpu_name() -> String {
+    use core::arch::x86_64::__cpuid;
+    let words = |r: core::arch::x86_64::CpuidResult| [r.eax, r.ebx, r.ecx, r.edx];
+    let mut bytes = Vec::new();
+    // SAFETY (all CPUID calls): CPUID exists on every x86_64 processor; extended leaves are read only if reported.
+    if unsafe { __cpuid(0x8000_0000) }.eax >= 0x8000_0004 {
+        for leaf in 0x8000_0002u32..=0x8000_0004 {
+            for w in words(unsafe { __cpuid(leaf) }) {
+                bytes.extend_from_slice(&w.to_le_bytes());
+            }
+        }
+    }
+    if bytes.iter().all(|&b| b == 0 || b == b' ') {
+        let r = unsafe { __cpuid(0) };
+        for w in [r.ebx, r.edx, r.ecx] {
+            bytes.extend_from_slice(&w.to_le_bytes());
+        }
+    }
+    let text: String = bytes.iter().filter(|&&b| b != 0).map(|&b| b as char).collect();
+    String::from(text.trim())
+}
+
+/// Which of our drivers handles a PCI function ("-" if none).
+fn driver_of(d: &crate::pci::Device) -> &'static str {
+    match (d.class, d.subclass, d.prog_if) {
+        (0x01, 0x06, _) => "ahci",
+        (0x01, 0x08, 0x02) => "nvme",
+        (0x0C, 0x03, 0x30) => "xhci",
+        (0x02, _, _) => crate::drivers::nic::driver_for(d.vendor, d.device).unwrap_or("-"),
+        _ => "-",
     }
 }
 

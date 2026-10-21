@@ -31,6 +31,11 @@ const BUF: usize = 2048;
 /// Cards this driver knows: (device id, name). Vendor is always Intel (0x8086).
 const SUPPORTED: [(u16, &str); 3] = [(0x100E, "82540EM (e1000)"), (0x100F, "82545EM (e1000)"), (0x10D3, "82574L (e1000e)")];
 
+/// True if this driver knows the card.
+pub fn supports(vendor: u16, device: u16) -> bool {
+    vendor == 0x8086 && SUPPORTED.iter().any(|(id, _)| *id == device)
+}
+
 #[allow(dead_code)] // the rings are used by `send`/`receive`: self-tests now, the TCP/IP stack in Phase 5
 pub struct Nic {
     regs: u64,

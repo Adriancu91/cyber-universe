@@ -5,14 +5,6 @@
 
 ## Active
 
-### B-001 · P3-09 · 2026-10-20
-- **Problema:** testul pe calculatoare reale cere acces fizic la ThinkPad L15 Gen 2 și la încă un calculator.
-- **Am încercat:** nu e o problemă tehnică — tot ce se poate face fără Adrian e gata: imaginea de stick (P3-04, artefactul
-  CI `stick-usb`, testată în QEMU ca stick USB), ghidul `docs/USB.md`, lista de verificare din `docs/HARDWARE.md`.
-- **Eroarea exactă:** —
-- **Ce ar debloca:** Adrian scrie imaginea pe un stick, pornește calculatoarele de pe el și trimite poze cu ecranul.
-- **Nevoie de Adrian:** da — urmează pașii din `docs/USB.md` pe ThinkPad (și pe un al doilea calculator) și trimite poze.
-
 ### B-003 · P5-07 · 2026-10-20
 - **Problema:** suita office ca modul în Cyber Universe cere codul suitei, care e doar pe laptop (decizia din hub
   2026-10-20: suita se termină și se testează de oameni întâi; codul rămâne pe laptop până decide Adrian).
@@ -32,6 +24,18 @@
 -->
 
 ## Rezolvate
+
+### B-001 · P3-09 · 2026-10-20
+- **Problema:** testul pe calculatoare reale cere acces fizic la ThinkPad L15 Gen 2 și la încă un calculator.
+- **Am încercat:** nu e o problemă tehnică — tot ce se poate face fără Adrian e gata: imaginea de stick (P3-04, artefactul
+  CI `stick-usb`, testată în QEMU ca stick USB), ghidul `docs/USB.md`, lista de verificare din `docs/HARDWARE.md`.
+- **Eroarea exactă:** —
+- **Ce ar debloca:** Adrian scrie imaginea pe un stick, pornește calculatoarele de pe el și trimite poze cu ecranul.
+- **Nevoie de Adrian:** da — urmează pașii din `docs/USB.md` pe ThinkPad (și pe un al doilea calculator) și trimite poze.
+- **Rezolvat 2026-10-21 22:05 (comanda C-2):** Adrian a pornit stick-ul pe un Lenovo ThinkPad cu AMD Ryzen (altul decât cel al
+  suitei): cu Secure Boot oprit ajunge la desktop; ecran, touchpad, clic, tastatura internă, Demo și Editor merg; `lspci`, `lsusb`, `mem`
+  merg. Nu merge: placa de rețea (Realtek `10ec:8168`, fără driver → P6-01). Rămân de verificat la testul 2 (P3-11): `ls /disk`,
+  `ls /usb`, consola Esc, tastatură USB externă, timpul de pornire. Al doilea calculator real: mai târziu (ThinkPad-ul L15 e al suitei).
 
 ### B-002 · P5-06 · 2026-10-20
 - **Problema:** HTTPS (TLS 1.3) are nevoie de criptografie (SHA-256, HMAC/HKDF, X25519, ChaCha20-Poly1305 sau AES-GCM,

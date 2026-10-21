@@ -2,15 +2,6 @@
 
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
-## OPRIT: necesită analiza lui Adrian (decizia lui: oprit până la testul pe stick)
-**Decizia lui Adrian, 2026-10-21 10:05 (`DECIZII.md` din hub):** OS-ul **rămâne oprit** — nu se închide Faza 5, nu pornește
-Faza 6 — până la testul pe un calculator real (B-001 / P3-09). Întrebarea despre închiderea Fazei 5 are răspuns: **nu acum**;
-nu se mai pune. Sesiunile următoare NU încep sarcini noi până când:
-- apar rezultatele testului de pe stick (B-001 → P3-09, apoi P3-10), sau
-- apare o comandă nouă pentru `cyber-universe` cu stare `nou` în `COMENZI.md` din hub.
-O sesiune care găsește una dintre acestea șterge secțiunea „OPRIT” și reia lucrul normal. Altfel: doar verifică hub-ul și
-CI-ul, fără instalare de unelte și fără schimbări de cod.
-
 ## Ultima sesiune
 - **2026-10-21, 17:41 UTC (20:41 ora României), sesiune programată:** tot oprit, conform deciziei lui Adrian de la 10:05;
   nicio comandă nouă în `COMENZI.md`, niciun rezultat de pe stick, nicio decizie nouă în `DECIZII.md`; CI verde (rularea 95,

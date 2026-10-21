@@ -102,8 +102,11 @@ AHCI, NVMe, XHCI, e1000). Fiecare sarcină are plan în `docs/plans/`.
   Test: scenariul `usb-disk` (discul de test ca stick USB → `/usb`, suma fișierului de 100 KiB corectă).
 - [x] **P3-08** Placă de rețea Intel e1000/e1000e: cadre Ethernet, test ARP. Dep: P3-01.
   Test: scenariile `net` (e1000e) și `net-e1000` (cerere ARP → răspuns de la 10.0.2.2); `shell` (`net`).
-- [ ] BLOCAT **P3-09** Test pe calculatoare reale (ThinkPad L15 Gen 2 + încă unul), `docs/HARDWARE.md`. **Are nevoie de Adrian.** Dep: P3-02, P3-03, P3-04, P3-06.
-- [ ] **P3-10** Închiderea Fazei 3: măsurători, generarea sarcinilor Fazei 4. Dep: P3-09.
+- [x] **P3-09** Test pe un calculator real, `docs/HARDWARE.md`. Dep: P3-02, P3-03, P3-04, P3-06.
+  Rezultat (2026-10-21, comanda C-2): Lenovo ThinkPad AMD — pornește până la desktop; ecran, touchpad, tastatură, editor merg; rețeaua nu (Realtek → P6-01).
+- [x] **P3-11** Testul 2 pe hardware real: comanda `hw` (raport pe o pagină) + lista pentru Adrian. Dep: P3-09.
+  Test: scenariul `shell` (`hw`). Pozele de la Adrian completează `HARDWARE.md` (fără ele P3-10 așteaptă).
+- [ ] **P3-10** Închiderea Fazei 3: măsurători, rezumat. Dep: P3-11 + pozele testului 2 de la Adrian. **Are nevoie de Adrian.**
 
 ## Faza 4 — Interfața și sistemul de module
 

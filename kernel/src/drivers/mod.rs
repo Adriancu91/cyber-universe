@@ -5,6 +5,7 @@ pub mod ahci;
 pub mod e1000;
 pub mod keyboard;
 pub mod mouse;
+pub mod nic;
 pub mod nvme;
 pub mod rtc;
 pub mod serial;

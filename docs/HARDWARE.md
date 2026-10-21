@@ -19,5 +19,15 @@
 | Calculator | Firmware | Data | Pornește | Tastatură | Disc | USB | Rețea | Observații |
 |---|---|---|---|---|---|---|---|---|
 | QEMU 8.2 (q35, OVMF) | OVMF | 2026-10-20 | da | da (PS/2 și USB) | da (SATA, NVMe) | da (stick, tastatură) | da (e1000, e1000e) | referința testelor automate |
-| ThinkPad L15 Gen 2 | — | — | — | — | — | — | — | de testat de Adrian |
-| al doilea calculator | — | — | — | — | — | — | — | de testat de Adrian |
+| Lenovo ThinkPad (AMD Ryzen 4000 „Renoir”, ~8 GB RAM; nu e cel al suitei) | UEFI Lenovo, **Secure Boot oprit** | 2026-10-21 | **da** (până la desktop) | da (internă; USB externă —) | NVMe Samsung `144d:a809` văzut în `lspci`; `ls /disk` — | da (xHCI AMD `1022:1639`; stick ADATA `125f:db8a` văzut în `lsusb`; `ls /usb` —) | **nu**: Realtek `10ec:8168` fără driver (P6-01); Wi-Fi Intel AX200 `8086:2723` fără driver | ecran nativ clar, touchpad + clic merg, Demo și Editor merg; OS-ul ocupă ~21 MB; cu Secure Boot pornit revine la meniul de boot fără mesaj. Detalii: hub `rezultate/2026-10-21-test-stick/REZULTAT.md` |
+| ThinkPad L15 Gen 2 (al suitei) | — | — | — | — | — | — | — | rezervat suitei office (decizia lui Adrian, 20 oct) |
+
+## Detalii: Lenovo ThinkPad AMD (2026-10-21)
+- Imaginea: artefactul CI `stick-usb` din `cf80c3e`, copiată ca **fișiere** pe un stick FAT32 (vezi `docs/USB.md`, varianta B).
+- `lspci`: punte gazdă `1022:1630` (Renoir), punți `1022:1632/1634/1635`, SMBus `1022:790b`, ISA `1022:790e`, rețea Realtek
+  `10ec:8168` (01:00.0), Wi-Fi Intel `8086:2723` (02:00.0), NVMe Samsung `144d:a809` (03:00.0), video AMD `1002:1636`, audio
+  `1002:1637`, `1022:15e2`, `1022:15e3`, două controlere USB xHCI `1022:1639`.
+- `lsusb`: cameră Chicony `04f2:b6be`, stick ADATA `125f:db8a` (Mass Storage).
+- `mem`: liberă 7377 MiB, folosită 21672 KiB (heap 17738 KiB).
+- Neverificat încă (testul 2, P3-11): `ls /disk`, `ls /usb`, `net` după driverul Realtek, consola text (Esc), tastatură USB externă,
+  timpul de pornire, comanda nouă `hw`.

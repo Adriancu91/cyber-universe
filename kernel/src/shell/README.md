@@ -15,3 +15,6 @@
 - **La pornire (P4-13):** nucleul normal pornește întâi desktopul (`/bin/desktop`); când desktopul se închide (Esc),
   rulează shell-ul în consola text, ca înainte.
 
+- **`hw` (P3-11):** raport hardware pe o pagină, pentru o singură poză pe un calculator real: procesorul, memoria, de cât
+  timp merge, dispozitivele PCI cu driverul care le folosește (`[-]` = fără driver), USB, `/disk` și `/usb`, rețeaua.
+  Testat în scenariul `shell`.
