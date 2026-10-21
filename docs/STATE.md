@@ -3,6 +3,19 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiune pornită manual de centrul de comandă (2026-10-21 20:27–21:40 UTC), în paralel cu sesiunea de la 20:40
+- **Atenție:** două sesiuni au lucrat deodată. Sesiunea de la 20:40 UTC face **P6-02** pe `wip/P6-02` (o continuă ea).
+  Varianta mea de P6-02 (făcută înainte să văd ramura) e păstrată pe **`wip/P6-02-b`**, nefolosită: rădăcinile Mozilla ca
+  fișiere DER, ECDSA P-384 generic (`crypto/src/ecp.rs`, 300 de semnături verificate cu OpenSSL), TLS 0x0503, test cu un lanț
+  P-384, workflow `real.yml`, plus o corectură la testul de cadre (`test_all_frames` măsura memoria înainte să-și rezerve lista).
+  Dacă `wip/P6-02` nu are corectura de cadre și pică testul `boot` cu „cadre pierdute”, ia-o de acolo.
+- **Testul 2 de la Adrian** (hub `rezultate/2026-10-22-test-2/`): NVMe merge; Realtek trimite 4, primește 0; `/usb` nemontat.
+  **Reparat în `1976997` (pe `main`):** Realtek — PHY pornit prin `PHYAR` (BMCR), legătura așteptată max. 4 s, biții `ISR` șterși
+  la fiecare citire, `net` arată legătura/`PHYstatus`/`ISR`/revizia; DHCP reîncearcă la 10 s după adresa de rezervă (și `net`
+  spune că e de rezervă); stick-uri fără tabelă de partiții și MBR cu alt tip, comenzi SCSI TEST UNIT READY + REQUEST SENSE la
+  pornirea stick-ului (~3 s); `hw` arată motivul când `/usb` nu e montat. Scenariu nou `usb-floppy`. 42/42 scenarii, `rtl8168` 14 teste.
+- **De la Adrian (testul 3):** aceeași listă, cu imaginea nouă: `net` (poză: linia „legatura: …”), `ping 1.1.1.1`, `hw` (linia `/usb`).
+
 - **Data:** 2026-10-21, 19:46–20:20 UTC (22:46–23:20 ora României), sesiune programată în cloud, fără Adrian.
 - **Deblocat:** comanda C-2 din hub (primul test pe hardware real a reușit, Lenovo ThinkPad AMD) a ridicat oprirea
   din 10:05; secțiunea „OPRIT” a fost ștearsă. Comanda C-3 (Faza 6) a fost preluată după C-2.
