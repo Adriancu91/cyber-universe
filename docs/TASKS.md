@@ -157,12 +157,17 @@ Fiecare are plan în `docs/plans/`.
 
 - [x] **P6-01** Driver Realtek RTL8168/8111 (`10ec:8168`): crate `rtl8168/` + model software al cipului (teste pe gazdă), placa în nucleu. Dep: P3-08.
   Test: `cd rtl8168 && cargo test --release` (11 teste față de model) + toate scenariile de rețea QEMU (e1000 prin interfața nouă `nic::Card`). Pe laptop: de verificat la testul 2 (cablu, `net`, `ping`).
-- [~] **P6-02** Rădăcinile reale de încredere (Mozilla) în imagine + `fetch https://` cu un site real. Dep: P5-16.
-- [ ] **P6-03** Parser și generator JSON propriu (crate `json/`). Dep: —.
-- [ ] **P6-04** Clientul API Claude (`/bin/claude` în linia de comandă; cheia din `/usb/claude.key`). Dep: P6-02, P6-03.
-- [ ] **P6-05** Aplicația „Claude”: chat în fereastră. Dep: P6-04.
+- [x] **P6-02** Rădăcinile reale de încredere (Mozilla) în imagine + `fetch https://` cu un site real. Dep: P5-16.
+  Test: `cd crypto && cargo test --release` (117 rădăcini citite, P-384), `cd tls && CYBER_NET=1 cargo test` (10 site-uri reale, în CI), scenariul `https-real` (example.com, api.github.com; doar cu internet).
+- [x] **P6-03** Parser și generator JSON propriu (crate `json/`). Dep: —.
+  Test: `cd json && cargo test --release` (RFC 8259, 25 de cazuri greșite, 200 de documente față de Python).
+- [x] **P6-04** Clientul API Claude (`/bin/claude` în linia de comandă; cheia din `/usb/claude.key`). Dep: P6-02, P6-03.
+  Test: scenariul `claude-cli` (imitație a API-ului: cerere verificată, răspuns chunked; cheie greșită → 401; fără cheie).
+- [x] **P6-05** Aplicația „Claude”: chat în fereastră. Dep: P6-04.
+  Test: scenariul `claude-app` (două mesaje, conversația întreagă trimisă, captura `tests/screens/claude-app.png`).
 - [ ] **P6-06** Uneltele lui Claude în OS (citește/scrie fișier, listează dosar, rulează comandă) cu confirmare pe ecran. Dep: P6-05.
-- [ ] **P6-07** CI publică un GitHub Release cu fișierele stick-ului și sumele SHA-256. Dep: —.
+- [x] **P6-07** CI publică un GitHub Release cu fișierele stick-ului și sumele SHA-256. Dep: —.
+  Test: jobul `release` din CI pe `main`; `GH_TOKEN=… tools/check-release.sh` (depozitul e privat → descărcarea cere token).
 - [ ] **P6-08** Comanda „Actualizează”: descarcă ultimul Release prin HTTPS, verifică sumele, rescrie stick-ul. Dep: P6-02, P6-07.
 - [ ] **P6-09** Trimitere pe GitHub din OS (API `contents`, token din `/usb/github.token`). Dep: P6-02, P6-03.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
