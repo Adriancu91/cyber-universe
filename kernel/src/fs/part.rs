@@ -22,6 +22,15 @@ fn u64_at(b: &[u8], o: usize) -> u64 {
     u64::from_le_bytes(b[o..o + 8].try_into().unwrap())
 }
 
+/// True if `s` is a FAT boot sector (jump instruction, 512-byte sectors, "FAT" type text, signature 55 AA) —
+/// Microsoft FAT specification ("BPB"). A disk formatted without a partition table ("superfloppy") starts with one.
+pub fn is_fat_boot_sector(s: &[u8]) -> bool {
+    let jump = s[0] == 0xEB && s[2] == 0x90 || s[0] == 0xE9;
+    let bytes_per_sector = u16::from_le_bytes([s[11], s[12]]);
+    let fat_text = &s[82..87] == b"FAT32" || &s[54..57] == b"FAT";
+    jump && bytes_per_sector == 512 && fat_text && s[510] == 0x55 && s[511] == 0xAA
+}
+
 /// The first FAT-capable partition of `dev`, or `None` if there is no partition table we understand.
 pub fn find_fat(dev: &dyn BlockDevice) -> Option<Found> {
     let mut mbr = [0u8; SECTOR];
@@ -29,16 +38,24 @@ pub fn find_fat(dev: &dyn BlockDevice) -> Option<Found> {
     if mbr[510] != 0x55 || mbr[511] != 0xAA {
         return None;
     }
+    // A boot sector at sector 0 also ends in 55 AA, so it is checked before reading the bytes as an MBR.
+    if is_fat_boot_sector(&mbr) {
+        return Some(Found { start: 0, sectors: dev.sectors(), table: "fara tabela" });
+    }
     let entry = |i: usize| &mbr[446 + i * 16..462 + i * 16];
     if (0..4).any(|i| entry(i)[4] == 0xEE) {
         return find_gpt(dev);
     }
     // MBR types for FAT32 (0x0B, 0x0C) and FAT16 (0x06, 0x0E); the FAT driver checks the real format.
-    (0..4).map(entry).find(|e| matches!(e[4], 0x0B | 0x0C | 0x06 | 0x0E)).map(|e| Found {
-        start: u32_at(e, 8) as u64,
-        sectors: u32_at(e, 12) as u64,
-        table: "MBR",
-    })
+    let typed = (0..4).map(entry).find(|e| matches!(e[4], 0x0B | 0x0C | 0x06 | 0x0E));
+    // Otherwise any used entry whose first sector really is a FAT boot sector (tools sometimes write another type, e.g. 0x07 or 0xEF).
+    let by_content = || {
+        (0..4).map(entry).filter(|e| e[4] != 0 && u32_at(e, 8) != 0).find(|e| {
+            let mut s = [0u8; SECTOR];
+            dev.read(u32_at(e, 8) as u64, &mut s).is_ok() && is_fat_boot_sector(&s)
+        })
+    };
+    typed.or_else(by_content).map(|e| Found { start: u32_at(e, 8) as u64, sectors: u32_at(e, 12) as u64, table: "MBR" })
 }
 
 fn find_gpt(dev: &dyn BlockDevice) -> Option<Found> {

@@ -130,3 +130,41 @@ fn too_long_frame_is_not_taken() {
     let mut c = card();
     assert!(!c.hw().deliver(&frame(MAC, BUF, 0)));
 }
+
+#[test]
+fn phy_powered_up_and_link_waited() {
+    let mut m = Model::new();
+    m.power_down_phy();
+    let mut c = Rtl8168::new(m).unwrap();
+    assert!(!c.link_up(), "PHY left powered down by the firmware");
+    assert!(!c.hw().deliver(&frame(MAC, 50, 1)), "no link, nothing received");
+    assert!(c.start_link(3000));
+    assert_eq!(c.hw().bmcr & (1 << 11), 0, "power-down bit cleared");
+    assert_ne!(c.hw().bmcr & (1 << 12), 0, "auto-negotiation on");
+    assert_eq!(c.status().0, 0b1_0011);
+    assert!(c.hw().deliver(&frame(MAC, 50, 1)));
+    let mut buf = [0u8; 2048];
+    assert_eq!(c.receive(&mut buf), Some(64));
+}
+
+#[test]
+fn no_cable_gives_up_after_wait() {
+    let mut m = Model::new();
+    m.set_link(false);
+    let mut c = Rtl8168::new(m).unwrap();
+    let before = c.hw().delays_us;
+    assert!(!c.start_link(500));
+    assert!(c.hw().delays_us - before >= 500_000, "waited about 500 ms");
+}
+
+#[test]
+fn receive_clears_overflow_and_resumes() {
+    let mut c = card();
+    c.hw().raise(1 << 6 | 1 << 4);
+    assert!(!c.hw().deliver(&frame(MAC, 50, 2)), "stalled while the overflow bit is set");
+    let mut buf = [0u8; 2048];
+    assert_eq!(c.receive(&mut buf), None);
+    assert_eq!(c.status().1 & ISR_ACK, 0, "status acknowledged by the poll");
+    assert!(c.hw().deliver(&frame(MAC, 50, 3)), "receiving again");
+    assert_eq!(c.receive(&mut buf), Some(64));
+}

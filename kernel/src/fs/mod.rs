@@ -45,16 +45,33 @@ pub fn init() {
     }
 }
 
+/// Why mounting failed, per mount point (shown by `hw`): (mount point, reason).
+static FAILURES: crate::sched::Mutex<alloc::vec::Vec<(String, String)>> = crate::sched::Mutex::new(alloc::vec::Vec::new());
+
+/// Remembers why `at` could not be mounted.
+pub fn note_failure(at: &str, why: &str) {
+    let mut f = FAILURES.lock();
+    f.retain(|(a, _)| a != at);
+    f.push((String::from(at), String::from(why)));
+}
+
+/// The reason `at` is not mounted, if one was noted.
+pub fn failure(at: &str) -> Option<String> {
+    FAILURES.lock().iter().find(|(a, _)| a == at).map(|(_, w)| w.clone())
+}
+
 /// Finds the FAT partition of `dev` and mounts it at `at` (writable only if it has `fat32::WRITE_MARKER`).
 pub fn mount_disk(dev: Box<dyn crate::block::BlockDevice>, at: &str) -> bool {
     let Some(p) = part::find_fat(dev.as_ref()) else {
-        crate::warn!("fs: disc fara partitie FAT");
+        crate::warn!("fs: disc fara partitie FAT ({})", at);
+        note_failure(at, "nicio partitie FAT (nici GPT, nici MBR, nici fara tabela)");
         return false;
     };
     let fat = match fat32::Fat32::new(Box::new(crate::block::Partition::new(dev, p.start, p.sectors))) {
         Ok(f) => f,
         Err(msg) => {
             crate::warn!("fs: partitia {} de la sectorul {}: {}", p.table, p.start, msg);
+            note_failure(at, &alloc::format!("partitia {} de la sectorul {}: {}", p.table, p.start, msg));
             return false;
         }
     };

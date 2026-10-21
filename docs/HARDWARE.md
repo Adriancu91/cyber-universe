@@ -29,5 +29,10 @@
   `1002:1637`, `1022:15e2`, `1022:15e3`, două controlere USB xHCI `1022:1639`.
 - `lsusb`: cameră Chicony `04f2:b6be`, stick ADATA `125f:db8a` (Mass Storage).
 - `mem`: liberă 7377 MiB, folosită 21672 KiB (heap 17738 KiB).
-- Neverificat încă (testul 2, P3-11): `ls /disk`, `ls /usb`, `net` după driverul Realtek, consola text (Esc), tastatură USB externă,
+- **Testul 2 (2026-10-22 ~00:00, imaginea `4bd215d`, hub `rezultate/2026-10-22-test-2/`):** pornire ~15 s până la desktop;
+  `hw`: AMD Ryzen 5 4500U; drivere legate: `[rtl8168]`, `[nvme]`, `[xhci]` ×2. **NVMe merge** (`/disk` = partiția EFI a discului
+  Samsung: `EFI/`, `System Volume Information/`). Realtek: MAC real `38:f3:ab:6b:11:34`, **4 trimise, 0 primite** → DHCP fără răspuns
+  (reparat în `fix/rtl-rx`: PHY pornit + așteptarea legăturii, starea ISR ștearsă, DHCP reîncearcă). `/usb: nemontat` pe un stick
+  formatat în Windows → stick-uri fără tabelă și comenzi de „trezire” SCSI adăugate; `hw` arată acum și motivul.
+- Neverificat încă (testul 3): `ls /disk`, `ls /usb`, `net` după driverul Realtek, consola text (Esc), tastatură USB externă,
   timpul de pornire, comanda nouă `hw`.

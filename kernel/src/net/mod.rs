@@ -74,14 +74,30 @@ pub fn lease_left_s() -> u32 {
     (until.saturating_sub(apic_ticks()) / crate::arch::x86_64::apic::HZ) as u32
 }
 
-/// Gets the address by DHCP (or uses the fallback), then renews the lease at half its time.
+/// True while the address is the fallback one (DHCP has not answered yet).
+static FALLBACK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Whether the current address is the fallback (no DHCP answer yet), for `net` in the shell.
+pub fn is_fallback() -> bool {
+    FALLBACK.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Gets the address by DHCP (or uses the fallback and keeps asking every 10 s, e.g. until a cable is plugged in or
+/// the link has finished negotiating on a real card), then renews the lease at half its time.
 fn dhcp_thread() {
     let mut lease = match dhcp::obtain() {
         Some(l) => l,
         None => {
             set_config([10, 0, 2, 15], [255, 255, 255, 0], [10, 0, 2, 2], [10, 0, 2, 3]);
-            crate::warn!("net: DHCP nu raspunde; folosesc 10.0.2.15/24, ruta 10.0.2.2");
-            return;
+            FALLBACK.store(true, core::sync::atomic::Ordering::Relaxed);
+            crate::warn!("net: DHCP nu raspunde; folosesc 10.0.2.15/24, ruta 10.0.2.2 si reincerc la 10 s");
+            loop {
+                sched::sleep_ms(10_000);
+                if let Some(l) = dhcp::obtain() {
+                    FALLBACK.store(false, core::sync::atomic::Ordering::Relaxed);
+                    break l;
+                }
+            }
         }
     };
     loop {

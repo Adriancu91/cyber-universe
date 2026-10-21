@@ -85,6 +85,22 @@ impl super::nic::Card for Card {
     fn counters(&self) -> (u64, u64) {
         (self.inner.sent, self.inner.received)
     }
+    fn link_info(&mut self) -> Option<alloc::string::String> {
+        let (phy, isr) = self.inner.status();
+        Some(alloc::format!(
+            "legatura: {} (PHYstatus {:02x}, ISR {:04x}, revizia {:08x}, aruncate {})",
+            link_text(phy), phy, isr, self.inner.revision, self.inner.dropped
+        ))
+    }
+}
+
+/// The PHYstatus byte in words: "da, 1000 Mbit/s, full duplex" or "nu".
+fn link_text(phy: u8) -> alloc::string::String {
+    if phy & 0b10 == 0 {
+        return alloc::string::String::from("nu");
+    }
+    let speed = if phy & 1 << 4 != 0 { "1000" } else if phy & 1 << 3 != 0 { "100" } else if phy & 1 << 2 != 0 { "10" } else { "?" };
+    alloc::format!("da, {} Mbit/s, {}", speed, if phy & 1 != 0 { "full duplex" } else { "half duplex" })
 }
 
 /// Finds a Realtek RTL8168 and starts it.
@@ -100,11 +116,17 @@ pub fn init() -> Option<Card> {
     match Rtl8168::new(KernelHw { regs }) {
         Ok(mut inner) => {
             let m = inner.mac;
-            let link = if inner.link_up() { "legatura activa" } else { "fara cablu / legatura" };
+            // Power the PHY up and wait for auto-negotiation (2-3 s with a cable), so DHCP's first requests are not
+            // sent into a link that is still down.
+            let up = inner.start_link(4000);
+            let (phy, _) = inner.status();
             crate::info!(
-                "net: placa Realtek RTL8168 pornita (revizia {:08x}), MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}, {}",
-                inner.revision, m[0], m[1], m[2], m[3], m[4], m[5], link
+                "net: placa Realtek RTL8168 pornita (revizia {:08x}), MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}, legatura: {}",
+                inner.revision, m[0], m[1], m[2], m[3], m[4], m[5], link_text(phy)
             );
+            if !up {
+                crate::warn!("net: Realtek: fara legatura dupa 4 s (cablu? PHYstatus {:02x}); DHCP reincearca singur", phy);
+            }
             Some(Card { inner })
         }
         Err(e) => {

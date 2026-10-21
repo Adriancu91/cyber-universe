@@ -87,16 +87,29 @@ impl UsbDisk {
             core::str::from_utf8(&inquiry[8..16]).unwrap_or("?").trim(),
             core::str::from_utf8(&inquiry[16..32]).unwrap_or("?").trim()
         );
-        // The device may need a moment after power-up: READ CAPACITY is retried a few times.
+        // Real sticks often answer the first commands with "unit attention" or "becoming ready": each failure is
+        // followed by REQUEST SENSE (which clears that state, SCSI SPC), then TEST UNIT READY / READ CAPACITY are
+        // retried for up to ~3 s.
         let mut capacity = None;
-        for _ in 0..5 {
-            if bot.scsi(x, &[0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0], 8, false).is_ok() {
+        let mut sense = [0u8; 3];
+        for attempt in 0..30 {
+            let ready = bot.scsi(x, &[0x00, 0, 0, 0, 0, 0], 0, false).is_ok(); // TEST UNIT READY
+            if ready && bot.scsi(x, &[0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0], 8, false).is_ok() {
                 capacity = Some(bot.data(8).to_vec());
                 break;
             }
-            crate::sched::sleep_ms(20);
+            if bot.scsi(x, &[0x03, 0, 0, 0, 18, 0], 18, false).is_ok() {
+                let d = bot.data(18);
+                sense = [d[2] & 0x0F, d[12], d[13]]; // sense key, ASC, ASCQ
+            }
+            crate::sched::sleep_ms(if attempt < 5 { 20 } else { 100 });
         }
-        let c = capacity?;
+        let Some(c) = capacity else {
+            let why = alloc::format!("stick-ul {} nu e gata (sense {:x}/{:02x}/{:02x})", name, sense[0], sense[1], sense[2]);
+            crate::warn!("usb: {}", why);
+            crate::fs::note_failure("/usb", &why);
+            return None;
+        };
         let last = u32::from_be_bytes(c[0..4].try_into().unwrap()) as u64;
         let block = u32::from_be_bytes(c[4..8].try_into().unwrap());
         if block as usize != SECTOR {

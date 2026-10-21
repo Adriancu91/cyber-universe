@@ -328,15 +328,21 @@ fn lsusb() {
 }
 
 fn net() {
-    match crate::drivers::nic::NIC.lock().as_ref() {
+    match crate::drivers::nic::NIC.lock().as_mut() {
         Some(n) => {
             let m = n.mac();
             out!("  {}  MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}\n", n.name(), m[0], m[1], m[2], m[3], m[4], m[5]);
             let (sent, received) = n.counters();
             out!("  pachete trimise {}, primite {}\n", sent, received);
+            if let Some(info) = n.link_info() {
+                out!("  {}\n", info);
+            }
             if let Some(c) = crate::net::config().filter(|c| c.ip != [0; 4]) {
                 let ip = |a: [u8; 4]| format!("{}.{}.{}.{}", a[0], a[1], a[2], a[3]);
                 out!("  IPv4 {}  masca {}  ruta {}  DNS {}\n", ip(c.ip), ip(c.mask), ip(c.gateway), ip(c.dns));
+                if crate::net::is_fallback() {
+                    out!("  (adresa de rezerva: DHCP n-a raspuns inca, reincearca la 10 s)\n");
+                }
             }
         }
         None => out!("(nicio placa de retea cunoscuta)\n"),
@@ -358,7 +364,10 @@ fn hw() {
     for path in ["/disk", "/usb"] {
         match fs::list(path) {
             Ok(entries) => out!("{}: montat ({} intrari)\n", path, entries.len()),
-            Err(_) => out!("{}: nemontat\n", path),
+            Err(_) => match fs::failure(path) {
+                Some(why) => out!("{}: nemontat ({})\n", path, why),
+                None => out!("{}: nemontat\n", path),
+            },
         }
     }
     out!("retea:\n");

@@ -108,6 +108,11 @@ rm -f "$DISK" && truncate -s 40M "$DISK"
 printf 'label: gpt\nstart=2048, size=38M, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7\n' | PATH="$PATH:/usr/sbin:/sbin" sfdisk -q "$DISK"
 PATH="$PATH:/usr/sbin:/sbin" mkfs.fat -F 32 -s 1 -n CYBERDISK --offset 2048 "$DISK" $((38 * 1024)) >/dev/null 2>&1
 MTOOLS_SKIP_CHECK=1 mcopy -s -i "$DISK@@1M" "$DISK_ROOT"/* ::/
+# The same files on a disk without a partition table ("superfloppy", as Windows sometimes formats sticks): usb-floppy.
+FLOPPY="$BUILD/floppy.img"
+rm -f "$FLOPPY" && truncate -s 40M "$FLOPPY"
+PATH="$PATH:/usr/sbin:/sbin" mkfs.fat -F 32 -s 1 -n CYBERSTICK "$FLOPPY" >/dev/null 2>&1
+MTOOLS_SKIP_CHECK=1 mcopy -s -i "$FLOPPY" "$DISK_ROOT"/* ::/
 if [[ ",$EXTRA_FEATURES," == *",test-disk,"* ]]; then
     cp "$DISK" "$ISO_ROOT/boot/disk.img"
     echo "    module_path: boot():/boot/disk.img" >> "$ISO_ROOT/boot/limine/limine.conf"
