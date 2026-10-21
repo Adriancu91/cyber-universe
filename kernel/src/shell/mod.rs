@@ -58,6 +58,7 @@ pub fn run() {
             "lsusb" => lsusb(),
             "net" => net(),
             "hw" => hw(),
+            "log" => show_log(args),
             "uptime" => uptime(),
             "reboot" => reboot(),
             "exit" => match crate::term::of_shell(crate::sched::current_id()) {
@@ -114,6 +115,7 @@ fn help() {
     out!("  lsusb            dispozitivele USB conectate\n");
     out!("  net              placa de retea (adresa MAC, pachete)\n");
     out!("  hw               raport hardware pe o pagina (pentru o singura poza)\n");
+    out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
     out!("  uptime           de cat timp merge sistemul\n");
     out!("  reboot           reporneste calculatorul\n");
     out!("  exit             inchide terminalul (doar in fereastra Terminal)\n");
@@ -328,18 +330,45 @@ fn lsusb() {
 }
 
 fn net() {
-    match crate::drivers::nic::NIC.lock().as_ref() {
+    match crate::drivers::nic::NIC.lock().as_mut() {
         Some(n) => {
             let m = n.mac();
             out!("  {}  MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}\n", n.name(), m[0], m[1], m[2], m[3], m[4], m[5]);
             let (sent, received) = n.counters();
             out!("  pachete trimise {}, primite {}\n", sent, received);
+            if let Some(info) = n.link_info() {
+                out!("  {}\n", info);
+            }
             if let Some(c) = crate::net::config().filter(|c| c.ip != [0; 4]) {
                 let ip = |a: [u8; 4]| format!("{}.{}.{}.{}", a[0], a[1], a[2], a[3]);
                 out!("  IPv4 {}  masca {}  ruta {}  DNS {}\n", ip(c.ip), ip(c.mask), ip(c.gateway), ip(c.dns));
+            } else {
+                out!("  fara adresa (DHCP fara raspuns; reincearca la 10 s)\n");
             }
         }
         None => out!("(nicio placa de retea cunoscuta)\n"),
+    }
+}
+
+/// The last lines of the kernel log, optionally only those containing a word (any case): `log`, `log rtl`, `log usb 50`.
+fn show_log(args: &[&str]) {
+    let mut count = 30usize;
+    let mut word: Option<String> = None;
+    for a in args {
+        match a.parse::<usize>() {
+            Ok(n) => count = n.clamp(1, 500),
+            Err(_) => word = Some(a.to_ascii_lowercase()),
+        }
+    }
+    let lines: Vec<String> = crate::log::recent()
+        .into_iter()
+        .filter(|l| word.as_ref().is_none_or(|w| l.to_ascii_lowercase().contains(w.as_str())))
+        .collect();
+    if lines.is_empty() {
+        out!("(niciun rand)\n");
+    }
+    for l in &lines[lines.len().saturating_sub(count)..] {
+        out!("{}\n", l);
     }
 }
 
@@ -358,7 +387,10 @@ fn hw() {
     for path in ["/disk", "/usb"] {
         match fs::list(path) {
             Ok(entries) => out!("{}: montat ({} intrari)\n", path, entries.len()),
-            Err(_) => out!("{}: nemontat\n", path),
+            Err(_) => match fs::failure(path) {
+                Some(why) => out!("{}: nemontat ({})\n", path, why),
+                None => out!("{}: nemontat\n", path),
+            },
         }
     }
     out!("retea:\n");

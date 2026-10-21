@@ -33,7 +33,12 @@ pub fn init() {
     for d in devices.iter().filter(|d| d.class == (0x08, 0x06, 0x50)) {
         match storage::UsbDisk::start(&mut x, d) {
             Some(disk) => disks.push(disk),
-            None => crate::warn!("usb: stick-ul de pe portul {} nu porneste", d.port),
+            None => {
+                crate::warn!("usb: stick-ul de pe portul {} nu porneste", d.port);
+                if crate::fs::failure("/usb").is_none() {
+                    crate::fs::note_failure("/usb", "stick-ul nu porneste (configurare USB)");
+                }
+            }
         }
     }
     *DISKS.lock() = disks;

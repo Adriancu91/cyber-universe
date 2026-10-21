@@ -1,7 +1,7 @@
 //! Network stack (Phase 5): Ethernet frames from the network card, ARP, IPv4, ICMP (ping), UDP and
 //! DHCP. A system thread takes the received frames from the card every few milliseconds and hands them
-//! to the protocol that owns them. The address comes from DHCP; without an answer the stack falls
-//! back to 10.0.2.15/24 through 10.0.2.2 (QEMU's user network).
+//! to the protocol that owns them. The address comes from DHCP; without an answer there is no address and DHCP
+//! is asked again every 10 s.
 
 pub mod arp;
 pub mod dhcp;
@@ -52,7 +52,7 @@ pub fn set_config(ip: Ipv4, mask: Ipv4, gateway: Ipv4, dns: Ipv4) {
     }
 }
 
-/// Whether the interface has an address (from DHCP or the fallback).
+/// Whether the interface has an address (from DHCP).
 pub fn ready() -> bool {
     config().is_some_and(|c| c.ip != [0; 4])
 }
@@ -74,14 +74,27 @@ pub fn lease_left_s() -> u32 {
     (until.saturating_sub(apic_ticks()) / crate::arch::x86_64::apic::HZ) as u32
 }
 
-/// Gets the address by DHCP (or uses the fallback), then renews the lease at half its time.
+/// Gets the address by DHCP; without an answer there is no address (no made-up one) and DHCP is asked again every
+/// 10 s (e.g. until a cable is plugged in). Then the lease is renewed at half its time.
 fn dhcp_thread() {
     let mut lease = match dhcp::obtain() {
         Some(l) => l,
         None => {
-            set_config([10, 0, 2, 15], [255, 255, 255, 0], [10, 0, 2, 2], [10, 0, 2, 3]);
-            crate::warn!("net: DHCP nu raspunde; folosesc 10.0.2.15/24, ruta 10.0.2.2");
-            return;
+            crate::warn!("net: DHCP nu raspunde; fara adresa, reincerc la 10 s");
+            let mut tries = 0u32;
+            loop {
+                if tries < 6 {
+                    // What the card sees, for `log` on a real computer (the first minute only, not forever).
+                    if let Some(info) = NIC.lock().as_mut().and_then(|n| n.link_info()) {
+                        crate::info!("net: {}", info);
+                    }
+                }
+                tries += 1;
+                sched::sleep_ms(10_000);
+                if let Some(l) = dhcp::obtain() {
+                    break l;
+                }
+            }
         }
     };
     loop {

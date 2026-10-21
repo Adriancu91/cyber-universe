@@ -22,8 +22,10 @@ pub mod reg {
     pub const ISR: u16 = 0x3E; // interrupt status (16-bit, write 1 to clear)
     pub const TCR: u16 = 0x40; // transmit configuration; bits 23 and 26-30 also identify the chip revision
     pub const RCR: u16 = 0x44; // receive configuration
+    pub const MPC: u16 = 0x4C; // missed packet counter (RTL8169 datasheet; read only for diagnostics)
     pub const CR9346: u16 = 0x50; // 0xC0 unlocks the configuration registers, 0x00 locks them
-    pub const PHYSTATUS: u16 = 0x6C; // bit 1: link up
+    pub const PHYAR: u16 = 0x60; // PHY access: bit 31 flag (write: 1 = write, clears when done), 20-16 register, 15-0 data
+    pub const PHYSTATUS: u16 = 0x6C; // bit 0 full duplex, 1 link up, 2 10 Mb/s, 3 100 Mb/s, 4 1000 Mb/s
     pub const RMS: u16 = 0xDA; // receive maximum packet size (16-bit)
     pub const RDSAR: u16 = 0xE4; // receive descriptor ring start, 64-bit
     pub const MTPS: u16 = 0xEC; // maximum transmit packet size, in 128-byte units
@@ -47,6 +49,12 @@ pub const POLL_NORMAL: u8 = 1 << 6;
 pub const RCR_VALUE: u32 = 7 << 13 | 7 << 8 | 1 << 3 | 1 << 1;
 /// Transmit: standard inter-frame gap (3 << 24), unlimited DMA burst (7 << 8).
 pub const TCR_VALUE: u32 = 3 << 24 | 7 << 8;
+
+/// IEEE 802.3 clause 22 PHY register 0 (BMCR): bit 12 auto-negotiation enable, bit 9 restart it, bit 11 power down.
+pub const BMCR_AUTONEG_RESTART: u16 = 1 << 12 | 1 << 9;
+/// Status bits acknowledged on every receive poll: ROK, RER, TOK, TER, RDU (descriptor unavailable), LinkChg, FOVW
+/// (FIFO overflow), TDU, SWInt. Some revisions stop receiving while an overflow or "no descriptor" bit stays set.
+pub const ISR_ACK: u16 = 0x01FF;
 
 /// Descriptors per ring (16 bytes each: one 256-byte-aligned block) and the buffer size (2 per 4 KiB page).
 pub const RING: usize = 16;
@@ -100,6 +108,28 @@ pub struct Rtl8168<H: Hw> {
     pub received: u64,
     /// Received frames thrown away (errors, or split over several buffers).
     pub dropped: u64,
+    /// Every ISR bit seen since start-up (the bits are cleared on each poll, so this keeps the history for diagnostics).
+    pub isr_seen: u16,
+    /// Receive polls so far.
+    pub polls: u64,
+}
+
+/// Registers read back for diagnostics (`log rtl`, `net`): what the card really holds after our writes.
+#[derive(Debug, Clone, Copy)]
+pub struct Diag {
+    pub chipcmd: u8,
+    pub rcr: u32,
+    pub tcr: u32,
+    pub phy: u8,
+    pub isr: u16,
+    pub imr: u16,
+    pub rdsar: u64,
+    pub tnpds: u64,
+    pub rms: u16,
+    pub mpc: u32,
+    /// opts1 of the receive descriptor the driver looks at next (OWN set = still waiting for the card).
+    pub rx_opts1: u32,
+    pub rx_next: usize,
 }
 
 fn desc_ptr(ring: Page, i: usize) -> *mut u32 {
@@ -192,13 +222,44 @@ impl<H: Hw> Rtl8168<H> {
 
         Ok(Rtl8168 {
             hw, mac, revision, rx_ring, tx_ring, rx_bufs, tx_bufs,
-            rx_next: 0, tx_next: 0, sent: 0, received: 0, dropped: 0,
+            rx_next: 0, tx_next: 0, sent: 0, received: 0, dropped: 0, isr_seen: 0, polls: 0,
         })
     }
 
     /// True if the cable is connected and the link negotiated.
     pub fn link_up(&mut self) -> bool {
         self.hw.read8(reg::PHYSTATUS) & 0b10 != 0
+    }
+
+    /// The raw PHYstatus byte (link, speed, duplex) and the interrupt status word, for diagnostics.
+    pub fn status(&mut self) -> (u8, u16) {
+        (self.hw.read8(reg::PHYSTATUS), self.hw.read16(reg::ISR))
+    }
+
+    /// Writes PHY register `reg` (MII) through PHYAR; false if the write never completed.
+    pub fn phy_write(&mut self, reg: u8, value: u16) -> bool {
+        self.hw.write32(reg::PHYAR, 1 << 31 | ((reg as u32 & 0x1F) << 16) | value as u32);
+        for _ in 0..2000 {
+            self.hw.delay_us(25);
+            if self.hw.read32(reg::PHYAR) & 1 << 31 == 0 {
+                self.hw.delay_us(20); // the datasheets ask for a short pause between PHY accesses
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Powers the PHY up and restarts auto-negotiation (firmware may leave it powered down when nothing boots
+    /// from the network), then waits up to `wait_ms` for the link. Returns whether the link is up.
+    pub fn start_link(&mut self, wait_ms: u32) -> bool {
+        self.phy_write(0, BMCR_AUTONEG_RESTART);
+        for _ in 0..wait_ms / 10 {
+            if self.link_up() {
+                return true;
+            }
+            self.hw.delay_us(10_000);
+        }
+        self.link_up()
     }
 
     /// Sends one Ethernet frame (destination, source, type, payload; at most 1514 bytes). Waits until the card took it.
@@ -239,6 +300,12 @@ impl<H: Hw> Rtl8168<H> {
 
     /// Copies the next received frame (without CRC) into `out`; returns its length (cut to `out.len()`).
     pub fn receive(&mut self, out: &mut [u8]) -> Option<usize> {
+        self.polls += 1;
+        let isr = self.hw.read16(reg::ISR);
+        self.isr_seen |= isr;
+        if isr & ISR_ACK != 0 {
+            self.hw.write16(reg::ISR, isr & ISR_ACK);
+        }
         loop {
             let i = self.rx_next;
             let opts1 = read_desc(self.rx_ring, i);
@@ -262,6 +329,30 @@ impl<H: Hw> Rtl8168<H> {
             }
             self.dropped += 1;
         }
+    }
+
+    /// Reads back the registers the driver set, plus the state of the next receive descriptor.
+    pub fn diag(&mut self) -> Diag {
+        let r64 = |hw: &mut H, at: u16| hw.read32(at) as u64 | (hw.read32(at + 4) as u64) << 32;
+        Diag {
+            chipcmd: self.hw.read8(reg::CHIPCMD),
+            rcr: self.hw.read32(reg::RCR),
+            tcr: self.hw.read32(reg::TCR),
+            phy: self.hw.read8(reg::PHYSTATUS),
+            isr: self.hw.read16(reg::ISR),
+            imr: self.hw.read16(reg::IMR),
+            rdsar: r64(&mut self.hw, reg::RDSAR),
+            tnpds: r64(&mut self.hw, reg::TNPDS),
+            rms: self.hw.read16(reg::RMS),
+            mpc: self.hw.read32(reg::MPC) & 0x00FF_FFFF,
+            rx_opts1: read_desc(self.rx_ring, self.rx_next),
+            rx_next: self.rx_next,
+        }
+    }
+
+    /// The physical addresses of the rings (to compare with what the card reads back).
+    pub fn ring_addresses(&self) -> (u64, u64) {
+        (self.rx_ring.phys, self.tx_ring.phys)
     }
 
     /// The hardware access object (tests use it to drive the model).

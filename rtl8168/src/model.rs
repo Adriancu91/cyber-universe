@@ -25,6 +25,12 @@ pub struct Model {
     tx_idx: usize,
     rx_idx: usize,
     pub delays_us: u64,
+    /// PHY register 0 (BMCR); with the power-down bit (11) set the link stays down.
+    pub bmcr: u16,
+    /// Whether a cable is plugged in (the link comes up only with the PHY powered and auto-negotiation on).
+    pub cable: bool,
+    /// Receive stalls while the FIFO-overflow bit (6) of ISR is set, as some revisions do.
+    pub stall_on_overflow: bool,
 }
 
 impl Model {
@@ -32,15 +38,35 @@ impl Model {
         let mut m = Model {
             regs: [0; 256], pages: Vec::new(), reset_reads: 3, reset_left: 0, absent: false, page_limit: 64,
             wire: Vec::new(), missed: 0, locked_writes: 0, tx_idx: 0, rx_idx: 0, delays_us: 0,
+            bmcr: 1 << 12, cable: true, stall_on_overflow: true,
         };
         m.regs[..6].copy_from_slice(&MAC);
         m.set32(reg::TCR, 0x5480_0000); // a revision number in bits 23 and 26-30, like a real chip
-        m.regs[reg::PHYSTATUS as usize] = 0b10;
+        m.update_link();
         m
     }
 
     pub fn set_link(&mut self, up: bool) {
-        self.regs[reg::PHYSTATUS as usize] = if up { 0b10 } else { 0 };
+        self.cable = up;
+        self.update_link();
+    }
+
+    /// A PHY left powered down by the firmware (the link cannot come up until the driver powers it).
+    pub fn power_down_phy(&mut self) {
+        self.bmcr |= 1 << 11;
+        self.update_link();
+    }
+
+    fn update_link(&mut self) {
+        let up = self.cable && self.bmcr & (1 << 11) == 0 && self.bmcr & (1 << 12) != 0;
+        // 1000 Mb/s full duplex when up.
+        self.regs[reg::PHYSTATUS as usize] = if up { 0b1_0011 } else { 0 };
+    }
+
+    /// Sets ISR bits as the card would (e.g. 1 << 6 for a FIFO overflow).
+    pub fn raise(&mut self, bits: u16) {
+        let old = u16::from_le_bytes([self.regs[0x3E], self.regs[0x3F]]);
+        self.regs[0x3E..0x40].copy_from_slice(&(old | bits).to_le_bytes());
     }
 
     fn get32(&self, r: u16) -> u32 {
@@ -114,6 +140,15 @@ impl Model {
                 self.regs[0x3E..0x40].copy_from_slice(&(old & !v).to_le_bytes());
                 return;
             }
+            reg::PHYAR => {
+                let v = u32::from_le_bytes(bytes.try_into().unwrap());
+                if v & 1 << 31 != 0 && (v >> 16) & 0x1F == 0 {
+                    self.bmcr = v as u16 & !(1 << 9); // the restart bit clears itself
+                    self.update_link();
+                }
+                self.set32(reg::PHYAR, v & !(1 << 31)); // write done at once
+                return;
+            }
             reg::TCR => {
                 // Bits 23 and 26-30 (revision) are read-only.
                 let v = u32::from_le_bytes(bytes.try_into().unwrap());
@@ -155,6 +190,11 @@ impl Model {
         let rcr = self.get32(reg::RCR);
         let broadcast = frame[..6] == [0xFF; 6];
         let ours = frame[..6] == self.regs[..6];
+        let isr = u16::from_le_bytes([self.regs[0x3E], self.regs[0x3F]]);
+        if self.stall_on_overflow && isr & 1 << 6 != 0 || self.regs[reg::PHYSTATUS as usize] & 0b10 == 0 {
+            self.missed += 1;
+            return false;
+        }
         if !(broadcast && rcr & 1 << 3 != 0 || ours && rcr & 1 << 1 != 0 || rcr & 1 != 0) {
             return false;
         }

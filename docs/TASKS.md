@@ -155,6 +155,14 @@ Generate la închiderea Fazei 4 (P4-11, 2026-10-20). Fiecare are plan în `docs/
 Generate la închiderea Fazei 5 (P5-09, 2026-10-21), după comanda C-3 din hub. Ordinea e cea cerută de Adrian.
 Fiecare are plan în `docs/plans/`.
 
+Reparații după testul 2 pe Lenovo (comanda C-4, înaintea restului fazei):
+- [x] **P6-01b** Recepția Realtek: PHY pornit, legătura așteptată, ISR șters, registrele citite înapoi în jurnal, `net` cu legătura și contoarele RX. Dep: P6-01.
+  Test: `cd rtl8168 && cargo test --release` (15 teste, modelul imită PHY oprit, fără cablu, FIFO plin). Pe laptop: testul 3.
+- [x] **P6-01c** Montarea stick-urilor formatate în Windows (MBR cu orice tip, fără tabelă) + comenzile SCSI de „trezire”. Dep: P3-07.
+  Test: scenariul `usb-floppy` (stick fără tabelă → `/usb`), `usb-disk` (GPT) neschimbat.
+- [x] **P6-01d** Comanda `log [cuvânt] [n]` (jurnalul nucleului ținut în memorie) și `net` „fără adresă” când DHCP nu răspunde. Dep: P2-09.
+  Test: scenariul `shell` (`log E1000E 2`, `log nimicnimic`).
+
 - [x] **P6-01** Driver Realtek RTL8168/8111 (`10ec:8168`): crate `rtl8168/` + model software al cipului (teste pe gazdă), placa în nucleu. Dep: P3-08.
   Test: `cd rtl8168 && cargo test --release` (11 teste față de model) + toate scenariile de rețea QEMU (e1000 prin interfața nouă `nic::Card`). Pe laptop: de verificat la testul 2 (cablu, `net`, `ping`).
 - [x] **P6-02** Rădăcinile reale de încredere (Mozilla) în imagine + `fetch https://` cu un site real. Dep: P5-16.

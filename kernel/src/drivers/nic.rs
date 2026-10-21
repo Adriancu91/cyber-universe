@@ -13,6 +13,10 @@ pub trait Card: Send {
     fn name(&self) -> &'static str;
     /// Frames sent and received since start-up.
     fn counters(&self) -> (u64, u64);
+    /// One line about the link (speed, duplex, chip status), if the driver knows it; for `net` in the shell.
+    fn link_info(&mut self) -> Option<alloc::string::String> {
+        None
+    }
 }
 
 /// The network card found at start-up.

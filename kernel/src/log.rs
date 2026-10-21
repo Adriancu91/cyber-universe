@@ -80,6 +80,7 @@ pub fn _log(level: Level, args: fmt::Arguments) {
     let text = line.as_str();
 
     crate::drivers::serial::write_str(text);
+    remember(text);
     crate::gfx::console::with_console(|c| {
         if let Some(c) = c {
             let old = c.color;
@@ -88,6 +89,61 @@ pub fn _log(level: Level, args: fmt::Arguments) {
             c.color = old;
         }
     });
+}
+
+/// The last 64 KiB of the log, kept in memory for `log` in the shell (no serial port on a laptop).
+const RING: usize = 64 * 1024;
+struct Ring {
+    buf: core::cell::UnsafeCell<[u8; RING]>,
+    /// Total bytes ever written (the position in `buf` is `written % RING`).
+    written: core::sync::atomic::AtomicUsize,
+    busy: core::sync::atomic::AtomicBool,
+}
+// SAFETY: `buf` is only touched while `busy` is held (taken with compare_exchange; never waited for).
+unsafe impl Sync for Ring {}
+static LOG: Ring = Ring {
+    buf: core::cell::UnsafeCell::new([0; RING]),
+    written: core::sync::atomic::AtomicUsize::new(0),
+    busy: core::sync::atomic::AtomicBool::new(false),
+};
+
+/// Runs `f` with the ring if nobody else holds it (a line logged from an interrupt in the middle is skipped, never waited for).
+fn with_ring<R>(f: impl FnOnce(&mut [u8; RING], &core::sync::atomic::AtomicUsize) -> R) -> Option<R> {
+    use core::sync::atomic::Ordering;
+    if LOG.busy.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+        return None;
+    }
+    // SAFETY: `busy` is held, so this is the only reference to the buffer.
+    let r = f(unsafe { &mut *LOG.buf.get() }, &LOG.written);
+    LOG.busy.store(false, Ordering::Release);
+    Some(r)
+}
+
+fn remember(text: &str) {
+    with_ring(|buf, written| {
+        let mut at = written.load(core::sync::atomic::Ordering::Relaxed);
+        for &b in text.as_bytes() {
+            buf[at % RING] = b;
+            at += 1;
+        }
+        written.store(at, core::sync::atomic::Ordering::Relaxed);
+    });
+}
+
+/// The kept log lines (oldest first; a first line cut by the ring's start is dropped).
+pub fn recent() -> alloc::vec::Vec<alloc::string::String> {
+    let bytes = with_ring(|buf, written| {
+        let n = written.load(core::sync::atomic::Ordering::Relaxed);
+        let start = n.saturating_sub(RING);
+        (start..n).map(|i| buf[i % RING]).collect::<alloc::vec::Vec<u8>>()
+    })
+    .unwrap_or_default();
+    let text = alloc::string::String::from_utf8_lossy(&bytes).into_owned();
+    let mut lines: alloc::vec::Vec<alloc::string::String> = text.lines().map(alloc::string::String::from).collect();
+    if bytes.len() == RING && !lines.is_empty() {
+        lines.remove(0);
+    }
+    lines
 }
 
 /// Logs at DEBUG level (debug builds only).
