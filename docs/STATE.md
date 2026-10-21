@@ -2,15 +2,20 @@
 
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
-## OPRIT: necesită analiza lui Adrian
-Trei sesiuni programate la rând (2026-10-20 23:41, 2026-10-21 02:41 și 05:41 UTC) n-au terminat nicio sarcină, pentru că
-**nu mai există sarcini libere** (nu e un eșec tehnic). Sesiunile următoare NU încep sarcini noi până când Adrian:
-- răspunde la întrebarea din hub (închiderea Fazei 5 fără P5-07/P5-08, ca să pornească Faza 6), sau
-- trimite o comandă nouă pentru `cyber-universe` în `COMENZI.md` din hub, sau
-- trimite rezultatele testului de pe stick (B-001 → P3-09, P3-10).
-O sesiune care găsește una dintre acestea șterge secțiunea „OPRIT” și reia lucrul normal.
+## OPRIT: necesită analiza lui Adrian (decizia lui: oprit până la testul pe stick)
+**Decizia lui Adrian, 2026-10-21 10:05 (`DECIZII.md` din hub):** OS-ul **rămâne oprit** — nu se închide Faza 5, nu pornește
+Faza 6 — până la testul pe un calculator real (B-001 / P3-09). Întrebarea despre închiderea Fazei 5 are răspuns: **nu acum**;
+nu se mai pune. Sesiunile următoare NU încep sarcini noi până când:
+- apar rezultatele testului de pe stick (B-001 → P3-09, apoi P3-10), sau
+- apare o comandă nouă pentru `cyber-universe` cu stare `nou` în `COMENZI.md` din hub.
+O sesiune care găsește una dintre acestea șterge secțiunea „OPRIT” și reia lucrul normal. Altfel: doar verifică hub-ul și
+CI-ul, fără instalare de unelte și fără schimbări de cod.
 
 ## Ultima sesiune
+- **2026-10-21, 08:41 UTC (11:41 ora României), sesiune programată:** oprit, conform deciziei lui Adrian de la 10:05;
+  nicio comandă nouă în `COMENZI.md`, niciun rezultat de pe stick; CI verde (rularea pentru `c929036`). Nu s-a schimbat cod.
+
+### Sesiunea precedentă (a treia fără lucru)
 - **2026-10-21, 05:41–05:50 UTC (08:41 ora României), sesiune programată:** a treia la rând fără sarcină liberă și fără
   comandă nouă în `COMENZI.md`; nicio decizie nouă în `DECIZII.md`; CI verde (rularea pentru `e628f2a`). Nu s-a schimbat
   cod; uneltele nu s-au instalat (nu era nimic de construit). S-a aplicat regula de oprire: „OPRIT” mai sus.
@@ -43,11 +48,11 @@ O sesiune care găsește una dintre acestea șterge secțiunea „OPRIT” și r
   lanțurile cu `openssl verify` — zero diferențe. CI verde pe toate commit-urile terminate (ultimele încă rulau la final).
 
 ## Următoarea sarcină
-**Niciuna liberă.** Ce poate debloca (decizia lui Adrian, întrebarea e în hub):
-1. Închiderea Fazei 5 fără P5-07/P5-08 (suita office și Kronos ca module se mută într-o fază ulterioară) → P5-09, apoi
-   sarcinile Fazei 6 din `docs/ROADMAP.md`.
+**Niciuna liberă; OS oprit prin decizia lui Adrian (2026-10-21 10:05).** Ce poate debloca:
+1. Rezultatele testului de pe stick (B-001) → P3-09, apoi P3-10.
 2. Sau sarcini noi aprobate prin `COMENZI.md` din hub (ex. rădăcinile reale de încredere — ISRG Root X1 etc. — ca
    `fetch https://` să meargă cu site-uri adevărate; azi `/etc/certs/` e gol în imaginea normală).
+Faza 5 NU se închide și Faza 6 NU pornește fără o decizie nouă a lui Adrian.
 Când Adrian trimite rezultatele de pe stick (B-001): P3-09, apoi P3-10. Suita office gata (B-003): P5-07, P5-08.
 Atenție: dacă 3 sesiuni la rând nu termină nimic, regula de oprire cere „OPRIT: necesită analiza lui Adrian” (aici motivul
 e lipsa sarcinilor, nu un eșec).
