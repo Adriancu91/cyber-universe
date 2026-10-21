@@ -3,7 +3,7 @@
 
 use crate::der::{self, Der, ctx};
 use crate::sha2::{Sha256, Sha384, Sha512};
-use crate::{p256, rsa};
+use crate::{p256, p384, rsa};
 
 // Object identifiers (contents of the OID element).
 const RSA_ENCRYPTION: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
@@ -14,8 +14,10 @@ const SHA512_RSA: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0d
 const MGF1: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x08];
 const EC_PUBLIC_KEY: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
 const PRIME256V1: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
+const SECP384R1: &[u8] = &[0x2b, 0x81, 0x04, 0x00, 0x22];
 const ECDSA_SHA256: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02];
 const ECDSA_SHA384: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x03];
+const ECDSA_SHA512: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x04];
 const OID_SHA256: &[u8] = &[0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01];
 const OID_SHA384: &[u8] = &[0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02];
 const OID_SHA512: &[u8] = &[0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03];
@@ -58,12 +60,18 @@ pub enum SigAlg {
     RsaPkcs1(Hash),
     RsaPss(Hash, usize), // hash, salt length
     Ecdsa(Hash),
+    /// An algorithm we cannot check (e.g. SHA-1 on old roots): the certificate can be read, but nothing it
+    /// signed is ever accepted.
+    Unknown,
 }
 
 #[derive(Clone, Copy)]
 pub enum Key<'a> {
     Rsa { n: &'a [u8], e: &'a [u8] },
     P256(&'a [u8]), // 04 || x || y
+    P384(&'a [u8]), // 04 || x || y
+    /// A key type we cannot use (e.g. P-521): signatures made with it are refused.
+    Unknown,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -121,8 +129,9 @@ fn parse_alg(t: der::Tlv) -> Result<SigAlg, Error> {
         SHA512_RSA => no_params(&mut d, SigAlg::RsaPkcs1(Hash::Sha512)),
         ECDSA_SHA256 => no_params(&mut d, SigAlg::Ecdsa(Hash::Sha256)),
         ECDSA_SHA384 => no_params(&mut d, SigAlg::Ecdsa(Hash::Sha384)),
+        ECDSA_SHA512 => no_params(&mut d, SigAlg::Ecdsa(Hash::Sha512)),
         RSA_PSS => parse_pss(d.expect(der::SEQUENCE).ok_or(Error::Format)?.body),
-        _ => Err(Error::Unsupported),
+        _ => Ok(SigAlg::Unknown),
     }
 }
 
@@ -192,13 +201,12 @@ fn parse_key(spki: &[u8]) -> Result<Key<'_>, Error> {
             let e = der::uint(k.expect(der::INTEGER).ok_or(Error::Format)?.body).ok_or(Error::Format)?;
             Ok(Key::Rsa { n, e })
         }
-        EC_PUBLIC_KEY => {
-            if alg.expect(der::OID).map(|o| o.body) != Some(PRIME256V1) {
-                return Err(Error::Unsupported);
-            }
-            Ok(Key::P256(key))
-        }
-        _ => Err(Error::Unsupported),
+        EC_PUBLIC_KEY => match alg.expect(der::OID).map(|o| o.body) {
+            Some(PRIME256V1) => Ok(Key::P256(key)),
+            Some(SECP384R1) => Ok(Key::P384(key)),
+            _ => Ok(Key::Unknown),
+        },
+        _ => Ok(Key::Unknown),
     }
 }
 
@@ -363,15 +371,50 @@ pub fn verify_signature(key: &Key, alg: SigAlg, msg: &[u8], sig: &[u8]) -> bool 
                 Hash::Sha512 => k.verify::<Sha512>(msg, sig),
             }
         }
+        (Key::P384(point), SigAlg::Ecdsa(h)) => {
+            let Some(k) = p384::PublicKey::new(point) else { return false };
+            match h {
+                Hash::Sha256 => k.verify::<Sha256>(msg, sig),
+                Hash::Sha384 => k.verify::<Sha384>(msg, sig),
+                Hash::Sha512 => k.verify::<Sha512>(msg, sig),
+            }
+        }
         _ => false,
     }
 }
 
 const MAX_CHAIN: usize = 8;
 
+/// Where trusted roots come from: a list in memory, or files looked up by name (see /bin/fetch).
+pub trait TrustStore {
+    /// Calls `f` with each trusted root (DER) whose subject may be `subject` (DER), until `f` returns true;
+    /// returns whether it did. Giving extra roots is harmless (they are checked), missing one is not.
+    fn find(&mut self, subject: &[u8], f: &mut dyn FnMut(&[u8]) -> bool) -> bool;
+}
+
+/// A plain list of roots.
+impl TrustStore for &[&[u8]] {
+    fn find(&mut self, _subject: &[u8], f: &mut dyn FnMut(&[u8]) -> bool) -> bool {
+        self.iter().any(|r| f(r))
+    }
+}
+
+/// The first 8 bytes of SHA-256 of a subject name, in lowercase hex: the file name of a root in /etc/certs
+/// (tools/roots.py names them the same way, plus `.0`, `.1` …).
+pub fn subject_id(subject: &[u8]) -> [u8; 16] {
+    let h = Sha256::digest(subject);
+    let hex = b"0123456789abcdef";
+    core::array::from_fn(|i| hex[usize::from(h[i / 2] >> (4 - 4 * (i % 2) as u8)) & 15])
+}
+
 /// Verifies a server's chain: `chain[0]` is the server certificate, each next one its issuer (as sent in TLS);
 /// it must end at one of `roots` (DER certificates). `now` is YYYYMMDDHHMMSS (UTC).
-pub fn verify_chain(chain: &[&[u8]], roots: &[&[u8]], host: &[u8], now: u64) -> Result<(), Error> {
+pub fn verify_chain(chain: &[&[u8]], mut roots: &[&[u8]], host: &[u8], now: u64) -> Result<(), Error> {
+    verify_chain_in(chain, &mut roots, host, now)
+}
+
+/// The same, with the roots taken from a `TrustStore`.
+pub fn verify_chain_in(chain: &[&[u8]], roots: &mut dyn TrustStore, host: &[u8], now: u64) -> Result<(), Error> {
     if chain.is_empty() {
         return Err(Error::EmptyChain);
     }
@@ -387,12 +430,17 @@ pub fn verify_chain(chain: &[&[u8]], roots: &[&[u8]], host: &[u8], now: u64) -> 
     for i in 0..chain.len() {
         check_time(&cur, now)?;
         // A trusted root that issued `cur` ends the chain (also when the root itself was sent along).
-        for &r in roots {
-            let root = Cert::parse(r)?;
-            if root.subject == cur.issuer && cur.signed_by(&root.key).is_ok() {
-                check_time(&root, now)?;
-                return check_issuer(&root, i);
+        // Roots we cannot read are skipped.
+        let mut found = None;
+        roots.find(cur.issuer, &mut |r| match Cert::parse(r) {
+            Ok(root) if root.subject == cur.issuer && cur.signed_by(&root.key).is_ok() => {
+                found = Some(check_time(&root, now).and_then(|_| check_issuer(&root, i)));
+                true
             }
+            _ => false,
+        });
+        if let Some(result) = found {
+            return result;
         }
         let Some(&next) = chain.get(i + 1) else { return Err(Error::UnknownIssuer) };
         let issuer = Cert::parse(next)?;

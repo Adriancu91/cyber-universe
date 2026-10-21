@@ -43,7 +43,8 @@ fn fetch(name: &str, host: &str, roots: &[&[u8]], now: u64) -> Result<Vec<u8>, E
     std::fs::File::open("/dev/urandom").unwrap().read_exact(&mut random).unwrap();
     let mut buf = vec![0u8; MIN_BUFFER];
     let result = (|| {
-        let mut tls = Tls::connect(&mut io, host, roots, now, &random, &mut buf)?;
+        let mut store = roots;
+        let mut tls = Tls::connect(&mut io, host, &mut store, now, &random, &mut buf)?;
         tls.send(&mut io, format!("GET / HTTP/1.0\r\nHost: {host}\r\n\r\n").as_bytes())?;
         let mut page = Vec::new();
         let mut chunk = [0u8; 1000];

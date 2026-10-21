@@ -3,15 +3,16 @@
 
 use crate::record::{self, Io, Keys, MAX_PLAIN, MAX_RECORD};
 use cyber_crypto::sha2::Sha256;
-use cyber_crypto::x509::{self, Cert, Hash, SigAlg};
+use cyber_crypto::x509::{self, Cert, Hash, Key, SigAlg, TrustStore};
 use cyber_crypto::x25519::{x25519, x25519_base};
 use cyber_crypto::{Digest, ct_eq, hkdf, hmac::hmac};
 
 const CHACHA20_POLY1305_SHA256: u16 = 0x1303;
 const X25519: u16 = 0x001d;
 const TLS13: u16 = 0x0304;
-/// signature_algorithms: what we can check in CertificateVerify, then the RSA PKCS#1 ones (certificates only).
-const SIG_ALGS: [u16; 7] = [0x0403, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601];
+/// signature_algorithms: what we can check in CertificateVerify (ECDSA P-256/P-384, RSA-PSS), then the RSA
+/// PKCS#1 ones (certificates only).
+const SIG_ALGS: [u16; 8] = [0x0403, 0x0503, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601];
 /// ServerHello.random of a HelloRetryRequest (§4.1.3).
 const HRR_RANDOM: [u8; 32] = [
     0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11, 0xbe, 0x1d, 0x8c, 0x02, 0x1e, 0x65, 0xb8, 0x91, 0xc2, 0xa2, 0x11, 0x16,
@@ -221,10 +222,10 @@ impl<I: Io> Handshake<'_, '_, I> {
 }
 
 impl<'b> Tls<'b> {
-    /// Opens a TLS 1.3 connection over `io` to `host`, trusting `roots` (DER certificates). `now` is the time as
+    /// Opens a TLS 1.3 connection over `io` to `host`, trusting the roots in `roots`. `now` is the time as
     /// YYYYMMDDHHMMSS (UTC); `random` = 64 unpredictable bytes (client random, then the X25519 private key).
     /// `buf` must have at least `MIN_BUFFER` bytes.
-    pub fn connect<I: Io>(io: &mut I, host: &str, roots: &[&[u8]], now: u64, random: &[u8; 64], buf: &'b mut [u8]) -> Result<Tls<'b>, Error> {
+    pub fn connect<I: Io>(io: &mut I, host: &str, roots: &mut dyn TrustStore, now: u64, random: &[u8; 64], buf: &'b mut [u8]) -> Result<Tls<'b>, Error> {
         if buf.len() < MIN_BUFFER || host.is_empty() || host.len() > 255 {
             return Err(Error::BufferTooSmall);
         }
@@ -370,7 +371,7 @@ impl<'b> Tls<'b> {
                 certs[count] = der;
                 count += 1;
             }
-            x509::verify_chain(&certs[..count], roots, host.as_bytes(), now).map_err(Error::Certificate)?;
+            x509::verify_chain_in(&certs[..count], roots, host.as_bytes(), now).map_err(Error::Certificate)?;
         }
         transcript.update(&hs.buf[s..e]);
         let leaf_range = {
@@ -386,8 +387,10 @@ impl<'b> Tls<'b> {
         }
         {
             let mut r = Reader { b: &hs.buf[s + 4..e] };
-            let alg = match r.u16()? {
+            let code = r.u16()?;
+            let alg = match code {
                 0x0403 => SigAlg::Ecdsa(Hash::Sha256),
+                0x0503 => SigAlg::Ecdsa(Hash::Sha384),
                 0x0804 => SigAlg::RsaPss(Hash::Sha256, 32),
                 0x0805 => SigAlg::RsaPss(Hash::Sha384, 48),
                 0x0806 => SigAlg::RsaPss(Hash::Sha512, 64),
@@ -399,6 +402,15 @@ impl<'b> Tls<'b> {
             content[97] = 0;
             content[98..].copy_from_slice(&th_cert);
             let leaf = Cert::parse(&hs.buf[leaf_range.0..leaf_range.1]).map_err(Error::Certificate)?;
+            // In TLS 1.3 the ECDSA code also names the curve (§4.2.3).
+            let curve_ok = match (code, leaf.key) {
+                (0x0403, k) => matches!(k, Key::P256(_)),
+                (0x0503, k) => matches!(k, Key::P384(_)),
+                (_, k) => matches!(k, Key::Rsa { .. }),
+            };
+            if !curve_ok {
+                return Err(Error::BadSignature);
+            }
             if !x509::verify_signature(&leaf.key, alg, &content, sig) {
                 return Err(Error::BadSignature);
             }

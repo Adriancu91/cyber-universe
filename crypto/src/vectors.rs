@@ -6,7 +6,7 @@ use crate::hmac::hmac;
 use crate::sha2::{Sha256, Sha384, Sha512};
 use crate::x25519::{x25519, x25519_base};
 use crate::x509::{self, Error as XErr};
-use crate::{aead, chacha20, p256, poly1305::Poly1305, rsa::PublicKey, vectors_rsa};
+use crate::{aead, chacha20, p256, p384, poly1305::Poly1305, rsa::PublicKey, vectors_rsa};
 use crate::{Digest, ct_eq};
 
 /// Hex text -> bytes in `out`; returns the length.
@@ -82,6 +82,16 @@ const P256_SIGS: [(&[u8], bool, &str); 3] = [
     (b"sample", false, "3046022100efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716022100f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8"),
     (b"test", false, "3045022100f1abb023518351cd71d881567b1ea663ed3efcf6c5132b354f28d3b0b7d383670220019f4113742a2b14bd25926b49c649155f267e60d3814b4c0cc84250e46f0083"),
     (b"sample", true, "304402200eafea039b20e9b42309fb1d89e213057cbf973dc0cfc8f129edddc800ef771902204861f0491e6998b9455193e34e7b0d284ddd7149a74b95b9261f13abde940954"),
+];
+
+/// RFC 6979 A.2.6 (P-384, key x = 6B9D3DAD…), signatures checked with Python `cryptography` (OpenSSL):
+/// (message, hash bits, DER signature).
+const P384_KEY: &str = "04ec3a4e415b4e19a4568618029f427fa5da9a8bc4ae92e02e06aae5286b300c64def8f0ea9055866064a254515480bc138015d9b72d7d57244ea8ef9ac0c621896708a59367f9dfb9f54ca84b3f1c9db1288b231c3ae0d4fe7344fd2533264720";
+const P384_SIGS: [(&[u8], u16, &str); 4] = [
+    (b"sample", 384, "306602310094edbb92a5ecb8aad4736e56c691916b3f88140666ce9fa73d64c4ea95ad133c81a648152e44acf96e36dd1e80fabe4602310099ef4aeb15f178cea1fe40db2603138f130e740a19624526203b6351d0a3a94fa329c145786e679e7b82c71a38628ac8"),
+    (b"test", 384, "30660231008203b63d3c853e8d77227fb377bcf7b7b772e97892a80f36ab775d509d7a5feb0542a7f0812998da8f1dd3ca3cf023db023100ddd0760448d42d8a43af45af836fce4de8be06b485e9b61b827c2f13173923e06a739f040649a667bf3b828246baa5a5"),
+    (b"sample", 256, "3065023021b13d1e013c7fa1392d03c5f99af8b30c570c6f98d4ea8e354b63a21d3daa33bde1e888e63355d92fa2b3c36d8fb2cd023100f3aa443fb107745bf4bd77cb3891674632068a10ca67e3d45db2266fa7d1feebefdc63eccd1ac42ec0cb8668a4fa0ab0"),
+    (b"sample", 512, "3065023100ed0959d5880ab2d869ae7f6c2915c6d60f96507f9cb3e047c0046861da4a799cfe30f35cc900056d7c99cd78824337090230512c8cceee3890a84058ce1e22dbc2198f42323ce8aca9135329f03c068e5112dc7cc3ef3446defceb01a45c2667fdd5"),
 ];
 
 // Test certificates (P5-15), made with OpenSSL; see crypto/src/testcerts/README.md.
@@ -297,6 +307,32 @@ pub fn self_test() -> Result<usize, &'static str> {
     let mut nm = [0u8; 8];
     unhex("3006020200010201", &mut nm);
     check(p256::parse_der_sig(&nm[..8]).is_none() && p256::parse_der_sig(&[0x30, 6, 2, 1, 1, 2, 1, 1]).is_some(), "ecdsa p256: DER necanonic acceptat")?;
+
+    // ECDSA P-384 (P6-02): the same checks on the larger curve.
+    let mut q = [0u8; 97];
+    unhex(P384_KEY, &mut q);
+    let Some(key) = p384::PublicKey::new(&q) else { return Err("p384: cheie refuzata") };
+    let mut der = [0u8; 104];
+    for (msg, bits, sig) in P384_SIGS {
+        let dl = unhex(sig, &mut der);
+        let ok = |m: &[u8], d: &[u8]| match bits {
+            256 => key.verify::<Sha256>(m, d),
+            384 => key.verify::<Sha384>(m, d),
+            _ => key.verify::<Sha512>(m, d),
+        };
+        check(ok(msg, &der[..dl]), "ecdsa p384 (RFC 6979)")?;
+        let mut bad = der;
+        bad[dl - 3] ^= 0x20;
+        check(!ok(msg, &bad[..dl]) && !ok(b"altceva", &der[..dl]), "ecdsa p384: semnatura gresita acceptata")?;
+    }
+    let mut order = [0u8; 48];
+    unhex("ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973", &mut order);
+    let mut one = [0u8; 48];
+    one[47] = 1;
+    let h = Sha384::digest(b"sample");
+    check(!key.verify_prehashed(&h, &[0; 48], &order) && !key.verify_prehashed(&h, &order, &one), "ecdsa p384: r sau s in afara intervalului")?;
+    q[96] ^= 1;
+    check(p384::PublicKey::new(&q).is_none() && p384::PublicKey::new(&q[..65]).is_none(), "ecdsa p384: punct in afara curbei acceptat")?;
 
     // X.509 chains (P5-15): certificates made with OpenSSL; the good chains pass, each broken one is refused
     // for the right reason.
