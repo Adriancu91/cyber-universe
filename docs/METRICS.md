@@ -16,6 +16,7 @@
 | 2026-10-20 | 0.1.0 (e8faab3), sfârșitul Fazei 1 | TCG (fără accelerare) | 3563 ms | 39.6 ms | 1124 KiB | 1126 KiB |
 | 2026-10-20 | 0.1.0 (59a4e7a), sfârșitul Fazei 2 | TCG (fără accelerare) | 3978 ms | 57.2 ms | 2412 KiB | 2072 KiB |
 | 2026-10-20 | 0.1.0 (a7ecb26), sfârșitul Fazei 4 | TCG (fără accelerare) | 4862 ms | 114.3 ms | 2680 KiB | 2973 KiB |
+| 2026-10-21 | 0.1.0 (c8fac5a), sfârșitul Fazei 5 | TCG (fără accelerare) | 4846 ms | 95.0 ms | 2768 KiB | 3597 KiB |
 
 Faza 2 față de Faza 1: nucleul face mai mult la pornire (planificator, sistem de fișiere din initrd), iar memoria crește
 mai ales din cele 256 de tabele de pagini prealocate pentru spațiile de adrese (1 MiB, vezi P2-04). Din pornirea totală,
@@ -25,6 +26,10 @@ mai ales din cele 256 de tabele de pagini prealocate pentru spațiile de adrese 
 Faza 4 față de Faza 2: pornirea nucleului include acum drivere (PCI, AHCI, NVMe, USB/XHCI cu așteptarea legăturilor USB 3,
 e1000) și citirea ceasului; memoria nucleului crește puțin (2,6 MiB). Interfața grafică (server + desktop) nu pornește la boot;
 cu desktopul pornit memoria totală e ~10 MiB (secțiunea „Desktop” de mai jos).
+
+Faza 5 față de Faza 4: pornirea și memoria aproape la fel (rețeaua, DHCP și HTTPS nu adaugă mult la pornire); fișierul nucleului
+crește cu ~0,6 MiB (stiva TCP/IP, criptografia, clientul TLS). Pe hardware real (Lenovo AMD, 21 oct): OS-ul ocupă ~21 MB cu
+desktopul pornit; timpul de pornire pe laptop îl măsoară Adrian la testul 2.
 
 ## Stabilitate
 | Data | Test | Rezultat |

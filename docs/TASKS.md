@@ -142,17 +142,36 @@ Generate la închiderea Fazei 4 (P4-11, 2026-10-20). Fiecare are plan în `docs/
 - [x] **P5-05** Rețea pentru programe (socket-uri) și aplicația „Rețea”. Dep: P5-03, P5-04.
 - [x] **P5-06** Client TLS 1.3 (biblioteca `tls/`), testat pe gazdă cu un server OpenSSL. Criptografie proprie (D-011). Dep: P5-10 … P5-15.
 - [x] **P5-16** HTTPS în OS: `fetch https://…`, rădăcini în initrd, ora din RTC, numere aleatoare. Dep: P5-05, P5-06.
-- [ ] BLOCAT **P5-07** Suita office ca modul (după ce citim proiectul din Cyber Hub). Dep: P4-11.
-- [ ] **P5-08** Kronos ca modul. Dep: P5-07.
 - [x] **P5-10** Criptografie 1: SHA-256, SHA-384, HMAC, HKDF (crate `crypto/`), cu vectorii NIST/RFC. Dep: —.
 - [x] **P5-11** Criptografie 2: X25519 (schimb de chei, RFC 7748). Dep: P5-10.
 - [x] **P5-12** Criptografie 3: ChaCha20-Poly1305 (RFC 8439). Dep: P5-10.
 - [x] **P5-13** Criptografie 4: numere mari și semnături RSA (PKCS#1 v1.5 și PSS). Dep: P5-10.
 - [x] **P5-14** Criptografie 5: semnături ECDSA P-256. Dep: P5-10.
 - [x] **P5-15** Criptografie 6: certificate X.509 (DER) și lanțul de încredere. Dep: P5-13, P5-14.
-- [ ] **P5-09** Închiderea Fazei 5. Dep: P5-01 … P5-08, P5-16.
+- [x] **P5-09** Închiderea Fazei 5 (fără P5-07/P5-08, mutate după suită — decizia lui Adrian, 21 oct 22:25). Dep: P5-01 … P5-06, P5-10 … P5-16.
 
-## Faza 6 și următoarele
+## Faza 6 — Loc de lucru cu Claude înăuntru
 
-Sarcinile se generează de Claude Code din `ROADMAP.md` la închiderea fazei anterioare (P5-09),
-în același format, cu ID-uri `P6-xx`, `P7-xx` etc.
+Generate la închiderea Fazei 5 (P5-09, 2026-10-21), după comanda C-3 din hub. Ordinea e cea cerută de Adrian.
+Fiecare are plan în `docs/plans/`.
+
+- [ ] **P6-01** Driver Realtek RTL8168/8111 (`10ec:8168`): crate `rtl8168/` + model software al cipului (teste pe gazdă), placa în nucleu. Dep: P3-08.
+- [ ] **P6-02** Rădăcinile reale de încredere (Mozilla) în imagine + `fetch https://` cu un site real. Dep: P5-16.
+- [ ] **P6-03** Parser și generator JSON propriu (crate `json/`). Dep: —.
+- [ ] **P6-04** Clientul API Claude (`/bin/claude` în linia de comandă; cheia din `/usb/claude.key`). Dep: P6-02, P6-03.
+- [ ] **P6-05** Aplicația „Claude”: chat în fereastră. Dep: P6-04.
+- [ ] **P6-06** Uneltele lui Claude în OS (citește/scrie fișier, listează dosar, rulează comandă) cu confirmare pe ecran. Dep: P6-05.
+- [ ] **P6-07** CI publică un GitHub Release cu fișierele stick-ului și sumele SHA-256. Dep: —.
+- [ ] **P6-08** Comanda „Actualizează”: descarcă ultimul Release prin HTTPS, verifică sumele, rescrie stick-ul. Dep: P6-02, P6-07.
+- [ ] **P6-09** Trimitere pe GitHub din OS (API `contents`, token din `/usb/github.token`). Dep: P6-02, P6-03.
+- [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
+
+## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
+
+- [ ] BLOCAT **P5-07** Suita office ca modul (după ce citim proiectul din Cyber Hub). Dep: P4-11.
+- [ ] **P5-08** Kronos ca modul. Dep: P5-07.
+
+## Faza 7 și următoarele
+
+Sarcinile se generează de Claude Code din `ROADMAP.md` la închiderea fazei anterioare (P6-10),
+în același format, cu ID-uri `P7-xx` etc.

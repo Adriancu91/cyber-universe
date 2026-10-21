@@ -55,3 +55,10 @@ după standardele publice (RFC, FIPS), fără biblioteci externe. Condiții: fie
 oficiali (NIST, RFC) într-un scenariu QEMU; codul nu e auditat de specialiști — nu se folosește pentru date sensibile
 până la o verificare separată. Codul stă în crate-ul propriu `crypto/` (no_std, fără dependențe), folosit de nucleu și de programe.
 În acord cu decizia din Cyber Hub (2026-10-20 19:40: „de la zero, fără alte licențe”).
+
+### D-012 — Faza 6: OS-ul ca loc de lucru cu Claude înăuntru (2026-10-21)
+Decizia lui Adrian din Cyber Hub (`DECIZII.md`, 2026-10-21 22:25; comanda C-3): Faza 6 nu mai e „auto-găzduire”, ci loc de
+lucru pe laptopul de test: driver Realtek RTL8168, rădăcinile reale de încredere, aplicația „Claude” (API, unelte în OS cu
+confirmare pentru scriere/rulare), auto-actualizare din GitHub Releases, trimitere pe GitHub. Compilarea în OS nu e obiectiv.
+Faza 5 se închide fără P5-07/P5-08 (mutate după suită). Cheile (API Claude, token GitHub) stau doar pe stick, niciodată în repo.
+Înlocuiește descrierea veche a Fazei 6 din ROADMAP (auto-găzduire).

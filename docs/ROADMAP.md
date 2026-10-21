@@ -56,14 +56,28 @@ Fazele se fac în ordine. O fază se consideră terminată doar când toate crit
 - Stivă TCP/IP, DHCP, DNS, HTTPS de bază.
 - Mutarea treptată a aplicațiilor proprii ca module: suita office, apoi Kronos.
 
-## Faza 6 — Auto-găzduire (1–2 ani de la start)
-**Scop:** Cyber Universe se dezvoltă din interiorul lui.
-- Compilator și instrumente care rulează în OS.
-- Editor de cod și integrare cu Claude Code.
+## Faza 6 — Loc de lucru cu Claude înăuntru (decizia lui Adrian, 2026-10-21 22:25)
+**Scop:** pe laptopul de test (Lenovo AMD, rețea Realtek `10ec:8168`), Cyber Universe devine un loc de lucru: rețea pe cablu,
+HTTPS cu site-uri adevărate, aplicația „Claude” (chat prin API, cu unelte în OS), actualizare din OS, trimitere pe GitHub.
+- Driver Realtek RTL8168/8111 (clean-room, după documentația publică), testat pe gazdă cu un model software al cipului.
+- Rădăcinile reale de încredere (lista Mozilla, MPL 2.0, doar ca date) + `fetch https://` cu un site real.
+- Parser JSON propriu; aplicația „Claude”: cheia din `/usb/claude.key` (niciodată în repo), chat în fereastră, unelte
+  (citește/scrie fișier, listează dosar, rulează comandă) — scrierea și rularea doar cu confirmarea lui Adrian pe ecran.
+- Auto-actualizare: CI publică un GitHub Release cu fișierele stick-ului + sume SHA-256; OS-ul le descarcă și rescrie stick-ul.
+- Trimitere pe GitHub din OS (API `contents`, token din fișier de pe stick).
+- **Nu e obiectiv acum:** compilarea OS-ului în interiorul OS-ului (construirea rămâne în CI). Wi-Fi (Intel AX200): mai târziu.
+
+**Gata când:** pe laptopul de test, din OS: Adrian vorbește cu Claude în fereastră, Claude citește un fișier și (cu confirmare)
+scrie unul, iar OS-ul se actualizează singur de pe GitHub.
 
 ## Faza 7 — Compatibilitate Windows (continuu)
 - Reconstruire clean-room a funcțiilor Windows necesare, după documentația publică.
 - Încărcare de programe Windows simple (format PE), extinsă treptat.
+
+## Mai târziu (din fazele anterioare)
+- Aplicațiile proprii ca module: suita office (P5-07), apoi Kronos (P5-08) — după ce suita își atinge ținta (decizia din 20 oct).
+- Auto-găzduirea (compilator și instrumente în OS) — nu e obiectiv acum (decizia din 21 oct 22:25).
+- Wi-Fi (Intel AX200 — cere firmware de la producător).
 
 ---
 
