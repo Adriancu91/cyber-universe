@@ -59,6 +59,18 @@ jobs:
           path: build/cyber-universe-usb.img
           if-no-files-found: error
 
+      - name: Fișierele pentru Release (P6-07)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: tools/release-files.sh
+
+      - name: Fișierele pentru Release
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: build/release/
+          if-no-files-found: error
+
       - name: Rezultate (log serial și captură de ecran)
         if: always()
         uses: actions/upload-artifact@v4
@@ -69,3 +81,29 @@ jobs:
             build/build-*.log
             tests/screens/*.png
           if-no-files-found: ignore
+
+  # P6-07: after green tests on main, a GitHub Release with the stick files (the newest is "latest"); the last 5 are kept.
+  # Only this job may write to the repository.
+  release:
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: release
+      - name: Release os-<număr> (marcat „latest”), păstrează ultimele 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          TAG="os-${{ github.run_number }}"
+          gh release create "$TAG" release/* --target "$GITHUB_SHA" --latest \
+            --title "Cyber Universe OS $TAG" \
+            --notes "Construit și testat de CI din commit-ul $GITHUB_SHA. Fișierele pentru stick: docs/USB.md (varianta B). Sumele: SHA256SUMS."
+          gh release list --limit 100 --json tagName,createdAt --jq 'sort_by(.createdAt) | reverse | .[].tagName' \
+            | grep '^os-' | tail -n +6 | while read -r old; do gh release delete "$old" --yes --cleanup-tag; done

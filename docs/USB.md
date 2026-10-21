@@ -9,6 +9,13 @@ Nu se șterge nimic de pe calculator: sistemul rulează doar de pe stick și din
   pentru varianta B (cea folosită la primul test, 21 oct): nimic în plus, doar Windows Explorer.
 
 ## 2. Descarcă imaginea
+**Cel mai simplu (de la P6-07):** pe GitHub, în depozitul `cyber-universe`, la dreapta, **Releases** → ultima versiune
+(`os-<număr>`, marcată *Latest*). Acolo sunt, fără arhivă: `cyber-universe-usb.img` (varianta A) și fișierele pentru
+varianta B (`BOOTX64.EFI`, `kernel`, `initrd.tar`, `limine.conf`, `limine-uefi-cd.bin`), plus `SHA256SUMS` (sumele de
+control) și `VERSIUNE` (din ce commit e). CI publică o versiune nouă după fiecare test verde pe `main` și le păstrează pe
+ultimele 5. Depozitul e privat, deci trebuie să fii logat pe GitHub.
+
+**Altfel (artefactul CI):**
 1. Pe GitHub, în depozitul `cyber-universe`, apasă **Actions**.
 2. Alege ultima rulare **CI** cu bifă verde.
 3. Jos, la **Artifacts**, descarcă **stick-usb** și dezarhivează-l: vei avea `cyber-universe-usb.img`.
@@ -20,7 +27,8 @@ Nu se șterge nimic de pe calculator: sistemul rulează doar de pe stick și din
 
 **Varianta B — fișiere copiate, fără Rufus/Etcher (a mers pe Lenovo, 21 oct):**
 1. Formatează stick-ul ca **FAT32** (clic dreapta pe stick în Explorer → Formatare → FAT32).
-2. Copiază în **rădăcina** stick-ului exact aceste fișiere, cu aceleași dosare (le iei din imagine sau din artefactul CI):
+2. Copiază în **rădăcina** stick-ului exact aceste fișiere, cu aceleași dosare (le iei din Release — acolo sunt fără
+   dosare, deci le pui tu în dosarele de mai jos — din imagine sau din artefactul CI):
    - `EFI/BOOT/BOOTX64.EFI`
    - `boot/kernel`
    - `boot/initrd.tar`
