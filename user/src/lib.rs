@@ -50,6 +50,7 @@ pub mod term {
 }
 
 pub mod gfx;
+pub mod https;
 pub mod net;
 pub mod settings;
 pub mod text;

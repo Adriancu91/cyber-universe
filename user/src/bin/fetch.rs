@@ -6,9 +6,8 @@
 #![no_std]
 #![no_main]
 
-use cyber_crypto::x509::{self, TrustStore, subject_id};
-use cyber_tls::{Io, MIN_BUFFER, Tls};
-use cyber_user::net::{TcpStream, parse_ip, resolve};
+use cyber_tls::MIN_BUFFER;
+use cyber_user::net::{TcpStream, resolve};
 use cyber_user::{error_text, println, write};
 
 cyber_user::entry!(main);
@@ -110,53 +109,8 @@ impl Page {
     }
 }
 
-struct Tcp(TcpStream);
-
-impl Io for Tcp {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, ()> {
-        self.0.read(buf).map_err(|_| ())
-    }
-    fn write_all(&mut self, data: &[u8]) -> Result<(), ()> {
-        self.0.write_all(data).map_err(|_| ())
-    }
-}
-
 // The program has no heap and a 64 KiB stack: the TLS buffer lives here.
 static mut TLS_BUF: [u8; MIN_BUFFER] = [0; MIN_BUFFER];
-
-/// The trusted roots in /etc/certs (tools/roots.py): only the files named after the issuer we look for are read,
-/// so the ~120 roots of the Mozilla list never need to be in memory together.
-struct EtcCerts;
-
-impl TrustStore for EtcCerts {
-    fn find(&mut self, subject: &[u8], f: &mut dyn FnMut(&[u8]) -> bool) -> bool {
-        let id = subject_id(subject);
-        let mut path = *b"/etc/certs/0123456789abcdef.0";
-        path[11..27].copy_from_slice(&id);
-        for n in 0..10u8 {
-            path[28] = b'0' + n;
-            let Ok(p) = core::str::from_utf8(&path) else { return false };
-            let fd = cyber_user::open(p);
-            if fd < 0 {
-                return false;
-            }
-            let mut der = [0u8; 4096];
-            let mut used = 0;
-            while used < der.len() {
-                let r = cyber_user::read(fd, &mut der[used..]);
-                if r <= 0 {
-                    break;
-                }
-                used += r as usize;
-            }
-            cyber_user::close(fd);
-            if f(&der[..used]) {
-                return true;
-            }
-        }
-        false
-    }
-}
 
 fn https(url: &str, address: Option<&str>) -> i64 {
     let (hostport, path) = match url.find('/') {
@@ -173,64 +127,24 @@ fn https(url: &str, address: Option<&str>) -> i64 {
         },
         None => (hostport, 443),
     };
-    let ip = match address {
-        Some(a) => match parse_ip(a) {
-            Some(ip) => ip,
-            None => {
-                println!("fetch: adresa invalida: {}", a);
-                return 1;
-            }
-        },
-        None => match resolve(host) {
-            Ok(ip) => ip,
-            Err(e) => {
-                println!("fetch: {}: {}", host, error_text(e));
-                return 1;
-            }
-        },
-    };
     // SAFETY: the program has one thread and this buffer is only borrowed here, once.
     let buf = unsafe { &mut *core::ptr::addr_of_mut!(TLS_BUF) };
-    // The real-time clock (taken as UTC) decides whether certificates are still valid.
-    let Some(t) = cyber_user::time() else {
-        println!("fetch: ceasul nu e disponibil");
-        return 1;
-    };
-    let now = t.year as u64 * 10_000_000_000
-        + t.month as u64 * 100_000_000
-        + t.day as u64 * 1_000_000
-        + t.hour as u64 * 10_000
-        + t.minute as u64 * 100
-        + t.second as u64;
-    let mut random = [0u8; 64];
-    if !cyber_user::random(&mut random) {
-        println!("fetch: numere aleatoare indisponibile");
-        return 1;
-    }
-    let mut io = match TcpStream::connect(ip, port, 5000) {
-        Ok(c) => Tcp(c),
-        Err(e) => {
-            println!("fetch: {}:{}: {}", host, port, error_text(e));
-            return 1;
-        }
-    };
-    let mut tls = match Tls::connect(&mut io, host, &mut EtcCerts, now, &random, buf) {
-        Ok(t) => t,
-        Err(cyber_tls::Error::Certificate(x509::Error::UnknownIssuer)) => {
-            println!("fetch: TLS refuzat: emitent necunoscut (nicio radacina potrivita in /etc/certs)");
-            return 1;
-        }
-        Err(e) => {
-            println!("fetch: TLS refuzat: {:?}", e);
-            return 1;
-        }
-    };
+    let Some((mut io, mut tls)) = cyber_user::https::open("fetch", host, port, address, buf) else { return 1 };
     println!("fetch: TLS 1.3 cu {} (certificat verificat)", host);
+    // The whole request in one TLS record: some servers do not answer a request split over several records.
+    let mut req = [0u8; 1024];
+    let mut n = 0;
     for part in ["GET ", path, " HTTP/1.0\r\nHost: ", host, "\r\nUser-Agent: CyberUniverse\r\nConnection: close\r\n\r\n"] {
-        if let Err(e) = tls.send(&mut io, part.as_bytes()) {
-            println!("fetch: trimitere: {:?}", e);
+        if n + part.len() > req.len() {
+            println!("fetch: adresa e prea lunga");
             return 1;
         }
+        req[n..n + part.len()].copy_from_slice(part.as_bytes());
+        n += part.len();
+    }
+    if let Err(e) = tls.send(&mut io, &req[..n]) {
+        println!("fetch: trimitere: {:?}", e);
+        return 1;
     }
     let mut page = Page::new();
     let mut chunk = [0u8; 2048];
@@ -238,7 +152,13 @@ fn https(url: &str, address: Option<&str>) -> i64 {
         match tls.recv(&mut io, &mut chunk) {
             Ok(0) => break,
             Ok(n) => page.feed(&chunk[..n]),
-            Err(cyber_tls::Error::Io) => break, // closed without close_notify: the page may be cut
+            Err(cyber_tls::Error::Io) => {
+                // Closed without close_notify: the page may be cut.
+                if page.total == 0 {
+                    println!("fetch: conexiunea s-a inchis fara raspuns");
+                }
+                break;
+            }
             Err(e) => {
                 println!("\nfetch: primire: {:?}", e);
                 return 1;
