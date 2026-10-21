@@ -14,7 +14,12 @@
   la fiecare citire, `net` arată legătura/`PHYstatus`/`ISR`/revizia; DHCP reîncearcă la 10 s după adresa de rezervă (și `net`
   spune că e de rezervă); stick-uri fără tabelă de partiții și MBR cu alt tip, comenzi SCSI TEST UNIT READY + REQUEST SENSE la
   pornirea stick-ului (~3 s); `hw` arată motivul când `/usb` nu e montat. Scenariu nou `usb-floppy`. 42/42 scenarii, `rtl8168` 14 teste.
-- **De la Adrian (testul 3):** aceeași listă, cu imaginea nouă: `net` (poză: linia „legatura: …”), `ping 1.1.1.1`, `hw` (linia `/usb`).
+- **Comanda C-4 (00:15) gata în `f7a455f` (CI verde):** pe lângă cele de mai sus, P6-01b/c/d în TASKS (cu planuri): registrele
+  Realtek citite înapoi în jurnal (`net: rtl8168 registre: …`, cu „(GRESIT)” dacă adresele inelelor nu s-au prins), `net` cu
+  pachetele pierdute de placă (MPC), ISR văzut și starea descriptorului RX; comanda **`log [cuvânt] [n]`** (jurnal de 64 KiB în
+  memorie); **fără DHCP nu mai există adresă de rezervă** (`net` → „fara adresa”).
+- **De la Adrian (testul 3):** lista e în hub (`stare/cyber-universe.md`). Dacă tot primește 0: din `log rtl` se vede ce registru
+  nu a „prins” — de acolo pornește sesiunea următoare.
 
 - **Data:** 2026-10-21, 19:46–20:20 UTC (22:46–23:20 ora României), sesiune programată în cloud, fără Adrian.
 - **Deblocat:** comanda C-2 din hub (primul test pe hardware real a reușit, Lenovo ThinkPad AMD) a ridicat oprirea
