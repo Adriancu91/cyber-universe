@@ -8,6 +8,7 @@ pub mod chacha20;
 pub mod der;
 pub mod hkdf;
 pub mod hmac;
+pub mod ecp;
 pub mod p256;
 pub mod poly1305;
 pub mod rsa;

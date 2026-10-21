@@ -1,0 +1,3 @@
+# Scenarios with real sites on the internet (P6-02). Same format as scenarios.txt. Run with `tools/test.sh --real`
+# (workflow .github/workflows/real.yml), not in the normal CI: they depend on sites we do not control.
+https-real | test-https-real | success | net: DHCP;;certificat verificat;;test: fetch https://example.com/ a iesit cu codul 0;;test: fetch https://letsencrypt.org/ a iesit cu codul 0;;test: fetch https://www.google.com/ a iesit cu codul 0;;TEST READY | |

@@ -241,6 +241,8 @@ fn run_tests() -> ! {
     test_crypto();
     #[cfg(feature = "test-https")]
     test_https();
+    #[cfg(feature = "test-https-real")]
+    test_https_real();
     #[cfg(feature = "test-usb")]
     assert!(boot::medium() == boot::Medium::Disk, "test: pornit de pe {:?}, nu de pe stick", boot::medium());
     #[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
@@ -357,9 +359,10 @@ fn test_frames() {
 /// them all: proves nothing still in use (page tables, stack, Limine data) was handed to the allocator.
 #[cfg(feature = "qemu-test")]
 fn test_all_frames() {
+    // Reserve the list first, so the heap does not need to grow while every frame is taken; growing the heap for
+    // the list itself may take frames, so the count is read after it.
+    let mut frames = alloc::vec::Vec::with_capacity(mem::frame::free_frames() as usize);
     let before = mem::frame::free_frames();
-    // Reserve the list first, so the heap does not need to grow while every frame is taken.
-    let mut frames = alloc::vec::Vec::with_capacity(before as usize);
     while let Some(f) = mem::frame::alloc_frame() {
         // SAFETY: the frame was just allocated to this test and is reachable through the HHDM.
         unsafe { core::ptr::write_bytes(mem::map::phys_to_virt(f), 0xA5, mem::map::PAGE_SIZE as usize) };
@@ -1207,13 +1210,27 @@ fn test_https() {
     }
 }
 
+/// HTTPS with real sites (P6-02): /bin/fetch through QEMU's network to the internet, checked against the Mozilla roots
+/// in /etc/certs. Not in the normal CI (depends on outside sites): tests/real.txt, run by `tools/test.sh --real`.
+#[cfg(feature = "test-https-real")]
+fn test_https_real() {
+    assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
+    for url in ["https://example.com/", "https://letsencrypt.org/", "https://www.google.com/"] {
+        let start = arch::x86_64::apic::ticks();
+        let id = proc::spawn_path("/bin/fetch", &["fetch", url]).expect("test: /bin/fetch");
+        let code = proc::wait_child(id);
+        let ms = (arch::x86_64::apic::ticks() - start) * 1000 / arch::x86_64::apic::HZ;
+        info!("test: fetch {} a iesit cu codul {} in {} ms", url, code, ms);
+    }
+}
+
 /// Our own cryptography (crypto/, D-011): every official test vector, then the SHA-256 speed.
 #[cfg(feature = "test-crypto")]
 fn test_crypto() {
     use cyber_crypto::{Digest, sha2::Sha256};
     let ticks = arch::x86_64::apic::ticks();
     match cyber_crypto::vectors::self_test() {
-        Ok(n) => info!("crypto: {} vectori oficiali trecuti (SHA-256/384/512, HMAC, HKDF, TLS 1.3, X25519, ChaCha20-Poly1305, RSA, ECDSA P-256, X.509)", n),
+        Ok(n) => info!("crypto: {} vectori oficiali trecuti (SHA-256/384/512, HMAC, HKDF, TLS 1.3, X25519, ChaCha20-Poly1305, RSA, ECDSA P-256 si P-384, X.509)", n),
         Err(name) => panic!("crypto: vectorul {} a esuat", name),
     }
     let ms = (arch::x86_64::apic::ticks() - ticks) * 1000 / arch::x86_64::apic::HZ;

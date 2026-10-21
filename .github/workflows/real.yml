@@ -1,0 +1,41 @@
+name: Site-uri reale (HTTPS)
+
+# P6-02: our TLS client with the Mozilla roots against real sites, on the host and from the OS in QEMU.
+# Not part of the normal CI (depends on outside sites): daily and on demand, and when tls/, crypto/ or the roots change.
+on:
+  schedule:
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["tls/**", "crypto/**", "boot/initrd/etc/certs/**", "tests/real.txt"]
+
+jobs:
+  real:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unelte sistem (QEMU, OVMF, xorriso, unelte FAT)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86 ovmf xorriso dosfstools mtools fdisk
+
+      - name: Rust nightly
+        run: rustup toolchain install nightly --profile minimal -c rust-src -t x86_64-unknown-none
+
+      - name: Clientul TLS pe gazdă, cu site-uri reale
+        run: cd tls && cargo run --release --example real -- example.com letsencrypt.org www.google.com github.com api.anthropic.com api.github.com objects.githubusercontent.com www.wikipedia.org cloudflare.com www.microsoft.com
+
+      - name: Din OS (QEMU), cu site-uri reale
+        if: always()
+        run: tools/test.sh --real
+
+      - name: Rezultate (log serial)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rezultate-real
+          path: build/serial-*.log
+          if-no-files-found: ignore

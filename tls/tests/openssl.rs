@@ -20,6 +20,7 @@ impl Io for Tcp {
 const NOW: u64 = 20261020120000;
 const ROOT: &[u8] = include_bytes!("data/root.der");
 const OTHER_ROOT: &[u8] = include_bytes!("data/other_root.der");
+const ROOT384: &[u8] = include_bytes!("data/root384.der");
 
 fn server(name: &str) -> (Child, u16) {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests");
@@ -73,6 +74,12 @@ fn check_page(page: &[u8]) {
 #[test]
 fn ecdsa_server() {
     check_page(&fetch("ec", "test.cyber.local", &[ROOT], NOW).unwrap());
+}
+
+/// P6-02: P-384 keys everywhere and ECDSA-SHA384 (CertificateVerify 0x0503), with an intermediate, like real sites.
+#[test]
+fn p384_chain_server() {
+    check_page(&fetch("p384", "test.cyber.local", &[ROOT, ROOT384], NOW).unwrap());
 }
 
 #[test]

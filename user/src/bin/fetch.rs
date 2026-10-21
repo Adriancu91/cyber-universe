@@ -121,19 +121,22 @@ impl Io for Tcp {
 
 // The program has no heap and a 64 KiB stack: the TLS buffer and the trusted certificates live here.
 static mut TLS_BUF: [u8; MIN_BUFFER] = [0; MIN_BUFFER];
-static mut CERTS: [u8; 32 * 1024] = [0; 32 * 1024];
-const MAX_ROOTS: usize = 16;
+// P6-02: the Mozilla roots (121 files, ~130 KB of DER) plus room to grow.
+static mut CERTS: [u8; 192 * 1024] = [0; 192 * 1024];
+const MAX_ROOTS: usize = 192;
+static mut NAMES: [u8; 8192] = [0; 8192];
 
 /// Reads every file in /etc/certs (DER certificates) into CERTS; returns how many and their places.
 fn load_roots(store: &mut [u8], places: &mut [(usize, usize); MAX_ROOTS]) -> usize {
-    let mut names = [0u8; 2048];
-    let n = cyber_user::list("/etc/certs", &mut names);
+    // SAFETY: one thread; NAMES is only borrowed here.
+    let names = unsafe { &mut *core::ptr::addr_of_mut!(NAMES) };
+    let n = cyber_user::list("/etc/certs", names);
     if n <= 0 {
         return 0;
     }
     let (mut count, mut used) = (0, 0);
     for name in core::str::from_utf8(&names[..n as usize]).unwrap_or("").lines() {
-        if name.ends_with('/') || count == MAX_ROOTS {
+        if name.ends_with('/') || !name.ends_with(".der") || count == MAX_ROOTS {
             continue;
         }
         let mut path = [0u8; 128];

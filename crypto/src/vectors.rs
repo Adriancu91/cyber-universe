@@ -6,7 +6,7 @@ use crate::hmac::hmac;
 use crate::sha2::{Sha256, Sha384, Sha512};
 use crate::x25519::{x25519, x25519_base};
 use crate::x509::{self, Error as XErr};
-use crate::{aead, chacha20, p256, poly1305::Poly1305, rsa::PublicKey, vectors_rsa};
+use crate::{aead, chacha20, ecp, p256, poly1305::Poly1305, rsa::PublicKey, vectors_rsa};
 use crate::{Digest, ct_eq};
 
 /// Hex text -> bytes in `out`; returns the length.
@@ -95,6 +95,17 @@ const CERT_INTER2_A: &[u8] = include_bytes!("testcerts/inter2_a.der");
 const CERT_DEEP_LEAF: &[u8] = include_bytes!("testcerts/deep_leaf.der");
 const CERT_ROOT_B: &[u8] = include_bytes!("testcerts/root_b.der");
 const CERT_LEAF_B: &[u8] = include_bytes!("testcerts/leaf_b.der");
+
+/// ECDSA P-384 (P6-02): RFC 6979 A.2.6 key; deterministic (RFC 6979) signatures made with OpenSSL (Python `cryptography`).
+const P384_Q: &str = "04ec3a4e415b4e19a4568618029f427fa5da9a8bc4ae92e02e06aae5286b300c64def8f0ea9055866064a254515480bc138015d9b72d7d57244ea8ef9ac0c621896708a59367f9dfb9f54ca84b3f1c9db1288b231c3ae0d4fe7344fd2533264720";
+const P384_SIGS: [(&[u8], u16, &str); 6] = [
+    (b"sample", 256, "3065023021b13d1e013c7fa1392d03c5f99af8b30c570c6f98d4ea8e354b63a21d3daa33bde1e888e63355d92fa2b3c36d8fb2cd023100f3aa443fb107745bf4bd77cb3891674632068a10ca67e3d45db2266fa7d1feebefdc63eccd1ac42ec0cb8668a4fa0ab0"),
+    (b"sample", 384, "306602310094edbb92a5ecb8aad4736e56c691916b3f88140666ce9fa73d64c4ea95ad133c81a648152e44acf96e36dd1e80fabe4602310099ef4aeb15f178cea1fe40db2603138f130e740a19624526203b6351d0a3a94fa329c145786e679e7b82c71a38628ac8"),
+    (b"sample", 512, "3065023100ed0959d5880ab2d869ae7f6c2915c6d60f96507f9cb3e047c0046861da4a799cfe30f35cc900056d7c99cd78824337090230512c8cceee3890a84058ce1e22dbc2198f42323ce8aca9135329f03c068e5112dc7cc3ef3446defceb01a45c2667fdd5"),
+    (b"test", 256, "306402306d6defac9ab64dabafe36c6bf510352a4cc27001263638e5b16d9bb51d451559f918eedaf2293be5b475cc8f0188636b02302d46f3becbcc523d5f1a1256bf0c9b024d879ba9e838144c8ba6baeb4b53b47d51ab373f9845c0514eefb14024787265"),
+    (b"test", 384, "30660231008203b63d3c853e8d77227fb377bcf7b7b772e97892a80f36ab775d509d7a5feb0542a7f0812998da8f1dd3ca3cf023db023100ddd0760448d42d8a43af45af836fce4de8be06b485e9b61b827c2f13173923e06a739f040649a667bf3b828246baa5a5"),
+    (b"test", 512, "3066023100a0d5d090c9980faf3c2ce57b7ae951d31977dd11c775d314af55f76c676447d06fb6495cd21b4b6e340fc236584fb277023100976984e59b4c77b0e8e4460dca3d9f20e07b9bb1f63beefaf576f6b2e8b224634a2092cd3792e0159ad9cee37659c736"),
+];
 
 /// Runs every vector. `Ok(count)` or `Err(name of the first one that failed)`.
 pub fn self_test() -> Result<usize, &'static str> {
@@ -297,6 +308,37 @@ pub fn self_test() -> Result<usize, &'static str> {
     let mut nm = [0u8; 8];
     unhex("3006020200010201", &mut nm);
     check(p256::parse_der_sig(&nm[..8]).is_none() && p256::parse_der_sig(&[0x30, 6, 2, 1, 1, 2, 1, 1]).is_some(), "ecdsa p256: DER necanonic acceptat")?;
+
+    // ECDSA P-384 (P6-02): the same checks on the generic curve code (ecp.rs).
+    let mut q384 = [0u8; 97];
+    unhex(P384_Q, &mut q384);
+    let Some(key) = ecp::PublicKey::new(&ecp::P384, &q384) else { return Err("p384: cheie refuzata") };
+    let mut der = [0u8; 110];
+    for (msg, hash, sig) in P384_SIGS {
+        let dl = unhex(sig, &mut der);
+        let ok = |m: &[u8], d: &[u8]| match hash {
+            256 => key.verify::<Sha256>(m, d),
+            384 => key.verify::<Sha384>(m, d),
+            _ => key.verify::<Sha512>(m, d),
+        };
+        check(ok(msg, &der[..dl]), "ecdsa p384 (RFC 6979)")?;
+        let mut bad = der;
+        bad[dl - 3] ^= 0x20;
+        check(!ok(msg, &bad[..dl]) && !ok(b"altceva", &der[..dl]), "ecdsa p384: semnatura gresita acceptata")?;
+    }
+    let n384 = ecp::P384.n;
+    let mut order = [0u8; 48];
+    for i in 0..6 {
+        order[48 - 8 * (i + 1)..48 - 8 * i].copy_from_slice(&n384[i].to_be_bytes());
+    }
+    let mut one = [0u8; 48];
+    one[47] = 1;
+    let h = Sha384::digest(b"sample");
+    check(!key.verify_prehashed(&h, &[0; 48], &order) && !key.verify_prehashed(&h, &order, &one), "ecdsa p384: r sau s in afara intervalului")?;
+    q384[96] ^= 1;
+    check(ecp::PublicKey::new(&ecp::P384, &q384).is_none() && ecp::PublicKey::new(&ecp::P384, &q384[..49]).is_none(), "ecdsa p384: punct in afara curbei acceptat")?;
+    let mut rs = [0u8; 96];
+    check(!ecp::parse_der_sig(&[0x30, 7, 2, 2, 0, 1, 2, 1, 1], 48, &mut rs) && ecp::parse_der_sig(&[0x30, 6, 2, 1, 1, 2, 1, 1], 48, &mut rs), "ecdsa p384: DER necanonic acceptat")?;
 
     // X.509 chains (P5-15): certificates made with OpenSSL; the good chains pass, each broken one is refused
     // for the right reason.

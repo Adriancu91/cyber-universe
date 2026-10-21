@@ -14,8 +14,10 @@ const SHA512_RSA: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0d
 const MGF1: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x08];
 const EC_PUBLIC_KEY: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
 const PRIME256V1: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
+const SECP384R1: &[u8] = &[0x2b, 0x81, 0x04, 0x00, 0x22];
 const ECDSA_SHA256: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02];
 const ECDSA_SHA384: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x03];
+const ECDSA_SHA512: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x04];
 const OID_SHA256: &[u8] = &[0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01];
 const OID_SHA384: &[u8] = &[0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02];
 const OID_SHA512: &[u8] = &[0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03];
@@ -64,6 +66,7 @@ pub enum SigAlg {
 pub enum Key<'a> {
     Rsa { n: &'a [u8], e: &'a [u8] },
     P256(&'a [u8]), // 04 || x || y
+    P384(&'a [u8]), // 04 || x || y (97 bytes)
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -121,6 +124,7 @@ fn parse_alg(t: der::Tlv) -> Result<SigAlg, Error> {
         SHA512_RSA => no_params(&mut d, SigAlg::RsaPkcs1(Hash::Sha512)),
         ECDSA_SHA256 => no_params(&mut d, SigAlg::Ecdsa(Hash::Sha256)),
         ECDSA_SHA384 => no_params(&mut d, SigAlg::Ecdsa(Hash::Sha384)),
+        ECDSA_SHA512 => no_params(&mut d, SigAlg::Ecdsa(Hash::Sha512)),
         RSA_PSS => parse_pss(d.expect(der::SEQUENCE).ok_or(Error::Format)?.body),
         _ => Err(Error::Unsupported),
     }
@@ -193,10 +197,11 @@ fn parse_key(spki: &[u8]) -> Result<Key<'_>, Error> {
             Ok(Key::Rsa { n, e })
         }
         EC_PUBLIC_KEY => {
-            if alg.expect(der::OID).map(|o| o.body) != Some(PRIME256V1) {
-                return Err(Error::Unsupported);
+            match alg.expect(der::OID).map(|o| o.body) {
+                Some(PRIME256V1) => Ok(Key::P256(key)),
+                Some(SECP384R1) => Ok(Key::P384(key)),
+                _ => Err(Error::Unsupported),
             }
-            Ok(Key::P256(key))
         }
         _ => Err(Error::Unsupported),
     }
@@ -363,6 +368,14 @@ pub fn verify_signature(key: &Key, alg: SigAlg, msg: &[u8], sig: &[u8]) -> bool 
                 Hash::Sha512 => k.verify::<Sha512>(msg, sig),
             }
         }
+        (Key::P384(point), SigAlg::Ecdsa(h)) => {
+            let Some(k) = crate::ecp::PublicKey::new(&crate::ecp::P384, point) else { return false };
+            match h {
+                Hash::Sha256 => k.verify::<Sha256>(msg, sig),
+                Hash::Sha384 => k.verify::<Sha384>(msg, sig),
+                Hash::Sha512 => k.verify::<Sha512>(msg, sig),
+            }
+        }
         _ => false,
     }
 }
@@ -388,7 +401,7 @@ pub fn verify_chain(chain: &[&[u8]], roots: &[&[u8]], host: &[u8], now: u64) -> 
         check_time(&cur, now)?;
         // A trusted root that issued `cur` ends the chain (also when the root itself was sent along).
         for &r in roots {
-            let root = Cert::parse(r)?;
+            let Ok(root) = Cert::parse(r) else { continue }; // a root with a key type we do not support
             if root.subject == cur.issuer && cur.signed_by(&root.key).is_ok() {
                 check_time(&root, now)?;
                 return check_issuer(&root, i);

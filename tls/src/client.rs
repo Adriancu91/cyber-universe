@@ -11,7 +11,7 @@ const CHACHA20_POLY1305_SHA256: u16 = 0x1303;
 const X25519: u16 = 0x001d;
 const TLS13: u16 = 0x0304;
 /// signature_algorithms: what we can check in CertificateVerify, then the RSA PKCS#1 ones (certificates only).
-const SIG_ALGS: [u16; 7] = [0x0403, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601];
+const SIG_ALGS: [u16; 8] = [0x0403, 0x0503, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601];
 /// ServerHello.random of a HelloRetryRequest (§4.1.3).
 const HRR_RANDOM: [u8; 32] = [
     0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11, 0xbe, 0x1d, 0x8c, 0x02, 0x1e, 0x65, 0xb8, 0x91, 0xc2, 0xa2, 0x11, 0x16,
@@ -386,8 +386,10 @@ impl<'b> Tls<'b> {
         }
         {
             let mut r = Reader { b: &hs.buf[s + 4..e] };
-            let alg = match r.u16()? {
+            let scheme = r.u16()?;
+            let alg = match scheme {
                 0x0403 => SigAlg::Ecdsa(Hash::Sha256),
+                0x0503 => SigAlg::Ecdsa(Hash::Sha384),
                 0x0804 => SigAlg::RsaPss(Hash::Sha256, 32),
                 0x0805 => SigAlg::RsaPss(Hash::Sha384, 48),
                 0x0806 => SigAlg::RsaPss(Hash::Sha512, 64),
@@ -399,7 +401,13 @@ impl<'b> Tls<'b> {
             content[97] = 0;
             content[98..].copy_from_slice(&th_cert);
             let leaf = Cert::parse(&hs.buf[leaf_range.0..leaf_range.1]).map_err(Error::Certificate)?;
-            if !x509::verify_signature(&leaf.key, alg, &content, sig) {
+            // In TLS 1.3 the ECDSA schemes also fix the curve (RFC 8446 §4.2.3).
+            let curve_ok = match scheme {
+                0x0403 => matches!(leaf.key, x509::Key::P256(_)),
+                0x0503 => matches!(leaf.key, x509::Key::P384(_)),
+                _ => true,
+            };
+            if !curve_ok || !x509::verify_signature(&leaf.key, alg, &content, sig) {
                 return Err(Error::BadSignature);
             }
         }

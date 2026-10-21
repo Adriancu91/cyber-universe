@@ -26,3 +26,9 @@ refuzul pentru rădăcină necunoscută, nume greșit și certificat expirat. Ce
 cheile private sunt publice intenționat, doar pentru test).
 
 **Surse:** RFC 8446, RFC 8439, RFC 7748, RFC 5280. Cod propriu.
+
+## Site-uri reale (P6-02)
+- Clientul acceptă și `ecdsa_secp384r1_sha384` (0x0503) în CertificateVerify, cu verificarea curbei cheii (RFC 8446 §4.2.3).
+- Test pe gazdă cu un lanț P-384 (rădăcină → intermediar → server, ca la site-urile reale): `tests/data/make_p384.py`.
+- `cargo run --release --example real -- example.com ...` încearcă site-uri adevărate cu rădăcinile Mozilla din imagine
+  (rulat în workflow-ul „Site-uri reale”; din sesiunile cloud nu merge: rețeaua lor e filtrată cu un certificat propriu).

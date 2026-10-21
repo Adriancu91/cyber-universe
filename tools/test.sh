@@ -4,6 +4,7 @@
 #   tools/test.sh boot log        only the named scenarios
 #   tools/test.sh --no-build ...  reuse existing ISOs
 #   tools/test.sh --stress        5-minute stability test (tests/stress.txt), not run on every push
+#   tools/test.sh --real          real sites on the internet (tests/real.txt), not run on every push
 # Exit code: 0 = all passed, 1 = at least one failed.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/qemu-common.sh"
@@ -16,6 +17,7 @@ for arg in "$@"; do
     case "$arg" in
         --no-build) BUILD_FIRST=0 ;;
         --stress) SCENARIOS="$ROOT/tests/stress.txt"; TIMEOUT=420 ;;
+        --real) SCENARIOS="$ROOT/tests/real.txt"; TIMEOUT=120 ;;
         -*) echo "Opțiune necunoscută: $arg" >&2; exit 2 ;;
         *) ONLY+=("$arg") ;;
     esac

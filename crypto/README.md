@@ -42,3 +42,12 @@ v1.5 și PSS, o parte stricate intenționat) au primit același verdict ca la Op
 scoase de pe curbă) la fel; la P5-15, lanțurile de test au fost verificate și cu `openssl verify` (aceleași verdicte).
 
 **Surse:** RFC 5280, ITU-T X.690, RFC 4055, RFC 6125, RFC 8017 (PKCS#1), FIPS 180-4, RFC 2104, RFC 4231, RFC 5869, RFC 6979 (doar vectorii), FIPS 186-5, SEC 1, RFC 7748, RFC 8439, RFC 8446, RFC 8448. Cod propriu.
+
+## ECDSA P-384 (P6-02)
+- `ecp.rs`: verificarea semnăturilor ECDSA pe curbe cu a = −3, generică după numărul de cuvinte de 64 de biți; folosită
+  pentru **P-384** (parametrii din FIPS 186-5 / SEC 2, verificați cu OpenSSL). Aceeași metodă ca `p256.rs`.
+- De ce: multe site-uri reale au rădăcini și certificate intermediare P-384 (de ex. Let's Encrypt, Google).
+- Teste: în `vectors.rs` — cheia din RFC 6979 A.2.6 cu semnături deterministe (RFC 6979) făcute cu OpenSSL, SHA-256/384/512,
+  plus cazurile care trebuie refuzate. Verificare încrucișată în afara repo-ului: 300 de semnături aleatoare (100 stricate)
+  față de OpenSSL — zero diferențe.
+- X.509 acceptă chei P-384 și `ecdsa-with-SHA512`; rădăcinile cu chei nesuportate (P-521) sunt sărite, nu mai opresc verificarea.
