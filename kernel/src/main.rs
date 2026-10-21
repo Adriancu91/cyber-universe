@@ -243,6 +243,8 @@ fn run_tests() -> ! {
     test_https();
     #[cfg(feature = "test-https-real")]
     test_https_real();
+    #[cfg(feature = "test-claude")]
+    test_claude();
     #[cfg(feature = "test-usb")]
     assert!(boot::medium() == boot::Medium::Disk, "test: pornit de pe {:?}, nu de pe stick", boot::medium());
     #[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
@@ -1188,16 +1190,10 @@ fn test_appnet() {
 #[cfg(feature = "test-https")]
 fn test_https() {
     assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
-    // The real roots (Mozilla list, tools/roots.py) come with the image; the test root is added next to them,
-    // under the name /bin/fetch looks for (its subject id).
+    // The real roots (Mozilla list, tools/roots.py) come with the image.
     let real = fs::list("/etc/certs").map(|l| l.len()).unwrap_or(0);
     info!("test: {} radacini de incredere in /etc/certs", if real > 100 { "peste 100" } else { "prea putine" });
-    let root: &[u8] = include_bytes!("../../tls/tests/data/root.der");
-    let subject = cyber_crypto::x509::Cert::parse(root).expect("test: radacina de test").subject;
-    let id = cyber_crypto::x509::subject_id(subject);
-    let path = alloc::format!("/etc/certs/{}.0", core::str::from_utf8(&id).unwrap());
-    fs::create(&path, fs::Kind::File).expect("test: radacina de test in /etc/certs");
-    fs::write(&path, 0, root).expect("test: radacina de test");
+    add_test_root();
     let mut r = [0u8; 16];
     random::fill(&mut r);
     let mut r2 = [0u8; 16];
@@ -1215,6 +1211,44 @@ fn test_https() {
         let ms = (arch::x86_64::apic::ticks() - start) * 1000 / arch::x86_64::apic::HZ;
         info!("test: {} a iesit cu codul {} in {} ms", what, code, ms);
     }
+}
+
+/// Adds the test root (tls/tests/data, its private key is public) to /etc/certs, under the name the programs look
+/// for (its subject id). Only test builds do this.
+#[cfg(any(feature = "test-https", feature = "test-claude"))]
+fn add_test_root() {
+    let root: &[u8] = include_bytes!("../../tls/tests/data/root.der");
+    let subject = cyber_crypto::x509::Cert::parse(root).expect("test: radacina de test").subject;
+    let id = cyber_crypto::x509::subject_id(subject);
+    let path = alloc::format!("/etc/certs/{}.0", core::str::from_utf8(&id).unwrap());
+    let _ = fs::create(&path, fs::Kind::File);
+    fs::write(&path, 0, root).expect("test: radacina de test");
+}
+
+/// The Claude API client (P6-04): /bin/claude talks to the imitation of the API (tools/claude-test-server.py, reached
+/// as 10.0.2.2:18444), which checks the request; then a wrong key and a missing key. No real key is ever used here.
+#[cfg(feature = "test-claude")]
+fn test_claude() {
+    assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
+    add_test_root();
+    let conf = b"# test: the imitation of the API\nhost = test.cyber.local\nport = 18444\naddress = 10.0.2.2\nkey = /etc/claude-test.key\n";
+    let _ = fs::create("/etc/claude.conf", fs::Kind::File);
+    fs::write("/etc/claude.conf", 0, conf).expect("test: /etc/claude.conf");
+    let run = |key: Option<&[u8]>, what: &str| {
+        let _ = fs::remove("/etc/claude-test.key");
+        if let Some(k) = key {
+            fs::create("/etc/claude-test.key", fs::Kind::File).expect("test: cheia");
+            fs::write("/etc/claude-test.key", 0, k).expect("test: cheia");
+        }
+        let start = arch::x86_64::apic::ticks();
+        let id = proc::spawn_path("/bin/claude", &["claude", "Ce", "faci,", "Claude?"]).expect("test: /bin/claude");
+        let code = proc::wait_child(id);
+        let ms = (arch::x86_64::apic::ticks() - start) * 1000 / arch::x86_64::apic::HZ;
+        info!("test: claude ({}) a iesit cu codul {} in {} ms", what, code, ms);
+    };
+    run(Some(b"sk-test-cyber\n"), "cheie buna");
+    run(Some(b"sk-gresita"), "cheie gresita");
+    run(None, "fara cheie");
 }
 
 /// HTTPS with real web sites (P6-02): /bin/fetch resolves the name, connects through QEMU's network to the
@@ -1528,11 +1562,13 @@ fn test_desktop() {
     );
     serial_println!("TASTATURA: astept taste"); // the harness moves the mouse onto Start and clicks
     wait_for("meniul nu se deschide", &|| screen(150, h - 32 - 6) == Some(MENU));
-    // Menu items from the top: the programs in /bin except the desktop, sorted (cat, demo, ...)
-    // (24 pixels each, 4 of margin, the bar is 32 high); the cursor is on Start (46, h - 16); `demo` is
-    // the second.
-    let items = fs::list("/bin").expect("test: /bin").iter().filter(|(n, _)| n != "desktop").count();
-    let demo_y = h - 32 - (items * 24 + 8) + 4 + 24 + 12;
+    // Menu items from the top: the programs in /bin except the desktop, sorted (cat, claude, demo, ...)
+    // (24 pixels each, 4 of margin, the bar is 32 high); the cursor is on Start (46, h - 16).
+    let mut names: alloc::vec::Vec<_> = fs::list("/bin").expect("test: /bin").into_iter().map(|(n, _)| n).filter(|n| n != "desktop").collect();
+    names.sort();
+    let items = names.len();
+    let demo = names.iter().position(|n| n == "demo").expect("test: /bin/demo");
+    let demo_y = h - 32 - (items * 24 + 8) + 4 + demo * 24 + 12;
     push_mouse(MouseEvent { dx: 4, dy: demo_y as i16 - (h - 16) as i16, buttons: 0 });
     push_mouse(MouseEvent { dx: 0, dy: 0, buttons: 1 });
     push_mouse(MouseEvent { dx: 0, dy: 0, buttons: 0 });

@@ -28,13 +28,25 @@
   `fetch https://<nume>[:port][/cale] [adresă]` (P5-16) — la fel prin HTTPS (TLS 1.3, biblioteca `tls/`): certificatul
   serverului se verifică față de certificatele din `/etc/certs/` (DER), ora din ceasul RTC (luată ca UTC), cheile din
   apelul de sistem `random`. `adresă` = unde se conectează în loc să caute numele (numele tot trebuie să fie în certificat).
-  Deocamdată `/etc/certs/` e gol în imaginea normală (rădăcinile reale vin mai târziu); testul `https` pune acolo rădăcina de test.
+  `/etc/certs/` are rădăcinile reale (lista Mozilla, P6-02); se citește doar fișierul emitentului căutat (`src/https.rs`).
+  Testul `https` adaugă rădăcina de test; `https-real` (doar cu internet, în CI) descarcă example.com și api.github.com.
+- `claude <întrebare>` (P6-04) — întreabă Claude prin API (`POST /v1/messages`, JSON prin biblioteca `json/`, HTTPS) și
+  scrie răspunsul. Cheia: un rând în `/usb/claude.key` — **nu se afișează și nu intră niciodată în repo**. `/etc/claude.conf`
+  (opțional, rânduri `nume = valoare`): `model` (implicit `claude-sonnet-5-5`), `max_tokens` (1024), `host`, `port`,
+  `address`, `key` (alt fișier cu cheia). Erori pe înțeles: fără cheie, cheie greșită (401), prea multe cereri (429),
+  supraîncărcat (529). Test: scenariul `claude-cli`, față de o imitație a API-ului (`tools/claude-test-server.py`,
+  verifică antetele și JSON-ul cererii; răspunde „chunked” și cu `\u` în text), fără nicio cheie reală.
 - `udp <adresă> <port> <text>` (P5-05) — trimite textul într-o datagramă UDP și scrie răspunsul (așteaptă 3 s).
 - **Rețea (`src/net.rs`):** `resolve(nume)`, `TcpStream::connect/write_all/read`, `UdpSocket::bind/send_to/recv_from`,
   `info()`, `ping()`, `parse_ip()`; fără heap. Socket-urile se închid când obiectul dispare (și când programul iese).
 - **Ferestre (`src/gfx.rs`):** `Window::open(titlu, l, î)`, `Canvas` (imaginea în memoria programului, `fill`),
   `present`/`present_all`, `draw` (o imagine mică oriunde în fereastră), `fill`, `Canvas::text` (același font ca
   nucleul), `Window::open_desktop`, `wait_event_for(ms)`, `wait_event()` → `Event::Key(c)` sau `Event::Click { x, y, buttons }`, `close()`.
+- **HTTPS (`src/https.rs`):** `open(program, gazdă, port, adresă, buffer)` → (`Tcp`, `Tls`) cu certificatul verificat
+  față de `/etc/certs` (`EtcCerts`), `now()` (ora pentru certificate).
+- **Heap (`src/heap.rs`, P6-04):** `cyber_user::heap!(MĂRIME);` dă programului un alocator peste o zonă statică, ca să
+  poată folosi `alloc` (Vec, String, JSON). Simplu: memoria eliberată revine doar când e ultimul bloc sau când totul e
+  eliberat — potrivit pentru comenzi care fac un lucru și ies; pentru aplicații de lungă durată (P6-05) trebuie unul mai bun.
 - **Biblioteca** are și `text::Line` (text fără heap), `mem_info`, `programs`, `kill`, `create`, `remove`, `spawn`, `spawn_with` (program + un argument), `wait`, `settings` (citirea setărilor), `list`, `time`, `screen_size`, și `open`, `read`, `close`, `stat`, `args()` (argumentele programului) și `error_text`.
 - **Cum se testează:** scenariul `log` (`hello din ELF`, `test: ELF OK`).
 - **Depinde de:** apelurile de sistem ale nucleului (`kernel/src/syscall/README.md`).

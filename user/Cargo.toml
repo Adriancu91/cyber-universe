@@ -8,6 +8,7 @@ description = "Cyber Universe OS user programs and their small runtime library"
 [dependencies]
 cyber_crypto = { path = "../crypto" }
 cyber_tls = { path = "../tls" }
+cyber_json = { path = "../json" }
 
 [lib]
 path = "src/lib.rs"

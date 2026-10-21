@@ -7,6 +7,10 @@ name = "cyber_crypto"
 version = "0.1.0"
 
 [[package]]
+name = "cyber_json"
+version = "0.1.0"
+
+[[package]]
 name = "cyber_tls"
 version = "0.1.0"
 dependencies = [
@@ -18,5 +22,6 @@ name = "cyber_user"
 version = "0.1.0"
 dependencies = [
  "cyber_crypto",
+ "cyber_json",
  "cyber_tls",
 ]
