@@ -2,13 +2,24 @@
 
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
-## Ultima sesiune
-- **2026-10-21, 02:41–02:50 UTC (05:41 ora României), sesiune programată:** tot nicio sarcină liberă și nicio comandă nouă
-  pentru `cyber-universe` în `COMENZI.md`; nicio decizie nouă în `DECIZII.md`; CI verde (rularea 90, `9973b59`). Nu s-a
-  schimbat cod; uneltele nu s-au instalat (nu era nimic de construit). **A doua sesiune la rând fără sarcină terminată**
-  (motiv: lipsa sarcinilor). Dacă și următoarea nu are ce face, regula de oprire cere „OPRIT: necesită analiza lui Adrian”.
+## OPRIT: necesită analiza lui Adrian
+Trei sesiuni programate la rând (2026-10-20 23:41, 2026-10-21 02:41 și 05:41 UTC) n-au terminat nicio sarcină, pentru că
+**nu mai există sarcini libere** (nu e un eșec tehnic). Sesiunile următoare NU încep sarcini noi până când Adrian:
+- răspunde la întrebarea din hub (închiderea Fazei 5 fără P5-07/P5-08, ca să pornească Faza 6), sau
+- trimite o comandă nouă pentru `cyber-universe` în `COMENZI.md` din hub, sau
+- trimite rezultatele testului de pe stick (B-001 → P3-09, P3-10).
+O sesiune care găsește una dintre acestea șterge secțiunea „OPRIT” și reia lucrul normal.
 
-### Sesiunea precedentă fără lucru
+## Ultima sesiune
+- **2026-10-21, 05:41–05:50 UTC (08:41 ora României), sesiune programată:** a treia la rând fără sarcină liberă și fără
+  comandă nouă în `COMENZI.md`; nicio decizie nouă în `DECIZII.md`; CI verde (rularea pentru `e628f2a`). Nu s-a schimbat
+  cod; uneltele nu s-au instalat (nu era nimic de construit). S-a aplicat regula de oprire: „OPRIT” mai sus.
+
+### Sesiunea precedentă fără lucru (a doua)
+- **2026-10-21, 02:41–02:50 UTC (05:41 ora României), sesiune programată:** nicio sarcină liberă și nicio comandă nouă;
+  CI verde (rularea 90, `9973b59`). Nu s-a schimbat cod.
+
+### Prima sesiune fără lucru
 - **2026-10-20, 23:41–23:50 UTC (02:41 ora României), sesiune programată:** nicio sarcină liberă și nicio comandă nouă
   pentru `cyber-universe` în `COMENZI.md` (hub); CI verde (rularea 89, `cd76b1e`). Nu s-a schimbat cod; uneltele nu s-au
   instalat (nu era nimic de construit). Întrebarea pentru Adrian (închiderea Fazei 5) rămâne deschisă.
