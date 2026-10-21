@@ -3,38 +3,16 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
-- **2026-10-21, 17:41 UTC (20:41 ora României), sesiune programată:** tot oprit, conform deciziei lui Adrian de la 10:05;
-  nicio comandă nouă în `COMENZI.md`, niciun rezultat de pe stick, nicio decizie nouă în `DECIZII.md`; CI verde (rularea 95,
-  `73ee315`). Nu s-a schimbat cod; uneltele nu s-au instalat.
-
-### Sesiunea precedentă (oprit, 14:41)
-- **2026-10-21, 14:41 UTC (17:41 ora României), sesiune programată:** tot oprit, conform deciziei lui Adrian de la 10:05;
-  nicio comandă nouă în `COMENZI.md`, niciun rezultat de pe stick, nicio decizie nouă în `DECIZII.md`; CI verde (rularea 94,
-  `66ba21c`). Nu s-a schimbat cod; uneltele nu s-au instalat.
-
-### Sesiunea precedentă (oprit, 11:41)
-- **2026-10-21, 11:41 UTC (14:41 ora României), sesiune programată:** tot oprit, conform deciziei lui Adrian de la 10:05;
-  nicio comandă nouă în `COMENZI.md`, niciun rezultat de pe stick, nicio decizie nouă în `DECIZII.md`; CI verde (rularea 93,
-  `11541ce`), testul de stres zilnic verde (prima rulare). Nu s-a schimbat cod; uneltele nu s-au instalat.
-
-### Sesiunea precedentă (oprit)
-- **2026-10-21, 08:41 UTC (11:41 ora României), sesiune programată:** oprit, conform deciziei lui Adrian de la 10:05;
-  nicio comandă nouă în `COMENZI.md`, niciun rezultat de pe stick; CI verde (rularea pentru `c929036`). Nu s-a schimbat cod.
-
-### Sesiunea precedentă (a treia fără lucru)
-- **2026-10-21, 05:41–05:50 UTC (08:41 ora României), sesiune programată:** a treia la rând fără sarcină liberă și fără
-  comandă nouă în `COMENZI.md`; nicio decizie nouă în `DECIZII.md`; CI verde (rularea pentru `e628f2a`). Nu s-a schimbat
-  cod; uneltele nu s-au instalat (nu era nimic de construit). S-a aplicat regula de oprire: „OPRIT” mai sus.
-
-### Sesiunea precedentă fără lucru (a doua)
-- **2026-10-21, 02:41–02:50 UTC (05:41 ora României), sesiune programată:** nicio sarcină liberă și nicio comandă nouă;
-  CI verde (rularea 90, `9973b59`). Nu s-a schimbat cod.
-
-### Prima sesiune fără lucru
-- **2026-10-20, 23:41–23:50 UTC (02:41 ora României), sesiune programată:** nicio sarcină liberă și nicio comandă nouă
-  pentru `cyber-universe` în `COMENZI.md` (hub); CI verde (rularea 89, `cd76b1e`). Nu s-a schimbat cod; uneltele nu s-au
-  instalat (nu era nimic de construit). Întrebarea pentru Adrian (închiderea Fazei 5) rămâne deschisă.
-  Prima sesiune la rând fără sarcină terminată (motiv: lipsa sarcinilor, nu un eșec).
+- **Data:** 2026-10-21, 19:46–20:20 UTC (22:46–23:20 ora României), sesiune programată în cloud, fără Adrian.
+- **Deblocat:** comanda C-2 din hub (primul test pe hardware real a reușit, Lenovo ThinkPad AMD) a ridicat oprirea
+  din 10:05; secțiunea „OPRIT” a fost ștearsă. Comanda C-3 (Faza 6) a fost preluată după C-2.
+- **Terminate (4 sarcini):** P3-09 (rezultatul testului în `HARDWARE.md`, B-001 rezolvat, `USB.md` cu varianta FAT32 și
+  nota despre Secure Boot), P3-11 (comanda `hw` — raport hardware pe o pagină), P5-09 (Faza 5 închisă fără P5-07/P5-08,
+  mutate după suită; rând nou în `METRICS.md`), P6-01 (driver Realtek RTL8168/8111: crate `rtl8168/` cu model al cipului,
+  interfață comună `nic::Card` pentru e1000 și Realtek). Faza 6 planificată: P6-01 … P6-10 cu planuri (D-012).
+- **Build:** OK, fără avertismente. **Teste:** `tools/test.sh` → 41 de scenarii trecute (`shell` verifică și `hw`);
+  `cd rtl8168 && cargo test --release` → 11 teste; CI verde pe `c8fac5a` și `a58aef3` (rularea pentru `cfd1dc5` pornită la final).
+- Sesiunile 2026-10-20 23:41 … 2026-10-21 17:41: oprite (fără sarcini, apoi decizia lui Adrian din 10:05); nu s-a schimbat cod.
 
 ### Sesiunea anterioară (cu lucru)
 - **Data:** 2026-10-20, 20:41–22:25 UTC (23:41–01:25 ora României), sesiune programată în cloud, fără Adrian.
@@ -54,14 +32,9 @@
   lanțurile cu `openssl verify` — zero diferențe. CI verde pe toate commit-urile terminate (ultimele încă rulau la final).
 
 ## Următoarea sarcină
-**Niciuna liberă; OS oprit prin decizia lui Adrian (2026-10-21 10:05).** Ce poate debloca:
-1. Rezultatele testului de pe stick (B-001) → P3-09, apoi P3-10.
-2. Sau sarcini noi aprobate prin `COMENZI.md` din hub (ex. rădăcinile reale de încredere — ISRG Root X1 etc. — ca
-   `fetch https://` să meargă cu site-uri adevărate; azi `/etc/certs/` e gol în imaginea normală).
-Faza 5 NU se închide și Faza 6 NU pornește fără o decizie nouă a lui Adrian.
-Când Adrian trimite rezultatele de pe stick (B-001): P3-09, apoi P3-10. Suita office gata (B-003): P5-07, P5-08.
-Atenție: dacă 3 sesiuni la rând nu termină nimic, regula de oprire cere „OPRIT: necesită analiza lui Adrian” (aici motivul
-e lipsa sarcinilor, nu un eșec).
+**P6-02** — rădăcinile reale de încredere (lista Mozilla, ca date) + `fetch https://` cu un site real (plan: `docs/plans/P6-02.md`).
+Apoi P6-03 (JSON), P6-04 … P6-09 în ordine. P3-10 așteaptă pozele testului 2 de la Adrian; P5-07/P5-08 după suită.
+Driverul Realtek (P6-01) nu poate fi testat în QEMU: confirmarea vine de la Adrian (cablu + `net` + `ping 1.1.1.1`).
 
 ## Mediu (verificat la P0-01, sesiune cloud)
 | Unealtă | Versiune |
@@ -99,6 +72,8 @@ e lipsa sarcinilor, nu un eșec).
 - Build-ul normal pornește desktopul; build-ul de test nu (testele pornesc ce le trebuie).
 - Scenariile cu servere de test pe gazdă: `tools/before-<scenariu>.sh` pornește înainte de QEMU și e oprit după
   (`dns`: server DNS 15353; `tcp`: server web 18080; `appnet`: amândouă + ecou UDP 15354). Nucleul le vede la 10.0.2.2.
+- Plăcile de rețea: `drivers/nic.rs` (`Card`, `NIC`); logica Realtek în crate-ul `rtl8168/` (teste pe gazdă cu `src/model.rs`).
+  Un driver nou de placă implementează `Card` și se adaugă în `nic::init_global` și `nic::driver_for` (`hw` îl arată).
 - Criptografia e în crate-ul `crypto/` (fără dependențe); nucleul o folosește pentru `random` (SHA-256) și testul `crypto`.
   Clientul TLS 1.3 e în `tls/` (folosit de `/bin/fetch`). Numerele aleatoare: `kernel/src/random.rs` — fără RDRAND (QEMU-ul
   de test) se bazează doar pe TSC: bune pentru teste, slabe în fața unui atacator serios.
