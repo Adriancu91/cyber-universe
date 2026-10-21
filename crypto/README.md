@@ -15,19 +15,24 @@
 - `bignum.rs` (P5-13) — numere mari fără heap (până la 4096 de biți, cuvinte de 64 de biți), înmulțire Montgomery, exponențiere;
 - `rsa.rs` (P5-13) — verificarea semnăturilor RSA (RFC 8017): PKCS#1 v1.5 și PSS (MGF1), cu SHA-256/384/512; refuză
   lungimi greșite, semnături ≥ n, umpluturi greșite; chei de 1024–4096 de biți;
-- `p256.rs` (P5-14) — verificarea semnăturilor ECDSA pe curba P-256 (FIPS 186-5): câmpul și ordinul în formă Montgomery
-  (4 cuvinte de 64 de biți), puncte în coordonate Jacobi, u1·G + u2·Q dintr-o singură trecere; cheia publică e verificată
-  că stă pe curbă; semnătura se citește din DER strict (`parse_der_sig`);
+- `ec.rs` (P5-14, generalizat la P6-02) — verificarea semnăturilor ECDSA pe curbele NIST cu a = −3 (FIPS 186-5): câmpul și
+  ordinul în formă Montgomery (L cuvinte de 64 de biți), puncte în coordonate Jacobi, u1·G + u2·Q dintr-o singură trecere;
+  cheia publică e verificată că stă pe curbă; semnătura se citește din DER strict (`parse_der_sig`);
+- `p256.rs` (P5-14), `p384.rs` (P6-02) — constantele curbelor P-256 și P-384 (SP 800-186) peste `ec.rs`. P-384 e folosită
+  de multe autorități (ISRG Root X2, intermediarii Let's Encrypt E…, GTS Root R4, DigiCert G3);
 - `der.rs` (P5-15) — cititor DER strict (etichete de un octet, lungimi minime; restul e refuzat);
-- `x509.rs` (P5-15) — certificate X.509 v3 (RFC 5280): emitent, subiect, valabilitate, cheia (RSA sau P-256), extensiile
+- `x509.rs` (P5-15) — certificate X.509 v3 (RFC 5280): emitent, subiect, valabilitate, cheia (RSA, P-256 sau P-384; alte chei și algoritmi —
+  de ex. SHA-1 pe rădăcini vechi — se pot citi, dar nimic semnat cu ele nu e acceptat), extensiile
   de bază (CA, lungimea lanțului, folosirea cheii, numele DNS); extensie critică necunoscută = refuz. `verify_chain`
   verifică lanțul server → intermediari → rădăcină de încredere (semnături, date, CA, lungime, numele serverului,
-  inclusiv `*.`); `verify_signature` va servi și la TLS (CertificateVerify);
+  inclusiv `*.`); `verify_chain_in` ia rădăcinile dintr-un `TrustStore` (în OS: fișierele din `/etc/certs`, căutate după
+  `subject_id` = primii 8 octeți din SHA-256 al numelui); `verify_signature` servește și la TLS (CertificateVerify);
 - `testcerts/` — certificatele de test (vezi README-ul de acolo);
 - `vectors_rsa.rs` — chei și semnături RSA făcute cu OpenSSL (2047, 2048, 2049, 3072, 4096 de biți; e = 3 și 65537);
 - `vectors.rs` — vectorii oficiali (FIPS 180-4, RFC 4231, RFC 5869, RFC 6979 (doar vectorii), FIPS 186-5, SEC 1, RFC 7748, RFC 8439, RFC 8448), rulați de `self_test()`.
 
-Urmează: TLS 1.3 (P5-06), care le folosește pe toate.
+`tests/roots.rs` (P6-02) citește toate rădăcinile reale din `boot/certs/` (lista Mozilla, `tools/roots.py`) și verifică
+că numele fișierelor se potrivesc cu `subject_id`.
 
 **Atenție:** codul nu e auditat de specialiști în securitate. Trece vectorii oficiali, dar nu se folosește pentru date
 sensibile până la o verificare separată (D-011).
@@ -35,10 +40,10 @@ sensibile până la o verificare separată (D-011).
 **Depinde de:** nimic. Nucleul îl folosește doar în testul `crypto` deocamdată (dependență opțională).
 
 **Cum se testează:** `cd crypto && cargo test --release` pe gazdă (și în CI); scenariul QEMU `crypto`
-(`crypto: 108 vectori oficiali trecuti`, plus viteza SHA-256 și ChaCha20-Poly1305 în emulare).
+(`crypto: 118 vectori oficiali trecuti`, plus viteza SHA-256 și ChaCha20-Poly1305 în emulare).
 Valorile așteptate au fost verificate și cu OpenSSL (pachetul Python `cryptography`), iar la P5-12 încă 300 de
 mesaje aleatoare (lungimi 0–299, date adiționale 0–69 octeți) au dat exact aceleași rezultate ca OpenSSL; la P5-13, 116 semnături RSA pe 40 de chei aleatoare (1024–4096 de biți,
 v1.5 și PSS, o parte stricate intenționat) au primit același verdict ca la OpenSSL; la P5-14, 200 de semnături ECDSA P-256 (SHA-256/384, o parte stricate, chei
-scoase de pe curbă) la fel; la P5-15, lanțurile de test au fost verificate și cu `openssl verify` (aceleași verdicte).
+scoase de pe curbă) la fel; la P6-02, 200 de semnături ECDSA P-384 (SHA-256/384/512, o treime stricate) la fel; la P5-15, lanțurile de test au fost verificate și cu `openssl verify` (aceleași verdicte).
 
 **Surse:** RFC 5280, ITU-T X.690, RFC 4055, RFC 6125, RFC 8017 (PKCS#1), FIPS 180-4, RFC 2104, RFC 4231, RFC 5869, RFC 6979 (doar vectorii), FIPS 186-5, SEC 1, RFC 7748, RFC 8439, RFC 8446, RFC 8448. Cod propriu.

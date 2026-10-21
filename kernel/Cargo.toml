@@ -48,6 +48,8 @@ test-appnet = ["qemu-test"]
 test-crypto = ["qemu-test"]
 # P5-16: /bin/fetch over HTTPS (TLS 1.3) against tools/before-https.sh.
 test-https = ["qemu-test"]
+# P6-02: fetch https:// from real web sites (needs internet: the scenario runs only with CYBER_NET=1, e.g. in CI).
+test-https-real = ["qemu-test"]
 # P4-01: the harness moves the mouse and clicks; the kernel must receive both events.
 test-mouse = ["qemu-test"]
 # P4-04: two windows; the harness types keys and drags the top one by its title bar with the mouse.

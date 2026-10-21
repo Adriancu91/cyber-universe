@@ -3,6 +3,7 @@
 #   tools/test.sh                 all scenarios
 #   tools/test.sh boot log        only the named scenarios
 #   tools/test.sh --no-build ...  reuse existing ISOs
+#   CYBER_NET=1 tools/test.sh    also the scenarios marked `internet` (real web sites)
 #   tools/test.sh --stress        5-minute stability test (tests/stress.txt), not run on every push
 # Exit code: 0 = all passed, 1 = at least one failed.
 set -uo pipefail
@@ -25,7 +26,7 @@ find_ovmf || exit 1
 mkdir -p "$BUILD"
 trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; echo "${s%"${s##*[![:space:]]}"}"; }
 
-passed=0; failed=0; failed_names=()
+passed=0; failed=0; skipped=0; failed_names=()
 while IFS='|' read -r name features ending expects screenshot qextra; do
     name="$(trim "$name")"
     [[ -z "$name" || "$name" == \#* ]] && continue
@@ -34,6 +35,13 @@ while IFS='|' read -r name features ending expects screenshot qextra; do
     expects="$(trim "$expects")"; screenshot="$(trim "${screenshot:-}")"; qextra="$(trim "${qextra:-}")"
 
     echo "== scenariu: $name"
+    # `internet` in the QEMU column: the scenario talks to real web sites; it runs only with CYBER_NET=1 (CI).
+    if [[ "$qextra" =~ (^|[[:space:]])internet($|[[:space:]]) ]]; then
+        if [[ "${CYBER_NET:-}" != "1" ]]; then
+            echo "[test] sarit: are nevoie de internet (CYBER_NET=1)"; skipped=$((skipped+1)); continue
+        fi
+        qextra="${qextra/internet/}"
+    fi
     build_args=(--test); [[ -n "$features" ]] && build_args+=(--features "$features")
     iso="$BUILD/cyber-universe-test.iso"
     [[ -n "$features" ]] && iso="$BUILD/cyber-universe-test-$(echo "$features" | tr ',' '-').iso"
@@ -103,5 +111,5 @@ while IFS='|' read -r name features ending expects screenshot qextra; do
     fi
 done < "$SCENARIOS"
 
-echo "== rezultat: $passed trecute, $failed eșuate${failed_names:+ (${failed_names[*]})}"
+echo "== rezultat: $passed trecute, $failed eșuate${failed_names:+ (${failed_names[*]})}$( (( skipped )) && echo ", $skipped sarite (fara internet)")"
 (( failed == 0 && passed > 0 ))

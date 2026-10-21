@@ -43,8 +43,8 @@ jobs:
       - name: Driver Realtek RTL8168 — față de modelul cipului, pe gazdă (rtl8168/)
         run: cd rtl8168 && cargo test --release
 
-      - name: Build + test în QEMU
-        run: tools/test.sh
+      - name: Build + test în QEMU (cu scenariile care au nevoie de internet)
+        run: CYBER_NET=1 tools/test.sh
 
       - name: Imagine pentru stick USB (docs/USB.md)
         run: tools/build.sh --usb

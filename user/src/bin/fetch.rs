@@ -1,10 +1,12 @@
 //! fetch <name> [port] [path]: downloads a web page over plain HTTP (TCP) and prints it (headers removed).
 //! fetch https://<name>[:port][/path] [address]: the same over TLS 1.3 (tls/), trusting the certificates in
-//! /etc/certs; `address` connects there instead of resolving the name (the name still has to match the certificate).
+//! /etc/certs (looked up by the issuer's name, see tools/roots.py); `address` connects there instead of
+//! resolving the name (the name still has to match the certificate).
 //! Exit code 0 if the server answered 200, otherwise 1.
 #![no_std]
 #![no_main]
 
+use cyber_crypto::x509::{self, TrustStore, subject_id};
 use cyber_tls::{Io, MIN_BUFFER, Tls};
 use cyber_user::net::{TcpStream, parse_ip, resolve};
 use cyber_user::{error_text, println, write};
@@ -119,50 +121,41 @@ impl Io for Tcp {
     }
 }
 
-// The program has no heap and a 64 KiB stack: the TLS buffer and the trusted certificates live here.
+// The program has no heap and a 64 KiB stack: the TLS buffer lives here.
 static mut TLS_BUF: [u8; MIN_BUFFER] = [0; MIN_BUFFER];
-static mut CERTS: [u8; 32 * 1024] = [0; 32 * 1024];
-const MAX_ROOTS: usize = 16;
 
-/// Reads every file in /etc/certs (DER certificates) into CERTS; returns how many and their places.
-fn load_roots(store: &mut [u8], places: &mut [(usize, usize); MAX_ROOTS]) -> usize {
-    let mut names = [0u8; 2048];
-    let n = cyber_user::list("/etc/certs", &mut names);
-    if n <= 0 {
-        return 0;
-    }
-    let (mut count, mut used) = (0, 0);
-    for name in core::str::from_utf8(&names[..n as usize]).unwrap_or("").lines() {
-        if name.ends_with('/') || count == MAX_ROOTS {
-            continue;
-        }
-        let mut path = [0u8; 128];
-        let full = b"/etc/certs/";
-        if full.len() + name.len() > path.len() {
-            continue;
-        }
-        path[..full.len()].copy_from_slice(full);
-        path[full.len()..full.len() + name.len()].copy_from_slice(name.as_bytes());
-        let Ok(p) = core::str::from_utf8(&path[..full.len() + name.len()]) else { continue };
-        let fd = cyber_user::open(p);
-        if fd < 0 {
-            continue;
-        }
-        let start = used;
-        loop {
-            let r = cyber_user::read(fd, &mut store[used..]);
-            if r <= 0 {
-                break;
+/// The trusted roots in /etc/certs (tools/roots.py): only the files named after the issuer we look for are read,
+/// so the ~120 roots of the Mozilla list never need to be in memory together.
+struct EtcCerts;
+
+impl TrustStore for EtcCerts {
+    fn find(&mut self, subject: &[u8], f: &mut dyn FnMut(&[u8]) -> bool) -> bool {
+        let id = subject_id(subject);
+        let mut path = *b"/etc/certs/0123456789abcdef.0";
+        path[11..27].copy_from_slice(&id);
+        for n in 0..10u8 {
+            path[28] = b'0' + n;
+            let Ok(p) = core::str::from_utf8(&path) else { return false };
+            let fd = cyber_user::open(p);
+            if fd < 0 {
+                return false;
             }
-            used += r as usize;
+            let mut der = [0u8; 4096];
+            let mut used = 0;
+            while used < der.len() {
+                let r = cyber_user::read(fd, &mut der[used..]);
+                if r <= 0 {
+                    break;
+                }
+                used += r as usize;
+            }
+            cyber_user::close(fd);
+            if f(&der[..used]) {
+                return true;
+            }
         }
-        cyber_user::close(fd);
-        if used > start {
-            places[count] = (start, used);
-            count += 1;
-        }
+        false
     }
-    count
 }
 
 fn https(url: &str, address: Option<&str>) -> i64 {
@@ -196,18 +189,8 @@ fn https(url: &str, address: Option<&str>) -> i64 {
             }
         },
     };
-    // SAFETY: the program has one thread and these buffers are only borrowed here, once.
-    let (store, buf) = unsafe { (&mut *core::ptr::addr_of_mut!(CERTS), &mut *core::ptr::addr_of_mut!(TLS_BUF)) };
-    let mut places = [(0usize, 0usize); MAX_ROOTS];
-    let count = load_roots(store, &mut places);
-    let mut roots: [&[u8]; MAX_ROOTS] = [&[]; MAX_ROOTS];
-    for i in 0..count {
-        roots[i] = &store[places[i].0..places[i].1];
-    }
-    if count == 0 {
-        println!("fetch: niciun certificat de incredere in /etc/certs");
-        return 1;
-    }
+    // SAFETY: the program has one thread and this buffer is only borrowed here, once.
+    let buf = unsafe { &mut *core::ptr::addr_of_mut!(TLS_BUF) };
     // The real-time clock (taken as UTC) decides whether certificates are still valid.
     let Some(t) = cyber_user::time() else {
         println!("fetch: ceasul nu e disponibil");
@@ -231,8 +214,12 @@ fn https(url: &str, address: Option<&str>) -> i64 {
             return 1;
         }
     };
-    let mut tls = match Tls::connect(&mut io, host, &roots[..count], now, &random, buf) {
+    let mut tls = match Tls::connect(&mut io, host, &mut EtcCerts, now, &random, buf) {
         Ok(t) => t,
+        Err(cyber_tls::Error::Certificate(x509::Error::UnknownIssuer)) => {
+            println!("fetch: TLS refuzat: emitent necunoscut (nicio radacina potrivita in /etc/certs)");
+            return 1;
+        }
         Err(e) => {
             println!("fetch: TLS refuzat: {:?}", e);
             return 1;

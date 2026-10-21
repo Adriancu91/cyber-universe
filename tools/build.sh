@@ -78,6 +78,9 @@ INITRD_ROOT="$BUILD/initrd-$MODE"
 rm -rf "$INITRD_ROOT" && mkdir -p "$INITRD_ROOT/bin"
 cp -r "$ROOT/boot/initrd/." "$INITRD_ROOT/"
 for p in "${PROGRAMS[@]}"; do cp "$USER_BIN/$p" "$INITRD_ROOT/bin/$p"; done
+# Trusted web roots (tools/roots.py, Mozilla list) -> /etc/certs, looked up by name by /bin/fetch.
+mkdir -p "$INITRD_ROOT/etc/certs"
+cp "$ROOT"/boot/certs/*.[0-9] "$INITRD_ROOT/etc/certs/"
 ( cd "$INITRD_ROOT" && tar --format=ustar --owner=0 --group=0 --sort=name -cf "$ISO_ROOT/boot/initrd.tar" * )
 echo "    module_path: boot():/boot/initrd.tar" >> "$ISO_ROOT/boot/limine/limine.conf"
 

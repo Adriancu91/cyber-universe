@@ -5,8 +5,8 @@
 (`MIN_BUFFER` ≈ 33 KiB).
 - `record.rs` — înregistrările: antetul, criptarea ChaCha20-Poly1305 (nonce = iv XOR număr), tipul real la final.
 - `client.rs` — `Tls::connect` (ClientHello cu SNI, X25519, o singură suită TLS_CHACHA20_POLY1305_SHA256; ServerHello;
-  programarea cheilor; EncryptedExtensions; Certificate — lanțul verificat cu `crypto::x509::verify_chain`;
-  CertificateVerify — ECDSA P-256 sau RSA-PSS; Finished), apoi `send`, `recv` (biletele NewSessionTicket sunt ignorate),
+  programarea cheilor; EncryptedExtensions; Certificate — lanțul verificat cu `crypto::x509::verify_chain_in`
+  față de un `TrustStore`; CertificateVerify — ECDSA P-256/P-384 (curba trebuie să fie cea din cod) sau RSA-PSS; Finished), apoi `send`, `recv` (biletele NewSessionTicket sunt ignorate),
   `close` (close_notify). Orice abatere oprește conexiunea cu o eroare (`Error`).
 
 **Nu face (încă):** reluarea sesiunii, date 0-RTT, HelloRetryRequest, KeyUpdate, alte suite, certificate de client.
@@ -17,6 +17,14 @@
 descarcă o pagină de 18 KB de la serverul OpenSSL de pe gazdă (~1,3 s în emulare) și refuză un nume greșit.
 Numerele aleatoare vin de la nucleu (`kernel/src/random.rs`): RDRAND când procesorul îl are, mereu amestecat prin SHA-256
 cu ceasul procesorului (TSC). Fără RDRAND (ca în QEMU-ul de test) sunt bune pentru teste, slabe în fața unui atacator serios.
+
+**Rădăcinile reale (P6-02):** lista publică Mozilla, ca date, în `boot/certs/` (generată de `tools/roots.py`, sursa și
+licența în `boot/certs/SURSA.md`); imaginea le pune în `/etc/certs`, iar `fetch` citește doar fișierul emitentului căutat
+(numele = `subject_id`). Testul `tests/real.rs` se conectează la site-uri reale (api.anthropic.com, github.com,
+api.github.com, example.com și alte câteva) cu aceste rădăcini; rulează doar cu `CYBER_NET=1` (setat în CI, care are
+internet). În sesiunile cloud ale lui Claude internetul trece printr-un proxy care schimbă certificatele, deci acolo testul
+se sare. Limite cunoscute: o singură suită (ChaCha20-Poly1305) și un singur grup (X25519) — serverele care nu le acceptă
+refuză conexiunea; extensia Name Constraints, când e critică, duce la refuz.
 
 **Depinde de:** `crypto/`.
 

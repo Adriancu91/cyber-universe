@@ -241,6 +241,8 @@ fn run_tests() -> ! {
     test_crypto();
     #[cfg(feature = "test-https")]
     test_https();
+    #[cfg(feature = "test-https-real")]
+    test_https_real();
     #[cfg(feature = "test-usb")]
     assert!(boot::medium() == boot::Medium::Disk, "test: pornit de pe {:?}, nu de pe stick", boot::medium());
     #[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
@@ -357,9 +359,10 @@ fn test_frames() {
 /// them all: proves nothing still in use (page tables, stack, Limine data) was handed to the allocator.
 #[cfg(feature = "qemu-test")]
 fn test_all_frames() {
+    // Reserve the list first, so the heap does not need to grow while every frame is taken; the count is taken
+    // after that, because reserving may itself grow the heap (it takes frames and keeps them).
+    let mut frames = alloc::vec::Vec::with_capacity(mem::frame::free_frames() as usize);
     let before = mem::frame::free_frames();
-    // Reserve the list first, so the heap does not need to grow while every frame is taken.
-    let mut frames = alloc::vec::Vec::with_capacity(before as usize);
     while let Some(f) = mem::frame::alloc_frame() {
         // SAFETY: the frame was just allocated to this test and is reachable through the HHDM.
         unsafe { core::ptr::write_bytes(mem::map::phys_to_virt(f), 0xA5, mem::map::PAGE_SIZE as usize) };
@@ -1185,9 +1188,16 @@ fn test_appnet() {
 #[cfg(feature = "test-https")]
 fn test_https() {
     assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
-    let _ = fs::create("/etc/certs", fs::Kind::Dir);
-    fs::create("/etc/certs/test.der", fs::Kind::File).expect("test: /etc/certs/test.der");
-    fs::write("/etc/certs/test.der", 0, include_bytes!("../../tls/tests/data/root.der")).expect("test: radacina de test");
+    // The real roots (Mozilla list, tools/roots.py) come with the image; the test root is added next to them,
+    // under the name /bin/fetch looks for (its subject id).
+    let real = fs::list("/etc/certs").map(|l| l.len()).unwrap_or(0);
+    info!("test: {} radacini de incredere in /etc/certs", if real > 100 { "peste 100" } else { "prea putine" });
+    let root: &[u8] = include_bytes!("../../tls/tests/data/root.der");
+    let subject = cyber_crypto::x509::Cert::parse(root).expect("test: radacina de test").subject;
+    let id = cyber_crypto::x509::subject_id(subject);
+    let path = alloc::format!("/etc/certs/{}.0", core::str::from_utf8(&id).unwrap());
+    fs::create(&path, fs::Kind::File).expect("test: radacina de test in /etc/certs");
+    fs::write(&path, 0, root).expect("test: radacina de test");
     let mut r = [0u8; 16];
     random::fill(&mut r);
     let mut r2 = [0u8; 16];
@@ -1207,13 +1217,27 @@ fn test_https() {
     }
 }
 
+/// HTTPS with real web sites (P6-02): /bin/fetch resolves the name, connects through QEMU's network to the
+/// internet and verifies the certificate against the Mozilla roots in /etc/certs (only those, no test root).
+#[cfg(feature = "test-https-real")]
+fn test_https_real() {
+    assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
+    for url in ["https://example.com/", "https://api.github.com/zen"] {
+        let start = arch::x86_64::apic::ticks();
+        let id = proc::spawn_path("/bin/fetch", &["fetch", url]).expect("test: /bin/fetch");
+        let code = proc::wait_child(id);
+        let ms = (arch::x86_64::apic::ticks() - start) * 1000 / arch::x86_64::apic::HZ;
+        info!("test: fetch {} a iesit cu codul {} in {} ms", url, code, ms);
+    }
+}
+
 /// Our own cryptography (crypto/, D-011): every official test vector, then the SHA-256 speed.
 #[cfg(feature = "test-crypto")]
 fn test_crypto() {
     use cyber_crypto::{Digest, sha2::Sha256};
     let ticks = arch::x86_64::apic::ticks();
     match cyber_crypto::vectors::self_test() {
-        Ok(n) => info!("crypto: {} vectori oficiali trecuti (SHA-256/384/512, HMAC, HKDF, TLS 1.3, X25519, ChaCha20-Poly1305, RSA, ECDSA P-256, X.509)", n),
+        Ok(n) => info!("crypto: {} vectori oficiali trecuti (SHA-256/384/512, HMAC, HKDF, TLS 1.3, X25519, ChaCha20-Poly1305, RSA, ECDSA P-256/P-384, X.509)", n),
         Err(name) => panic!("crypto: vectorul {} a esuat", name),
     }
     let ms = (arch::x86_64::apic::ticks() - ticks) * 1000 / arch::x86_64::apic::HZ;
