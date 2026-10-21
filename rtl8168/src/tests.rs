@@ -168,3 +168,20 @@ fn receive_clears_overflow_and_resumes() {
     assert!(c.hw().deliver(&frame(MAC, 50, 3)), "receiving again");
     assert_eq!(c.receive(&mut buf), Some(64));
 }
+
+#[test]
+fn diag_reads_back_what_was_set() {
+    let mut c = card();
+    let d = c.diag();
+    let (rx, tx) = c.ring_addresses();
+    assert_eq!((d.rdsar, d.tnpds), (rx, tx));
+    assert_eq!(d.rcr, RCR_VALUE);
+    assert_eq!(d.chipcmd, CMD_RX | CMD_TX);
+    assert_eq!(d.rms as usize, BUF);
+    assert_ne!(d.rx_opts1 & desc::OWN, 0, "first receive descriptor handed to the card");
+    c.hw().raise(1 << 4);
+    let mut buf = [0u8; 2048];
+    c.receive(&mut buf);
+    assert_eq!(c.isr_seen & (1 << 4), 1 << 4, "history kept after the bit was cleared");
+    assert_eq!(c.polls, 1);
+}

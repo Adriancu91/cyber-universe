@@ -18,3 +18,5 @@
 - **`hw` (P3-11):** raport hardware pe o pagină, pentru o singură poză pe un calculator real: procesorul, memoria, de cât
   timp merge, dispozitivele PCI cu driverul care le folosește (`[-]` = fără driver), USB, `/disk` și `/usb`, rețeaua.
   Testat în scenariul `shell`.
+- **`log [cuvânt] [n]` (P6-01d):** ultimele n rânduri (implicit 30) din jurnalul nucleului, ținut în memorie (64 KiB), doar cele
+  care conțin cuvântul (ex. `log rtl`, `log usb 50`). Pentru calculatoare fără port serial. Testat în scenariul `shell`.

@@ -86,12 +86,25 @@ impl super::nic::Card for Card {
         (self.inner.sent, self.inner.received)
     }
     fn link_info(&mut self) -> Option<alloc::string::String> {
-        let (phy, isr) = self.inner.status();
+        let d = self.inner.diag();
         Some(alloc::format!(
-            "legatura: {} (PHYstatus {:02x}, ISR {:04x}, revizia {:08x}, aruncate {})",
-            link_text(phy), phy, isr, self.inner.revision, self.inner.dropped
+            "legatura: {}; primire: aruncate {}, pierdute de placa {}, ISR vazut {:04x}, descriptor RX {} = {:08x}, citiri {}",
+            link_text(d.phy), self.inner.dropped, d.mpc, self.inner.isr_seen, d.rx_next, d.rx_opts1, self.inner.polls
         ))
     }
+}
+
+/// One log line with what the card holds after start-up (`log rtl` shows it on a laptop without a serial port).
+fn log_registers(inner: &mut Rtl8168<KernelHw>) {
+    let d = inner.diag();
+    let (rx, tx) = inner.ring_addresses();
+    crate::info!(
+        "net: rtl8168 registre: CR {:02x} RCR {:08x} TCR {:08x} IMR {:04x} ISR {:04x} RMS {} RDSAR {:x}{} TNPDS {:x}{} PHY {:02x}",
+        d.chipcmd, d.rcr, d.tcr, d.imr, d.isr, d.rms,
+        d.rdsar, if d.rdsar == rx { "" } else { " (GRESIT)" },
+        d.tnpds, if d.tnpds == tx { "" } else { " (GRESIT)" },
+        d.phy
+    );
 }
 
 /// The PHYstatus byte in words: "da, 1000 Mbit/s, full duplex" or "nu".
@@ -124,6 +137,7 @@ pub fn init() -> Option<Card> {
                 "net: placa Realtek RTL8168 pornita (revizia {:08x}), MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}, legatura: {}",
                 inner.revision, m[0], m[1], m[2], m[3], m[4], m[5], link_text(phy)
             );
+            log_registers(&mut inner);
             if !up {
                 crate::warn!("net: Realtek: fara legatura dupa 4 s (cablu? PHYstatus {:02x}); DHCP reincearca singur", phy);
             }
