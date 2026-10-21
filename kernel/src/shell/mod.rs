@@ -328,11 +328,12 @@ fn lsusb() {
 }
 
 fn net() {
-    match crate::drivers::e1000::NIC.lock().as_ref() {
+    match crate::drivers::nic::NIC.lock().as_ref() {
         Some(n) => {
-            let m = n.mac;
-            out!("  {}  MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}\n", n.name, m[0], m[1], m[2], m[3], m[4], m[5]);
-            out!("  pachete trimise {}, primite {}\n", n.sent, n.received);
+            let m = n.mac();
+            out!("  {}  MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}\n", n.name(), m[0], m[1], m[2], m[3], m[4], m[5]);
+            let (sent, received) = n.counters();
+            out!("  pachete trimise {}, primite {}\n", sent, received);
             if let Some(c) = crate::net::config().filter(|c| c.ip != [0; 4]) {
                 let ip = |a: [u8; 4]| format!("{}.{}.{}.{}", a[0], a[1], a[2], a[3]);
                 out!("  IPv4 {}  masca {}  ruta {}  DNS {}\n", ip(c.ip), ip(c.mask), ip(c.gateway), ip(c.dns));
@@ -369,16 +370,16 @@ fn cpu_name() -> String {
     use core::arch::x86_64::__cpuid;
     let words = |r: core::arch::x86_64::CpuidResult| [r.eax, r.ebx, r.ecx, r.edx];
     let mut bytes = Vec::new();
-    // SAFETY (all CPUID calls): CPUID exists on every x86_64 processor; extended leaves are read only if reported.
-    if unsafe { __cpuid(0x8000_0000) }.eax >= 0x8000_0004 {
+    // CPUID exists on every x86_64 processor; extended leaves are read only if reported.
+    if __cpuid(0x8000_0000).eax >= 0x8000_0004 {
         for leaf in 0x8000_0002u32..=0x8000_0004 {
-            for w in words(unsafe { __cpuid(leaf) }) {
+            for w in words(__cpuid(leaf)) {
                 bytes.extend_from_slice(&w.to_le_bytes());
             }
         }
     }
     if bytes.iter().all(|&b| b == 0 || b == b' ') {
-        let r = unsafe { __cpuid(0) };
+        let r = __cpuid(0);
         for w in [r.ebx, r.edx, r.ecx] {
             bytes.extend_from_slice(&w.to_le_bytes());
         }

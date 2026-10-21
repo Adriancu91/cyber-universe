@@ -164,7 +164,7 @@ pub fn net_info(buf: u64, len: u64) -> i64 {
         return E_FAULT;
     }
     let Some(cfg) = net::config() else { return 0 };
-    let (sent, received) = crate::drivers::e1000::NIC.lock().as_ref().map_or((0, 0), |n| (n.sent, n.received));
+    let (sent, received) = crate::drivers::nic::NIC.lock().as_ref().map_or((0, 0), |n| n.counters());
     let mut r = [0u8; INFO_LEN];
     r[0..6].copy_from_slice(&cfg.mac);
     r[8..12].copy_from_slice(&cfg.ip);

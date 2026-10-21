@@ -54,6 +54,49 @@ impl Device {
         (addr != 0).then_some(addr)
     }
 
+    /// Physical address of the first memory BAR (I/O BARs and the upper halves of 64-bit BARs are skipped).
+    pub fn first_memory_bar(&self) -> Option<u64> {
+        let mut i = 0;
+        while i < 6 {
+            let low = self.read32(0x10 + i * 4);
+            if low & 1 == 0 {
+                if let Some(a) = self.bar(i) {
+                    return Some(a);
+                }
+            }
+            i += if low & 1 == 0 && (low >> 1) & 3 == 2 { 2 } else { 1 };
+        }
+        None
+    }
+
+    /// Puts the device in the full-power state D0 if it has the PCI power-management capability (firmware may
+    /// leave unused devices in D3, where their registers read as all ones). PCI Bus Power Management spec 1.2.
+    pub fn power_on(&self) {
+        if self.read32(0x04) >> 16 & 1 << 4 == 0 {
+            return; // no capability list
+        }
+        let mut ptr = (self.read32(0x34) & 0xFC) as u16;
+        for _ in 0..48 {
+            if ptr == 0 {
+                return;
+            }
+            let cap = self.read32(ptr);
+            if cap & 0xFF == 0x01 {
+                let pmcsr = self.read32(ptr + 4);
+                if pmcsr & 3 != 0 {
+                    self.write32(ptr + 4, pmcsr & !3);
+                    // The device needs up to 10 ms to leave D3 (spec: D3hot -> D0 recovery time).
+                    let start = crate::time::since_boot_us().unwrap_or(0);
+                    while crate::time::since_boot_us().is_some_and(|t| t < start + 10_000) {
+                        core::hint::spin_loop();
+                    }
+                }
+                return;
+            }
+            ptr = ((cap >> 8) & 0xFC) as u16;
+        }
+    }
+
     /// Lets the device answer memory accesses and act as bus master (needed for DMA).
     #[allow(dead_code)] // used by the disk, USB and network drivers (P3-02 and later)
     pub fn enable(&self) {

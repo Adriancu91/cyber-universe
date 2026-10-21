@@ -38,6 +38,11 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
 **Inspirație:** OSDev Wiki „Serial Ports”, „8042 PS/2 Controller”, „PS/2 Keyboard” (doar descrierea).
 
 ## Rețea
+
+- `nic.rs` — interfața comună a plăcilor de rețea (`Card`: trimite/primește cadre, MAC, nume, contoare) și placa găsită la
+  pornire (`NIC`): întâi Intel e1000/e1000e, apoi Realtek. Stiva `net/`, apelurile de sistem și shell-ul folosesc doar interfața.
+- `rtl8168.rs` — Realtek RTL8168/8111 (P6-01): registrele mapate, pagini DMA, întârzieri; logica e în crate-ul `rtl8168/`
+  (testat pe gazdă față de un model al cipului). Pornește placa din starea de economie D3 dacă firmware-ul a lăsat-o așa.
 - `e1000.rs` — plăci de rețea Intel e1000 (82540EM, 82545EM) și e1000e (82574L) (P3-08): reset, adresa MAC, inelele de
   descriptori pentru primire și trimitere (32 × 2 KiB), cu așteptare activă. `send(cadru)`, `receive()`; comanda `net` din shell.
   Placa Intel I219 din ThinkPad (tot familia e1000e) are diferențe (PHY, registre) — se tratează după testul pe calculatorul real.

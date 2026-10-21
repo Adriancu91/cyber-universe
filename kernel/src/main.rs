@@ -128,7 +128,7 @@ extern "C" fn kernel_main() -> ! {
             fs::mount_disk(disk, "/disk");
         }
     }
-    drivers::e1000::init_global();
+    drivers::nic::init_global();
     net::init();
     if let Some(stick) = drivers::usb::take_disk() {
         fs::mount_disk(alloc::boxed::Box::new(stick), "/usb");

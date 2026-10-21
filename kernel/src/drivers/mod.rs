@@ -8,5 +8,6 @@ pub mod mouse;
 pub mod nic;
 pub mod nvme;
 pub mod rtc;
+pub mod rtl8168;
 pub mod serial;
 pub mod usb;

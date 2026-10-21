@@ -11,7 +11,7 @@ pub mod ipv4;
 pub mod tcp;
 pub mod udp;
 
-use crate::drivers::e1000::NIC;
+use crate::drivers::nic::NIC;
 use crate::sched::{self, Mutex};
 use alloc::vec::Vec;
 
@@ -39,7 +39,7 @@ pub fn config() -> Option<Config> {
 
 /// Starts the stack on the network card found at start-up (if any).
 pub fn init() {
-    let Some(mac) = NIC.lock().as_ref().map(|n| n.mac) else { return };
+    let Some(mac) = NIC.lock().as_ref().map(|n| n.mac()) else { return };
     *CONFIG.lock() = Some(Config { mac, ip: [0; 4], mask: [0; 4], gateway: [0; 4], dns: [0; 4] });
     sched::spawn_system(receive_thread);
     sched::spawn_system(dhcp_thread);

@@ -9,6 +9,8 @@ description = "Cyber Universe OS kernel"
 limine = "=0.5.0"
 # Our own cryptography (D-011): random bytes for programs (SHA-256 mixing) and the crypto test.
 cyber_crypto = { path = "../crypto" }
+# P6-01: Realtek RTL8168/8111 driver logic (tested on the host against a model of the chip).
+cyber_rtl8168 = { path = "../rtl8168" }
 
 [features]
 # Test build: the kernel waits for a byte on COM1, then exits QEMU through isa-debug-exit.

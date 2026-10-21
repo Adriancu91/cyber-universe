@@ -17,8 +17,13 @@ name = "cyber_kernel"
 version = "0.1.0"
 dependencies = [
  "cyber_crypto",
+ "cyber_rtl8168",
  "limine",
 ]
+
+[[package]]
+name = "cyber_rtl8168"
+version = "0.1.0"
 
 [[package]]
 name = "limine"

@@ -1,0 +1,11 @@
+[package]
+name = "cyber_rtl8168"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Cyber Universe's driver logic for Realtek RTL8168/8111 network cards (no_std, no dependencies), with a software model of the chip for host tests."
+
+[dependencies]
+
+[profile.release]
+opt-level = 2

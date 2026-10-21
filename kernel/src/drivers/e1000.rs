@@ -36,7 +36,6 @@ pub fn supports(vendor: u16, device: u16) -> bool {
     vendor == 0x8086 && SUPPORTED.iter().any(|(id, _)| *id == device)
 }
 
-#[allow(dead_code)] // the rings are used by `send`/`receive`: self-tests now, the TCP/IP stack in Phase 5
 pub struct Nic {
     regs: u64,
     pub mac: [u8; 6],
@@ -84,7 +83,6 @@ fn buffers() -> Option<[u64; RING]> {
     Some(bufs)
 }
 
-#[allow(dead_code)] // used by the self-tests now, by the TCP/IP stack in Phase 5
 impl Nic {
     /// Sends one Ethernet frame (destination, source, type, payload; at most 1514 bytes).
     pub fn send(&mut self, packet: &[u8]) -> bool {
@@ -134,18 +132,26 @@ impl Nic {
     }
 }
 
-/// The network card found at start-up.
-pub static NIC: crate::sched::Mutex<Option<Nic>> = crate::sched::Mutex::new(None);
-
-/// Starts the card (if there is a supported one) and keeps it in `NIC`.
-pub fn init_global() {
-    if let Some(n) = init() {
-        *NIC.lock() = Some(n);
+impl super::nic::Card for Nic {
+    fn send(&mut self, frame: &[u8]) -> bool {
+        Nic::send(self, frame)
+    }
+    fn receive(&mut self) -> Option<Vec<u8>> {
+        Nic::receive(self)
+    }
+    fn mac(&self) -> [u8; 6] {
+        self.mac
+    }
+    fn name(&self) -> &'static str {
+        self.name
+    }
+    fn counters(&self) -> (u64, u64) {
+        (self.sent, self.received)
     }
 }
 
 /// Finds a supported Intel card and starts it (link up, receive and transmit rings).
-fn init() -> Option<Nic> {
+pub fn init() -> Option<Nic> {
     let (dev, name) = crate::pci::devices().into_iter().find_map(|d| {
         if d.vendor != 0x8086 {
             return None;
