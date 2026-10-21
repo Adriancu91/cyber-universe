@@ -3,6 +3,20 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-21 20:40–22:35 UTC (23:40–01:35 ora României), în cloud, fără Adrian
+- **Terminate (6 sarcini):** P6-02 (117 rădăcini Mozilla în `/etc/certs`, căutate după nume; ECDSA P-384; `fetch https://`
+  cu site-uri reale), P6-03 (JSON propriu, crate `json/`), P6-04 (`/bin/claude` — clientul API Claude), P6-05 (`claude-app`,
+  chat în fereastră; alocator cu eliberare reală pentru programe), P6-06 (uneltele lui Claude cu confirmare Da/Nu),
+  P6-07 (CI publică Release-ul `os-<număr>` cu fișierele stick-ului și `SHA256SUMS`).
+- A lucrat în paralel o sesiune pornită manual (P6-01b/c/d, C-4): `main` a fost unit cu ramura acestei sesiuni (merge, fără
+  rescriere de istorie). Varianta ei de P6-02 (`wip/P6-02-b`) rămâne nefolosită — poate fi ștearsă de Adrian oricând.
+- **Build:** OK, fără avertismente. **Teste:** `tools/test.sh` → 45 de scenarii trecute + `https-real` sărit local (rulează
+  doar cu internet, în CI: `CYBER_NET=1`); `crypto` 118 vectori + 117 rădăcini, `tls` (OpenSSL local + 10 site-uri reale în CI),
+  `json` (RFC 8259 + 200 de documente față de Python), `rtl8168` 15 teste. CI verde pe `wip/P6-02` (cu site-urile reale).
+  La o rulare completă locală, `ahci` a picat o dată la verificarea temporizatorului („54 intreruperi intr-o secunda”) —
+  calculatorul era încărcat; rulat singur trece. Dacă reapare în CI, e de făcut verificarea mai tolerantă.
+- **Descoperit:** depozitul `cyber-universe` e **privat** → Release-urile se descarcă doar cu token (vezi nota din `plans/P6-08.md`).
+
 ### Sesiune pornită manual de centrul de comandă (2026-10-21 20:27–21:40 UTC), în paralel cu sesiunea de la 20:40
 - **Atenție:** două sesiuni au lucrat deodată. Sesiunea de la 20:40 UTC face **P6-02** pe `wip/P6-02` (o continuă ea).
   Varianta mea de P6-02 (făcută înainte să văd ramura) e păstrată pe **`wip/P6-02-b`**, nefolosită: rădăcinile Mozilla ca
@@ -50,9 +64,9 @@
   lanțurile cu `openssl verify` — zero diferențe. CI verde pe toate commit-urile terminate (ultimele încă rulau la final).
 
 ## Următoarea sarcină
-**P6-02** — rădăcinile reale de încredere (lista Mozilla, ca date) + `fetch https://` cu un site real (plan: `docs/plans/P6-02.md`).
-Apoi P6-03 (JSON), P6-04 … P6-09 în ordine. P3-10 așteaptă pozele testului 2 de la Adrian; P5-07/P5-08 după suită.
-Driverul Realtek (P6-01) nu poate fi testat în QEMU: confirmarea vine de la Adrian (cablu + `net` + `ping 1.1.1.1`).
+**P6-08** — comanda „Actualizează” (plan: `docs/plans/P6-08.md`, cu nota despre depozitul privat: descărcare prin API cu
+tokenul din `/usb/github.token`). Apoi P6-09 (trimitere pe GitHub), P6-10 (testul pe laptop cu Adrian).
+P3-10 așteaptă testul 3; P5-07/P5-08 după suită.
 
 ## Mediu (verificat la P0-01, sesiune cloud)
 | Unealtă | Versiune |
@@ -71,6 +85,15 @@ Driverul Realtek (P6-01) nu poate fi testat în QEMU: confirmarea vine de la Adr
 - Funcții noi folosite doar de teste: `#[cfg(feature = "qemu-test")]`; API pentru mai târziu: `#[allow(dead_code)]` cu motiv.
 
 ## Avertismente pentru sesiunea următoare
+- **Rădăcinile de încredere:** `boot/certs/` e generat de `tools/roots.py` din `certdata.txt` (NSS); pentru o listă nouă
+  rulează scriptul (vezi `boot/certs/SURSA.md`). `fetch` și `claude` caută rădăcina după `subject_id` (fișierul `<id>.0`).
+- **Internetul în sesiunile cloud ale lui Claude trece printr-un proxy care schimbă certificatele** → testele cu site-uri reale
+  merg doar în CI (`CYBER_NET=1`); local, `https-real` e sărit (scenariile cu `internet` în coloana QEMU).
+- **Programele cu heap:** `cyber_user::heap!(MĂRIME)`; clientul Claude e în `user/src/claude_api.rs` și uneltele în
+  `user/src/claude_tools.rs` (incluse cu `#[path]`, ca biblioteca `cyber_user` să rămână fără heap).
+- **Imitația API-ului Claude:** `tools/claude-test-server.py` (port 18444, cheia `sk-test-cyber`); scenariile `claude-cli`,
+  `claude-app`, `claude-tools`. Nu rula două `tools/test.sh` deodată: serverele de test folosesc porturi fixe.
+- Meniul Start are 14 programe; `test_desktop` caută `demo` după nume (nu mai depinde de poziție).
 - Fiecare sesiune cloud nouă: rulează întâi `tools/env-check.sh --install` (acum instalează și dosfstools, mtools, fdisk).
 - **Cyber Hub:** se clonează direct `https://github.com/Adriancu91/Cyber-hub` (fără add_repo); merge din sesiunile programate.
 - Nu edita `tools/test.sh` cât rulează un test în fundal (bash citește scriptul pe bucăți).
