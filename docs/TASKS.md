@@ -157,7 +157,7 @@ Fiecare are plan în `docs/plans/`.
 
 - [x] **P6-01** Driver Realtek RTL8168/8111 (`10ec:8168`): crate `rtl8168/` + model software al cipului (teste pe gazdă), placa în nucleu. Dep: P3-08.
   Test: `cd rtl8168 && cargo test --release` (11 teste față de model) + toate scenariile de rețea QEMU (e1000 prin interfața nouă `nic::Card`). Pe laptop: de verificat la testul 2 (cablu, `net`, `ping`).
-- [ ] **P6-02** Rădăcinile reale de încredere (Mozilla) în imagine + `fetch https://` cu un site real. Dep: P5-16.
+- [~] **P6-02** Rădăcinile reale de încredere (Mozilla) în imagine + `fetch https://` cu un site real. Dep: P5-16.
 - [ ] **P6-03** Parser și generator JSON propriu (crate `json/`). Dep: —.
 - [ ] **P6-04** Clientul API Claude (`/bin/claude` în linia de comandă; cheia din `/usb/claude.key`). Dep: P6-02, P6-03.
 - [ ] **P6-05** Aplicația „Claude”: chat în fereastră. Dep: P6-04.
