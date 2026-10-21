@@ -36,6 +36,11 @@
   `address`, `key` (alt fișier cu cheia). Erori pe înțeles: fără cheie, cheie greșită (401), prea multe cereri (429),
   supraîncărcat (529). Test: scenariul `claude-cli`, față de o imitație a API-ului (`tools/claude-test-server.py`,
   verifică antetele și JSON-ul cererii; răspunde „chunked” și cu `\u` în text), fără nicio cheie reală.
+- `claude-app` (P6-05) — fereastra „Claude” din meniul Start: conversația sus (Tu / Claude), caseta de scris jos,
+  Enter trimite **toată** conversația (același client și aceeași configurare ca `claude`, din `src/claude_api.rs`),
+  „Claude se gândește...” cât așteaptă; săgețile sus/jos derulează, Esc închide. Erorile (fără cheie, 401, fără rețea)
+  apar în conversație cu roșu și nu se trimit. Test: scenariul `claude-app` (captura `tests/screens/claude-app.png`).
+  Nu salvează încă conversația (pasul opțional din plan).
 - `udp <adresă> <port> <text>` (P5-05) — trimite textul într-o datagramă UDP și scrie răspunsul (așteaptă 3 s).
 - **Rețea (`src/net.rs`):** `resolve(nume)`, `TcpStream::connect/write_all/read`, `UdpSocket::bind/send_to/recv_from`,
   `info()`, `ping()`, `parse_ip()`; fără heap. Socket-urile se închid când obiectul dispare (și când programul iese).
@@ -44,9 +49,10 @@
   nucleul), `Window::open_desktop`, `wait_event_for(ms)`, `wait_event()` → `Event::Key(c)` sau `Event::Click { x, y, buttons }`, `close()`.
 - **HTTPS (`src/https.rs`):** `open(program, gazdă, port, adresă, buffer)` → (`Tcp`, `Tls`) cu certificatul verificat
   față de `/etc/certs` (`EtcCerts`), `now()` (ora pentru certificate).
-- **Heap (`src/heap.rs`, P6-04):** `cyber_user::heap!(MĂRIME);` dă programului un alocator peste o zonă statică, ca să
-  poată folosi `alloc` (Vec, String, JSON). Simplu: memoria eliberată revine doar când e ultimul bloc sau când totul e
-  eliberat — potrivit pentru comenzi care fac un lucru și ies; pentru aplicații de lungă durată (P6-05) trebuie unul mai bun.
+- **Heap (`src/heap.rs`, P6-04/P6-05):** `cyber_user::heap!(MĂRIME);` dă programului un alocator peste o zonă statică, ca
+  să poată folosi `alloc` (Vec, String, JSON). Blocuri cu antet de 16 octeți, primul care încape; la eliberare, blocurile
+  libere vecine se unesc, deci merge și pentru aplicații care rulează mult (chatul). Verificat pe gazdă cu 200 000 de
+  alocări/eliberări/realocări la întâmplare (conținutul neatins, totul liber la final).
 - **Biblioteca** are și `text::Line` (text fără heap), `mem_info`, `programs`, `kill`, `create`, `remove`, `spawn`, `spawn_with` (program + un argument), `wait`, `settings` (citirea setărilor), `list`, `time`, `screen_size`, și `open`, `read`, `close`, `stat`, `args()` (argumentele programului) și `error_text`.
 - **Cum se testează:** scenariul `log` (`hello din ELF`, `test: ELF OK`).
 - **Depinde de:** apelurile de sistem ale nucleului (`kernel/src/syscall/README.md`).

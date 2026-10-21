@@ -245,6 +245,8 @@ fn run_tests() -> ! {
     test_https_real();
     #[cfg(feature = "test-claude")]
     test_claude();
+    #[cfg(feature = "test-claude-app")]
+    test_claude_app();
     #[cfg(feature = "test-usb")]
     assert!(boot::medium() == boot::Medium::Disk, "test: pornit de pe {:?}, nu de pe stick", boot::medium());
     #[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
@@ -1215,7 +1217,7 @@ fn test_https() {
 
 /// Adds the test root (tls/tests/data, its private key is public) to /etc/certs, under the name the programs look
 /// for (its subject id). Only test builds do this.
-#[cfg(any(feature = "test-https", feature = "test-claude"))]
+#[cfg(any(feature = "test-https", feature = "test-claude", feature = "test-claude-app"))]
 fn add_test_root() {
     let root: &[u8] = include_bytes!("../../tls/tests/data/root.der");
     let subject = cyber_crypto::x509::Cert::parse(root).expect("test: radacina de test").subject;
@@ -1249,6 +1251,41 @@ fn test_claude() {
     run(Some(b"sk-test-cyber\n"), "cheie buna");
     run(Some(b"sk-gresita"), "cheie gresita");
     run(None, "fara cheie");
+}
+
+/// The Claude chat window (P6-05): typed messages go to the imitation of the API (as in `test_claude`), the answers
+/// appear in the window (screenshot), the whole conversation is sent each time, Esc closes it.
+#[cfg(feature = "test-claude-app")]
+fn test_claude_app() {
+    use drivers::keyboard::{Key, push_key};
+    assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
+    add_test_root();
+    let conf = b"host = test.cyber.local\nport = 18444\naddress = 10.0.2.2\nkey = /etc/claude-test.key\n";
+    let _ = fs::create("/etc/claude.conf", fs::Kind::File);
+    fs::write("/etc/claude.conf", 0, conf).expect("test: /etc/claude.conf");
+    let _ = fs::create("/etc/claude-test.key", fs::Kind::File);
+    fs::write("/etc/claude-test.key", 0, b"sk-test-cyber\n").expect("test: cheia");
+    let app = proc::spawn_path("/bin/claude-app", &["claude-app"]).expect("test: /bin/claude-app");
+    let deadline = arch::x86_64::apic::ticks() + 10 * arch::x86_64::apic::HZ;
+    while !ui::top_window().is_some_and(|(o, _)| o == app) {
+        assert!(arch::x86_64::apic::ticks() < deadline, "test: fereastra Claude nu se deschide");
+        sched::sleep_ms(10);
+    }
+    let typed = |text: &str| {
+        for ch in text.chars() {
+            push_key(Key::Char(ch));
+            sched::sleep_ms(20);
+        }
+        push_key(Key::Enter);
+        sched::sleep_ms(2500); // the answer comes from the host in well under a second
+    };
+    typed("Salut, Claude!");
+    typed("Ce faci?");
+    info!("CLAUDE-APP: captura");
+    sched::sleep_ms(1000);
+    push_key(Key::Escape);
+    assert!(proc::wait(app) == 0, "test: aplicatia Claude nu s-a inchis cu 0");
+    info!("test: aplicatia Claude OK");
 }
 
 /// HTTPS with real web sites (P6-02): /bin/fetch resolves the name, connects through QEMU's network to the

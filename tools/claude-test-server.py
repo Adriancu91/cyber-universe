@@ -37,10 +37,12 @@ def check(head, body):
     except Exception as e:
         return 400, "JSON invalid: " + str(e)
     m = req.get("messages")
+    # A conversation: user, assistant, user, ... ending with the user (what the real API requires).
     if not isinstance(req.get("model"), str) or not isinstance(req.get("max_tokens"), int) or not isinstance(m, list) \
-            or len(m) != 1 or m[0].get("role") != "user" or not isinstance(m[0].get("content"), str):
+            or len(m) % 2 != 1 or any(x.get("role") != ("user", "assistant")[i % 2] or not isinstance(x.get("content"), str)
+                                       for i, x in enumerate(m)):
         return 400, "corp JSON gresit: " + body.decode("utf-8", "replace")
-    return 200, m[0]["content"]
+    return 200, m[-1]["content"] + ("" if len(m) == 1 else f" (mesaje in conversatie: {len(m)})")
 
 
 while True:

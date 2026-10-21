@@ -52,6 +52,8 @@ test-https = ["qemu-test"]
 test-https-real = ["qemu-test"]
 # P6-04: /bin/claude against an imitation of the Claude API on the host.
 test-claude = ["qemu-test"]
+# P6-05: the Claude chat window against the same imitation of the API.
+test-claude-app = ["qemu-test"]
 # P4-01: the harness moves the mouse and clicks; the kernel must receive both events.
 test-mouse = ["qemu-test"]
 # P4-04: two windows; the harness types keys and drags the top one by its title bar with the mouse.
