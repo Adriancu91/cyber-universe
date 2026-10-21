@@ -68,10 +68,13 @@ fn main() -> i64 {
     if ok { 0 } else { 1 }
 }
 
-/// The answer of a web server: the header is kept (up to 1 KiB) until the first empty line, the body is printed.
+/// The answer of a web server: the start of the header is kept (1 KiB, enough for the status line), the header ends
+/// at the first empty line (headers can be longer, e.g. api.github.com sends ~2 KiB), the body is printed.
 struct Page {
     head: [u8; 1024],
     head_len: usize,
+    /// The last 4 bytes seen in the header, to find its end however long it is.
+    last4: u32,
     in_body: bool,
     ok: bool,
     total: usize,
@@ -79,7 +82,7 @@ struct Page {
 
 impl Page {
     fn new() -> Page {
-        Page { head: [0; 1024], head_len: 0, in_body: false, ok: false, total: 0 }
+        Page { head: [0; 1024], head_len: 0, last4: 0, in_body: false, ok: false, total: 0 }
     }
 
     fn feed(&mut self, mut data: &[u8]) {
@@ -90,8 +93,9 @@ impl Page {
                     self.head[self.head_len] = data[i];
                     self.head_len += 1;
                 }
+                self.last4 = self.last4 << 8 | u32::from(data[i]);
                 i += 1;
-                self.in_body = self.head_len >= 4 && &self.head[self.head_len - 4..self.head_len] == b"\r\n\r\n";
+                self.in_body = self.last4 == u32::from_be_bytes(*b"\r\n\r\n");
             }
             if self.in_body {
                 self.ok = self.head.starts_with(b"HTTP/1.0 200") || self.head.starts_with(b"HTTP/1.1 200");
