@@ -12,6 +12,11 @@ O sesiune care găsește una dintre acestea șterge secțiunea „OPRIT” și r
 CI-ul, fără instalare de unelte și fără schimbări de cod.
 
 ## Ultima sesiune
+- **2026-10-21, 17:41 UTC (20:41 ora României), sesiune programată:** tot oprit, conform deciziei lui Adrian de la 10:05;
+  nicio comandă nouă în `COMENZI.md`, niciun rezultat de pe stick, nicio decizie nouă în `DECIZII.md`; CI verde (rularea 95,
+  `73ee315`). Nu s-a schimbat cod; uneltele nu s-au instalat.
+
+### Sesiunea precedentă (oprit, 14:41)
 - **2026-10-21, 14:41 UTC (17:41 ora României), sesiune programată:** tot oprit, conform deciziei lui Adrian de la 10:05;
   nicio comandă nouă în `COMENZI.md`, niciun rezultat de pe stick, nicio decizie nouă în `DECIZII.md`; CI verde (rularea 94,
   `66ba21c`). Nu s-a schimbat cod; uneltele nu s-au instalat.
