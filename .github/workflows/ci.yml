@@ -40,6 +40,9 @@ jobs:
       - name: TLS 1.3 — clientul nostru față de un server OpenSSL pe gazdă și față de site-uri reale (tls/)
         run: cd tls && CYBER_NET=1 cargo test --release -- --nocapture
 
+      - name: JSON — cititorul și scriitorul propriu, față de Python (json/)
+        run: cd json && cargo test --release
+
       - name: Driver Realtek RTL8168 — față de modelul cipului, pe gazdă (rtl8168/)
         run: cd rtl8168 && cargo test --release
 

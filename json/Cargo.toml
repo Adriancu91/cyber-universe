@@ -1,0 +1,11 @@
+[package]
+name = "cyber_json"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Cyber Universe's own JSON reader and writer (RFC 8259), no_std + alloc, no dependencies."
+
+[dependencies]
+
+[profile.release]
+opt-level = 2
