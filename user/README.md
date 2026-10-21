@@ -41,6 +41,12 @@
   „Claude se gândește...” cât așteaptă; săgețile sus/jos derulează, Esc închide. Erorile (fără cheie, 401, fără rețea)
   apar în conversație cu roșu și nu se trimit. Test: scenariul `claude-app` (captura `tests/screens/claude-app.png`).
   Nu salvează încă conversația (pasul opțional din plan).
+  **Uneltele lui Claude (P6-06, `src/claude_tools.rs`):** Claude poate cere `read_file` (cel mult 32 KiB), `list_dir`,
+  `write_file` și `run_command` (în shell-ul aplicației, așteaptă cel mult 10 s, ieșirea tăiată la 8 KiB). Citirea și listarea
+  se fac direct; **scrierea și rularea apar într-o casetă cu exact ce se va face, cu „Da (D)” / „Nu (N)”** — fără „Da” nu
+  se face nimic. Căile sunt limitate la `/disk`, `/usb`, `/tmp` (fără `..`); o scriere în altă parte e refuzată fără să
+  întrebe. Fiecare unealtă apare în conversație („Unealta: …”). Test: scenariul `claude-tools` (imitația API-ului cere pe
+  rând fiecare unealtă; „Nu” la prima scriere, „Da” la a doua și la comandă; discul e verificat după, cu `mtype`/`fsck.fat`).
 - `udp <adresă> <port> <text>` (P5-05) — trimite textul într-o datagramă UDP și scrie răspunsul (așteaptă 3 s).
 - **Rețea (`src/net.rs`):** `resolve(nume)`, `TcpStream::connect/write_all/read`, `UdpSocket::bind/send_to/recv_from`,
   `info()`, `ping()`, `parse_ip()`; fără heap. Socket-urile se închid când obiectul dispare (și când programul iese).

@@ -39,10 +39,43 @@ def check(head, body):
     m = req.get("messages")
     # A conversation: user, assistant, user, ... ending with the user (what the real API requires).
     if not isinstance(req.get("model"), str) or not isinstance(req.get("max_tokens"), int) or not isinstance(m, list) \
-            or len(m) % 2 != 1 or any(x.get("role") != ("user", "assistant")[i % 2] or not isinstance(x.get("content"), str)
+            or len(m) % 2 != 1 or any(x.get("role") != ("user", "assistant")[i % 2] or not isinstance(x.get("content"), (str, list))
                                        for i, x in enumerate(m)):
         return 400, "corp JSON gresit: " + body.decode("utf-8", "replace")
+    if m[0]["content"] == "Fa testul uneltelor":
+        return 200, tools_step(req, m)
     return 200, m[-1]["content"] + ("" if len(m) == 1 else f" (mesaje in conversatie: {len(m)})")
+
+
+# The tools test (P6-06): Claude asks for each tool in turn; each step checks the result of the previous one.
+STEPS = [
+    ("list_dir", {"path": "/disk"}, None),
+    ("read_file", {"path": "/disk/salut.txt"}, lambda r, e: "salut.txt" in r and not e),
+    ("write_file", {"path": "/disk/claude.txt", "content": "scris de Claude\n"}, lambda r, e: r.startswith("salut de pe disc") and not e),
+    ("write_file", {"path": "/disk/claude.txt", "content": "scris de Claude\n"}, lambda r, e: e and "refuzat" in r),
+    ("run_command", {"command": "ls /disk"}, lambda r, e: not e and "scris /disk/claude.txt" in r),
+    ("write_file", {"path": "/etc/rau.txt", "content": "nu"}, lambda r, e: not e and "claude.txt" in r and "salut.txt" in r),
+    (None, None, lambda r, e: e and "nu e permisa" in r),
+]
+
+
+def tools_step(req, m):
+    """Returns ("tool", block) or ("text", text) for the next answer."""
+    if not isinstance(req.get("tools"), list) or {t.get("name") for t in req["tools"]} != {"read_file", "list_dir", "write_file", "run_command"}:
+        return ("text", "Testul uneltelor a esuat: uneltele nu au fost declarate")
+    results = [x["content"][0] for x in m if x["role"] == "user" and isinstance(x["content"], list)]
+    n = len(results)
+    if n:
+        r = results[-1]
+        if r.get("type") != "tool_result" or r.get("tool_use_id") != f"toolu_{n - 1}":
+            return ("text", f"Testul uneltelor a esuat la pasul {n}: tool_result gresit {r}")
+        text = r.get("content") if isinstance(r.get("content"), str) else ""
+        if not STEPS[n][2](text, bool(r.get("is_error"))):
+            return ("text", f"Testul uneltelor a esuat la pasul {n}: {text!r}")
+    name, inp, _ = STEPS[n]
+    if name is None:
+        return ("text", "Gata: toate uneltele au mers cum trebuie.")
+    return ("tool", {"type": "tool_use", "id": f"toolu_{n}", "name": name, "input": inp})
 
 
 while True:
@@ -68,7 +101,18 @@ while True:
                 break
             body += d
         status, text = check(head, body)
-        if status == 200:
+        if status == 200 and isinstance(text, tuple):
+            kind, value = text
+            if kind == "tool":
+                content = [{"type": "text", "text": f"Folosesc {value['name']}."}, value]
+                answer = {"id": "msg_test", "type": "message", "role": "assistant", "model": "test", "content": content,
+                          "stop_reason": "tool_use", "usage": {"input_tokens": 10, "output_tokens": 12}}
+                text = "tool_use " + value["name"]
+            else:
+                answer = {"id": "msg_test", "type": "message", "role": "assistant", "model": "test",
+                          "content": [{"type": "text", "text": value}], "stop_reason": "end_turn", "usage": {"input_tokens": 10, "output_tokens": 12}}
+                text = value
+        elif status == 200:
             answer = {"id": "msg_test", "type": "message", "role": "assistant", "model": "test",
                       "content": [{"type": "text", "text": "Salut! Am primit: " + text + " (cu diacritice: ăîșț)"}],
                       "stop_reason": "end_turn", "usage": {"input_tokens": 10, "output_tokens": 12}}

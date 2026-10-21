@@ -1,6 +1,8 @@
 //! Claude (P6-05): a chat window with Claude. The conversation is above, the box to write in is below; Enter sends
 //! the whole conversation to the API (src/claude_api.rs, the same client and configuration as /bin/claude), and the
 //! answer appears when it comes ("Claude se gandeste..." meanwhile). Up/Down scroll, Esc or Ctrl+Q closes.
+//! Claude may use tools (P6-06, src/claude_tools.rs): reading and listing happen at once, writing a file and running
+//! a command first show a box with exactly what will be done, and happen only after "Da" (D or a click).
 #![no_std]
 #![no_main]
 
@@ -13,6 +15,11 @@ use cyber_user::{error_text, println};
 
 #[path = "../claude_api.rs"]
 mod claude_api;
+#[path = "../claude_tools.rs"]
+mod claude_tools;
+
+use cyber_json::Value;
+use claude_tools::Request;
 
 cyber_user::entry!(main);
 cyber_user::heap!(2 * 1024 * 1024);
@@ -35,6 +42,9 @@ const YOU: u32 = 0x00_20_50_A0;
 const CLAUDE: u32 = 0x00_A0_50_20;
 const DIM: u32 = 0x00_60_70_80;
 const ERROR: u32 = 0x00_C0_20_20;
+const TOOL: u32 = 0x00_30_80_40;
+/// Rounds of tool use in one turn before we stop (protects against a loop).
+const MAX_ROUNDS: usize = 12;
 
 static mut PIXELS: [u32; W * H] = [0; W * H];
 
@@ -43,11 +53,16 @@ enum Who {
     You,
     Claude,
     Note,
+    Tool,
 }
 
 struct Chat {
-    /// The conversation; notes (errors) are shown but not sent.
+    /// What is shown; notes (errors) and tool lines are not sent as such.
     messages: Vec<(Who, String)>,
+    /// The conversation exactly as sent to the API (text, tool_use and tool_result blocks).
+    api: Vec<Value>,
+    /// The shell used by run_command (opened the first time).
+    term: Option<i64>,
     input: String,
     /// How many screen lines up from the bottom the view is scrolled.
     scroll: usize,
@@ -91,11 +106,17 @@ impl Chat {
                 Who::You => ("Tu:", YOU),
                 Who::Claude => ("Claude:", CLAUDE),
                 Who::Note => ("!", ERROR),
+                Who::Tool => ("Unealta:", TOOL),
             };
             out.push((color, String::from(label)));
             let mut l = Vec::new();
             wrap(text, COLS - 1, &mut l);
-            out.extend(l.into_iter().map(|s| (if *who == Who::Note { ERROR } else { TEXT }, alloc::format!(" {}", s))));
+            let color = match who {
+                Who::Note => ERROR,
+                Who::Tool => DIM,
+                _ => TEXT,
+            };
+            out.extend(l.into_iter().map(|s| (color, alloc::format!(" {}", s))));
             out.push((TEXT, String::new()));
         }
         out
@@ -126,24 +147,101 @@ impl Chat {
         c.text(6, H - 13, self.status, DIM, 1);
         win.present_all(c);
     }
+}
 
-    /// The conversation as the API wants it: alternating user/assistant, without the notes.
-    fn conversation(&self) -> Vec<(&str, &str)> {
-        let mut out: Vec<(&str, &str)> = Vec::new();
-        for (who, text) in &self.messages {
-            let role = match who {
-                Who::You => "user",
-                Who::Claude => "assistant",
-                Who::Note => continue,
-            };
-            // Two of the same role in a row (after an error) are not allowed: keep the last one.
-            if out.last().is_some_and(|(r, _)| *r == role) {
-                out.pop();
-            }
-            out.push((role, text));
-        }
-        out
+/// The confirmation box over the window: what the tool wants to do, and "Da" / "Nu". Returns Adrian's answer.
+fn confirm(c: &mut Canvas, win: &Window, lines: &[String]) -> bool {
+    let (bx, by, bw) = (40, 120, W - 80);
+    let bh = 70 + lines.len() * LINE_H;
+    c.fill(bx - 2, by - 2, bw + 4, bh + 4, ERROR);
+    c.fill(bx, by, bw, bh, BG);
+    for (i, l) in lines.iter().enumerate() {
+        c.text(bx + 10, by + 10 + i * LINE_H, l, TEXT, 2);
     }
+    let yb = by + bh - 40;
+    c.fill(bx + 10, yb, 120, 30, TOOL);
+    c.text(bx + 22, yb + 8, "Da (D)", BG, 2);
+    c.fill(bx + 150, yb, 120, 30, ERROR);
+    c.text(bx + 162, yb + 8, "Nu (N)", BG, 2);
+    win.present_all(c);
+    while let Some(ev) = win.wait_event() {
+        match ev {
+            Event::Key('d' | 'D') => return true,
+            Event::Key('n' | 'N' | '\u{1b}') => return false,
+            Event::Click { x, y, buttons } if buttons & 1 != 0 && (yb..yb + 30).contains(&y) => {
+                if (bx + 10..bx + 130).contains(&x) {
+                    return true;
+                }
+                if (bx + 150..bx + 270).contains(&x) {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// One turn: sends the conversation, does the tools Claude asks for (with confirmation where needed) and sends their
+/// results back, until Claude answers with text. On an error the turn is undone, so the conversation stays valid.
+fn turn(chat: &mut Chat, c: &mut Canvas, win: &Window, conf: &claude_api::Config, key: &str, tools: &Value) -> Result<(), String> {
+    for _ in 0..MAX_ROUNDS {
+        println!("claude-app: trimit conversatia ({} mesaje)", chat.api.len());
+        let answer = claude_api::send(conf, key, &chat.api, Some(tools))?;
+        let content = answer.get("content").cloned().unwrap_or(Value::Array(Vec::new()));
+        let text = claude_api::text_of(&answer);
+        if !text.is_empty() {
+            println!("claude-app: raspuns primit ({} caractere)", text.chars().count());
+            chat.messages.push((Who::Claude, text));
+        }
+        chat.api.push(Value::object([("role", Value::str("assistant")), ("content", content.clone())]));
+        if answer.get("stop_reason").and_then(Value::as_str) != Some("tool_use") {
+            return Ok(());
+        }
+        let mut results = Vec::new();
+        for block in content.as_array().unwrap_or(&[]) {
+            if block.get("type").and_then(Value::as_str) != Some("tool_use") {
+                continue;
+            }
+            let id = block.get("id").and_then(Value::as_str).unwrap_or("");
+            let name = block.get("name").and_then(Value::as_str).unwrap_or("");
+            let result = match Request::from(name, block.get("input").unwrap_or(&Value::Null)) {
+                Err(e) => Err(e),
+                Ok(req) => {
+                    let what = req.describe();
+                    chat.messages.push((Who::Tool, what.clone()));
+                    let ok = if req.needs_confirmation() && claude_tools::allowed_request(&req) {
+                        chat.status = "Claude cere voie: D = da, N = nu";
+                        chat.draw(c, win);
+                        let yes = confirm(c, win, &req.details());
+                        println!("claude-app: {} -> {}", what, if yes { "da" } else { "nu" });
+                        yes
+                    } else {
+                        println!("claude-app: {}", what);
+                        true
+                    };
+                    if ok { req.run(&mut chat.term) } else { Err("Adrian a refuzat (a apasat Nu)".into()) }
+                }
+            };
+            let (text, error) = match result {
+                Ok(t) => (t, false),
+                Err(e) => {
+                    chat.messages.push((Who::Note, e.clone()));
+                    (e, true)
+                }
+            };
+            results.push(Value::object([
+                ("type", Value::str("tool_result")),
+                ("tool_use_id", Value::str(id)),
+                ("content", Value::String(text)),
+                ("is_error", Value::Bool(error)),
+            ]));
+        }
+        chat.api.push(Value::object([("role", Value::str("user")), ("content", Value::Array(results))]));
+        chat.status = "Claude se gandeste...";
+        chat.draw(c, win);
+    }
+    Err("prea multe unelte intr-un singur raspuns; m-am oprit".into())
 }
 
 fn main() -> i64 {
@@ -158,7 +256,9 @@ fn main() -> i64 {
     };
     let mut c = Canvas::new(W, H, pixels);
     let conf = claude_api::config();
-    let mut chat = Chat { messages: Vec::new(), input: String::new(), scroll: 0, status: "scrie un mesaj si apasa Enter" };
+    let mut chat =
+        Chat { messages: Vec::new(), api: Vec::new(), term: None, input: String::new(), scroll: 0, status: "scrie un mesaj si apasa Enter" };
+    let tools = cyber_json::parse(claude_tools::DEFINITIONS).expect("tool definitions");
     let key = claude_api::key(&conf);
     if let Err(e) = &key {
         chat.messages.push((Who::Note, e.clone()));
@@ -184,21 +284,18 @@ fn main() -> i64 {
                     continue;
                 };
                 chat.input.clear();
-                chat.messages.push((Who::You, text));
+                chat.messages.push((Who::You, text.clone()));
+                let before = chat.api.len();
+                chat.api.push(Value::object([("role", Value::str("user")), ("content", Value::String(text))]));
                 chat.scroll = 0;
                 chat.status = "Claude se gandeste...";
                 chat.draw(&mut c, &win);
-                let n = chat.conversation().len();
-                println!("claude-app: trimit conversatia ({} mesaje)", n);
-                let answer = claude_api::ask(&conf, k, &chat.conversation());
-                match answer {
-                    Ok(a) => {
-                        println!("claude-app: raspuns primit ({} caractere)", a.chars().count());
-                        chat.messages.push((Who::Claude, a));
-                        chat.status = "gata";
-                    }
+                let k = k.clone();
+                match turn(&mut chat, &mut c, &win, &conf, &k, &tools) {
+                    Ok(()) => chat.status = "gata",
                     Err(e) => {
                         println!("claude-app: eroare: {}", e);
+                        chat.api.truncate(before);
                         chat.messages.push((Who::Note, e));
                         chat.status = "eroare (vezi mai sus)";
                     }

@@ -247,6 +247,8 @@ fn run_tests() -> ! {
     test_claude();
     #[cfg(feature = "test-claude-app")]
     test_claude_app();
+    #[cfg(feature = "test-claude-tools")]
+    test_claude_tools();
     #[cfg(feature = "test-usb")]
     assert!(boot::medium() == boot::Medium::Disk, "test: pornit de pe {:?}, nu de pe stick", boot::medium());
     #[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
@@ -1217,7 +1219,7 @@ fn test_https() {
 
 /// Adds the test root (tls/tests/data, its private key is public) to /etc/certs, under the name the programs look
 /// for (its subject id). Only test builds do this.
-#[cfg(any(feature = "test-https", feature = "test-claude", feature = "test-claude-app"))]
+#[cfg(any(feature = "test-https", feature = "test-claude", feature = "test-claude-app", feature = "test-claude-tools"))]
 fn add_test_root() {
     let root: &[u8] = include_bytes!("../../tls/tests/data/root.der");
     let subject = cyber_crypto::x509::Cert::parse(root).expect("test: radacina de test").subject;
@@ -1286,6 +1288,47 @@ fn test_claude_app() {
     push_key(Key::Escape);
     assert!(proc::wait(app) == 0, "test: aplicatia Claude nu s-a inchis cu 0");
     info!("test: aplicatia Claude OK");
+}
+
+/// Claude's tools in the chat window (P6-06): the imitation of the API asks for each tool in turn (list, read, write,
+/// write again, run a command, write outside the allowed folders). The keys answer the confirmation boxes: "Nu" to the
+/// first write, "Da" to the second and to the command; the write to /etc is refused without asking. Then the disk is
+/// checked here and by tools/after-claude-tools.sh.
+#[cfg(feature = "test-claude-tools")]
+fn test_claude_tools() {
+    use drivers::keyboard::{Key, push_key};
+    assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
+    add_test_root();
+    let conf = b"host = test.cyber.local\nport = 18444\naddress = 10.0.2.2\nkey = /etc/claude-test.key\n";
+    let _ = fs::create("/etc/claude.conf", fs::Kind::File);
+    fs::write("/etc/claude.conf", 0, conf).expect("test: /etc/claude.conf");
+    let _ = fs::create("/etc/claude-test.key", fs::Kind::File);
+    fs::write("/etc/claude-test.key", 0, b"sk-test-cyber\n").expect("test: cheia");
+    let app = proc::spawn_path("/bin/claude-app", &["claude-app"]).expect("test: /bin/claude-app");
+    let deadline = arch::x86_64::apic::ticks() + 10 * arch::x86_64::apic::HZ;
+    while !ui::top_window().is_some_and(|(o, _)| o == app) {
+        assert!(arch::x86_64::apic::ticks() < deadline, "test: fereastra Claude nu se deschide");
+        sched::sleep_ms(10);
+    }
+    for ch in "Fa testul uneltelor".chars() {
+        push_key(Key::Char(ch));
+        sched::sleep_ms(20);
+    }
+    push_key(Key::Enter);
+    // The app reads these only when it shows a confirmation box, in this order.
+    for (k, wait) in [('n', 1500), ('d', 1500), ('d', 4000)] {
+        sched::sleep_ms(wait);
+        push_key(Key::Char(k));
+    }
+    sched::sleep_ms(4000);
+    info!("CLAUDE-TOOLS: captura");
+    sched::sleep_ms(1000);
+    push_key(Key::Escape);
+    assert!(proc::wait(app) == 0, "test: aplicatia Claude nu s-a inchis cu 0");
+    let written = fs::read_all("/disk/claude.txt").expect("test: /disk/claude.txt lipseste");
+    assert!(written == b"scris de Claude\n", "test: claude.txt are alt continut");
+    assert!(fs::read_all("/etc/rau.txt").is_err(), "test: /etc/rau.txt a fost scris");
+    info!("test: uneltele lui Claude OK (Nu respectat, Da executat, /etc refuzat)");
 }
 
 /// HTTPS with real web sites (P6-02): /bin/fetch resolves the name, connects through QEMU's network to the

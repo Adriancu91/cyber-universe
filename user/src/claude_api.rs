@@ -117,14 +117,37 @@ pub fn key(c: &Config) -> Result<String, String> {
 
 /// Sends the conversation (`(role, text)` pairs, "user" / "assistant", ending with "user") and returns Claude's
 /// answer, or a message saying what went wrong (in Romanian, for the screen).
+#[allow(dead_code)] // used by /bin/claude, not by the chat window
 pub fn ask(c: &Config, key: &str, messages: &[(&str, &str)]) -> Result<String, String> {
-    let list = messages.iter().map(|(role, text)| Value::object([("role", Value::str(role)), ("content", Value::str(text))])).collect();
-    let body = Value::object([
-        ("model", Value::str(&c.model)),
-        ("max_tokens", Value::int(c.max_tokens)),
-        ("messages", Value::Array(list)),
-    ])
-    .to_string();
+    let list: Vec<Value> =
+        messages.iter().map(|(role, text)| Value::object([("role", Value::str(role)), ("content", Value::str(text))])).collect();
+    Ok(text_of(&send(c, key, &list, None)?))
+}
+
+/// The text blocks of an answer, joined.
+pub fn text_of(answer: &Value) -> String {
+    let mut out = String::new();
+    for part in answer.get("content").and_then(Value::as_array).unwrap_or(&[]) {
+        if part.get("type").and_then(Value::as_str) == Some("text") {
+            out.push_str(part.get("text").and_then(Value::as_str).unwrap_or(""));
+        }
+    }
+    out
+}
+
+/// Sends the messages exactly as given (objects with "role" and "content", which may be text or a list of blocks:
+/// text, tool_use, tool_result) and, when `tools` is given, the tools Claude may ask for. Returns the whole answer
+/// (its "content" list and "stop_reason"), or a message saying what went wrong.
+pub fn send(c: &Config, key: &str, messages: &[Value], tools: Option<&Value>) -> Result<Value, String> {
+    let mut fields = alloc::vec![
+        (String::from("model"), Value::str(&c.model)),
+        (String::from("max_tokens"), Value::int(c.max_tokens)),
+        (String::from("messages"), Value::Array(messages.to_vec())),
+    ];
+    if let Some(t) = tools {
+        fields.push((String::from("tools"), t.clone()));
+    }
+    let body = Value::Object(fields).to_string();
 
     // SAFETY: the program has one thread and uses this buffer for one request at a time.
     let buf = unsafe { &mut *core::ptr::addr_of_mut!(TLS_BUF) };
@@ -178,14 +201,8 @@ pub fn ask(c: &Config, key: &str, messages: &[(&str, &str)]) -> Result<String, S
         529 => return Err("serviciul e supraincarcat acum (529), incearca mai tarziu".to_string()),
         s => return Err(alloc::format!("eroare {}: {}", s, message)),
     }
-    let Some(content) = json.as_ref().and_then(|j| j.get("content")).and_then(Value::as_array) else {
-        return Err("raspuns fara text".to_string());
-    };
-    let mut answer = String::new();
-    for part in content {
-        if part.get("type").and_then(Value::as_str) == Some("text") {
-            answer.push_str(part.get("text").and_then(Value::as_str).unwrap_or(""));
-        }
+    match json {
+        Some(j) if j.get("content").and_then(Value::as_array).is_some() => Ok(j),
+        _ => Err("raspuns fara continut".to_string()),
     }
-    Ok(answer)
 }

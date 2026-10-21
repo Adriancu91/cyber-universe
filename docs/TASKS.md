@@ -173,7 +173,8 @@ Reparații după testul 2 pe Lenovo (comanda C-4, înaintea restului fazei):
   Test: scenariul `claude-cli` (imitație a API-ului: cerere verificată, răspuns chunked; cheie greșită → 401; fără cheie).
 - [x] **P6-05** Aplicația „Claude”: chat în fereastră. Dep: P6-04.
   Test: scenariul `claude-app` (două mesaje, conversația întreagă trimisă, captura `tests/screens/claude-app.png`).
-- [ ] **P6-06** Uneltele lui Claude în OS (citește/scrie fișier, listează dosar, rulează comandă) cu confirmare pe ecran. Dep: P6-05.
+- [x] **P6-06** Uneltele lui Claude în OS (citește/scrie fișier, listează dosar, rulează comandă) cu confirmare pe ecran. Dep: P6-05.
+  Test: scenariul `claude-tools` (Nu respectat, Da executat, scriere în /etc refuzată; discul verificat pe gazdă).
 - [x] **P6-07** CI publică un GitHub Release cu fișierele stick-ului și sumele SHA-256. Dep: —.
   Test: jobul `release` din CI pe `main`; `GH_TOKEN=… tools/check-release.sh` (depozitul e privat → descărcarea cere token).
 - [ ] **P6-08** Comanda „Actualizează”: descarcă ultimul Release prin HTTPS, verifică sumele, rescrie stick-ul. Dep: P6-02, P6-07.
