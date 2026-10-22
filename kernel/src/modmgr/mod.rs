@@ -246,6 +246,8 @@ pub fn start(name: &str) -> Result<u64, ModError> {
         return Err(ModError::Running);
     }
     let program = format!("{}/{}", dir(name), m.start.ok_or(ModError::NoProgram)?);
+    // Logged before the spawn: the new program may run (and print) before the line after it.
+    crate::info!("mod: pornesc {} ({})", name, program);
     let id = crate::proc::spawn_path(&program, &[&program]).map_err(|_| ModError::Spawn)?;
     RUNNING.lock().push((String::from(name), id));
     crate::info!("mod: pornit {} (firul {})", name, id);
