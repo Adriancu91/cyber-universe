@@ -3,6 +3,10 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Pornire manuală 2026-10-22 (cerută de centrul de comandă la 16:40 pentru C-8) — fără lucru nou
+- C-8 era deja făcută în această sesiune (P6-10d, Release os-138, CI verde). Nicio comandă nouă, niciun rezultat de la testul 6,
+  nicio sarcină liberă (P6-10 așteaptă testul 6; C-7 rămâne `nou` până merge rețeaua) → oprire (CLAUDE.md §3).
+
 ### Sesiunea programată 2026-10-22 13:28–14:30 UTC (16:28–17:30 ora României), în cloud, fără Adrian — P6-10d (C-8)
 - **Pornire:** clonele vechi din `/home/claude` aveau alt istoric (fără bază comună cu GitHub) → mutate deoparte (`*.vechi`), clonat curat.
 - **Hub:** comanda nouă **C-8** (testul 5: regresie 0 trimise / 0 primite; No Snoop era deja oprit; completări 16:45 studiu, 16:50 RCR,
