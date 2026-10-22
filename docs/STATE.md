@@ -3,7 +3,32 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
-### Sesiunea programată 2026-10-22 17:40–18:30 UTC (20:40–21:30 ora României), în cloud, fără Adrian — P6-10f (C-9, completările 4–5)
+### Sesiunea programată 2026-10-22 19:45–21:00 UTC (22:45–00:00 ora României), în cloud, fără Adrian — C-10: P6-10g, P6-10h
+- **Pornire:** clonele locale aveau iar `main` cu alt istoric (clonă „shallow” veche) → păstrat ca ramura locală `backup-local-old`
+  (nepublicată), `main` = GitHub. Hub: comanda nouă **C-10** (testul 7, os-150) → preluată 19:55 UTC; P6-10g și P6-10h în TASKS, cu planuri.
+- **Terminată: P6-10g** (prima inițializare citește zerouri la cald; repornirea merge și fără golirea cache-ului):
+  - **Paza DMA** (`frame::pin`): paginile date plăcilor (rtl8168, e1000, ahci, nvme) nu mai pot fi eliberate de altcineva — încercarea e
+    refuzată și scrisă în jurnal cu fișier:linie; `reclaim_bootloader` le sare; `check_pins()`. Test în QEMU: `test_dma_guard` (în `net`,
+    `net-high`) + `test_all_frames` verifică că nicio pagină pazită nu e dată din nou. În QEMU nu s-a găsit nicio suprapunere (37 de pagini pazite, 0 libere).
+  - **Schimbarea de comportament (una):** inelele + toate bufferele RX/TX într-un **bloc contiguu între 16 MiB și 4 GB** (139 de pagini),
+    ca la repornire. `rtl porneste pagini` = alocarea veche (os-149). Golirea cache-ului rămâne implicită până la testul 8.
+  - **Diagnostic (nu atinge placa):** bufferele RX umplute cu `A5`; `net` → „necitite de placa (model A5)” și „paza memoriei”; `log rtl` →
+    blocul DMA și regiunea din harta memoriei.
+- **Terminată: P6-10h** (doar varianta rece; pornirea implicită neschimbată): proba OCP înaintea scrierilor (E8DE citit de 2 ori; la laptop
+  `0001` = OCP răspunde), bitul 15 din E8DE tratat ca **comandă care se șterge singură**, C+ bit 3 = doar 8169 (nu mai e „eșuat”).
+  Concluzie: accesul OCP pare corect; la rece rămâne singurul semn real **FIFO-ul RX care nu se golește** (pasul 3).
+- C-10 (3): rețeaua de test prin partajarea Windows (ICS, 192.168.137.x) notată în `docs/HARDWARE.md` și `docs/USB.md` (secțiunea 6b).
+- **CI:** roșu o dată pe `165d28a` — scenariul `modules`: programul modulului a scris „modul salut: pornit” înaintea rândului nucleului
+  „mod: pornit salut” (ordine întâmplătoare, veche). Reparat: rândul „mod: pornesc salut” se scrie înainte de pornirea programului, testul îl
+  așteaptă pe el. Verde pe `b1bbe34` (os-154) și `53b14dd` (**Release `os-155`**: P6-10g + P6-10h).
+- **Teste:** `cd rtl8168 && cargo test --release` → 39; `tools/test.sh` → 49 trecute + `https-real` sărit (înainte de P6-10h și de reparația
+  `modules`); după ele: `shell`, `net`, `boot`, `modules` (×4), `phase4` trecute.
+- **Următorul pas:** testul 8 pe laptop (lista în hub, `stare/cyber-universe.md`). Dacă (C) ia adresă la prima inițializare → P6-10g
+  confirmată, apoi (o schimbare) scoatem golirea cache-ului dacă `net` arată 0 cadre reparate de ea. Dacă (C) tot zerouri: `log rx` arată
+  dacă primii octeți sunt `a5` (placa n-a scris → starea plăcii, încercăm două inițializări la pornire) sau `00` (altcineva a scris).
+  (R): dacă tot 0/0, pasul 3 (FIFO) e următoarea țintă — sarcină nouă după rezultat.
+
+### (anterioară) Sesiunea programată 2026-10-22 17:40–18:30 UTC (20:40–21:30 ora României), în cloud, fără Adrian — P6-10f (C-9, completările 4–5)
 - **Pornire:** clonele locale aveau din nou `main` cu alt istoric → păstrat ca ramura locală `backup/old-local-main` (nepublicată), `main` = GitHub.
 - **Hub:** nicio comandă nouă. Dar **C-9 avea două completări (18:20 și 18:30 ora României) pe care sesiunea de la 14:55 UTC nu le-a văzut**:
   testul 6 G–L arată că `rtl porneste cache` repară cadrele zero la cald, iar cu cablul la router merg DHCP (192.168.8.194), ping, DNS,
