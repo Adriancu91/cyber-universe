@@ -86,6 +86,28 @@ pub trait Hw {
     fn alloc_page(&mut self) -> Option<(u64, *mut u8)>;
     /// Busy-waits about `us` microseconds.
     fn delay_us(&mut self, us: u32);
+    /// Makes DMA memory `ptr..ptr + len` agree between the CPU and the card: what the CPU wrote is written back
+    /// to memory, and what the CPU holds in its caches for that range is dropped, so the next read sees what the
+    /// card wrote. Needed when the card's writes do not snoop the CPU caches (PCIe "No Snoop").
+    fn dma_sync(&mut self, ptr: *mut u8, len: usize);
+}
+
+/// What the driver saw for one of the first received frames (`log rx` on the laptop).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RxRecord {
+    /// Descriptor index.
+    pub index: u16,
+    /// Length from the descriptor (frame + CRC).
+    pub len: u16,
+    /// Buffer address the descriptor holds (what the card wrote to).
+    pub desc_addr: u64,
+    /// Physical address of the buffer the driver reads.
+    pub buf_phys: u64,
+    /// CPU address the driver reads from.
+    pub buf_virt: u64,
+    /// The first 16 bytes before and after the cache sync.
+    pub before: [u8; 16],
+    pub after: [u8; 16],
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -138,6 +160,14 @@ pub struct Rtl8168<H: Hw> {
     pub dhcp_replies: u64,
     /// The first received frames: (ethertype, UDP destination port or 0).
     pub first: [(u16, u16); FIRST_FRAMES],
+    /// The first received frames in detail (addresses, bytes before/after the cache sync).
+    pub rx_log: [RxRecord; FIRST_FRAMES],
+    /// Good frames whose ethertype read as 0000 (impossible on a real network: the driver read the wrong memory).
+    pub zero_type: u64,
+    /// Frames whose first bytes read as zeros before the cache sync and as data after it (the sync was needed).
+    pub fixed_by_sync: u64,
+    /// Receive buffers above 4 GiB (the card then needs 64-bit addressing).
+    pub high_bufs: usize,
     /// An RDU was seen and the card has not been seen receiving into a drained ring since.
     rdu_pending: bool,
     /// Since the last RDU, the driver found the ring empty (everything handed back to the card).
@@ -187,6 +217,23 @@ fn write_desc(ring: Page, i: usize, opts1: u32, addr: u64) {
         d.write_volatile(opts1);
     }
     core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+}
+
+/// The buffer address held by descriptor `i` (words 2 and 3).
+fn desc_addr(ring: Page, i: usize) -> u64 {
+    let d = desc_ptr(ring, i);
+    // SAFETY: see `desc_ptr`.
+    unsafe { d.add(2).read_volatile() as u64 | (d.add(3).read_volatile() as u64) << 32 }
+}
+
+/// The first 16 bytes of a receive buffer, read as they are (volatile: the card writes there).
+fn head(p: *const u8) -> [u8; 16] {
+    let mut h = [0u8; 16];
+    for (k, b) in h.iter_mut().enumerate() {
+        // SAFETY: `p` is a receive buffer of BUF >= 16 bytes owned by the driver.
+        *b = unsafe { p.add(k).read_volatile() };
+    }
+    h
 }
 
 fn eor(i: usize, len: usize) -> u32 {
@@ -239,12 +286,20 @@ impl<H: Hw> Rtl8168<H> {
         let mut tx_bufs = [tx_ring; TX_RING];
         for i in (0..RX_RING).step_by(2) {
             let p = hw_page(&mut hw).ok_or(InitError::NoMemory)?;
+            // The page was zeroed by the CPU: write the zeros back and drop them from the cache now, so stale or
+            // dirty lines never hide (or later overwrite) what the card writes.
+            hw.dma_sync(p.ptr, 4096);
             for (k, b) in halves(p).into_iter().enumerate() {
                 // SAFETY: the book page holds exactly RX_RING `Page`s (4096 bytes) and is page-aligned.
                 unsafe { (rx_book.ptr as *mut Page).add(i + k).write(b) };
                 write_desc(rx_ring, i + k, desc::OWN | eor(i + k, RX_RING) | BUF as u32, b.phys);
             }
         }
+        hw.dma_sync(rx_ring.ptr, 4096);
+        let high_bufs = (0..RX_RING)
+            // SAFETY: every entry of the book was written just above.
+            .filter(|&i| unsafe { (rx_book.ptr as *const Page).add(i).read() }.phys >> 32 != 0)
+            .count();
         for pair in tx_bufs.chunks_mut(2) {
             let p = hw_page(&mut hw).ok_or(InitError::NoMemory)?;
             pair.copy_from_slice(&halves(p));
@@ -252,6 +307,8 @@ impl<H: Hw> Rtl8168<H> {
         for i in 0..TX_RING {
             write_desc(tx_ring, i, eor(i, TX_RING), 0);
         }
+        hw.dma_sync(tx_ring.ptr, 4096);
+        hw.dma_sync(rx_ring.ptr, 4096);
 
         hw.write8(reg::CR9346, 0xC0); // unlock configuration
         hw.write16(reg::IMR, 0); // polling: no interrupts
@@ -274,6 +331,7 @@ impl<H: Hw> Rtl8168<H> {
             hw, mac, revision, rx_ring, tx_ring, rx_book, tx_bufs,
             rx_next: 0, tx_next: 0, sent: 0, received: 0, dropped: 0, isr_seen: 0, polls: 0,
             rdu_count: 0, restarts: 0, resyncs: 0, dhcp_replies: 0, first: [(0, 0); FIRST_FRAMES],
+            rx_log: [RxRecord::default(); FIRST_FRAMES], zero_type: 0, fixed_by_sync: 0, high_bufs,
             rdu_pending: false, drained: false, idle_polls: 0,
         })
     }
@@ -330,7 +388,9 @@ impl<H: Hw> Rtl8168<H> {
             core::ptr::write_bytes(buf.ptr, 0, MIN_FRAME);
             core::ptr::copy_nonoverlapping(frame.as_ptr(), buf.ptr, frame.len());
         }
+        self.hw.dma_sync(buf.ptr, len);
         write_desc(self.tx_ring, i, desc::OWN | eor(i, TX_RING) | desc::FS | desc::LS | len as u32, buf.phys);
+        self.hw.dma_sync(desc_ptr(self.tx_ring, i) as *mut u8, 16);
         self.tx_next = (i + 1) % TX_RING;
         self.hw.write8(reg::TPPOLL, POLL_NORMAL);
         let done = self.wait_tx_free(i);
@@ -365,6 +425,8 @@ impl<H: Hw> Rtl8168<H> {
         }
         loop {
             let i = self.rx_next;
+            // The card writes the descriptor back: make sure the CPU does not read an old copy from its cache.
+            self.hw.dma_sync(desc_ptr(self.rx_ring, i) as *mut u8, 16);
             let opts1 = read_desc(self.rx_ring, i);
             if opts1 & desc::OWN != 0 {
                 if self.resync() {
@@ -377,10 +439,18 @@ impl<H: Hw> Rtl8168<H> {
             let len = (opts1 & desc::LEN) as usize;
             let good = whole && opts1 & desc::RX_ERROR == 0 && (4..=BUF).contains(&len);
             let mut n = 0;
+            let mut rec = RxRecord::default();
             if good {
                 n = (len - 4).min(out.len());
+                let b = self.rx_buf(i);
+                rec = RxRecord {
+                    index: i as u16, len: len as u16, desc_addr: desc_addr(self.rx_ring, i),
+                    buf_phys: b.phys, buf_virt: b.ptr as u64, before: head(b.ptr), after: [0; 16],
+                };
+                self.hw.dma_sync(b.ptr, len);
+                rec.after = head(b.ptr);
                 // SAFETY: the card wrote `len` <= BUF bytes into this driver-owned buffer and handed it back.
-                unsafe { core::ptr::copy_nonoverlapping(self.rx_buf(i).ptr, out.as_mut_ptr(), n) };
+                unsafe { core::ptr::copy_nonoverlapping(b.ptr, out.as_mut_ptr(), n) };
             }
             self.rearm(i);
             self.rx_next = (i + 1) % RX_RING;
@@ -394,6 +464,13 @@ impl<H: Hw> Rtl8168<H> {
                 let sum = summarize(&out[..n]);
                 if (self.received as usize) < FIRST_FRAMES {
                     self.first[self.received as usize] = sum;
+                    self.rx_log[self.received as usize] = rec;
+                }
+                if sum.0 == 0 {
+                    self.zero_type += 1;
+                }
+                if rec.before == [0; 16] && rec.after != [0; 16] {
+                    self.fixed_by_sync += 1;
                 }
                 if sum == (0x0800, 68) {
                     self.dhcp_replies += 1;
@@ -413,6 +490,7 @@ impl<H: Hw> Rtl8168<H> {
     /// Hands receive descriptor `i` back to the card (OWN, EOR on the last one, buffer size).
     fn rearm(&mut self, i: usize) {
         write_desc(self.rx_ring, i, desc::OWN | eor(i, RX_RING) | BUF as u32, self.rx_buf(i).phys);
+        self.hw.dma_sync(desc_ptr(self.rx_ring, i) as *mut u8, 16);
     }
 
     /// The descriptor the driver expects is still the card's: if the card wrote a frame into another one (it started

@@ -38,6 +38,12 @@ pub struct Model {
     /// ring start), so the driver has to find where it writes.
     pub keep_index_on_restart: bool,
     rx_stalled: bool,
+    /// Memory the CPU does not see coherently (a card writing with PCIe "No Snoop" past stale CPU caches): received
+    /// frame data lands in `pending` and reaches the CPU's view of the page only through `dma_sync`.
+    pub noncoherent: bool,
+    pending: Vec<(u64, Vec<u8>)>,
+    /// Calls of `dma_sync`.
+    pub syncs: u64,
 }
 
 impl Model {
@@ -46,7 +52,7 @@ impl Model {
             regs: [0; 256], pages: Vec::new(), reset_reads: 3, reset_left: 0, absent: false, page_limit: 160,
             wire: Vec::new(), missed: 0, locked_writes: 0, tx_idx: 0, rx_idx: 0, delays_us: 0,
             bmcr: 1 << 12, cable: true, stall_on_overflow: true, stall_after_rdu: false,
-            keep_index_on_restart: false, rx_stalled: false,
+            keep_index_on_restart: false, rx_stalled: false, noncoherent: false, pending: Vec::new(), syncs: 0,
         };
         m.regs[..6].copy_from_slice(&MAC);
         m.set32(reg::TCR, 0x5480_0000); // a revision number in bits 23 and 26-30, like a real chip
@@ -234,9 +240,14 @@ impl Model {
             self.missed += 1;
             return false;
         }
-        let buf = self.mem(addr, len);
-        buf[..frame.len()].copy_from_slice(frame);
-        buf[frame.len()..].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        let mut data = frame.to_vec();
+        data.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        if self.noncoherent {
+            self.mem(addr, len); // checks the address
+            self.pending.push((addr, data));
+        } else {
+            self.mem(addr, len).copy_from_slice(&data);
+        }
         let eor = opts1 & desc::EOR;
         self.set_opts1(ring, self.rx_idx, eor | desc::FS | desc::LS | len as u32);
         self.rx_idx = if eor != 0 { 0 } else { self.rx_idx + 1 };
@@ -305,6 +316,24 @@ impl Hw for Model {
     }
     fn delay_us(&mut self, us: u32) {
         self.delays_us += us as u64;
+    }
+    fn dma_sync(&mut self, ptr: *mut u8, len: usize) {
+        self.syncs += 1;
+        let Some(page) = self.pages.iter().position(|p| {
+            let start = p.as_ptr() as usize;
+            (start..start + 4096).contains(&(ptr as usize))
+        }) else {
+            panic!("dma_sync outside the DMA pages");
+        };
+        let off = ptr as usize - self.pages[page].as_ptr() as usize;
+        assert!(off + len <= 4096, "dma_sync crosses a page");
+        let phys = PHYS_BASE + page as u64 * 4096 + off as u64;
+        let (now, later): (Vec<_>, Vec<_>) =
+            self.pending.drain(..).partition(|(a, d)| *a < phys + len as u64 && phys < *a + d.len() as u64);
+        self.pending = later;
+        for (a, d) in now {
+            self.mem(a, d.len()).copy_from_slice(&d);
+        }
     }
 }
 

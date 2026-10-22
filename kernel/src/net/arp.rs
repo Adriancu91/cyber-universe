@@ -42,9 +42,12 @@ fn cached(ip: Ipv4) -> Option<Mac> {
     cache.iter().find(|e| e.0 == ip).map(|e| e.1)
 }
 
+/// ARP packets written to the log so far (only the first few: `log arp` on the laptop).
+static LOGGED: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+const LOG_FIRST: u32 = 16;
+
 /// A received ARP packet.
 pub fn handle(p: &[u8]) {
-    let Some(cfg) = config() else { return };
     if p.len() < 28 || p[0..6] != [0, 1, 0x08, 0, 6, 4] {
         return;
     }
@@ -52,6 +55,16 @@ pub fn handle(p: &[u8]) {
     let sender_mac: Mac = p[8..14].try_into().unwrap();
     let sender_ip: Ipv4 = p[14..18].try_into().unwrap();
     let target_ip: Ipv4 = p[24..28].try_into().unwrap();
+    if LOGGED.fetch_add(1, core::sync::atomic::Ordering::Relaxed) < LOG_FIRST {
+        let ip = |a: Ipv4| alloc::format!("{}.{}.{}.{}", a[0], a[1], a[2], a[3]);
+        crate::info!(
+            "net: arp primit: {} de la {} ({:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}) pentru {}",
+            if op == 1 { "cerere" } else if op == 2 { "raspuns" } else { "alt tip" },
+            ip(sender_ip), sender_mac[0], sender_mac[1], sender_mac[2], sender_mac[3], sender_mac[4], sender_mac[5],
+            ip(target_ip)
+        );
+    }
+    let Some(cfg) = config() else { return };
     if target_ip != cfg.ip {
         return;
     }

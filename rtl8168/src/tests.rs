@@ -300,3 +300,91 @@ fn first_frames_are_summarised() {
     assert_eq!(c.dhcp_replies, 1);
     assert_eq!(summarize(&[0; 5]), (0, 0));
 }
+
+/// A frame with its own ethertype (0x8800 + k) and payload pattern, so a frame read from the wrong buffer shows.
+fn typed_frame(k: u8) -> Vec<u8> {
+    let mut f = frame([0xFF; 6], 46 + k as usize, k.wrapping_mul(7));
+    f[12..14].copy_from_slice(&[0x88, k]);
+    f
+}
+
+#[test]
+fn noncoherent_memory_twelve_frames_each_read_from_its_own_buffer() {
+    let mut m = Model::new();
+    m.noncoherent = true;
+    let mut c = Rtl8168::new(m).expect("init");
+    let mut buf = [0u8; 2048];
+    // A burst before the driver polls (as at boot on the laptop), then frames one by one.
+    for k in 0..12u8 {
+        assert!(c.hw().deliver(&typed_frame(k)));
+    }
+    for k in 0..12u8 {
+        let n = c.receive(&mut buf).expect("frame");
+        let want = typed_frame(k);
+        assert_eq!(&buf[..n], &want[..], "frame {k} read whole and from its own buffer");
+    }
+    for k in 12..20u8 {
+        assert!(c.hw().deliver(&typed_frame(k)));
+        let n = c.receive(&mut buf).expect("frame");
+        assert_eq!(u16::from_be_bytes([buf[12], buf[13]]), 0x8800 + k as u16);
+        assert_eq!(n, typed_frame(k).len());
+    }
+    assert_eq!(c.zero_type, 0);
+    assert_eq!(c.fixed_by_sync, 20, "every frame needed the sync");
+    for (k, r) in c.rx_log.iter().enumerate() {
+        assert_eq!(r.index as usize, k);
+        assert_eq!(r.len as usize, typed_frame(k as u8).len() + 4);
+        assert_eq!(r.desc_addr, r.buf_phys, "the card wrote where the driver reads");
+        assert_eq!(r.before, [0; 16], "stale view before the sync");
+        assert_eq!(&r.after[..], &typed_frame(k as u8)[..16]);
+    }
+    assert_eq!(c.first[1], (0x8801, 0));
+    assert_eq!(c.high_bufs, RX_RING, "the model's pages are above 4 GiB");
+}
+
+/// The same card, but a host that never syncs: what the laptop showed at test 4.
+struct NoSync(Model);
+
+impl Hw for NoSync {
+    fn read8(&mut self, r: u16) -> u8 { self.0.read8(r) }
+    fn read16(&mut self, r: u16) -> u16 { self.0.read16(r) }
+    fn read32(&mut self, r: u16) -> u32 { self.0.read32(r) }
+    fn write8(&mut self, r: u16, v: u8) { self.0.write8(r, v) }
+    fn write16(&mut self, r: u16, v: u16) { self.0.write16(r, v) }
+    fn write32(&mut self, r: u16, v: u32) { self.0.write32(r, v) }
+    fn alloc_page(&mut self) -> Option<(u64, *mut u8)> { self.0.alloc_page() }
+    fn delay_us(&mut self, us: u32) { self.0.delay_us(us) }
+    fn dma_sync(&mut self, _: *mut u8, _: usize) {}
+}
+
+#[test]
+fn without_the_sync_frames_read_as_zeros() {
+    let mut m = Model::new();
+    m.noncoherent = true;
+    let mut c = Rtl8168::new(NoSync(m)).expect("init");
+    let mut buf = [0u8; 2048];
+    for k in 0..8u8 {
+        assert!(c.hw().0.deliver(&typed_frame(k)));
+    }
+    for _ in 0..8 {
+        c.receive(&mut buf).expect("a frame, with the right length");
+    }
+    assert_eq!(c.first, [(0, 0); FIRST_FRAMES], "ethertype 0000, as on the laptop");
+    assert_eq!(c.zero_type, 8);
+    assert_eq!(c.fixed_by_sync, 0);
+    assert_eq!(c.rx_log[3].after, [0; 16]);
+}
+
+#[test]
+fn coherent_memory_needs_no_fix() {
+    let mut c = card();
+    let mut buf = [0u8; 2048];
+    for k in 0..3u8 {
+        c.hw().deliver(&typed_frame(k));
+        c.receive(&mut buf).unwrap();
+    }
+    assert_eq!(c.fixed_by_sync, 0);
+    assert_eq!(c.zero_type, 0);
+    assert_eq!(&c.rx_log[2].before, &c.rx_log[2].after);
+    assert!(c.hw().syncs > RX_RING as u64 / 2, "pages synced at start-up, descriptors on every poll");
+}
