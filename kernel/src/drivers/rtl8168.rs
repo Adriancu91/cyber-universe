@@ -168,12 +168,23 @@ fn variant_text(o: Options) -> alloc::string::String {
     if o.cache {
         parts.push("cache");
     }
+    for (on, name) in [(o.mcu, "mcu"), (o.phy, "phy"), (o.cplus, "cplus"), (o.order, "ordine")] {
+        if on {
+            parts.push(name);
+        }
+    }
     if parts.is_empty() { alloc::string::String::from("implicita (ca os-125)") } else { parts.join(" ") }
 }
 
 /// The lines `log rtl` shows after start-up: the card's registers (read back), the PCI side and where the memory is,
 /// so one photo can be compared with the previous version's.
 fn log_registers(inner: &mut Rtl8168<KernelHw>, dev: &crate::pci::Device) {
+    for (i, st) in inner.steps.as_slice().iter().enumerate() {
+        crate::info!(
+            "net: rtl8168 pas {}: {} [{:04x}] {:x} -> {:x}{}",
+            i + 1, st.what, st.reg, st.before, st.after, if st.ok { "" } else { " (EXPIRAT / ESUAT)" }
+        );
+    }
     let d = inner.diag();
     let (rx, tx) = inner.ring_addresses();
     crate::info!(
@@ -185,6 +196,10 @@ fn log_registers(inner: &mut Rtl8168<KernelHw>, dev: &crate::pci::Device) {
         d.rdsar >> 32, d.rdsar as u32, if d.rdsar == rx { "" } else { " (GRESIT)" },
         d.tnpds >> 32, d.tnpds as u32, if d.tnpds == tx { "" } else { " (GRESIT)" },
         below_4g(rx), below_4g(tx)
+    );
+    crate::info!(
+        "net: rtl8168 C+ Command {:04x}, PMCH {:02x}, revizia {:08x} = {} (doar citite)",
+        d.cplus, d.pmch, inner.revision, chip_name(inner.revision)
     );
     let b: [u64; 3] = inner.rx_buffer_addresses();
     crate::info!(
@@ -260,7 +275,19 @@ pub fn init_with(options: Options) -> Option<Card> {
     }
 }
 
-/// Parses the words after `rtl porneste`: `bloc`, `rxdv`, `cache` (any order). `Err(word)` for an unknown word.
+/// The chip family from the revision bits of TCR (FreeBSD `if_rlreg.h` lists the same numbers), for the log.
+fn chip_name(rev: u32) -> &'static str {
+    match rev {
+        0x4C00_0000 => "8168G",
+        0x5080_0000 => "8168GU/8111GU",
+        0x5400_0000 => "8168H",
+        0x5C80_0000 => "8411B",
+        _ => "alta",
+    }
+}
+
+/// Parses the words after `rtl porneste`: `bloc`, `rxdv`, `cache`, the cold-start steps `mcu`, `phy`, `cplus`,
+/// `ordine`, and `rece` = all cold-start steps (any order). `Err(word)` for an unknown word.
 pub fn parse_options<'a>(words: &[&'a str]) -> Result<Options, &'a str> {
     let mut o = Options::default();
     for &w in words {
@@ -268,6 +295,14 @@ pub fn parse_options<'a>(words: &[&'a str]) -> Result<Options, &'a str> {
             "bloc" => o.rx_block = true,
             "rxdv" => o.rxdv = true,
             "cache" => o.cache = true,
+            "mcu" => o.mcu = true,
+            "phy" => o.phy = true,
+            "cplus" => o.cplus = true,
+            "ordine" => o.order = true,
+            "rece" => {
+                let c = Options::cold();
+                (o.rxdv, o.mcu, o.phy, o.cplus, o.order) = (true, c.mcu, c.phy, c.cplus, c.order);
+            }
             "implicit" => {}
             _ => return Err(w),
         }

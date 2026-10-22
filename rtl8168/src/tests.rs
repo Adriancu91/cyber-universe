@@ -9,11 +9,11 @@ fn card() -> Rtl8168<Model> {
 fn init_reads_mac_and_enables() {
     let mut c = card();
     assert_eq!(c.mac, MAC);
-    assert_eq!(c.revision, 0x5480_0000);
+    assert_eq!(c.revision, 0x5080_0000, "the laptop's 8168GU");
     let m = c.hw();
     assert_eq!(m.reg8(reg::CHIPCMD), CMD_RX | CMD_TX);
     assert_eq!(m.reg32(reg::RCR), RCR_VALUE);
-    assert_eq!(m.reg32(reg::TCR) & !0x7C80_0000, TCR_VALUE);
+    assert_eq!(m.reg32(reg::TCR) & !(0x7C80_0000 | TCR_TX_EMPTY), TCR_VALUE);
     assert_eq!(m.reg8(reg::CR9346), 0, "configuration locked again");
     assert_eq!(m.locked_writes, 0, "no write to a locked register");
     assert!(c.link_up());
@@ -451,4 +451,94 @@ fn zero_type_frames_are_counted() {
     assert_eq!(c.receive(&mut buf), Some(64));
     assert_eq!(c.zero_type, 1);
     assert_eq!(c.fixed_by_sync, 0);
+}
+
+#[test]
+fn default_start_takes_no_cold_steps() {
+    // The default start-up stays exactly that of os-125: no C+ Command, PMCH, MAC OCP or MISC writes, no steps.
+    let mut c = card();
+    assert!(c.steps.as_slice().is_empty());
+    let m = c.hw();
+    assert_eq!(m.cplus(), 0);
+    assert_eq!(m.reg8(reg::PMCH), 0);
+    assert_eq!(m.ocp_value(OCP_HANDOVER), 0);
+    assert_eq!(m.reg32(reg::RCR), RCR_VALUE, "no early-off bit");
+}
+
+#[test]
+fn cold_card_moves_nothing_with_the_default_start() {
+    // Test 6: started straight from the stick, link up, 0 sent / 0 received.
+    let mut m = Model::new();
+    m.cold = true;
+    let mut c = Rtl8168::new(m).unwrap();
+    assert!(c.link_up());
+    assert!(!c.send(&frame([0xFF; 6], 64, 1)));
+    assert!(!c.hw().deliver(&frame(MAC, 64, 2)));
+    assert_eq!((c.sent, c.received), (0, 0));
+}
+
+#[test]
+fn cold_start_steps_are_taken_and_recorded() {
+    let mut m = Model::new();
+    m.cold = true;
+    m.gate_rxdv();
+    let mut c = Rtl8168::with_options(m, Options::cold()).unwrap();
+    let steps = c.steps.as_slice();
+    assert!(steps.iter().all(|s| s.ok), "{:?}", steps);
+    let names: std::vec::Vec<&str> = steps.iter().map(|s| s.what).collect();
+    // The hand-over comes first, in this order.
+    assert!(names[0].starts_with("poarta RXDV inchisa"));
+    assert!(names[1].contains("coada TX"));
+    assert!(names[6].starts_with("OCP E8DE bit 14"));
+    assert!(names[8].starts_with("OCP E8DE bit 15"));
+    // Every bit change shows the register before and after, with exactly one bit different.
+    for s in steps.iter().filter(|s| s.what.contains(" bit ") && !s.what.starts_with("astept")) {
+        assert!((s.before ^ s.after).count_ones() <= 1, "{:?}", s);
+    }
+    let m = c.hw();
+    assert_eq!(m.cplus() & 0x89, 0x89, "C+ Command bits 0, 3, 7");
+    assert_eq!(m.reg8(reg::PMCH) & 0x80, 0x80);
+    assert_eq!(m.ocp_value(OCP_HANDOVER) & 0xC000, 0x8000, "bit 14 cleared, bit 15 set");
+    assert_eq!(m.reg8(reg::MCU) & MCU_NOW_IS_OOB, 0);
+    assert_eq!(m.reg32(reg::RCR), RCR_VALUE | RCR_EARLY_OFF_V2);
+    assert_eq!(m.reg32(reg::MISC) & MISC_RXDV_GATE, 0, "the gate closed for the hand-over is open again");
+    assert_eq!(m.reg8(reg::CHIPCMD), CMD_RX | CMD_TX);
+    assert_eq!(m.locked_writes, 0);
+    // The cold card now moves frames both ways.
+    assert!(c.send(&frame([0xFF; 6], 64, 1)));
+    assert!(c.hw().deliver(&frame(MAC, 64, 2)));
+    let mut buf = [0u8; 2048];
+    assert_eq!(c.receive(&mut buf), Some(78));
+    let d = c.diag();
+    assert_eq!((d.cplus & 0x89, d.pmch & 0x80), (0x89, 0x80), "visible in log rtl");
+    // A receiver restart keeps the early-off bit.
+    c.restart_rx();
+    assert_eq!(c.hw().reg32(reg::RCR), RCR_VALUE | RCR_EARLY_OFF_V2);
+}
+
+#[test]
+fn each_cold_variant_alone_touches_only_its_registers() {
+    let c = Rtl8168::with_options(Model::new(), Options { cplus: true, ..Options::default() }).unwrap();
+    assert_eq!(c.steps.len, 3);
+    let mut c = Rtl8168::with_options(Model::new(), Options { phy: true, ..Options::default() }).unwrap();
+    assert_eq!(c.steps.len, 3);
+    assert_eq!(c.hw().cplus(), 0);
+    let mut c = Rtl8168::with_options(Model::new(), Options { order: true, ..Options::default() }).unwrap();
+    assert_eq!(c.steps.len, 2);
+    assert_eq!(c.hw().reg32(reg::RCR), RCR_VALUE | RCR_EARLY_OFF_V2);
+    let mut c = Rtl8168::with_options(Model::new(), Options { mcu: true, ..Options::default() }).unwrap();
+    assert_eq!(c.steps.len, 10);
+    assert_eq!(c.hw().reg32(reg::MISC) & MISC_RXDV_GATE, 0, "mcu always reopens the gate");
+    assert!(c.misc_change.is_some());
+}
+
+#[test]
+fn a_wait_that_runs_out_is_noted_and_start_up_goes_on() {
+    let mut m = Model::new();
+    m.tx_never_empty = true;
+    let mut c = Rtl8168::with_options(m, Options::cold()).unwrap();
+    let s = c.steps.as_slice()[1];
+    assert!(s.what.contains("coada TX") && !s.ok);
+    assert!(c.hw().delays_us >= 100_000, "waited about 100 ms, not forever");
+    assert!(c.send(&frame([0xFF; 6], 64, 1)));
 }

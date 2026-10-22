@@ -115,7 +115,7 @@ fn help() {
     out!("  lspci            dispozitivele PCI (discuri, USB, retea...)\n");
     out!("  lsusb            dispozitivele USB conectate\n");
     out!("  net              placa de retea (adresa MAC, pachete)\n");
-    out!("  rtl porneste [bloc] [rxdv] [cache]  reporneste placa Realtek cu variantele date (fara: ca la pornire)\n");
+    out!("  rtl porneste [variante]  reporneste placa Realtek cu variantele date (fara: ca la pornire; `rtl` le arata)\n");
     out!("  hw               raport hardware pe o pagina (pentru o singura poza)\n");
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
     out!("  uptime           de cat timp merge sistemul\n");
@@ -354,20 +354,25 @@ fn net() {
     }
 }
 
-/// `rtl porneste [bloc] [rxdv] [cache]`: resets and restarts the Realtek card with the given start-up choices, so
+/// `rtl porneste [bloc] [rxdv] [cache] [rece|mcu|phy|cplus|ordine]`: resets and restarts the Realtek card with the given start-up choices, so
 /// several variants can be tried on the laptop from one boot, one change at a time (`log rtl` shows each start).
 fn rtl(args: &[&str]) {
     let Some((&"porneste", words)) = args.split_first() else {
-        out!("folosire: rtl porneste [bloc] [rxdv] [cache]\n");
+        out!("folosire: rtl porneste [variante]\n");
         out!("  bloc   bufferele de primire intr-un singur bloc sub 4 GB\n");
         out!("  rxdv   deschide poarta RXDV (MISC bit 19), daca e inchisa\n");
         out!("  cache  goleste cache-ul pentru fiecare pachet primit/trimis\n");
+        out!("  rece   pornirea completa la rece = mcu phy cplus ordine rxdv (pasii in `log rtl`)\n");
+        out!("  mcu    preia placa de la firmware (MCU, OCP E8DE) inainte de resetare\n");
+        out!("  phy    trezeste PHY-ul (PMCH bit 7, PHY 1F=0, 0E=0)\n");
+        out!("  cplus  C+ Command bitii 0, 3, 7\n");
+        out!("  ordine TCR/RCR (cu EarlyOff v2) scrise inainte de pornirea RX/TX\n");
         return;
     };
     let options = match crate::drivers::rtl8168::parse_options(words) {
         Ok(o) => o,
         Err(w) => {
-            out!("rtl: varianta necunoscuta: {} (bloc, rxdv, cache)\n", w);
+            out!("rtl: varianta necunoscuta: {} (bloc, rxdv, cache, rece, mcu, phy, cplus, ordine)\n", w);
             return;
         }
     };

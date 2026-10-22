@@ -196,8 +196,8 @@ Reparații după testul 5 pe Lenovo (comanda C-8, înaintea lui P6-10):
   Test: `cd rtl8168 && cargo test --release` (27 de teste: poarta RXDV, bloc sub 4 GB, adrese pe 64 de biți); `tools/test.sh` (50 de scenarii, cu `net-high` la -m 6G). Pe laptop: testul 6 (variantele una câte una).
 
 Reparații după testul 6 pe Lenovo (comanda C-9, înaintea lui P6-10):
-- [~] **P6-10e** Realtek: inițializarea completă la pornirea „la rece” (variante `rtl porneste rece|mcu|phy|cplus|ordine`, fiecare pas în `log rtl`). Dep: P6-10d.
-  Test: `cd rtl8168 && cargo test --release`; `tools/test.sh`. Pe laptop: testul 7 (R).
+- [x] **P6-10e** Realtek: inițializarea completă la pornirea „la rece” (variante `rtl porneste rece|mcu|phy|cplus|ordine`, fiecare pas în `log rtl`). Dep: P6-10d.
+  Test: `cd rtl8168 && cargo test --release` (32 de teste: mod „rece” al modelului, pașii în ordine, așteptări cu limită); `tools/test.sh` (50 de scenarii; `shell` verifică `rtl porneste rece`). Pe laptop: testul 7 (R).
 - [ ] **P6-10f** Realtek: cadrele 2+ citite ca zero — diagnostic la cald (F12) cu `log rx`, apoi reparația. Dep: P6-10d.
   Test: pe laptop, testul 7 (C).
 

@@ -35,7 +35,7 @@ pub struct Model {
     /// Receive stalls while the FIFO-overflow bit (6) of ISR is set, as some revisions do.
     pub stall_on_overflow: bool,
     /// After running out of descriptors (RDU), the card takes no frame until the receiver is switched off and on
-    /// again: what the laptop's RTL8168H showed at test 3 (16 frames, then nothing).
+    /// again: what the laptop's RTL8168GU showed at test 3 (16 frames, then nothing).
     pub stall_after_rdu: bool,
     /// The card keeps its receive index when the receiver is switched off and on (instead of restarting at the
     /// ring start), so the driver has to find where it writes.
@@ -49,6 +49,15 @@ pub struct Model {
     /// `dma_sync` calls and the bytes they covered.
     pub syncs: u64,
     pub synced_bytes: u64,
+    /// A card nobody initialised since power-on (test 6: started straight from the stick, no boot menu): no DMA in either
+    /// direction until the driver has taken the MAC over from the firmware (MAC OCP 0xE8DE bit 15) and set C+ Command
+    /// bit 3. This only stands in for "the cold start needs more steps" so the variants can be tested; which steps the
+    /// real chip needs is found on the laptop.
+    pub cold: bool,
+    /// MAC OCP registers written by the driver (address, value).
+    ocp: Vec<(u16, u16)>,
+    /// The transmit queue never reports empty (TCR bit 11 stays clear): a wait that must time out.
+    pub tx_never_empty: bool,
 }
 
 impl Model {
@@ -58,10 +67,11 @@ impl Model {
             wire: Vec::new(), missed: 0, locked_writes: 0, tx_idx: 0, rx_idx: 0, delays_us: 0,
             bmcr: 1 << 12, cable: true, stall_on_overflow: true, stall_after_rdu: false,
             keep_index_on_restart: false, rx_stalled: false, no_snoop: false, hidden: Vec::new(), syncs: 0,
-            synced_bytes: 0,
+            synced_bytes: 0, cold: false, ocp: Vec::new(), tx_never_empty: false,
         };
         m.regs[..6].copy_from_slice(&MAC);
-        m.set32(reg::TCR, 0x5480_0000); // a revision number in bits 23 and 26-30, like a real chip
+        m.set32(reg::TCR, 0x5080_0000 | crate::TCR_TX_EMPTY); // the laptop's revision (8168GU), transmit queue empty
+        m.regs[reg::MCU as usize] = crate::MCU_TX_EMPTY | crate::MCU_RX_EMPTY | crate::MCU_LINK_LIST_READY;
         m.update_link();
         m
     }
@@ -74,7 +84,22 @@ impl Model {
     }
 
     fn gated(&self) -> bool {
-        self.get32(reg::MISC) & crate::MISC_RXDV_GATE != 0
+        self.get32(reg::MISC) & crate::MISC_RXDV_GATE != 0 || self.still_cold()
+    }
+
+    /// A cold card stays idle until the hand-over and C+ Command bit 3 (see `cold`).
+    fn still_cold(&self) -> bool {
+        self.cold && !(self.ocp_value(crate::OCP_HANDOVER) & 1 << 15 != 0 && self.regs[reg::CPLUS_CMD as usize] & 1 << 3 != 0)
+    }
+
+    /// A MAC OCP register as last written (0 if never).
+    pub fn ocp_value(&self, at: u16) -> u16 {
+        self.ocp.iter().rev().find(|(a, _)| *a == at).map_or(0, |&(_, v)| v)
+    }
+
+    /// The C+ Command register.
+    pub fn cplus(&self) -> u16 {
+        u16::from_le_bytes([self.regs[reg::CPLUS_CMD as usize], self.regs[reg::CPLUS_CMD as usize + 1]])
     }
 
     /// Whether `phys` lies in the contiguous below-4-GiB block handed out by `alloc_block`.
@@ -199,10 +224,22 @@ impl Model {
                 return;
             }
             reg::TCR => {
-                // Bits 23 and 26-30 (revision) are read-only.
+                // Bits 23 and 26-30 (revision) and 11 (transmit queue empty) are read-only.
                 let v = u32::from_le_bytes(bytes.try_into().unwrap());
-                let keep = self.get32(reg::TCR) & 0x7C80_0000;
-                self.set32(reg::TCR, keep | (v & !0x7C80_0000));
+                let ro = 0x7C80_0000 | crate::TCR_TX_EMPTY;
+                let keep = self.get32(reg::TCR) & ro;
+                self.set32(reg::TCR, keep | (v & !ro));
+                return;
+            }
+            reg::OCP_DATA => {
+                let v = u32::from_le_bytes(bytes.try_into().unwrap());
+                let at = (((v >> 16) & 0x7FFF) << 1) as u16; // address bits 15-1 in 30-16; bit 15 is data
+                if v & 1 << 31 != 0 {
+                    self.ocp.push((at, v as u16));
+                } else {
+                    let cur = self.ocp_value(at) as u32;
+                    self.set32(reg::OCP_DATA, cur);
+                }
                 return;
             }
             _ => {}
@@ -326,7 +363,13 @@ impl Hw for Model {
         if self.absent { u16::MAX } else { u16::from_le_bytes([self.regs[r as usize], self.regs[r as usize + 1]]) }
     }
     fn read32(&mut self, r: u16) -> u32 {
-        if self.absent { u32::MAX } else { self.get32(r) }
+        if self.absent {
+            return u32::MAX;
+        }
+        if r == reg::TCR && self.tx_never_empty {
+            return self.get32(r) & !crate::TCR_TX_EMPTY;
+        }
+        self.get32(r)
     }
     fn write8(&mut self, r: u16, v: u8) {
         self.write(r, &[v]);

@@ -48,5 +48,21 @@
   **Studiu (clean-room, doar idei, nimic copiat):** commit-ul FreeBSD r261531 (driverul `re(4)`, licență BSD) adaugă suportul
   RTL8168G: la pornire șterge bitul 19 din MISC (0xF0) dacă placa e 8168G („RXDV gated”) și folosește „EarlyOff v2” (bitul 11 din
   RxConfig). De aici varianta `rxdv`; bitul 11 rămâne candidat pentru o versiune următoare (o schimbare pe Release).
+- **După testul 6 pe Lenovo (22 oct, P6-10e, comanda C-9):** cauza lui „0 / 0” e pornirea **la rece** (direct de pe stick): același
+  os-125 merge pornit din meniul F12 (firmware-ul pornește placa ca să afișeze meniul) și nu merge pornit direct. Revizia plăcii,
+  `50800000`, e de fapt **RTL8168GU/8111GU** (FreeBSD `if_rlreg.h`), nu 8168H cum estimam. Pornirea implicită rămâne neschimbată;
+  pașii de pornire la rece sunt **variante** (`rtl porneste rece` = toate; sau câte una: `mcu`, `phy`, `cplus`, `ordine`), fiecare
+  registru scris citire → un bit → scriere, iar fiecare pas apare în `log rtl` (`pas N: ce, [registru] înainte -> după`, cu
+  „EXPIRAT” dacă o așteptare n-a reușit în ~100 ms; pornirea merge mai departe):
+  `mcu` = preluarea plăcii de la firmware înainte de resetare (poarta RXDV închisă, coada TX și FIFO-urile goale, RX/TX oprite,
+  MCU fără modul OOB, registrul MAC OCP E8DE: bitul 14 șters / bitul 15 pus, cu așteptarea „lista gata” după fiecare; poarta se
+  redeschide înainte de pornire); `phy` = PMCH bit 7, PHY 1F = 0, 0E = 0; `cplus` = registrul C+ Command (0xE0) biții 0, 3, 7, primul
+  după deblocare; `ordine` = TCR și RCR (cu EarlyOff v2, bitul 11) scrise înainte de pornirea RX/TX. `log rtl` arată și C+ Command,
+  PMCH și numele reviziei. Modelul are un mod `cold` (placa nu transferă până la preluare + C+ bit 3) — doar ca test al mecanismului;
+  ce pași contează cu adevărat se vede pe laptop (testul 7). 32 de teste.
+  **Studiu (clean-room, doar idei, nimic copiat):** FreeBSD `re(4)` (`sys/dev/re/if_re.c`, BSD): pentru 8168GU configurează C+ Command
+  înaintea oricărui alt registru, oprește poarta RXDV, scrie TCR/RCR (cu EarlyOff v2) și abia apoi pornește RX/TX; la atașare trezește
+  PHY-ul (registrele 1F și 0E). SerenityOS (`Kernel/Net/Realtek/RTL8168NetworkAdapter.cpp`, BSD-2): la 8168G+ face preluarea de la
+  MCU (pașii `mcu`) înainte de reset; pentru GU are restul neimplementat. Linux `r8169` (GPL) nu a fost folosit.
 - **Limite cunoscute:** nu setăm registrele PHY speciale pe care unele revizii le cer; dacă legătura nu se ridică pe un
   calculator, jurnalul arată revizia cipului (`revizia ...`) → sarcină nouă pentru acea revizie.

@@ -31,6 +31,59 @@ pub mod reg {
     pub const MTPS: u16 = 0xEC; // maximum transmit packet size, in 128-byte units
     pub const MCU: u16 = 0xD3; // 8168G and later: MCU status (read only for diagnostics)
     pub const MISC: u16 = 0xF0; // 8168G and later: bit 19 = RXDV gate (receive/transmit DMA held back while set)
+    pub const PMCH: u16 = 0x6F; // power management; bit 7 keeps the PHY powered (FreeBSD re(4): "PHYWAKE_PM")
+    pub const OCP_DATA: u16 = 0xB0; // 8168G and later: MAC OCP access: bit 31 write, the (even) address << 15, data 15-0
+    pub const CPLUS_CMD: u16 = 0xE0; // C+ Command (16-bit): bit 0 and bit 3 (PCI multiple read/write), bit 7
+}
+
+/// TCR bit 11 (8168E-VL and later, read only): the transmit queue is empty.
+pub const TCR_TX_EMPTY: u32 = 1 << 11;
+/// RCR bit 11 (8168G and later): "early off" version 2, set by FreeBSD re(4) for these revisions.
+pub const RCR_EARLY_OFF_V2: u32 = 1 << 11;
+/// MCU (0xD3) bits, 8168G and later: 7 the firmware's out-of-band mode, 5/4 transmit/receive FIFO empty, 1 the MCU's
+/// internal list is ready.
+pub const MCU_NOW_IS_OOB: u8 = 1 << 7;
+pub const MCU_TX_EMPTY: u8 = 1 << 5;
+pub const MCU_RX_EMPTY: u8 = 1 << 4;
+pub const MCU_LINK_LIST_READY: u8 = 1 << 1;
+/// The MAC OCP register the hand-over from firmware toggles (bit 14 cleared, then bit 15 set).
+pub const OCP_HANDOVER: u16 = 0xE8DE;
+/// How many start-up steps are kept for `log rtl`.
+pub const MAX_STEPS: usize = 32;
+
+/// One start-up step of the cold-start variants: a register (or PHY register) before and after, for `log rtl`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Step {
+    /// What the step does, in words.
+    pub what: &'static str,
+    /// The register (MMIO offset; MAC OCP address for OCP steps; PHY register number for PHY steps).
+    pub reg: u16,
+    pub before: u32,
+    pub after: u32,
+    /// false: a wait ran out of time, or a PHY write never completed (the start-up goes on anyway).
+    pub ok: bool,
+}
+
+/// The steps taken at start-up (only the cold-start variants add any).
+#[derive(Debug, Clone, Copy)]
+pub struct Steps {
+    pub list: [Step; MAX_STEPS],
+    pub len: usize,
+}
+
+impl Steps {
+    const fn new() -> Steps {
+        Steps { list: [Step { what: "", reg: 0, before: 0, after: 0, ok: true }; MAX_STEPS], len: 0 }
+    }
+    fn push(&mut self, s: Step) {
+        if self.len < MAX_STEPS {
+            self.list[self.len] = s;
+            self.len += 1;
+        }
+    }
+    pub fn as_slice(&self) -> &[Step] {
+        &self.list[..self.len]
+    }
 }
 
 /// MISC bit 19 (8168G and later): while set, the card's receive/transmit paths are gated off. Firmware or a previous
@@ -48,6 +101,25 @@ pub struct Options {
     /// Drop the CPU's cached copy of each data buffer: before a received frame is read, before the card reads a frame
     /// to send (`Hw::dma_sync`). Descriptor rings are never touched.
     pub cache: bool,
+    /// Cold start (test 6: the card works only after the firmware's boot menu touched it). 8168G and later: before the
+    /// reset, take the MAC over from the firmware's MCU: RXDV gate closed, wait for empty queues, receiver and
+    /// transmitter off, MCU out-of-band bit cleared, MAC OCP 0xE8DE bit 14 cleared / bit 15 set with a wait for "list
+    /// ready" after each (idea from SerenityOS, BSD-2). The gate is opened again before the receiver starts.
+    pub mcu: bool,
+    /// Cold start: PHY awake: PMCH bit 7, PHY register 0x1F = 0 (page 0) and 0x0E = 0 (idea from FreeBSD re(4), BSD).
+    pub phy: bool,
+    /// Cold start: C+ Command bits 0, 3 and 7, before every other register (as FreeBSD re(4) does for this revision).
+    pub cplus: bool,
+    /// Cold start: 8168G order: TCR and RCR (with "early off" v2) written before the receiver and transmitter are
+    /// switched on (FreeBSD re(4): "RX/TX MACs should be enabled after RX/TX configuration").
+    pub order: bool,
+}
+
+impl Options {
+    /// Every cold-start step (`rtl porneste rece`): mcu, phy, cplus, order and rxdv.
+    pub fn cold() -> Options {
+        Options { rxdv: true, mcu: true, phy: true, cplus: true, order: true, ..Options::default() }
+    }
 }
 
 /// Bits of a descriptor's first word.
@@ -80,7 +152,7 @@ pub const ISR_RDU: u16 = 1 << 4;
 
 /// Receive descriptors (16 bytes each: the ring fills exactly one 4 KiB page, so it is 256-byte aligned). Big enough
 /// that the broadcast traffic arriving while the driver waits for the link at start-up does not fill it (with 16, the
-/// laptop's RTL8168H filled the ring at boot, reported RDU and never received again: test 3, 2026-10-22).
+/// laptop's RTL8168GU filled the ring at boot, reported RDU and never received again: test 3, 2026-10-22).
 pub const RX_RING: usize = 256;
 /// Transmit descriptors (the driver waits for each frame, so a few are enough).
 pub const TX_RING: usize = 16;
@@ -160,6 +232,10 @@ pub struct Rtl8168<H: Hw> {
     pub options: Options,
     /// MISC (before, after) when `Options::rxdv` was asked for.
     pub misc_change: Option<(u32, u32)>,
+    /// The cold-start steps taken, with registers before/after (empty for the default start-up).
+    pub steps: Steps,
+    /// The RCR value the driver writes (with "early off" v2 when `Options::order`).
+    rcr_value: u32,
     rx_ring: Page,
     tx_ring: Page,
     /// A page holding the RX_RING receive buffer addresses (`Page`, 16 bytes each): kept out of the struct so the
@@ -220,6 +296,9 @@ pub struct Diag {
     /// MISC (0xF0) and MCU (0xD3), 8168G and later; read only.
     pub misc: u32,
     pub mcu: u8,
+    /// C+ Command (0xE0) and PMCH (0x6F); read only.
+    pub cplus: u16,
+    pub pmch: u8,
 }
 
 fn desc_ptr(ring: Page, i: usize) -> *mut u32 {
@@ -283,6 +362,87 @@ pub fn summarize(frame: &[u8]) -> (u16, u16) {
     (et, 0)
 }
 
+/// Read, change one bit, write (only if it must change), read back; recorded as a step. `width` is 8, 16 or 32.
+fn set_bit<H: Hw>(hw: &mut H, steps: &mut Steps, what: &'static str, reg: u16, width: u8, bit: u32, on: bool) {
+    let read = |hw: &mut H| match width {
+        8 => hw.read8(reg) as u32,
+        16 => hw.read16(reg) as u32,
+        _ => hw.read32(reg),
+    };
+    let before = read(hw);
+    let want = if on { before | 1 << bit } else { before & !(1 << bit) };
+    if want != before {
+        match width {
+            8 => hw.write8(reg, want as u8),
+            16 => hw.write16(reg, want as u16),
+            _ => hw.write32(reg, want),
+        }
+    }
+    let after = read(hw);
+    steps.push(Step { what, reg, before, after, ok: after & 1 << bit == want & 1 << bit });
+}
+
+/// Waits (at most `limit_us`, in 10 us steps) until all `mask` bits of a register are set; recorded as a step with the
+/// value at the start and at the end. Never blocks for good: a timeout is only noted.
+fn wait_bits<H: Hw>(hw: &mut H, steps: &mut Steps, what: &'static str, reg: u16, wide: bool, mask: u32, limit_us: u32) {
+    let read = |hw: &mut H| if wide { hw.read32(reg) } else { hw.read8(reg) as u32 };
+    let before = read(hw);
+    let mut now = before;
+    let mut waited = 0;
+    while now & mask != mask && waited < limit_us {
+        hw.delay_us(10);
+        waited += 10;
+        now = read(hw);
+    }
+    steps.push(Step { what, reg, before, after: now, ok: now & mask == mask });
+}
+
+/// Reads a 16-bit MAC OCP register (8168G and later).
+fn ocp_read<H: Hw>(hw: &mut H, at: u16) -> u16 {
+    hw.write32(reg::OCP_DATA, (at as u32) << 15);
+    hw.read32(reg::OCP_DATA) as u16
+}
+
+/// One bit of a MAC OCP register: read, change, write, read back; recorded as a step.
+fn ocp_set_bit<H: Hw>(hw: &mut H, steps: &mut Steps, what: &'static str, at: u16, bit: u32, on: bool) {
+    let before = ocp_read(hw, at);
+    let want = if on { before | 1 << bit } else { before & !(1 << bit) };
+    if want != before {
+        hw.write32(reg::OCP_DATA, 1 << 31 | (at as u32) << 15 | want as u32);
+    }
+    let after = ocp_read(hw, at);
+    steps.push(Step { what, reg: at, before: before as u32, after: after as u32, ok: after == want });
+}
+
+/// Writes PHY register `r` (MII) through PHYAR; false if the write never completed.
+fn phy_write_raw<H: Hw>(hw: &mut H, r: u8, value: u16) -> bool {
+    hw.write32(reg::PHYAR, 1 << 31 | ((r as u32 & 0x1F) << 16) | value as u32);
+    for _ in 0..2000 {
+        hw.delay_us(25);
+        if hw.read32(reg::PHYAR) & 1 << 31 == 0 {
+            hw.delay_us(20); // the datasheets ask for a short pause between PHY accesses
+            return true;
+        }
+    }
+    false
+}
+
+/// The hand-over from the firmware's MCU before the reset (`Options::mcu`), each step recorded.
+fn take_over_from_firmware<H: Hw>(hw: &mut H, steps: &mut Steps) {
+    set_bit(hw, steps, "poarta RXDV inchisa (MISC bit 19)", reg::MISC, 32, 19, true);
+    wait_bits(hw, steps, "astept coada TX goala (TCR bit 11)", reg::TCR, true, TCR_TX_EMPTY, 100_000);
+    let fifo = (MCU_TX_EMPTY | MCU_RX_EMPTY) as u32;
+    wait_bits(hw, steps, "astept FIFO RX+TX goale (MCU biti 4,5)", reg::MCU, false, fifo, 100_000);
+    set_bit(hw, steps, "primire oprita (CR bit 3)", reg::CHIPCMD, 8, 3, false);
+    set_bit(hw, steps, "trimitere oprita (CR bit 2)", reg::CHIPCMD, 8, 2, false);
+    set_bit(hw, steps, "MCU fara modul OOB (bit 7)", reg::MCU, 8, 7, false);
+    ocp_set_bit(hw, steps, "OCP E8DE bit 14 sters", OCP_HANDOVER, 14, false);
+    let ready = MCU_LINK_LIST_READY as u32;
+    wait_bits(hw, steps, "astept MCU lista gata (bit 1)", reg::MCU, false, ready, 100_000);
+    ocp_set_bit(hw, steps, "OCP E8DE bit 15 pus", OCP_HANDOVER, 15, true);
+    wait_bits(hw, steps, "astept MCU lista gata (bit 1)", reg::MCU, false, ready, 100_000);
+}
+
 impl<H: Hw> Rtl8168<H> {
     /// Resets and starts the card exactly as Release os-125 did (`Options::default()`).
     pub fn new(hw: H) -> Result<Self, InitError> {
@@ -293,6 +453,10 @@ impl<H: Hw> Rtl8168<H> {
     pub fn with_options(mut hw: H, options: Options) -> Result<Self, InitError> {
         if hw.read32(reg::TCR) == u32::MAX && hw.read32(reg::IDR0) == u32::MAX {
             return Err(InitError::NotAnswering);
+        }
+        let mut steps = Steps::new();
+        if options.mcu {
+            take_over_from_firmware(&mut hw, &mut steps);
         }
         hw.write8(reg::CHIPCMD, CMD_RESET);
         let mut done = false;
@@ -347,6 +511,20 @@ impl<H: Hw> Rtl8168<H> {
         }
 
         hw.write8(reg::CR9346, 0xC0); // unlock configuration
+        if options.cplus {
+            // FreeBSD re(4): the C+ register is configured before all others.
+            set_bit(&mut hw, &mut steps, "C+ Command bit 0", reg::CPLUS_CMD, 16, 0, true);
+            set_bit(&mut hw, &mut steps, "C+ Command bit 3 (PCI citire/scriere multipla)", reg::CPLUS_CMD, 16, 3, true);
+            set_bit(&mut hw, &mut steps, "C+ Command bit 7", reg::CPLUS_CMD, 16, 7, true);
+        }
+        if options.phy {
+            set_bit(&mut hw, &mut steps, "PHY alimentat (PMCH bit 7)", reg::PMCH, 8, 7, true);
+            for (r, what) in [(0x1F, "PHY registrul 1F = 0 (pagina 0)"), (0x0E, "PHY registrul 0E = 0")] {
+                let ok = phy_write_raw(&mut hw, r, 0);
+                steps.push(Step { what, reg: r as u16, before: 0, after: 0, ok });
+            }
+        }
+        let rcr_value = if options.order { RCR_VALUE | RCR_EARLY_OFF_V2 } else { RCR_VALUE };
         hw.write16(reg::IMR, 0); // polling: no interrupts
         hw.write16(reg::ISR, 0xFFFF);
         hw.write16(reg::RMS, BUF as u16);
@@ -358,7 +536,7 @@ impl<H: Hw> Rtl8168<H> {
         hw.write32(reg::MAR0, 0);
         hw.write32(reg::MAR0 + 4, 0);
         let mut misc_change = None;
-        if options.rxdv {
+        if options.rxdv || options.mcu {
             // Read, change one bit, write; only if it is set.
             let before = hw.read32(reg::MISC);
             if before & MISC_RXDV_GATE != 0 {
@@ -366,14 +544,21 @@ impl<H: Hw> Rtl8168<H> {
             }
             misc_change = Some((before, hw.read32(reg::MISC)));
         }
+        if options.order {
+            // 8168G and later: configure first, then switch the receiver and transmitter on.
+            hw.write32(reg::TCR, TCR_VALUE);
+            hw.write32(reg::RCR, rcr_value);
+            steps.push(Step { what: "TCR scris inainte de pornire", reg: reg::TCR, before: 0, after: hw.read32(reg::TCR), ok: true });
+            steps.push(Step { what: "RCR scris inainte de pornire", reg: reg::RCR, before: 0, after: hw.read32(reg::RCR), ok: true });
+        }
         hw.write8(reg::CHIPCMD, CMD_RX | CMD_TX);
         // Written after enabling as well: some revisions only keep RCR/TCR once the receiver/transmitter is on.
-        hw.write32(reg::RCR, RCR_VALUE);
+        hw.write32(reg::RCR, rcr_value);
         hw.write32(reg::TCR, TCR_VALUE);
         hw.write8(reg::CR9346, 0x00); // lock configuration
 
         Ok(Rtl8168 {
-            hw, mac, revision, options, misc_change, rx_ring, tx_ring, rx_book, tx_bufs,
+            hw, mac, revision, options, misc_change, steps, rcr_value, rx_ring, tx_ring, rx_book, tx_bufs,
             rx_next: 0, tx_next: 0, sent: 0, received: 0, dropped: 0, isr_seen: 0, polls: 0,
             rdu_count: 0, restarts: 0, resyncs: 0, dhcp_replies: 0, first: [(0, 0); FIRST_FRAMES],
             detail: [RxDetail::default(); FIRST_FRAMES], zero_type: 0, fixed_by_sync: 0,
@@ -393,15 +578,7 @@ impl<H: Hw> Rtl8168<H> {
 
     /// Writes PHY register `reg` (MII) through PHYAR; false if the write never completed.
     pub fn phy_write(&mut self, reg: u8, value: u16) -> bool {
-        self.hw.write32(reg::PHYAR, 1 << 31 | ((reg as u32 & 0x1F) << 16) | value as u32);
-        for _ in 0..2000 {
-            self.hw.delay_us(25);
-            if self.hw.read32(reg::PHYAR) & 1 << 31 == 0 {
-                self.hw.delay_us(20); // the datasheets ask for a short pause between PHY accesses
-                return true;
-            }
-        }
-        false
+        phy_write_raw(&mut self.hw, reg, value)
     }
 
     /// Powers the PHY up and restarts auto-negotiation (firmware may leave it powered down when nothing boots
@@ -565,7 +742,7 @@ impl<H: Hw> Rtl8168<H> {
         false
     }
 
-    /// After an RDU, some revisions (the laptop's RTL8168H) do not take frames again on their own once descriptors
+    /// After an RDU, some revisions (the laptop's RTL8168GU) do not take frames again on their own once descriptors
     /// are free. If no frame came for `STALL_POLLS` polls although every descriptor is the card's, restart the
     /// receiver: off, descriptors re-armed, ring start written again, on. (On a quiet network this may restart once
     /// for nothing, which costs nothing.)
@@ -598,7 +775,7 @@ impl<H: Hw> Rtl8168<H> {
         self.hw.write32(reg::RDSAR + 4, (self.rx_ring.phys >> 32) as u32);
         self.hw.write16(reg::ISR, ISR_ACK);
         self.hw.write8(reg::CHIPCMD, CMD_RX | CMD_TX);
-        self.hw.write32(reg::RCR, RCR_VALUE);
+        self.hw.write32(reg::RCR, self.rcr_value);
         self.hw.write8(reg::CR9346, 0x00);
     }
 
@@ -621,6 +798,8 @@ impl<H: Hw> Rtl8168<H> {
             rx_owned: (0..RX_RING).filter(|&i| read_desc(self.rx_ring, i) & desc::OWN != 0).count(),
             misc: self.hw.read32(reg::MISC),
             mcu: self.hw.read8(reg::MCU),
+            cplus: self.hw.read16(reg::CPLUS_CMD),
+            pmch: self.hw.read8(reg::PMCH),
         }
     }
 
