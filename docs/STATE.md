@@ -3,6 +3,10 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Pornire manuală 2026-10-22 ~16:00 UTC (cerută de centrul de comandă la 18:10 pentru C-9) — fără lucru nou
+- C-9 era deja făcută în această sesiune (P6-10e, Release os-144, CI verde; P6-10f așteaptă testul 7 C). Nicio comandă nouă, niciun
+  rezultat de la testul 7 → oprire (CLAUDE.md §3).
+
 ### Sesiunea programată 2026-10-22 14:55–16:00 UTC (17:55–19:00 ora României), în cloud, fără Adrian — P6-10e (C-9)
 - **Pornire:** clonele locale aveau `main` cu alt istoric (clonă „shallow”) → lucrat pe ramura locală `sesiune-1022b` din `origin/main`,
   push pe `main`. A lucrat în paralel sesiunea de la 14:40 (a reparat CI-ul `net-high`, n-a atins C-9); commit-ul ei a fost luat prin rebase local.
