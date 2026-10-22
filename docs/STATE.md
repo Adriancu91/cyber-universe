@@ -3,6 +3,16 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-22 14:40–15:30 UTC (17:40–18:30 ora României), în cloud, fără Adrian — reparat CI roșu
+- **Pornire:** clonele locale aveau un `main` vechi, cu alt istoric → păstrat ca ramura locală `local-vechi-main` (nepublicată), `main` nou din GitHub.
+- Hub: nicio comandă nouă, niciun rezultat de la testul 6; C-7 rămâne `nou` (se preia când merge rețeaua pe laptop). Nicio sarcină liberă în TASKS.
+- **CI roșu** pe `4fe5e76` (run 140, doar STATE.md schimbat): scenariul `net-high` — `PANIC: scurgere in heap: 1346688 inainte, 1346624 dupa`.
+  Reprodus local: 2 eșecuri din 3. Cauza: testul de heap compară memoria folosită înainte/după, dar firul de rețea (DHCP terminat chiar atunci)
+  eliberează 64 de octeți în același timp. **Nu e o problemă a driverului.** Reparat doar în testul nucleului (`test_heap`): întreruperile sunt
+  oprite cât se măsoară (`sched::irq_save/irq_restore`), deci nimic altceva nu rulează. După reparație: `net-high` 6 din 6 trecute.
+  Comportamentul driverelor nu s-a schimbat (regula D-013 — o schimbare pe Release — nu e atinsă: e doar cod de test).
+- **Următorul pas:** neschimbat — testul 6 pe laptop (lista în hub, `stare/cyber-universe.md`).
+
 ### Pornire manuală 2026-10-22 (cerută de centrul de comandă la 16:40 pentru C-8) — fără lucru nou
 - C-8 era deja făcută în această sesiune (P6-10d, Release os-138, CI verde). Nicio comandă nouă, niciun rezultat de la testul 6,
   nicio sarcină liberă (P6-10 așteaptă testul 6; C-7 rămâne `nou` până merge rețeaua) → oprire (CLAUDE.md §3).

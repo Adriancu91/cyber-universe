@@ -428,6 +428,9 @@ fn test_paging() {
 #[cfg(feature = "qemu-test")]
 fn test_heap() {
     use alloc::{boxed::Box, vec::Vec};
+    // Other threads (e.g. the network stack finishing DHCP) may allocate or free while the test runs;
+    // with interrupts masked nothing else can run, so the before/after comparison only sees this test.
+    let flags = sched::irq_save();
     let (used_before, _) = mem::heap::stats();
     {
         let v: Vec<u64> = (0..1_000_000u64).collect();
@@ -447,6 +450,7 @@ fn test_heap() {
         assert!(s == "5000 cutii ramase", "String gresit");
     }
     let (used_after, mapped) = mem::heap::stats();
+    sched::irq_restore(flags);
     assert!(used_after == used_before, "scurgere in heap: {} inainte, {} dupa", used_before, used_after);
     info!("test: heap OK (Vec de 1.000.000, 10.000 Box, String); heap mapat {} KiB", mapped / 1024);
 }
