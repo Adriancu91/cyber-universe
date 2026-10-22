@@ -3,6 +3,10 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Pornire manuală 2026-10-22 ~21:10 UTC (cerută de centrul de comandă la 22:55 pentru C-10) — fără lucru nou
+- C-10 era deja făcută în această sesiune (P6-10g, P6-10h, Release os-155, CI verde). Hub: C-11 (GPU) e `nou` dar se preia după C-7;
+  C-7 așteaptă rețeaua la rece (testul 8). Niciun rezultat de la testul 8 → oprire (CLAUDE.md §3).
+
 ### Sesiunea programată 2026-10-22 19:45–21:00 UTC (22:45–00:00 ora României), în cloud, fără Adrian — C-10: P6-10g, P6-10h
 - **Pornire:** clonele locale aveau iar `main` cu alt istoric (clonă „shallow” veche) → păstrat ca ramura locală `backup-local-old`
   (nepublicată), `main` = GitHub. Hub: comanda nouă **C-10** (testul 7, os-150) → preluată 19:55 UTC; P6-10g și P6-10h în TASKS, cu planuri.
