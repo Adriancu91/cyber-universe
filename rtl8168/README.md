@@ -77,5 +77,11 @@
   A5, placa nu a scris; dacă sunt zero, altcineva a șters pagina. În nucleu, paginile date plăcii sunt **pazite** (`frame::pin`): nu pot
   fi eliberate de altcineva (încercarea apare în jurnal cu fișierul și linia), `net`/`log rtl` arată starea pazei și regiunea din harta
   memoriei a inelului și a bufferelor. Modelul are `lose_data` (placa nu scrie datele) — 36 de teste.
+- **P6-10h (comanda C-10, testul 7 R):** accesul MAC OCP e verificat înainte de orice scriere — pasul „OCP proba” citește E8DE de două
+  ori (aceeași valoare, nu FFFF); dacă nu răspunde, scrierile OCP se sar. Citirea pe laptop (`0001`, nu adresa scrisă de noi) arată că
+  OCP răspunde. Bitul 15 din E8DE e tratat ca **comandă** pe care cipul o șterge singur (pasul e bun dacă ceilalți biți rămân la fel;
+  verificarea e „astept MCU lista gata, dupa comanda”), iar C+ bit 3 există doar la 8169 (la 8168 rămâne 0, nu mai e marcat eșuat).
+  Singurul pas cu adevărat eșuat la rece rămâne FIFO-ul de primire care nu se golește (pasul 3). Pornirea implicită nu se schimbă.
+  Modelul: `e8de_self_clears`, `ocp_dead`, `cplus_bit3_fixed` — 39 de teste.
 - **Limite cunoscute:** nu setăm registrele PHY speciale pe care unele revizii le cer; dacă legătura nu se ridică pe un
   calculator, jurnalul arată revizia cipului (`revizia ...`) → sarcină nouă pentru acea revizie.

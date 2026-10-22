@@ -59,6 +59,14 @@ pub struct Model {
     /// Frame data never reaches memory (only the descriptor is written back): stands in for "the card's writes to the
     /// buffers are lost", one of the two explanations of test 7's first start-up (the other: someone wipes the page).
     pub lose_data: bool,
+    /// MAC OCP E8DE bit 15 is a command the chip clears once done (what test 7 showed): reads give it back as 0,
+    /// but the hand-over counts as done.
+    pub e8de_self_clears: bool,
+    handover_done: bool,
+    /// MAC OCP does not answer: every read gives FFFF (the probe must stop the OCP writes).
+    pub ocp_dead: bool,
+    /// C+ Command bit 3 cannot be written (the 8168, unlike the 8169).
+    pub cplus_bit3_fixed: bool,
     /// The transmit queue never reports empty (TCR bit 11 stays clear): a wait that must time out.
     pub tx_never_empty: bool,
 }
@@ -71,6 +79,7 @@ impl Model {
             bmcr: 1 << 12, cable: true, stall_on_overflow: true, stall_after_rdu: false,
             keep_index_on_restart: false, rx_stalled: false, no_snoop: false, hidden: Vec::new(), syncs: 0,
             synced_bytes: 0, cold: false, ocp: Vec::new(), tx_never_empty: false, lose_data: false,
+            e8de_self_clears: false, handover_done: false, ocp_dead: false, cplus_bit3_fixed: false,
         };
         m.regs[..6].copy_from_slice(&MAC);
         m.set32(reg::TCR, 0x5080_0000 | crate::TCR_TX_EMPTY); // the laptop's revision (8168GU), transmit queue empty
@@ -92,7 +101,8 @@ impl Model {
 
     /// A cold card stays idle until the hand-over and C+ Command bit 3 (see `cold`).
     fn still_cold(&self) -> bool {
-        self.cold && !(self.ocp_value(crate::OCP_HANDOVER) & 1 << 15 != 0 && self.regs[reg::CPLUS_CMD as usize] & 1 << 3 != 0)
+        let cplus_ok = self.cplus_bit3_fixed || self.regs[reg::CPLUS_CMD as usize] & 1 << 3 != 0;
+        self.cold && !((self.handover_done || self.ocp_value(crate::OCP_HANDOVER) & 1 << 15 != 0) && cplus_ok)
     }
 
     /// A MAC OCP register as last written (0 if never).
@@ -238,11 +248,24 @@ impl Model {
                 let v = u32::from_le_bytes(bytes.try_into().unwrap());
                 let at = (((v >> 16) & 0x7FFF) << 1) as u16; // address bits 15-1 in 30-16; bit 15 is data
                 if v & 1 << 31 != 0 {
-                    self.ocp.push((at, v as u16));
+                    let mut data = v as u16;
+                    if at == crate::OCP_HANDOVER && data & 0x8000 != 0 && self.e8de_self_clears {
+                        self.handover_done = true;
+                        data &= !0x8000;
+                    }
+                    if !self.ocp_dead {
+                        self.ocp.push((at, data));
+                    }
                 } else {
-                    let cur = self.ocp_value(at) as u32;
+                    let cur = if self.ocp_dead { 0xFFFF } else { self.ocp_value(at) as u32 };
                     self.set32(reg::OCP_DATA, cur);
                 }
+                return;
+            }
+            reg::CPLUS_CMD if self.cplus_bit3_fixed => {
+                let mut b = bytes.to_vec();
+                b[0] &= !(1 << 3);
+                self.regs[r as usize..r as usize + b.len()].copy_from_slice(&b);
                 return;
             }
             _ => {}

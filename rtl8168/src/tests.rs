@@ -489,8 +489,9 @@ fn cold_start_steps_are_taken_and_recorded() {
     // The hand-over comes first, in this order.
     assert!(names[0].starts_with("poarta RXDV inchisa"));
     assert!(names[1].contains("coada TX"));
-    assert!(names[6].starts_with("OCP E8DE bit 14"));
-    assert!(names[8].starts_with("OCP E8DE bit 15"));
+    assert!(names[6].starts_with("OCP proba"), "OCP is probed before any OCP write");
+    assert!(names[7].starts_with("OCP E8DE bit 14"));
+    assert!(names[9].starts_with("OCP E8DE bit 15"));
     // Every bit change shows the register before and after, with exactly one bit different.
     for s in steps.iter().filter(|s| s.what.contains(" bit ") && !s.what.starts_with("astept")) {
         assert!((s.before ^ s.after).count_ones() <= 1, "{:?}", s);
@@ -527,7 +528,7 @@ fn each_cold_variant_alone_touches_only_its_registers() {
     assert_eq!(c.steps.len, 2);
     assert_eq!(c.hw().reg32(reg::RCR), RCR_VALUE | RCR_EARLY_OFF_V2);
     let mut c = Rtl8168::with_options(Model::new(), Options { mcu: true, ..Options::default() }).unwrap();
-    assert_eq!(c.steps.len, 10);
+    assert_eq!(c.steps.len, 11);
     assert_eq!(c.hw().reg32(reg::MISC) & MISC_RXDV_GATE, 0, "mcu always reopens the gate");
     assert!(c.misc_change.is_some());
 }
@@ -609,4 +610,49 @@ fn reused_buffer_gets_the_pattern_again() {
     assert!(c.hw().deliver(&frame([0xFF; 6], 80, 7)));
     assert!(c.receive(&mut buf).is_some());
     assert_eq!(c.unwritten, 1);
+}
+
+#[test]
+fn test7_chip_self_clearing_bit15_and_fixed_cplus_bit3_are_not_failures() {
+    // What the laptop showed at test 7 (R): E8DE reads 0001, bit 15 does not read back, C+ bit 3 stays 0.
+    let mut m = Model::new();
+    m.cold = true;
+    m.e8de_self_clears = true;
+    m.cplus_bit3_fixed = true;
+    let mut c = Rtl8168::with_options(m, Options::cold()).unwrap();
+    let steps = c.steps.as_slice().to_vec();
+    let bit15 = steps.iter().find(|s| s.what.starts_with("OCP E8DE bit 15")).unwrap();
+    assert_eq!(bit15.after & 0x8000, 0, "the chip cleared the command bit");
+    assert!(bit15.ok, "{:?}", bit15);
+    let c3 = steps.iter().find(|s| s.what.starts_with("C+ Command bit 3")).unwrap();
+    assert_eq!(c3.after & 1 << 3, 0);
+    assert!(c3.ok, "a bit the 8168 does not have is not a failure");
+    assert!(steps.iter().all(|s| s.ok), "{:?}", steps);
+    // The hand-over was done, so the cold card moves frames.
+    assert!(c.send(&frame([0xFF; 6], 64, 1)));
+}
+
+#[test]
+fn ocp_that_does_not_answer_stops_the_ocp_writes() {
+    let mut m = Model::new();
+    m.ocp_dead = true;
+    let mut c = Rtl8168::with_options(m, Options { mcu: true, ..Options::default() }).unwrap();
+    let steps = c.steps.as_slice().to_vec();
+    let probe = steps.iter().find(|s| s.what.starts_with("OCP proba")).unwrap();
+    assert!(!probe.ok && probe.before == 0xFFFF);
+    assert!(!steps.iter().any(|s| s.what.starts_with("OCP E8DE")), "no OCP write after a failed probe");
+    assert_eq!(c.hw().ocp_value(OCP_HANDOVER), 0, "nothing written");
+    assert_eq!(c.steps.len, 9);
+}
+
+#[test]
+fn ocp_probe_reads_a_real_value_not_the_written_address() {
+    // A chip that answers gives the same register value twice (on the laptop: 0001), never FFFF.
+    let mut m = Model::new();
+    m.e8de_self_clears = true;
+    let mut c = Rtl8168::with_options(m, Options { mcu: true, ..Options::default() }).unwrap();
+    let probe = c.steps.as_slice().iter().find(|s| s.what.starts_with("OCP proba")).copied().unwrap();
+    assert!(probe.ok);
+    assert_eq!(probe.before, probe.after);
+    let _ = c.hw();
 }

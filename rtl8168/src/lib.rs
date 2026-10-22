@@ -81,6 +81,12 @@ impl Steps {
             self.len += 1;
         }
     }
+    /// The last step cannot fail (a bit that only some revisions have).
+    fn mark_last_ok(&mut self) {
+        if self.len > 0 {
+            self.list[self.len - 1].ok = true;
+        }
+    }
     pub fn as_slice(&self) -> &[Step] {
         &self.list[..self.len]
     }
@@ -431,6 +437,26 @@ fn ocp_set_bit<H: Hw>(hw: &mut H, steps: &mut Steps, what: &'static str, at: u16
     steps.push(Step { what, reg: at, before: before as u32, after: after as u32, ok: after == want });
 }
 
+/// A MAC OCP command bit: read, write with the bit set (always: it is a command), read back. The chip may clear the
+/// bit itself once the command is done (test 7: E8DE bit 15 read back as 0 while MCU showed "list ready"), so the
+/// step is good when no OTHER bit changed; whether the command worked shows in the "list ready" wait after it.
+fn ocp_command_bit<H: Hw>(hw: &mut H, steps: &mut Steps, what: &'static str, at: u16, bit: u32) {
+    let before = ocp_read(hw, at);
+    hw.write32(reg::OCP_DATA, 1 << 31 | (at as u32) << 15 | (before | 1 << bit) as u32);
+    let after = ocp_read(hw, at);
+    let others = !(1u16 << bit);
+    steps.push(Step { what, reg: at, before: before as u32, after: after as u32, ok: after & others == before & others });
+}
+
+/// Checks that MAC OCP reads answer before anything is written through OCP: the same register read twice must give
+/// the same value, and not FFFF. (If the chip did not answer, 0xB0 would keep what we wrote: the address, data 0000.)
+fn ocp_probe<H: Hw>(hw: &mut H, steps: &mut Steps) -> bool {
+    let (a, b) = (ocp_read(hw, OCP_HANDOVER), ocp_read(hw, OCP_HANDOVER));
+    let ok = a == b && a != 0xFFFF;
+    steps.push(Step { what: "OCP proba: E8DE citit de doua ori (la fel, nu FFFF)", reg: OCP_HANDOVER, before: a as u32, after: b as u32, ok });
+    ok
+}
+
 /// Writes PHY register `r` (MII) through PHYAR; false if the write never completed.
 fn phy_write_raw<H: Hw>(hw: &mut H, r: u8, value: u16) -> bool {
     hw.write32(reg::PHYAR, 1 << 31 | ((r as u32 & 0x1F) << 16) | value as u32);
@@ -453,11 +479,16 @@ fn take_over_from_firmware<H: Hw>(hw: &mut H, steps: &mut Steps) {
     set_bit(hw, steps, "primire oprita (CR bit 3)", reg::CHIPCMD, 8, 3, false);
     set_bit(hw, steps, "trimitere oprita (CR bit 2)", reg::CHIPCMD, 8, 2, false);
     set_bit(hw, steps, "MCU fara modul OOB (bit 7)", reg::MCU, 8, 7, false);
-    ocp_set_bit(hw, steps, "OCP E8DE bit 14 sters", OCP_HANDOVER, 14, false);
+    let ocp = ocp_probe(hw, steps);
+    if ocp {
+        ocp_set_bit(hw, steps, "OCP E8DE bit 14 sters", OCP_HANDOVER, 14, false);
+    }
     let ready = MCU_LINK_LIST_READY as u32;
     wait_bits(hw, steps, "astept MCU lista gata (bit 1)", reg::MCU, false, ready, 100_000);
-    ocp_set_bit(hw, steps, "OCP E8DE bit 15 pus", OCP_HANDOVER, 15, true);
-    wait_bits(hw, steps, "astept MCU lista gata (bit 1)", reg::MCU, false, ready, 100_000);
+    if ocp {
+        ocp_command_bit(hw, steps, "OCP E8DE bit 15 pus (comanda; se poate sterge singur)", OCP_HANDOVER, 15);
+    }
+    wait_bits(hw, steps, "astept MCU lista gata (bit 1, dupa comanda)", reg::MCU, false, ready, 100_000);
 }
 
 impl<H: Hw> Rtl8168<H> {
@@ -540,7 +571,10 @@ impl<H: Hw> Rtl8168<H> {
         if options.cplus {
             // FreeBSD re(4): the C+ register is configured before all others.
             set_bit(&mut hw, &mut steps, "C+ Command bit 0", reg::CPLUS_CMD, 16, 0, true);
-            set_bit(&mut hw, &mut steps, "C+ Command bit 3 (PCI citire/scriere multipla)", reg::CPLUS_CMD, 16, 3, true);
+            // Bit 3 ("PCI multiple read/write") exists on the old 8169 only; on the 8168 it stays 0 (test 7: 2021 -> 2021),
+            // which is not a failure.
+            set_bit(&mut hw, &mut steps, "C+ Command bit 3 (doar la 8169; la 8168 ramane 0)", reg::CPLUS_CMD, 16, 3, true);
+            steps.mark_last_ok();
             set_bit(&mut hw, &mut steps, "C+ Command bit 7", reg::CPLUS_CMD, 16, 7, true);
         }
         if options.phy {
