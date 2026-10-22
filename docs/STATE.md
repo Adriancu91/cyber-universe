@@ -3,6 +3,25 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-21 23:40 – 2026-10-22 00:45 UTC (02:40–03:45 ora României), în cloud, fără Adrian
+- **Hub:** nicio comandă nouă (`nou`) pentru `cyber-universe`; C-2, C-4 gata, C-3 în lucru (acum: pașii 4 și 5 gata).
+- **Terminate (2 sarcini):**
+  - **P6-08** — `/bin/actualizeaza` (și butonul „Actualizeaza” din Setări, care deschide un terminal cu comanda): ultimul
+    Release prin API-ul GitHub (token din `/usb/github.token`, trimis doar API-ului, nu și stocării la care redirecționează),
+    fiecare fișier verificat cu `SHA256SUMS`, scris ca `.nou` și citit înapoi, apoi `vechi → .vechi`, `.nou → nume`, `sync`.
+    O actualizare oprită la mijloc se repară la următoarea rulare. Nucleu: apelurile `rename` (33) și `sync` (34),
+    `rename`/`flush` în FAT32, cache de un sector pentru FAT (lanțurile lungi nu mai cer o citire pe cluster),
+    SYNCHRONIZE CACHE la stick. `cyber.rw` intră acum în imaginea de stick și în Release (stick-ul trebuie marcat ca să se
+    poată scrie pe el). Reparat în `cyber_user`: un `{}` gol oprea restul rândului la `println!`.
+  - **P6-09** — `/bin/gh-trimite <fișier> <proprietar/depozit> <cale> [mesaj]` (API „contents”: GET pentru `sha`, PUT cu
+    base64), base64 propriu în `json/` (`cyber_json::base64`), unealta `github_push` pentru Claude (cu confirmare),
+    client HTTPS comun `user/src/http_client.rs`.
+- **Build:** OK, fără avertismente. **Teste:** `tools/test.sh` → **47 de scenarii trecute** (noi: `update`, `ghpush`;
+  `claude-tools` acoperă și `github_push`) + `https-real` sărit local; `cd json && cargo test --release` (base64 nou).
+  CI verde pe `7bd2f6c` (P6-08) și `3b24e00` (P6-09).
+- **Nu mai e nicio sarcină liberă:** P6-10 (testul pe laptop) și P3-10 așteaptă testul lui Adrian; P5-07/P5-08 după suită.
+
+### (anterioară)
 ### Sesiunea programată 2026-10-21 20:40–22:35 UTC (23:40–01:35 ora României), în cloud, fără Adrian
 - **Terminate (6 sarcini):** P6-02 (117 rădăcini Mozilla în `/etc/certs`, căutate după nume; ECDSA P-384; `fetch https://`
   cu site-uri reale), P6-03 (JSON propriu, crate `json/`), P6-04 (`/bin/claude` — clientul API Claude), P6-05 (`claude-app`,
@@ -64,9 +83,9 @@
   lanțurile cu `openssl verify` — zero diferențe. CI verde pe toate commit-urile terminate (ultimele încă rulau la final).
 
 ## Următoarea sarcină
-**P6-08** — comanda „Actualizează” (plan: `docs/plans/P6-08.md`, cu nota despre depozitul privat: descărcare prin API cu
-tokenul din `/usb/github.token`). Apoi P6-09 (trimitere pe GitHub), P6-10 (testul pe laptop cu Adrian).
-P3-10 așteaptă testul 3; P5-07/P5-08 după suită.
+**Nicio sarcină liberă.** **P6-10** (închiderea Fazei 6) = testul pe laptop cu Adrian: testul 3 (rețeaua Realtek, `/usb`), apoi
+`claude.key` + `github.token` pe stick, `claude Salut`, `run actualizeaza`, `run gh-trimite …`. Din pozele lui: reparații, apoi
+P6-10 și P3-10. Sesiunile programate fără rezultate noi de la Adrian: verifică hub-ul (COMENZI) și CI, apoi se opresc.
 
 ## Mediu (verificat la P0-01, sesiune cloud)
 | Unealtă | Versiune |
@@ -85,6 +104,9 @@ P3-10 așteaptă testul 3; P5-07/P5-08 după suită.
 - Funcții noi folosite doar de teste: `#[cfg(feature = "qemu-test")]`; API pentru mai târziu: `#[allow(dead_code)]` cu motiv.
 
 ## Avertismente pentru sesiunea următoare
+- **Programele cu HTTPS și heap** folosesc `user/src/http_client.rs` (inclus cu `#[path]`); imitațiile pentru teste:
+  `tools/update-test-server.py` (porturile 18445 API + 18446 stocare) și `tools/ghpush-test-server.py` (18447).
+- **Scrierea pe stick** cere `cyber.rw` în rădăcina lui; `rename` merge doar pe FAT32 și doar pentru fișiere.
 - **Rădăcinile de încredere:** `boot/certs/` e generat de `tools/roots.py` din `certdata.txt` (NSS); pentru o listă nouă
   rulează scriptul (vezi `boot/certs/SURSA.md`). `fetch` și `claude` caută rădăcina după `subject_id` (fișierul `<id>.0`).
 - **Internetul în sesiunile cloud ale lui Claude trece printr-un proxy care schimbă certificatele** → testele cu site-uri reale
@@ -93,7 +115,7 @@ P3-10 așteaptă testul 3; P5-07/P5-08 după suită.
   `user/src/claude_tools.rs` (incluse cu `#[path]`, ca biblioteca `cyber_user` să rămână fără heap).
 - **Imitația API-ului Claude:** `tools/claude-test-server.py` (port 18444, cheia `sk-test-cyber`); scenariile `claude-cli`,
   `claude-app`, `claude-tools`. Nu rula două `tools/test.sh` deodată: serverele de test folosesc porturi fixe.
-- Meniul Start are 15 programe; `test_desktop` caută `demo` după nume (nu mai depinde de poziție).
+- Meniul Start are 16 programe; `test_desktop` caută `demo` după nume (nu mai depinde de poziție).
 - Fiecare sesiune cloud nouă: rulează întâi `tools/env-check.sh --install` (acum instalează și dosfstools, mtools, fdisk).
 - **Cyber Hub:** se clonează direct `https://github.com/Adriancu91/Cyber-hub` (fără add_repo); merge din sesiunile programate.
 - Nu edita `tools/test.sh` cât rulează un test în fundal (bash citește scriptul pe bucăți).
