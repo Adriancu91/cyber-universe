@@ -69,32 +69,53 @@ impl Device {
         None
     }
 
-    /// Puts the device in the full-power state D0 if it has the PCI power-management capability (firmware may
-    /// leave unused devices in D3, where their registers read as all ones). PCI Bus Power Management spec 1.2.
-    pub fn power_on(&self) {
+    /// Offset of the capability with ID `id` in the configuration space (PCI Local Bus spec: capability list).
+    pub fn capability(&self, id: u8) -> Option<u16> {
         if self.read32(0x04) >> 16 & 1 << 4 == 0 {
-            return; // no capability list
+            return None; // no capability list
         }
         let mut ptr = (self.read32(0x34) & 0xFC) as u16;
         for _ in 0..48 {
             if ptr == 0 {
-                return;
+                return None;
             }
             let cap = self.read32(ptr);
-            if cap & 0xFF == 0x01 {
-                let pmcsr = self.read32(ptr + 4);
-                if pmcsr & 3 != 0 {
-                    self.write32(ptr + 4, pmcsr & !3);
-                    // The device needs up to 10 ms to leave D3 (spec: D3hot -> D0 recovery time).
-                    let start = crate::time::since_boot_us().unwrap_or(0);
-                    while crate::time::since_boot_us().is_some_and(|t| t < start + 10_000) {
-                        core::hint::spin_loop();
-                    }
-                }
-                return;
+            if cap & 0xFF == id as u32 {
+                return Some(ptr);
             }
             ptr = ((cap >> 8) & 0xFC) as u16;
         }
+        None
+    }
+
+    /// Puts the device in the full-power state D0 if it has the PCI power-management capability (firmware may
+    /// leave unused devices in D3, where their registers read as all ones). PCI Bus Power Management spec 1.2.
+    pub fn power_on(&self) {
+        let Some(ptr) = self.capability(0x01) else { return };
+        let pmcsr = self.read32(ptr + 4);
+        if pmcsr & 3 != 0 {
+            self.write32(ptr + 4, pmcsr & !3);
+            // The device needs up to 10 ms to leave D3 (spec: D3hot -> D0 recovery time).
+            let start = crate::time::since_boot_us().unwrap_or(0);
+            while crate::time::since_boot_us().is_some_and(|t| t < start + 10_000) {
+                core::hint::spin_loop();
+            }
+        }
+    }
+
+    /// PCI Express Device Control: switches off "Enable No Snoop" (bit 11, on by default per the PCIe spec) and
+    /// "Enable Relaxed Ordering" (bit 4), so the device's DMA writes stay coherent with the CPU caches and in order.
+    /// Returns the Device Control word (before, after), or `None` without a PCI Express capability.
+    pub fn pcie_strict_dma(&self) -> Option<(u16, u16)> {
+        let ptr = self.capability(0x10)?;
+        let dw = self.read32(ptr + 8); // Device Capabilities is at +4; Device Control (low) + Device Status (high) at +8
+        let before = dw as u16;
+        let after = before & !(1 << 11 | 1 << 4);
+        if after != before {
+            // Writing 0 to the status half leaves its write-1-to-clear bits alone.
+            self.write32(ptr + 8, after as u32);
+        }
+        Some((before, self.read32(ptr + 8) as u16))
     }
 
     /// Lets the device answer memory accesses and act as bus master (needed for DMA).

@@ -49,7 +49,23 @@ impl Hw for KernelHw {
         let p = phys_to_virt(f);
         // SAFETY: a fresh frame, reachable through the HHDM; the driver keeps it for as long as the card runs.
         unsafe { core::ptr::write_bytes(p, 0, PAGE_SIZE as usize) };
+        // The zeros go to memory now, not later over what the card writes (descriptor rings included).
+        self.dma_sync(f, p, PAGE_SIZE as usize);
         Some((f, p))
+    }
+    fn dma_sync(&mut self, _phys: u64, ptr: *mut u8, len: usize) {
+        const LINE: usize = 64; // cache line size of every x86-64 CPU we target (CPUID could say; all use 64)
+        let start = ptr as usize & !(LINE - 1);
+        let end = ptr as usize + len;
+        // SAFETY: CLFLUSH writes a cached line back if dirty and drops it; the lines belong to a DMA buffer owned by
+        // this driver and mapped through the HHDM. MFENCE orders it against the reads and writes around it.
+        unsafe {
+            core::arch::asm!("mfence", options(nostack, preserves_flags));
+            for a in (start..end).step_by(LINE) {
+                core::arch::asm!("clflush [{}]", in(reg) a, options(nostack, preserves_flags));
+            }
+            core::arch::asm!("mfence", options(nostack, preserves_flags));
+        }
     }
     fn delay_us(&mut self, us: u32) {
         match crate::time::since_boot_us() {
@@ -63,6 +79,10 @@ impl Hw for KernelHw {
 
 pub struct Card {
     inner: Rtl8168<KernelHw>,
+    /// PCI Express Device Control (before, after) switching No Snoop / Relaxed Ordering off.
+    devctl: Option<(u16, u16)>,
+    /// How many of the first frames were already written to the log (`log rx`).
+    logged: usize,
 }
 
 // SAFETY: the raw pointers inside point to DMA pages owned only by this driver; the card is used under `nic::NIC`'s lock.
@@ -74,7 +94,13 @@ impl super::nic::Card for Card {
     }
     fn receive(&mut self) -> Option<Vec<u8>> {
         let mut buf = [0u8; cyber_rtl8168::BUF];
-        self.inner.receive(&mut buf).map(|n| buf[..n].to_vec())
+        let got = self.inner.receive(&mut buf).map(|n| buf[..n].to_vec());
+        let have = (self.inner.received as usize).min(cyber_rtl8168::FIRST_FRAMES);
+        while self.logged < have {
+            log_frame(self.logged, &self.inner.detail[self.logged]);
+            self.logged += 1;
+        }
+        got
     }
     fn mac(&self) -> [u8; 6] {
         self.inner.mac
@@ -95,11 +121,36 @@ impl super::nic::Card for Card {
         Some(alloc::format!(
             "legatura: {}; primire: aruncate {}, pierdute de placa {}, ISR vazut {:04x}, descriptor RX {} = {:08x}, citiri {}\n\
              inel RX {}: index {}, ai placii {}; RDU vazut {} ori, reporniri {}, resincronizari {}; raspunsuri DHCP (udp 68) {}\n\
-             primele cadre: {}",
+             primele cadre: {}\n\
+             cadre cu tip 0000: {}; reparate de golirea cache-ului: {}; PCIe No Snoop: {} (detalii: log rx)",
             link_text(d.phy), r.dropped, d.mpc, r.isr_seen, d.rx_next, d.rx_opts1, r.polls,
             cyber_rtl8168::RX_RING, d.rx_next, d.rx_owned, r.rdu_count, r.restarts, r.resyncs, r.dhcp_replies,
-            if first.is_empty() { alloc::string::String::from("-") } else { first.join(" ") }
+            if first.is_empty() { alloc::string::String::from("-") } else { first.join(" ") },
+            r.zero_type, r.fixed_by_sync, devctl_text(self.devctl)
         ))
+    }
+}
+
+/// `log rx`: one received frame, to tell an address mix-up (addresses differ) from a cache problem (zeros before
+/// the cache is dropped, real bytes after).
+fn log_frame(k: usize, d: &cyber_rtl8168::RxDetail) {
+    let hex = |b: &[u8; 16]| b.iter().map(|x| alloc::format!("{:02x}", x)).collect::<Vec<_>>().join("");
+    crate::info!(
+        "net: rx cadru {}: index {}, lungime {}, adresa in descriptor {:x}, adresa citita {:x}{}, inainte {}, dupa {}",
+        k + 1, d.index, d.len, d.desc_addr, d.read_addr,
+        if d.desc_addr == d.read_addr { "" } else { " (DIFERITE)" },
+        hex(&d.before), hex(&d.after)
+    );
+}
+
+fn devctl_text(d: Option<(u16, u16)>) -> alloc::string::String {
+    match d {
+        None => alloc::string::String::from("fara capabilitate PCIe"),
+        Some((b, a)) => alloc::format!(
+            "{} (era {})",
+            if a & 1 << 11 == 0 { "oprit" } else { "PORNIT" },
+            if b & 1 << 11 == 0 { "oprit" } else { "pornit" }
+        ),
     }
 }
 
@@ -129,6 +180,12 @@ fn link_text(phy: u8) -> alloc::string::String {
 pub fn init() -> Option<Card> {
     let dev = crate::pci::devices().into_iter().find(|d| supports(d.vendor, d.device))?;
     dev.power_on();
+    // Before the card does any DMA: received frames must reach the CPU through its caches (test 4: with No Snoop on
+    // by default, frames 2+ read as the zeros still cached from start-up).
+    let devctl = dev.pcie_strict_dma();
+    if let Some((b, a)) = devctl {
+        crate::info!("net: rtl8168 PCIe Device Control {:04x} -> {:04x} (No Snoop si Relaxed Ordering oprite)", b, a);
+    }
     dev.enable();
     let Some(base) = dev.first_memory_bar() else {
         crate::warn!("net: Realtek {:04x}: niciun BAR de memorie", dev.device);
@@ -150,7 +207,7 @@ pub fn init() -> Option<Card> {
             if !up {
                 crate::warn!("net: Realtek: fara legatura dupa 4 s (cablu? PHYstatus {:02x}); DHCP reincearca singur", phy);
             }
-            Some(Card { inner })
+            Some(Card { inner, devctl, logged: 0 })
         }
         Err(e) => {
             let why = match e {

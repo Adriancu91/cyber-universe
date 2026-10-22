@@ -300,3 +300,76 @@ fn first_frames_are_summarised() {
     assert_eq!(c.dhcp_replies, 1);
     assert_eq!(summarize(&[0; 5]), (0, 0));
 }
+
+/// 12 frames of different types, each one in its own buffer; `burst` = all arrive before the driver looks.
+fn twelve_frames(no_snoop: bool, burst: bool) -> Rtl8168<Model> {
+    let mut m = Model::new();
+    m.no_snoop = no_snoop;
+    let mut c = Rtl8168::new(m).unwrap();
+    let types: Vec<u16> = (0..12u16).map(|k| [0x0806, 0x0800, 0x86DD, 0x88CC][k as usize % 4] + (k / 4) * 0x100).collect();
+    let make = |k: usize| {
+        let mut f = frame([0xFF; 6], 40 + k * 13, k as u8);
+        f[12..14].copy_from_slice(&types[k].to_be_bytes());
+        f
+    };
+    let mut buf = [0u8; 2048];
+    let mut check = |c: &mut Rtl8168<Model>, k: usize| {
+        let f = make(k);
+        assert_eq!(c.receive(&mut buf), Some(f.len()), "frame {k}");
+        assert_eq!(&buf[..f.len()], &f[..], "frame {k}: its own bytes, not zeros or another frame's");
+    };
+    if burst {
+        (0..12).for_each(|k| assert!(c.hw().deliver(&make(k))));
+        (0..12).for_each(|k| check(&mut c, k));
+    } else {
+        for k in 0..12 {
+            assert!(c.hw().deliver(&make(k)));
+            check(&mut c, k);
+        }
+    }
+    assert_eq!(c.receive(&mut buf), None);
+    let want: Vec<(u16, u16)> = types[..FIRST_FRAMES].iter().map(|&t| (t, 0)).collect();
+    assert_eq!(&c.first[..], &want[..], "every one of the first frames has its real type");
+    assert_eq!(c.zero_type, 0);
+    for (k, d) in c.detail.iter().enumerate() {
+        assert_eq!(d.index as usize, k);
+        assert_eq!(d.len as usize, make(k).len() + 4, "length with the CRC");
+        assert_eq!(d.desc_addr, d.read_addr, "the driver reads the buffer the card was given");
+        assert_eq!(d.after[..], make(k)[..16]);
+    }
+    c
+}
+
+#[test]
+fn consecutive_frames_each_read_from_own_buffer() {
+    for burst in [false, true] {
+        let mut c = twelve_frames(false, burst);
+        assert_eq!(c.fixed_by_sync, 0, "coherent memory: nothing to repair");
+        assert!(c.detail.iter().all(|d| d.before == d.after));
+        assert!(c.hw().syncs >= 12);
+    }
+}
+
+#[test]
+fn no_snoop_frames_are_read_after_dropping_the_cache() {
+    // What test 4 showed: the card's data is in memory but the CPU still sees the zeros of the fresh page.
+    for burst in [false, true] {
+        let mut c = twelve_frames(true, burst);
+        assert_eq!(c.fixed_by_sync, 12, "every frame read as zeros before the sync and right after it");
+        assert!(c.detail.iter().all(|d| d.before == [0; 16]), "without the sync the driver would read zeros");
+        // Each sync covers exactly the frame (plus CRC) inside its own buffer.
+        assert!(c.hw().synced_bytes >= (RX_RING / 2 * 4096) as u64);
+    }
+}
+
+#[test]
+fn zero_type_frames_are_counted() {
+    let mut c = card();
+    let mut buf = [0u8; 2048];
+    let mut f = frame(MAC, 50, 1);
+    f[12..14].copy_from_slice(&[0, 0]);
+    c.hw().deliver(&f);
+    assert_eq!(c.receive(&mut buf), Some(64));
+    assert_eq!(c.zero_type, 1);
+    assert_eq!(c.fixed_by_sync, 0);
+}

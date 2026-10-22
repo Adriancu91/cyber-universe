@@ -86,6 +86,26 @@ pub trait Hw {
     fn alloc_page(&mut self) -> Option<(u64, *mut u8)>;
     /// Busy-waits about `us` microseconds.
     fn delay_us(&mut self, us: u32);
+    /// Makes the CPU see what the card wrote by DMA to `len` bytes at `ptr` (physical `phys`): drops the CPU's cached
+    /// copy (the kernel: CLFLUSH on every line). Needed when the card writes with PCIe "No Snoop", which does not
+    /// update the CPU caches (test 4: frames 2+ read as zeros).
+    fn dma_sync(&mut self, phys: u64, ptr: *mut u8, len: usize);
+}
+
+/// What the driver saw for one of the first received frames (`log rx`): to tell an address mix-up from a cache problem.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RxDetail {
+    /// Receive descriptor index.
+    pub index: u16,
+    /// Length from the descriptor (frame + CRC).
+    pub len: u16,
+    /// Buffer address written in the descriptor (read back from it).
+    pub desc_addr: u64,
+    /// Physical address of the buffer the driver copies from.
+    pub read_addr: u64,
+    /// The first 16 bytes before and after dropping the CPU's cached copy.
+    pub before: [u8; 16],
+    pub after: [u8; 16],
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -138,6 +158,12 @@ pub struct Rtl8168<H: Hw> {
     pub dhcp_replies: u64,
     /// The first received frames: (ethertype, UDP destination port or 0).
     pub first: [(u16, u16); FIRST_FRAMES],
+    /// Details of the first received frames (addresses, first bytes).
+    pub detail: [RxDetail; FIRST_FRAMES],
+    /// Good frames whose ethertype was 0000 even after the cache was dropped (impossible on a real network).
+    pub zero_type: u64,
+    /// Frames that read as zeros before dropping the CPU's cached copy and correctly after it.
+    pub fixed_by_sync: u64,
     /// An RDU was seen and the card has not been seen receiving into a drained ring since.
     rdu_pending: bool,
     /// Since the last RDU, the driver found the ring empty (everything handed back to the card).
@@ -187,6 +213,23 @@ fn write_desc(ring: Page, i: usize, opts1: u32, addr: u64) {
         d.write_volatile(opts1);
     }
     core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+}
+
+/// The buffer address held by descriptor `i` (words 2 and 3).
+fn read_desc_addr(ring: Page, i: usize) -> u64 {
+    let d = desc_ptr(ring, i);
+    // SAFETY: see `desc_ptr`; the driver owns this descriptor (OWN clear).
+    unsafe { d.add(2).read_volatile() as u64 | (d.add(3).read_volatile() as u64) << 32 }
+}
+
+/// The first 16 bytes of a receive buffer, read straight from memory (volatile: exactly what the CPU sees now).
+fn first16(buf: Page) -> [u8; 16] {
+    let mut b = [0u8; 16];
+    for (k, x) in b.iter_mut().enumerate() {
+        // SAFETY: k < 16 < BUF bytes of a driver-owned buffer.
+        *x = unsafe { buf.ptr.add(k).read_volatile() };
+    }
+    b
 }
 
 fn eor(i: usize, len: usize) -> u32 {
@@ -239,6 +282,9 @@ impl<H: Hw> Rtl8168<H> {
         let mut tx_bufs = [tx_ring; TX_RING];
         for i in (0..RX_RING).step_by(2) {
             let p = hw_page(&mut hw).ok_or(InitError::NoMemory)?;
+            // The page was zeroed by the CPU: push those zeros out of the cache before the card writes there, so a
+            // cached line can neither hide nor later overwrite what the card writes.
+            hw.dma_sync(p.phys, p.ptr, 4096);
             for (k, b) in halves(p).into_iter().enumerate() {
                 // SAFETY: the book page holds exactly RX_RING `Page`s (4096 bytes) and is page-aligned.
                 unsafe { (rx_book.ptr as *mut Page).add(i + k).write(b) };
@@ -274,6 +320,7 @@ impl<H: Hw> Rtl8168<H> {
             hw, mac, revision, rx_ring, tx_ring, rx_book, tx_bufs,
             rx_next: 0, tx_next: 0, sent: 0, received: 0, dropped: 0, isr_seen: 0, polls: 0,
             rdu_count: 0, restarts: 0, resyncs: 0, dhcp_replies: 0, first: [(0, 0); FIRST_FRAMES],
+            detail: [RxDetail::default(); FIRST_FRAMES], zero_type: 0, fixed_by_sync: 0,
             rdu_pending: false, drained: false, idle_polls: 0,
         })
     }
@@ -377,10 +424,24 @@ impl<H: Hw> Rtl8168<H> {
             let len = (opts1 & desc::LEN) as usize;
             let good = whole && opts1 & desc::RX_ERROR == 0 && (4..=BUF).contains(&len);
             let mut n = 0;
+            let mut detail = RxDetail::default();
             if good {
+                // The descriptor said "done" before the data may be read (no load moves above the OWN check).
+                core::sync::atomic::fence(core::sync::atomic::Ordering::Acquire);
+                let buf = self.rx_buf(i);
                 n = (len - 4).min(out.len());
+                detail = RxDetail {
+                    index: i as u16,
+                    len: len as u16,
+                    desc_addr: read_desc_addr(self.rx_ring, i),
+                    read_addr: buf.phys,
+                    before: first16(buf),
+                    after: [0; 16],
+                };
+                self.hw.dma_sync(buf.phys, buf.ptr, len);
                 // SAFETY: the card wrote `len` <= BUF bytes into this driver-owned buffer and handed it back.
-                unsafe { core::ptr::copy_nonoverlapping(self.rx_buf(i).ptr, out.as_mut_ptr(), n) };
+                unsafe { core::ptr::copy_nonoverlapping(buf.ptr, out.as_mut_ptr(), n) };
+                detail.after = first16(buf);
             }
             self.rearm(i);
             self.rx_next = (i + 1) % RX_RING;
@@ -394,6 +455,13 @@ impl<H: Hw> Rtl8168<H> {
                 let sum = summarize(&out[..n]);
                 if (self.received as usize) < FIRST_FRAMES {
                     self.first[self.received as usize] = sum;
+                    self.detail[self.received as usize] = detail;
+                }
+                if n >= 14 && sum.0 == 0 {
+                    self.zero_type += 1;
+                }
+                if detail.before[12..14] == [0, 0] && detail.after[12..14] != [0, 0] {
+                    self.fixed_by_sync += 1;
                 }
                 if sum == (0x0800, 68) {
                     self.dhcp_replies += 1;

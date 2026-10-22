@@ -25,5 +25,14 @@
   redați, `RDSAR` rescris, pornită); dacă placa scrie în alt descriptor decât cel așteptat, driverul se **re-sincronizează**.
   `net` arată inelul (mărime, index, câți sunt ai plăcii), de câte ori s-a văzut RDU, repornirile, re-sincronizările, câte
   răspunsuri DHCP (UDP 68) au venit și primele 8 cadre (ethertype, portul UDP). Modelul imită blocarea după RDU (20 de teste).
+- **După testul 4 pe Lenovo (22 oct, P6-10c):** inelul nu se mai bloca, dar primul cadru era corect (ARP) și următoarele
+  aveau tipul `0000` → procesorul citea zerouri din bufferele în care placa scrisese. Adresele și ordinea operațiilor din driver
+  au fost verificate (corecte). Cauza cea mai probabilă: **cache-ul** — PCI Express pornește cu „Enable No Snoop” activ, deci
+  placa poate scrie în memorie fără să anunțe cache-ul, iar procesorul vede zerourile puse de el la pornire. Reparații: nucleul
+  oprește „No Snoop” și „Relaxed Ordering” în Device Control (specificația PCIe); trăsătura `Hw` are `dma_sync` (în nucleu:
+  `CLFLUSH` pe fiecare linie de 64 de octeți), apelată după umplerea paginilor cu zerouri și înainte de citirea fiecărui cadru.
+  Diagnostic: `log rx` (primele 8 cadre: index, lungime, adresa din descriptor și cea citită, primii 16 octeți înainte și după
+  golirea cache-ului), iar `net` numără cadrele cu tipul 0000 și pe cele „reparate de golirea cache-ului”. Modelul are un mod
+  cu memorie ne-coerentă (`no_snoop`); test cu 12 cadre consecutive, fiecare verificat (23 de teste).
 - **Limite cunoscute:** nu setăm registrele PHY speciale pe care unele revizii le cer; dacă legătura nu se ridică pe un
   calculator, jurnalul arată revizia cipului (`revizia ...`) → sarcină nouă pentru acea revizie.

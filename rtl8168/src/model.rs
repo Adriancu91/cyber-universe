@@ -38,6 +38,14 @@ pub struct Model {
     /// ring start), so the driver has to find where it writes.
     pub keep_index_on_restart: bool,
     rx_stalled: bool,
+    /// Frame data is written with PCIe "No Snoop": the CPU keeps seeing its old (cached) bytes until the driver drops
+    /// them with `dma_sync`, as on the test laptop (test 4: frames 2+ read as zeros). Descriptors stay coherent.
+    pub no_snoop: bool,
+    /// Bytes in memory that the CPU does not see yet (physical address, data), when `no_snoop` is on.
+    hidden: Vec<(u64, Vec<u8>)>,
+    /// `dma_sync` calls and the bytes they covered.
+    pub syncs: u64,
+    pub synced_bytes: u64,
 }
 
 impl Model {
@@ -46,7 +54,8 @@ impl Model {
             regs: [0; 256], pages: Vec::new(), reset_reads: 3, reset_left: 0, absent: false, page_limit: 160,
             wire: Vec::new(), missed: 0, locked_writes: 0, tx_idx: 0, rx_idx: 0, delays_us: 0,
             bmcr: 1 << 12, cable: true, stall_on_overflow: true, stall_after_rdu: false,
-            keep_index_on_restart: false, rx_stalled: false,
+            keep_index_on_restart: false, rx_stalled: false, no_snoop: false, hidden: Vec::new(), syncs: 0,
+            synced_bytes: 0,
         };
         m.regs[..6].copy_from_slice(&MAC);
         m.set32(reg::TCR, 0x5480_0000); // a revision number in bits 23 and 26-30, like a real chip
@@ -234,9 +243,14 @@ impl Model {
             self.missed += 1;
             return false;
         }
-        let buf = self.mem(addr, len);
-        buf[..frame.len()].copy_from_slice(frame);
-        buf[frame.len()..].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        let _ = self.mem(addr, len); // checks the buffer lies inside one page
+        let mut data = frame.to_vec();
+        data.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        if self.no_snoop {
+            self.hidden.push((addr, data));
+        } else {
+            self.mem(addr, len).copy_from_slice(&data);
+        }
         let eor = opts1 & desc::EOR;
         self.set_opts1(ring, self.rx_idx, eor | desc::FS | desc::LS | len as u32);
         self.rx_idx = if eor != 0 { 0 } else { self.rx_idx + 1 };
@@ -305,6 +319,21 @@ impl Hw for Model {
     }
     fn delay_us(&mut self, us: u32) {
         self.delays_us += us as u64;
+    }
+    fn dma_sync(&mut self, phys: u64, _ptr: *mut u8, len: usize) {
+        self.syncs += 1;
+        self.synced_bytes += len as u64;
+        let (lo, hi) = (phys, phys + len as u64);
+        let hidden = core::mem::take(&mut self.hidden);
+        for (at, data) in hidden {
+            let end = at + data.len() as u64;
+            if at >= lo && end <= hi {
+                self.mem(at, data.len()).copy_from_slice(&data);
+            } else {
+                assert!(end <= lo || at >= hi, "dma_sync covers only part of a frame");
+                self.hidden.push((at, data));
+            }
+        }
     }
 }
 
