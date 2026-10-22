@@ -5,7 +5,8 @@
 ## Ultima sesiune
 ### Sesiunea programată 2026-10-22 14:40–15:30 UTC (17:40–18:30 ora României), în cloud, fără Adrian — reparat CI roșu
 - **Pornire:** clonele locale aveau un `main` vechi, cu alt istoric → păstrat ca ramura locală `local-vechi-main` (nepublicată), `main` nou din GitHub.
-- Hub: nicio comandă nouă, niciun rezultat de la testul 6; C-7 rămâne `nou` (se preia când merge rețeaua pe laptop). Nicio sarcină liberă în TASKS.
+- Hub: la pornire (14:44 UTC) nicio comandă nouă. Între timp a sosit **C-9** (testul 6), preluată de **altă sesiune la 15:05 UTC** (P6-10e/P6-10f, `[~]`)
+  → această sesiune NU a lucrat la C-9, a reparat doar CI-ul.
 - **CI roșu** pe `4fe5e76` (run 140, doar STATE.md schimbat): scenariul `net-high` — `PANIC: scurgere in heap: 1346688 inainte, 1346624 dupa`.
   Reprodus local: 2 eșecuri din 3. Cauza: testul de heap compară memoria folosită înainte/după, dar firul de rețea (DHCP terminat chiar atunci)
   eliberează 64 de octeți în același timp. **Nu e o problemă a driverului.** Reparat doar în testul nucleului (`test_heap`): întreruperile sunt
