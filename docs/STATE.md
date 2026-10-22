@@ -3,6 +3,20 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-22 17:40–18:30 UTC (20:40–21:30 ora României), în cloud, fără Adrian — P6-10f (C-9, completările 4–5)
+- **Pornire:** clonele locale aveau din nou `main` cu alt istoric → păstrat ca ramura locală `backup/old-local-main` (nepublicată), `main` = GitHub.
+- **Hub:** nicio comandă nouă. Dar **C-9 avea două completări (18:20 și 18:30 ora României) pe care sesiunea de la 14:55 UTC nu le-a văzut**:
+  testul 6 G–L arată că `rtl porneste cache` repară cadrele zero la cald, iar cu cablul la router merg DHCP (192.168.8.194), ping, DNS,
+  HTTPS TLS 1.3 → **prima ieșire pe internet a OS-ului pe hardware**. Lipsa DHCP de la testele vechi = cablu fără router, nu OS-ul.
+- **Terminată: P6-10f** (rescrisă după completări): **golirea cache-ului e implicită** (primire și trimitere, doar bufferele de date) —
+  singura schimbare de comportament din acest Release (D-013); `boot_options()` = os-125 + `cache`; `rtl porneste` pornește de la ea;
+  `rtl porneste faracache` = exact os-125. Mici: `fetch <url>` merge fără `run`; `host` scrie `github.com = 140.82.121.3`.
+- **Teste:** `cd rtl8168 && cargo test --release` → 32; `tools/test.sh` → 49 trecute + `https-real` sărit (toate, din prima); `shell` verifică `fetch`.
+- **CI verde** pe `549e4b8` → **Release `os-149`** = versiunea pentru testul 7.
+- **Următorul pas:** testul 7 pe laptop (lista în hub): la rece `rtl porneste rece` → dacă are adresă și `fetch https://example.com/` merge,
+  `rece` devine implicit (o schimbare pe Release) și se trece la **C-7**. C-7 rămâne `nou` până atunci (C-9: „dacă merge la rece, treci la C-7”).
+- **Avertisment:** la pornire, citește TOATE completările comenzilor deja `gata` (centrul de comandă le adaugă după preluare).
+
 ### Pornire manuală 2026-10-22 ~16:00 UTC (cerută de centrul de comandă la 18:10 pentru C-9) — fără lucru nou
 - C-9 era deja făcută în această sesiune (P6-10e, Release os-144, CI verde; P6-10f așteaptă testul 7 C). Nicio comandă nouă, niciun
   rezultat de la testul 7 → oprire (CLAUDE.md §3).
