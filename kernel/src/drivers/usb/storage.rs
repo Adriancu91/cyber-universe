@@ -2,7 +2,7 @@
 //! READ CAPACITY(10), READ(10), WRITE(10)). Written from the USB Mass Storage Class Bulk-Only Transport
 //! 1.0 specification and the public SCSI Primary/Block Commands descriptions.
 
-use super::xhci::{BULK, Ring, UsbDevice, Xhci};
+use super::xhci::{BULK, CC_SHORT_PACKET, CC_STALL, CC_SUCCESS, CC_TIMEOUT, Ring, UsbDevice, Xhci, cc_name};
 use crate::block::{BlockDevice, BlockError, SECTOR};
 use crate::mem::{frame, map::{PAGE_SIZE, phys_to_virt}};
 
@@ -12,6 +12,10 @@ const MAX_SECTORS: u32 = (PAGE_SIZE / SECTOR as u64) as u32;
 
 struct Bot {
     slot: u8,
+    port: u8,
+    /// Endpoint addresses (for CLEAR_FEATURE after a stall) and their DCIs.
+    ep_in: u8,
+    ep_out: u8,
     dci_in: u8,
     dci_out: u8,
     ring_in: Ring,
@@ -28,6 +32,33 @@ pub struct UsbDisk {
 }
 
 impl Bot {
+    /// One bulk transfer of `len` bytes from/to `buf` (physical). A failure is logged with the SCSI command and
+    /// the stage; after a STALL the endpoint is cleared so the next command can run (BOT 1.0 §5.3, §6.7).
+    fn bulk(&mut self, x: &mut Xhci, input: bool, buf: u64, len: u32, op: u8, stage: &str) -> Result<(), u32> {
+        let (dci, ep) = if input { (self.dci_in, self.ep_in) } else { (self.dci_out, self.ep_out) };
+        let stale = x.drop_stale(self.slot, dci);
+        if stale > 0 {
+            crate::warn!("usb: port {}: {} transferuri vechi ignorate (raspunsuri dupa timp)", self.port, stale);
+        }
+        let ring = if input { &mut self.ring_in } else { &mut self.ring_out };
+        x.queue(self.slot, dci, ring, buf, len);
+        let code = x.wait_transfer(self.slot, dci).map_or(CC_TIMEOUT, |t| t.2);
+        if code == CC_SUCCESS || code == CC_SHORT_PACKET {
+            return Ok(());
+        }
+        crate::warn!(
+            "usb: port {}: SCSI {:02x}, {}: cod {} ({})",
+            self.port, op, stage, code, cc_name(code)
+        );
+        if code == CC_STALL {
+            let ring = if input { &self.ring_in } else { &self.ring_out };
+            if let Err(c) = x.clear_halt(self.slot, dci, ep, ring) {
+                crate::warn!("usb: port {}: stergerea STALL a esuat (cod {}: {})", self.port, c, cc_name(c));
+            }
+        }
+        Err(code)
+    }
+
     /// Runs one SCSI command with an optional data stage of `len` bytes: into `self.data`, or from it
     /// to the device if `out`.
     fn scsi(&mut self, x: &mut Xhci, cb: &[u8], len: u32, out: bool) -> Result<(), BlockError> {
@@ -41,17 +72,17 @@ impl Bot {
         cbw[15..15 + cb.len()].copy_from_slice(cb);
         // SAFETY: the command frame belongs to this driver and is not in use by the controller.
         unsafe { core::ptr::copy_nonoverlapping(cbw.as_ptr(), phys_to_virt(self.cmd), cbw.len()) };
-        x.queue(self.slot, self.dci_out, &mut self.ring_out, self.cmd, 31);
-        x.wait_transfer(self.slot, self.dci_out).ok_or(BlockError::OutOfRange)?;
-        if len > 0 && out {
-            x.queue(self.slot, self.dci_out, &mut self.ring_out, self.data, len);
-            x.wait_transfer(self.slot, self.dci_out).ok_or(BlockError::OutOfRange)?;
-        } else if len > 0 {
-            x.queue(self.slot, self.dci_in, &mut self.ring_in, self.data, len);
-            x.wait_transfer(self.slot, self.dci_in).ok_or(BlockError::OutOfRange)?;
+        let op = cb[0];
+        self.bulk(x, false, self.cmd, 31, op, "comanda (CBW)").map_err(|_| BlockError::OutOfRange)?;
+        if len > 0 {
+            // A stalled data stage still ends with a status block (BOT 1.0 §6.7.2, §6.7.3).
+            let _ = self.bulk(x, !out, self.data, len, op, if out { "date spre stick" } else { "date de la stick" });
         }
-        x.queue(self.slot, self.dci_in, &mut self.ring_in, self.cmd + 64, 13);
-        x.wait_transfer(self.slot, self.dci_in).ok_or(BlockError::OutOfRange)?;
+        let mut status = self.bulk(x, true, self.cmd + 64, 13, op, "stare (CSW)");
+        if status == Err(CC_STALL) {
+            status = self.bulk(x, true, self.cmd + 64, 13, op, "stare (CSW), a doua oara");
+        }
+        status.map_err(|_| BlockError::OutOfRange)?;
         // SAFETY: as above; the status (CSW) was written 64 bytes into the frame.
         let csw = unsafe { core::slice::from_raw_parts(phys_to_virt(self.cmd + 64), 13) };
         let ok = u32::from_le_bytes(csw[0..4].try_into().unwrap()) == CSW_SIGNATURE
@@ -74,13 +105,38 @@ impl Bot {
 impl UsbDisk {
     /// Configures `dev` (a Bulk-Only mass-storage device) and reads its size.
     pub fn start(x: &mut Xhci, dev: &UsbDevice) -> Option<UsbDisk> {
-        x.control_out(dev.slot, [0x00, 9, dev.config, 0, 0, 0, 0, 0]).ok()?; // SET_CONFIGURATION
-        let (ep_in, ep_out) = (dev.endpoint(BULK, true)?, dev.endpoint(BULK, false)?);
+        let port = dev.port;
+        // SET_CONFIGURATION
+        if let Err(c) = x.control_out(dev.slot, [0x00, 9, dev.config, 0, 0, 0, 0, 0]) {
+            crate::warn!("usb: port {}: SET_CONFIGURATION {} a esuat (cod {}: {})", port, dev.config, c, cc_name(c));
+            return None;
+        }
+        crate::info!("usb: port {}: SET_CONFIGURATION {} ok", port, dev.config);
+        let (Some(ep_in), Some(ep_out)) = (dev.endpoint(BULK, true), dev.endpoint(BULK, false)) else {
+            crate::warn!("usb: port {}: stick-ul nu are endpoint-uri bulk IN si OUT", port);
+            return None;
+        };
         let mut rings = x.configure_endpoints(dev, &[ep_in, ep_out])?;
         let (dci_out, ring_out) = rings.pop()?;
         let (dci_in, ring_in) = rings.pop()?;
-        let mut bot = Bot { slot: dev.slot, dci_in, dci_out, ring_in, ring_out, cmd: frame::alloc_frame()?, data: frame::alloc_frame()?, tag: 0 };
-        bot.scsi(x, &[0x12, 0, 0, 0, 36, 0], 36, false).ok()?; // INQUIRY
+        let mut bot = Bot {
+            slot: dev.slot, port, ep_in: ep_in.0, ep_out: ep_out.0, dci_in, dci_out, ring_in, ring_out,
+            cmd: frame::alloc_frame()?, data: frame::alloc_frame()?, tag: 0,
+        };
+        // INQUIRY; a stick that is still waking up may miss the first one.
+        let mut inquired = false;
+        for attempt in 0..3 {
+            if bot.scsi(x, &[0x12, 0, 0, 0, 36, 0], 36, false).is_ok() {
+                inquired = true;
+                break;
+            }
+            crate::warn!("usb: port {}: INQUIRY, incercarea {} a esuat", port, attempt + 1);
+            crate::sched::sleep_ms(200);
+        }
+        if !inquired {
+            crate::fs::note_failure("/usb", "stick-ul nu raspunde la INQUIRY (vezi log usb)");
+            return None;
+        }
         let inquiry = bot.data(36);
         let name = alloc::format!(
             "{} {}",

@@ -19,10 +19,43 @@ const TRB_ENABLE_SLOT: u32 = 9;
 const TRB_CONFIGURE_ENDPOINT: u32 = 12;
 const TRB_ADDRESS_DEVICE: u32 = 11;
 const TRB_EVALUATE_CONTEXT: u32 = 13;
+const TRB_RESET_ENDPOINT: u32 = 14;
+const TRB_SET_TR_DEQUEUE: u32 = 16;
 const EVT_TRANSFER: u32 = 32;
 const EVT_COMMAND_DONE: u32 = 33;
-const CC_SUCCESS: u32 = 1;
-const CC_SHORT_PACKET: u32 = 13;
+pub const CC_SUCCESS: u32 = 1;
+pub const CC_STALL: u32 = 6;
+pub const CC_SHORT_PACKET: u32 = 13;
+/// Our own code for "no answer in time" (the controller never reports 0).
+pub const CC_TIMEOUT: u32 = 0;
+/// How long a command (Enable Slot, Address Device, ...) may take.
+const COMMAND_MS: u64 = 2_000;
+/// How long a transfer may take: USB 2.0 §9.2.6.4 allows 5 s for a control request with data; real sticks can
+/// also take seconds for their first SCSI command (QEMU answers at once, which hid too-short spin limits).
+pub const TRANSFER_MS: u64 = 5_000;
+
+/// The xHCI completion code in words (xHCI 1.2, table 6-90), for the log (`log usb`).
+pub fn cc_name(code: u32) -> &'static str {
+    match code {
+        CC_TIMEOUT => "fara raspuns in timp",
+        1 => "succes",
+        2 => "eroare de buffer",
+        3 => "babble",
+        4 => "eroare de tranzactie USB",
+        5 => "TRB gresit",
+        CC_STALL => "STALL (dispozitivul refuza)",
+        7 => "fara resurse",
+        8 => "fara latime de banda",
+        11 => "slot neactivat",
+        12 => "endpoint neactivat",
+        CC_SHORT_PACKET => "pachet scurt",
+        17 => "parametru gresit (context)",
+        19 => "stare de context gresita",
+        22 => "dispozitiv incompatibil",
+        26 => "oprit",
+        _ => "alt cod",
+    }
+}
 
 fn rd(a: u64) -> u32 {
     // SAFETY: `a` is a register of the mapped (uncached) XHCI register block.
@@ -45,6 +78,31 @@ fn wait(mut done: impl FnMut() -> bool) -> bool {
         core::hint::spin_loop();
     }
     false
+}
+
+/// Calls `f` until it returns something or `ms` milliseconds pass (measured with the clock; a spin count only if
+/// the clock is not running yet).
+fn wait_ms<T>(ms: u64, mut f: impl FnMut() -> Option<T>) -> Option<T> {
+    match crate::time::since_boot_us() {
+        Some(start) => loop {
+            if let Some(v) = f() {
+                return Some(v);
+            }
+            if crate::time::since_boot_us().is_none_or(|t| t > start + ms * 1000) {
+                return f();
+            }
+            core::hint::spin_loop();
+        },
+        None => {
+            for _ in 0..SPIN_LIMIT {
+                if let Some(v) = f() {
+                    return Some(v);
+                }
+                core::hint::spin_loop();
+            }
+            None
+        }
+    }
 }
 
 /// A zeroed frame the controller will use (DMA).
@@ -79,6 +137,11 @@ impl Ring {
             mem32(base, link * 4 + 3).write_volatile(TRB_LINK << 10 | 1 << 1); // toggle cycle
         }
         Some(Ring { base, index: 0, cycle: true })
+    }
+
+    /// Where the next TRB will go and its cycle bit (for Set TR Dequeue Pointer after a stall).
+    fn position(&self) -> (u64, bool) {
+        (self.base + self.index as u64 * 16, self.cycle)
     }
 
     /// Writes one TRB (the cycle bit is added here); returns its physical address.
@@ -121,6 +184,8 @@ pub struct UsbDevice {
     pub config: u8,
     /// Endpoints of that interface: (address, attributes, max packet size, interval).
     pub endpoints: [Option<(u8, u8, u16, u8)>; 4],
+    /// For each endpoint, bMaxBurst from its SuperSpeed companion descriptor (0 below SuperSpeed).
+    pub bursts: [u8; 4],
 }
 
 /// Endpoint transfer types (USB attributes bits 0-1).
@@ -208,22 +273,20 @@ impl Xhci {
         self.pending_len += 1;
     }
 
-    /// Waits for an event of type `kind`. Transfer events of other endpoints are kept for their
+    /// Waits up to `ms` for an event of type `kind`. Transfer events of other endpoints are kept for their
     /// drivers; other events (port changes) are skipped.
-    fn wait_event(&mut self, kind: u32) -> Option<[u32; 4]> {
-        for _ in 0..SPIN_LIMIT {
-            if let Some(e) = self.next_event() {
-                let t = (e[3] >> 10) & 0x3F;
-                if t == kind && (kind != EVT_TRANSFER || (e[3] >> 16) & 0x1F == 1) {
-                    return Some(e);
-                }
-                if t == EVT_TRANSFER {
-                    self.keep(e);
-                }
+    fn wait_event(&mut self, kind: u32, ms: u64) -> Option<[u32; 4]> {
+        wait_ms(ms, || {
+            let e = self.next_event()?;
+            let t = (e[3] >> 10) & 0x3F;
+            if t == kind && (kind != EVT_TRANSFER || (e[3] >> 16) & 0x1F == 1) {
+                return Some(e);
             }
-            core::hint::spin_loop();
-        }
-        None
+            if t == EVT_TRANSFER {
+                self.keep(e);
+            }
+            None
+        })
     }
 
     /// The next finished transfer of endpoint `dci` of `slot`, if there is one (no waiting).
@@ -240,34 +303,47 @@ impl Xhci {
         Some(t)
     }
 
-    /// Waits for the next finished transfer of endpoint `dci` of `slot`.
+    /// Waits up to `TRANSFER_MS` for the next finished transfer of endpoint `dci` of `slot`.
     pub fn wait_transfer(&mut self, slot: u8, dci: u8) -> Option<Transfer> {
-        for _ in 0..SPIN_LIMIT / 16 {
-            if let Some(t) = self.take_transfer(slot, dci) {
-                return Some(t);
-            }
-            core::hint::spin_loop();
+        wait_ms(TRANSFER_MS, || self.take_transfer(slot, dci))
+    }
+
+    /// Forgets finished transfers of an endpoint nobody waited for (e.g. one that answered after its time-out).
+    pub fn drop_stale(&mut self, slot: u8, dci: u8) -> usize {
+        let mut n = 0;
+        while self.take_transfer(slot, dci).is_some() {
+            n += 1;
         }
-        None
+        n
+    }
+
+    /// After a STALL on endpoint `dci` (address `ep_addr`): Reset Endpoint, move the controller past the stalled
+    /// TRB (Set TR Dequeue Pointer) and CLEAR_FEATURE(ENDPOINT_HALT) on the device (xHCI 1.2 §4.6.8, USB 2.0 §9.4.1).
+    pub fn clear_halt(&mut self, slot: u8, dci: u8, ep_addr: u8, ring: &Ring) -> Result<(), u32> {
+        let target = (dci as u32) << 16 | (slot as u32) << 24;
+        self.command([0, 0, 0, TRB_RESET_ENDPOINT << 10 | target])?;
+        let (at, cycle) = ring.position();
+        self.command([at as u32 | cycle as u32, (at >> 32) as u32, 0, TRB_SET_TR_DEQUEUE << 10 | target])?;
+        self.control_out(slot, [0x02, 1, 0, 0, ep_addr, 0, 0, 0])
     }
 
     /// Runs one command; returns the completion event.
     fn command(&mut self, trb: [u32; 4]) -> Result<[u32; 4], u32> {
         self.commands.push(trb);
         wr(self.doorbells, 0);
-        let e = self.wait_event(EVT_COMMAND_DONE).ok_or(0u32)?;
+        let e = self.wait_event(EVT_COMMAND_DONE, COMMAND_MS).ok_or(CC_TIMEOUT)?;
         let code = e[2] >> 24;
         if code == CC_SUCCESS { Ok(e) } else { Err(code) }
     }
 
     /// Control transfer on endpoint 0 of `slot` without a data stage (a "set" request).
     pub fn control_out(&mut self, slot: u8, request: [u8; 8]) -> Result<(), u32> {
-        let ring = &mut self.ep0.iter_mut().find(|(s, _)| *s == slot).ok_or(0u32)?.1;
+        let ring = &mut self.ep0.iter_mut().find(|(s, _)| *s == slot).ok_or(CC_TIMEOUT)?.1;
         let setup = u64::from_le_bytes(request);
         ring.push([setup as u32, (setup >> 32) as u32, 8, TRB_SETUP << 10 | 1 << 6]); // IDT, no data
         ring.push([0, 0, 0, TRB_STATUS << 10 | 1 << 16 | 1 << 5]); // IN status, interrupt on completion
         wr(self.doorbells + 4 * slot as u64, 1);
-        let e = self.wait_event(EVT_TRANSFER).ok_or(0u32)?;
+        let e = self.wait_event(EVT_TRANSFER, TRANSFER_MS).ok_or(CC_TIMEOUT)?;
         let code = e[2] >> 24;
         if code == CC_SUCCESS { Ok(()) } else { Err(code) }
     }
@@ -296,14 +372,18 @@ impl Xhci {
                 _ => 0,
             };
             let esit = if attr & 3 == INTERRUPT { mps as u32 } else { 0 };
+            // SuperSpeed: the burst the device announced (companion descriptor); 0 (one packet) otherwise.
+            let burst = dev.endpoints.iter().position(|e| e.is_some_and(|e| e.0 == addr)).map_or(0, |k| dev.bursts[k]) as u32;
+            // Average TRB length: 3 KiB for bulk (xHCI 1.2 §4.14.1.1), 8 for interrupt.
+            let average = if esit != 0 { 8 } else { 3072 };
             // SAFETY: input context frame owned by the driver; offsets inside it.
             unsafe {
                 let ep = self.ctx(input, dci as usize + 1);
                 ep.write_volatile(ival << 16);
-                ep.add(1).write_volatile((mps as u32) << 16 | kind << 3 | 3 << 1); // type, 3 retries
+                ep.add(1).write_volatile((mps as u32) << 16 | burst << 8 | kind << 3 | 3 << 1); // type, 3 retries
                 ep.add(2).write_volatile(ring.base as u32 | 1);
                 ep.add(3).write_volatile((ring.base >> 32) as u32);
-                ep.add(4).write_volatile(esit << 16 | if esit != 0 { 8 } else { mps as u32 });
+                ep.add(4).write_volatile(esit << 16 | average);
             }
             add |= 1 << dci;
             last = last.max(dci as u32);
@@ -319,9 +399,10 @@ impl Xhci {
         let r = self.command([input as u32, (input >> 32) as u32, 0, TRB_CONFIGURE_ENDPOINT << 10 | (dev.slot as u32) << 24]);
         frame::free_frame(input);
         if let Err(code) = r {
-            crate::warn!("usb: Configure Endpoint a esuat (cod {})", code);
+            crate::warn!("usb: port {}: Configure Endpoint a esuat (cod {}: {})", dev.port, code, cc_name(code));
             return None;
         }
+        crate::info!("usb: port {}: Configure Endpoint ok ({} endpoint-uri)", dev.port, eps.len());
         Some(out)
     }
 
@@ -334,13 +415,13 @@ impl Xhci {
 
     /// Control transfer on endpoint 0 of `slot` with an IN data stage into `buf` (physical, <= 4 KiB).
     fn control_in(&mut self, slot: u8, request: [u8; 8], buf: u64, len: u16) -> Result<(), u32> {
-        let ring = &mut self.ep0.iter_mut().find(|(s, _)| *s == slot).ok_or(0u32)?.1;
+        let ring = &mut self.ep0.iter_mut().find(|(s, _)| *s == slot).ok_or(CC_TIMEOUT)?.1;
         let setup = u64::from_le_bytes(request);
         ring.push([setup as u32, (setup >> 32) as u32, 8, TRB_SETUP << 10 | 1 << 6 | 3 << 16]); // IDT, IN data
         ring.push([buf as u32, (buf >> 32) as u32, len as u32, TRB_DATA << 10 | 1 << 16]); // IN
         ring.push([0, 0, 0, TRB_STATUS << 10 | 1 << 5]); // OUT status, interrupt on completion
         wr(self.doorbells + 4 * slot as u64, 1); // endpoint 0 = DCI 1
-        let e = self.wait_event(EVT_TRANSFER).ok_or(0u32)?;
+        let e = self.wait_event(EVT_TRANSFER, TRANSFER_MS).ok_or(CC_TIMEOUT)?;
         let code = e[2] >> 24;
         if code == CC_SUCCESS || code == CC_SHORT_PACKET { Ok(()) } else { Err(code) }
     }
@@ -370,7 +451,15 @@ impl Xhci {
             }
         }
         let speed = ((rd(reg) >> 10) & 0xF) as u8;
-        let slot = (self.command([0, 0, 0, TRB_ENABLE_SLOT << 10]).ok()?[3] >> 24) as u8;
+        // Each step of the enumeration goes to the log (`log usb`) with the controller's completion code.
+        let fail = |step: &str, code: u32| -> Option<UsbDevice> {
+            crate::warn!("usb: port {}: {} a esuat (cod {}: {})", port, step, code, cc_name(code));
+            None
+        };
+        let slot = match self.command([0, 0, 0, TRB_ENABLE_SLOT << 10]) {
+            Ok(e) => (e[3] >> 24) as u8,
+            Err(c) => return fail("Enable Slot", c),
+        };
 
         // Device context (output) and input context for Address Device.
         let output = dma_frame()?;
@@ -397,14 +486,15 @@ impl Xhci {
         }
         self.ep0.push((slot, ring));
         if let Err(code) = self.command([input as u32, (input >> 32) as u32, 0, TRB_ADDRESS_DEVICE << 10 | (slot as u32) << 24]) {
-            crate::warn!("usb: portul {}: Address Device a esuat (cod {})", port, code);
-            return None;
+            return fail("Address Device", code);
         }
 
         // Device descriptor: first 8 bytes (to learn the real max packet size), then all 18.
         let buf = dma_frame()?;
         let get = |kind: u16, len: u16| [0x80u8, 6, 0, (kind >> 8) as u8, 0, 0, len as u8, (len >> 8) as u8];
-        self.control_in(slot, get(0x0100, 8), buf, 8).ok()?;
+        if let Err(c) = self.control_in(slot, get(0x0100, 8), buf, 8) {
+            return fail("GET_DESCRIPTOR dispozitiv (8 octeti)", c);
+        }
         // SAFETY: the buffer frame belongs to the driver; the transfer finished.
         let mps0 = unsafe { *phys_to_virt(buf).add(7) } as u32;
         if speed < 3 && mps0 != max_packet && mps0 != 0 {
@@ -414,23 +504,32 @@ impl Xhci {
                 let ep0 = self.ctx(input, 2).add(1);
                 ep0.write_volatile((ep0.read_volatile() & 0xFFFF) | mps0 << 16);
             }
-            self.command([input as u32, (input >> 32) as u32, 0, TRB_EVALUATE_CONTEXT << 10 | (slot as u32) << 24]).ok()?;
+            if let Err(c) = self.command([input as u32, (input >> 32) as u32, 0, TRB_EVALUATE_CONTEXT << 10 | (slot as u32) << 24]) {
+                return fail("Evaluate Context", c);
+            }
         }
-        self.control_in(slot, get(0x0100, 18), buf, 18).ok()?;
+        if let Err(c) = self.control_in(slot, get(0x0100, 18), buf, 18) {
+            return fail("GET_DESCRIPTOR dispozitiv (18 octeti)", c);
+        }
         // SAFETY: as above; 18 bytes were written.
         let d = unsafe { core::slice::from_raw_parts(phys_to_virt(buf), 18) };
         let (vendor, product) = (u16::from_le_bytes([d[8], d[9]]), u16::from_le_bytes([d[10], d[11]]));
         let mut class = (d[4], d[5], d[6]);
 
         // Configuration descriptor: the device class is often in the first interface.
-        self.control_in(slot, get(0x0200, 9), buf, 9).ok()?;
+        if let Err(c) = self.control_in(slot, get(0x0200, 9), buf, 9) {
+            return fail("GET_DESCRIPTOR configuratie (9 octeti)", c);
+        }
         // SAFETY: as above.
         let total = u16::from_le_bytes(unsafe { [*phys_to_virt(buf).add(2), *phys_to_virt(buf).add(3)] }).min(512);
-        self.control_in(slot, get(0x0200, total), buf, total).ok()?;
+        if let Err(c) = self.control_in(slot, get(0x0200, total), buf, total) {
+            return fail("GET_DESCRIPTOR configuratie (completa)", c);
+        }
         // SAFETY: as above; `total` bytes were requested (fewer may arrive: the rest stays zero).
         let cfg = unsafe { core::slice::from_raw_parts(phys_to_virt(buf), total as usize) };
         let config = cfg.get(5).copied().unwrap_or(1);
         let (mut interface, mut endpoints, mut found, mut in_first) = (0, [None; 4], 0, false);
+        let mut bursts = [0u8; 4];
         let mut seen_interface = false;
         let mut i = 0;
         while i + 2 <= cfg.len() && cfg[i] >= 2 {
@@ -452,13 +551,23 @@ impl Xhci {
                     endpoints[found] = Some((cfg[i + 2], cfg[i + 3], mps, cfg[i + 6]));
                     found += 1;
                 }
+                0x30 if i + 3 <= cfg.len() && in_first && found > 0 => {
+                    // SuperSpeed endpoint companion of the endpoint just read: bMaxBurst.
+                    bursts[found - 1] = cfg[i + 2].min(15);
+                }
                 _ => {}
             }
             i += cfg[i] as usize;
         }
         frame::free_frame(buf);
         frame::free_frame(input);
-        Some(UsbDevice { slot, port, speed, vendor, product, class, interface, config, endpoints })
+        crate::info!(
+            "usb: port {}: slot {}, viteza {}, pachet maxim EP0 {}, configuratia {} ({} octeti), endpoint-uri {}",
+            port, slot, speed, if speed < 3 && mps0 != 0 { mps0 } else { max_packet }, config, total,
+            endpoints.iter().flatten().zip(bursts).map(|(e, b)| alloc::format!("{:02x}/{}/{}/b{}", e.0, e.1 & 3, e.2, b))
+                .collect::<Vec<_>>().join(" ")
+        );
+        Some(UsbDevice { slot, port, speed, vendor, product, class, interface, config, endpoints, bursts })
     }
 }
 

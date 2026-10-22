@@ -36,7 +36,7 @@ pub fn init() {
             None => {
                 crate::warn!("usb: stick-ul de pe portul {} nu porneste", d.port);
                 if crate::fs::failure("/usb").is_none() {
-                    crate::fs::note_failure("/usb", "stick-ul nu porneste (configurare USB)");
+                    crate::fs::note_failure("/usb", "stick-ul nu porneste (configurare USB; vezi log usb)");
                 }
             }
         }
