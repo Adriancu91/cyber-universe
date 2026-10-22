@@ -3,6 +3,26 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-22 14:55–16:00 UTC (17:55–19:00 ora României), în cloud, fără Adrian — P6-10e (C-9)
+- **Pornire:** clonele locale aveau `main` cu alt istoric (clonă „shallow”) → lucrat pe ramura locală `sesiune-1022b` din `origin/main`,
+  push pe `main`. A lucrat în paralel sesiunea de la 14:40 (a reparat CI-ul `net-high`, n-a atins C-9); commit-ul ei a fost luat prin rebase local.
+- **Hub:** comanda nouă **C-9** (testul 6: cauza e pornirea la rece; os-125 merge din F12, nu direct) → preluată 15:05 UTC; **P6-10e**,
+  **P6-10f** în TASKS cu planuri. Regula de oprire nu se aplică (sesiunea 13:28 a terminat P6-10d).
+- **Descoperit:** revizia `50800000` e **RTL8168GU/8111GU** (FreeBSD `if_rlreg.h`), nu 8168H cum scria în comentarii (corectat).
+- **Terminată: P6-10e** — pornirea la rece, ca **variante** (pornirea implicită rămâne exact os-125/os-138; regula D-013):
+  `rtl porneste rece` = `mcu` + `phy` + `cplus` + `ordine` + `rxdv`; fiecare se poate da și singur. Fiecare registru: citire → un bit →
+  scriere; fiecare pas în `log rtl` („pas N: ce [registru] înainte -> după”, „EXPIRAT” la o așteptare de peste ~100 ms, pornirea continuă).
+  `mcu` = preluarea de la firmware înainte de reset (SerenityOS, BSD-2: poarta RXDV, coada TX/FIFO goale, RX/TX oprite, MCU bit 7,
+  OCP E8DE bit 14/15 cu „lista gata”); `phy` = PMCH bit 7, PHY 1F=0, 0E=0 (FreeBSD); `cplus` = C+ Command (0xE0) biții 0, 3, 7 înaintea
+  restului (FreeBSD: „C+ înaintea tuturor”); `ordine` = TCR/RCR (cu EarlyOff v2, bit 11) înainte de pornirea RX/TX (FreeBSD, 8168G+).
+  `log rtl` arată și C+ Command, PMCH, numele reviziei. Model: mod `cold`, MAC OCP, MCU, TCR bit 11.
+- **P6-10f:** fără schimbare de cod (diagnosticul `log rx` există din os-138); de făcut pe laptop la cald (testul 7 C). Observație: golirea
+  cache-ului (`rtl porneste cache`) n-a fost încercată niciodată la cald (testul 5 a fost la rece) → e în lista testului 7.
+- **Teste:** `cd rtl8168 && cargo test --release` → 32; `tools/test.sh` → 47 trecute + `https-real` sărit; `editor` și `stress-quick` au picat
+  în rularea completă (calculator încărcat) și trec rulate singure; `shell`, `net`, `net-high` trecute.
+- **Următorul pas:** testul 7 pe laptop (lista în hub). Dacă `rece` merge la rece → devine implicit (o schimbare pe Release), apoi
+  eventual găsim pasul minim. Dacă nu: `log rtl` cu pașii arată unde; urmează registrele ERI/EPHY (documentație mai detaliată).
+
 ### Sesiunea programată 2026-10-22 14:40–15:30 UTC (17:40–18:30 ora României), în cloud, fără Adrian — reparat CI roșu
 - **Pornire:** clonele locale aveau un `main` vechi, cu alt istoric → păstrat ca ramura locală `local-vechi-main` (nepublicată), `main` nou din GitHub.
 - Hub: la pornire (14:44 UTC) nicio comandă nouă. Între timp a sosit **C-9** (testul 6), preluată de **altă sesiune la 15:05 UTC** (P6-10e/P6-10f, `[~]`)
