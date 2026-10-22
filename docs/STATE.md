@@ -3,6 +3,26 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-22 06:25–07:30 UTC (09:25–10:30 ora României), în cloud, fără Adrian
+- **Hub:** comanda nouă **C-5** (testul 3: Realtek primește 16 cadre apoi nimic; stick-ul nu trece de configurarea USB) → preluată;
+  P6-10a, P6-10b adăugate în TASKS cu planuri. Regula de oprire nu s-a aplicat (era comandă nouă; C-5 cere explicit să nu ne oprim).
+- **Terminate (2 sarcini):**
+  - **P6-10a** — Realtek: inelul de primire are acum 256 de descriptori (era 16 = exact cât a primit laptopul); lista bufferelor
+    într-o pagină separată (driverul mic pe stivă); după un RDU urmat de `STALL_POLLS` (50) citiri fără cadre → primirea e repornită
+    (CR fără RE, descriptori redați, RDSAR rescris, RE din nou); re-sincronizare dacă placa scrie în alt descriptor. `net` are două rânduri
+    noi: `inel RX 256: index, ai placii, RDU vazut, reporniri, resincronizari, raspunsuri DHCP (udp 68)` și `primele cadre: 0806 0800/udp68 …`.
+    Modelul cipului imită blocarea după RDU (`stall_after_rdu`) și indexul păstrat (`keep_index_on_restart`): 20 de teste.
+  - **P6-10b** — xHCI/stick: așteptările se măsoară cu ceasul (comenzi 2 s, transferuri 5 s; înainte erau bucle de ~1–40 ms pe un
+    procesor rapid — cel mai probabil motivul eșecului pe laptop: QEMU răspunde instant). Fiecare pas al enumerării și al pornirii
+    stick-ului apare în `log usb` cu codul TRB în cuvinte (Enable Slot, Address Device, descriptori, SET_CONFIGURATION, Configure Endpoint,
+    INQUIRY pe etape CBW/date/CSW). STALL: Reset Endpoint + Set TR Dequeue + CLEAR_FEATURE(HALT). Transferuri întârziate ignorate.
+    Burst SuperSpeed din descriptorul companion; Average TRB Length 3072 la bulk. INQUIRY reîncercat de 3 ori.
+- **Build:** OK, fără avertismente. **Teste:** `tools/test.sh` → 49 de scenarii trecute (nou: `usb-disk-hs`, stick USB 2 pe port USB 2;
+  `usb-disk` verifică acum pașii din jurnal și burst 15) + `https-real` sărit local; `cd rtl8168 && cargo test --release` → 20.
+- **Pe laptop:** urmează **testul 4** (lista în hub, `stare/cyber-universe.md`). Dacă primirea tot se oprește: din `net` se vede dacă
+  s-au făcut reporniri; următorul pas ar fi resetarea completă a plăcii la blocare. Dacă stick-ul tot nu pornește: `log usb` arată pasul și codul.
+
+### (anterioară)
 ### Sesiunea programată 2026-10-22 05:40 UTC (08:40 ora României), în cloud, fără Adrian — fără lucru nou
 - Hub: nicio comandă `nou` pentru `cyber-universe`, niciun rezultat nou de la Adrian (testul 3 / P6-10 nefăcut încă).
 - `docs/TASKS.md`: nicio sarcină liberă → sesiunea s-a oprit (CLAUDE.md §3). CI verde pe `06c69c9`. Mediul instalat (rustc nightly 2026-10-21).
@@ -97,9 +117,9 @@
   lanțurile cu `openssl verify` — zero diferențe. CI verde pe toate commit-urile terminate (ultimele încă rulau la final).
 
 ## Următoarea sarcină
-**Nicio sarcină liberă.** **P6-10** (închiderea Fazei 6) = testul pe laptop cu Adrian: testul 3 (rețeaua Realtek, `/usb`), apoi
-`claude.key` + `github.token` pe stick, `claude Salut`, `run actualizeaza`, `run gh-trimite …`. Din pozele lui: reparații, apoi
-P6-10 și P3-10. Sesiunile programate fără rezultate noi de la Adrian: verifică hub-ul (COMENZI) și CI, apoi se opresc.
+**Nicio sarcină liberă.** Așteaptă **testul 4** al lui Adrian (C-5 pasul 3): `log rtl`, `net`, `ping 1.1.1.1`, `log usb`, `hw`, `ls /usb`.
+Din pozele lui: reparații (sarcini noi P6-10c…), apoi P6-10 și P3-10. Sesiunile fără rezultate noi: verifică hub-ul și CI, apoi se opresc
+(dar NU scriu „OPRIT” cât timp C-5 e `preluat`, cum cere C-5 pasul 4).
 
 ## Mediu (verificat la P0-01, sesiune cloud)
 | Unealtă | Versiune |
