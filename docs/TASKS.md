@@ -201,6 +201,12 @@ Reparații după testul 6 pe Lenovo (comanda C-9, înaintea lui P6-10):
 - [x] **P6-10f** Realtek: cadrele 2+ citite ca zero — golirea cache-ului devine implicită (RX și TX), confirmată pe laptop la testul 6 G–L; plus alias `fetch` și mesajul lui `host` (C-9, completările 18:20 și 18:30). Dep: P6-10d.
   Test: `cd rtl8168 && cargo test --release`; `tools/test.sh`. Pe laptop: testul 7 (rece, fără `rtl porneste cache`).
 
+Reparații după testul 7 pe Lenovo (comanda C-10, înaintea lui P6-10):
+- [~] **P6-10g** Realtek: prima inițializare citește zerouri la cald — paza paginilor DMA (nicio pagină dată de două ori, test în QEMU), jurnalul regiunii din harta memoriei, inelele și bufferele într-un bloc nou peste 16 MiB (ca la repornire). Dep: P6-10f.
+  Test: `cd rtl8168 && cargo test --release`; `tools/test.sh` (scenariu nou `dmaguard`). Pe laptop: testul 8 (C) — `net` la prima inițializare → adresă.
+- [ ] **P6-10h** Realtek: accesul MAC OCP verificat (citire înainte de scriere, bitul 15 din E8DE „se șterge singur”), pașii reci reinterpretați în `log rtl`. Dep: P6-10e.
+  Test: `cd rtl8168 && cargo test --release`. Pe laptop: testul 8 (R).
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
