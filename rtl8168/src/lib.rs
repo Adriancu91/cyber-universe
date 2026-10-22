@@ -29,6 +29,25 @@ pub mod reg {
     pub const RMS: u16 = 0xDA; // receive maximum packet size (16-bit)
     pub const RDSAR: u16 = 0xE4; // receive descriptor ring start, 64-bit
     pub const MTPS: u16 = 0xEC; // maximum transmit packet size, in 128-byte units
+    pub const MCU: u16 = 0xD3; // 8168G and later: MCU status (read only for diagnostics)
+    pub const MISC: u16 = 0xF0; // 8168G and later: bit 19 = RXDV gate (receive/transmit DMA held back while set)
+}
+
+/// MISC bit 19 (8168G and later): while set, the card's receive/transmit paths are gated off. Firmware or a previous
+/// driver may leave it set; the FreeBSD re(4) driver clears it before enabling the receiver (read for the idea only).
+pub const MISC_RXDV_GATE: u32 = 1 << 19;
+
+/// Start-up choices, one per behaviour change (rule of 2026-10-22: one change per Release, verified on the laptop).
+/// The default is exactly the start-up of Release os-125 (test 4, the last version that sent and received).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Options {
+    /// Receive buffers from one physically contiguous block below 4 GiB (`Hw::alloc_block`), buffer i at base + i * BUF.
+    pub rx_block: bool,
+    /// Clear the RXDV gate (MISC bit 19) if it is set, before the receiver and transmitter are enabled.
+    pub rxdv: bool,
+    /// Drop the CPU's cached copy of each data buffer: before a received frame is read, before the card reads a frame
+    /// to send (`Hw::dma_sync`). Descriptor rings are never touched.
+    pub cache: bool,
 }
 
 /// Bits of a descriptor's first word.
@@ -84,6 +103,9 @@ pub trait Hw {
     fn write32(&mut self, reg: u16, v: u32);
     /// A zeroed, physically contiguous 4 KiB page: (physical address for the card, pointer for the CPU).
     fn alloc_page(&mut self) -> Option<(u64, *mut u8)>;
+    /// `pages` zeroed, physically contiguous 4 KiB pages, all below 4 GiB: (physical address, pointer). Used only with
+    /// `Options::rx_block`.
+    fn alloc_block(&mut self, pages: usize) -> Option<(u64, *mut u8)>;
     /// Busy-waits about `us` microseconds.
     fn delay_us(&mut self, us: u32);
     /// Makes the CPU see what the card wrote by DMA to `len` bytes at `ptr` (physical `phys`): drops the CPU's cached
@@ -101,9 +123,11 @@ pub struct RxDetail {
     pub len: u16,
     /// Buffer address written in the descriptor (read back from it).
     pub desc_addr: u64,
-    /// Physical address of the buffer the driver copies from.
+    /// Physical address of the buffer the driver copies from (as the driver recorded it).
     pub read_addr: u64,
-    /// The first 16 bytes before and after dropping the CPU's cached copy.
+    /// Virtual address the driver copies from (the kernel translates it back through the page tables for `log rx`).
+    pub read_ptr: u64,
+    /// The first 16 bytes before and after dropping the CPU's cached copy (the same read twice without `cache`).
     pub before: [u8; 16],
     pub after: [u8; 16],
 }
@@ -132,6 +156,10 @@ pub struct Rtl8168<H: Hw> {
     pub mac: [u8; 6],
     /// Bits 23 and 26-30 of TCR: the chip revision ("XID"), shown in the log to tell revisions apart.
     pub revision: u32,
+    /// The start-up choices this card was started with.
+    pub options: Options,
+    /// MISC (before, after) when `Options::rxdv` was asked for.
+    pub misc_change: Option<(u32, u32)>,
     rx_ring: Page,
     tx_ring: Page,
     /// A page holding the RX_RING receive buffer addresses (`Page`, 16 bytes each): kept out of the struct so the
@@ -189,6 +217,9 @@ pub struct Diag {
     pub rx_next: usize,
     /// Receive descriptors that belong to the card right now (OWN set); all of them = the ring is free.
     pub rx_owned: usize,
+    /// MISC (0xF0) and MCU (0xD3), 8168G and later; read only.
+    pub misc: u32,
+    pub mcu: u8,
 }
 
 fn desc_ptr(ring: Page, i: usize) -> *mut u32 {
@@ -253,8 +284,13 @@ pub fn summarize(frame: &[u8]) -> (u16, u16) {
 }
 
 impl<H: Hw> Rtl8168<H> {
+    /// Resets and starts the card exactly as Release os-125 did (`Options::default()`).
+    pub fn new(hw: H) -> Result<Self, InitError> {
+        Self::with_options(hw, Options::default())
+    }
+
     /// Resets and starts the card: MAC address, rings, receiver and transmitter on, interrupts off.
-    pub fn new(mut hw: H) -> Result<Self, InitError> {
+    pub fn with_options(mut hw: H, options: Options) -> Result<Self, InitError> {
         if hw.read32(reg::TCR) == u32::MAX && hw.read32(reg::IDR0) == u32::MAX {
             return Err(InitError::NotAnswering);
         }
@@ -280,11 +316,22 @@ impl<H: Hw> Rtl8168<H> {
         let (rx_ring, tx_ring) = (page().ok_or(InitError::NoMemory)?, page().ok_or(InitError::NoMemory)?);
         let rx_book = hw_page(&mut hw).ok_or(InitError::NoMemory)?;
         let mut tx_bufs = [tx_ring; TX_RING];
+        let block = if options.rx_block {
+            let (phys, ptr) = hw.alloc_block(RX_RING * BUF / 4096).ok_or(InitError::NoMemory)?;
+            Some(Page { phys, ptr })
+        } else {
+            None
+        };
         for i in (0..RX_RING).step_by(2) {
-            let p = hw_page(&mut hw).ok_or(InitError::NoMemory)?;
-            // The page was zeroed by the CPU: push those zeros out of the cache before the card writes there, so a
-            // cached line can neither hide nor later overwrite what the card writes.
-            hw.dma_sync(p.phys, p.ptr, 4096);
+            let p = match block {
+                // SAFETY: i * BUF < RX_RING * BUF, the block's size; physical and virtual addresses move together.
+                Some(b) => Page { phys: b.phys + (i * BUF) as u64, ptr: unsafe { b.ptr.add(i * BUF) } },
+                None => hw_page(&mut hw).ok_or(InitError::NoMemory)?,
+            };
+            if options.cache {
+                // The page was zeroed by the CPU: push those zeros out of the cache before the card writes there.
+                hw.dma_sync(p.phys, p.ptr, 4096);
+            }
             for (k, b) in halves(p).into_iter().enumerate() {
                 // SAFETY: the book page holds exactly RX_RING `Page`s (4096 bytes) and is page-aligned.
                 unsafe { (rx_book.ptr as *mut Page).add(i + k).write(b) };
@@ -310,6 +357,15 @@ impl<H: Hw> Rtl8168<H> {
         hw.write32(reg::RDSAR + 4, (rx_ring.phys >> 32) as u32);
         hw.write32(reg::MAR0, 0);
         hw.write32(reg::MAR0 + 4, 0);
+        let mut misc_change = None;
+        if options.rxdv {
+            // Read, change one bit, write; only if it is set.
+            let before = hw.read32(reg::MISC);
+            if before & MISC_RXDV_GATE != 0 {
+                hw.write32(reg::MISC, before & !MISC_RXDV_GATE);
+            }
+            misc_change = Some((before, hw.read32(reg::MISC)));
+        }
         hw.write8(reg::CHIPCMD, CMD_RX | CMD_TX);
         // Written after enabling as well: some revisions only keep RCR/TCR once the receiver/transmitter is on.
         hw.write32(reg::RCR, RCR_VALUE);
@@ -317,7 +373,7 @@ impl<H: Hw> Rtl8168<H> {
         hw.write8(reg::CR9346, 0x00); // lock configuration
 
         Ok(Rtl8168 {
-            hw, mac, revision, rx_ring, tx_ring, rx_book, tx_bufs,
+            hw, mac, revision, options, misc_change, rx_ring, tx_ring, rx_book, tx_bufs,
             rx_next: 0, tx_next: 0, sent: 0, received: 0, dropped: 0, isr_seen: 0, polls: 0,
             rdu_count: 0, restarts: 0, resyncs: 0, dhcp_replies: 0, first: [(0, 0); FIRST_FRAMES],
             detail: [RxDetail::default(); FIRST_FRAMES], zero_type: 0, fixed_by_sync: 0,
@@ -377,9 +433,10 @@ impl<H: Hw> Rtl8168<H> {
             core::ptr::write_bytes(buf.ptr, 0, MIN_FRAME);
             core::ptr::copy_nonoverlapping(frame.as_ptr(), buf.ptr, frame.len());
         }
-        // The frame goes from the CPU cache to memory before the card reads it (a card reading with "No Snoop" would
-        // otherwise send stale bytes: possibly why the router never answered our DHCP requests).
-        self.hw.dma_sync(buf.phys, buf.ptr, len);
+        if self.options.cache {
+            // The frame goes from the CPU cache to memory before the card reads it.
+            self.hw.dma_sync(buf.phys, buf.ptr, len);
+        }
         write_desc(self.tx_ring, i, desc::OWN | eor(i, TX_RING) | desc::FS | desc::LS | len as u32, buf.phys);
         self.tx_next = (i + 1) % TX_RING;
         self.hw.write8(reg::TPPOLL, POLL_NORMAL);
@@ -438,10 +495,13 @@ impl<H: Hw> Rtl8168<H> {
                     len: len as u16,
                     desc_addr: read_desc_addr(self.rx_ring, i),
                     read_addr: buf.phys,
+                    read_ptr: buf.ptr as u64,
                     before: first16(buf),
                     after: [0; 16],
                 };
-                self.hw.dma_sync(buf.phys, buf.ptr, len);
+                if self.options.cache {
+                    self.hw.dma_sync(buf.phys, buf.ptr, len);
+                }
                 // SAFETY: the card wrote `len` <= BUF bytes into this driver-owned buffer and handed it back.
                 unsafe { core::ptr::copy_nonoverlapping(buf.ptr, out.as_mut_ptr(), n) };
                 detail.after = first16(buf);
@@ -559,12 +619,19 @@ impl<H: Hw> Rtl8168<H> {
             rx_opts1: read_desc(self.rx_ring, self.rx_next),
             rx_next: self.rx_next,
             rx_owned: (0..RX_RING).filter(|&i| read_desc(self.rx_ring, i) & desc::OWN != 0).count(),
+            misc: self.hw.read32(reg::MISC),
+            mcu: self.hw.read8(reg::MCU),
         }
     }
 
     /// The physical addresses of the rings (to compare with what the card reads back).
     pub fn ring_addresses(&self) -> (u64, u64) {
         (self.rx_ring.phys, self.tx_ring.phys)
+    }
+
+    /// Physical addresses of the first `N` receive buffers (`log rtl`).
+    pub fn rx_buffer_addresses<const N: usize>(&self) -> [u64; N] {
+        core::array::from_fn(|i| self.rx_buf(i.min(RX_RING - 1)).phys)
     }
 
     /// The hardware access object (tests use it to drive the model).

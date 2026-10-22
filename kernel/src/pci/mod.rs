@@ -90,6 +90,7 @@ impl Device {
 
     /// Puts the device in the full-power state D0 if it has the PCI power-management capability (firmware may
     /// leave unused devices in D3, where their registers read as all ones). PCI Bus Power Management spec 1.2.
+    /// Read, change only the power-state field (bits 1:0), write; before and after go to the log.
     pub fn power_on(&self) {
         let Some(ptr) = self.capability(0x01) else { return };
         let pmcsr = self.read32(ptr + 4);
@@ -100,29 +101,53 @@ impl Device {
             while crate::time::since_boot_us().is_some_and(|t| t < start + 10_000) {
                 core::hint::spin_loop();
             }
+            crate::info!(
+                "pci: {} PMCSR stare D{} -> D0 ({:04x} -> {:04x})",
+                self.address(), pmcsr & 3, pmcsr as u16, self.read32(ptr + 4) as u16
+            );
         }
     }
 
-    /// PCI Express Device Control: switches off "Enable No Snoop" (bit 11, on by default per the PCIe spec) and
-    /// "Enable Relaxed Ordering" (bit 4), so the device's DMA writes stay coherent with the CPU caches and in order.
-    /// Returns the Device Control word (before, after), or `None` without a PCI Express capability.
-    pub fn pcie_strict_dma(&self) -> Option<(u16, u16)> {
+    /// PCI Express Device Control, read only (`log rtl`): the OS no longer writes it (test 5, 2026-10-22).
+    pub fn pcie_devctl(&self) -> Option<u16> {
         let ptr = self.capability(0x10)?;
-        let dw = self.read32(ptr + 8); // Device Capabilities is at +4; Device Control (low) + Device Status (high) at +8
-        let before = dw as u16;
-        let after = before & !(1 << 11 | 1 << 4);
-        if after != before {
-            // Writing 0 to the status half leaves its write-1-to-clear bits alone.
-            self.write32(ptr + 8, after as u32);
-        }
-        Some((before, self.read32(ptr + 8) as u16))
+        Some(self.read32(ptr + 8) as u16) // Device Control is the low half of the dword at +8
     }
 
-    /// Lets the device answer memory accesses and act as bus master (needed for DMA).
+    /// The Command register (low half of offset 4).
+    pub fn command(&self) -> u16 {
+        self.read32(0x04) as u16
+    }
+
+    /// Sets one bit of the Command register: read, change that bit, write (only if it is not set yet); before and
+    /// after go to the log, tagged with `who` (so `log rtl` shows the Realtek's). Writing 0 to the Status half leaves
+    /// its write-1-to-clear bits alone.
+    fn set_command_bit(&self, bit: u16, name: &str, who: &str) {
+        let before = self.command();
+        if before & 1 << bit != 0 {
+            return;
+        }
+        self.write32(0x04, (before | 1 << bit) as u32);
+        let after = self.command();
+        crate::info!("pci: {} {} Command bit {} ({}) 0 -> {} ({:04x} -> {:04x})",
+            self.address(), who, bit, name, after >> bit & 1, before, after);
+    }
+
+    /// Lets the device answer memory accesses (bit 1) and act as bus master (bit 2, needed for DMA): one bit at a time.
     #[allow(dead_code)] // used by the disk, USB and network drivers (P3-02 and later)
     pub fn enable(&self) {
-        let cmd = self.read32(0x04);
-        self.write32(0x04, (cmd & 0xFFFF) | 0b110);
+        self.enable_as("");
+    }
+
+    /// `enable`, with a word for the log lines (e.g. "rtl8168").
+    pub fn enable_as(&self, who: &str) {
+        self.set_command_bit(1, "Memory Space", who);
+        self.set_command_bit(2, "Bus Master", who);
+    }
+
+    /// bus:device.function, as `lspci` shows it.
+    pub fn address(&self) -> alloc::string::String {
+        alloc::format!("{:02x}:{:02x}.{}", self.bus, self.dev, self.func)
     }
 
     pub fn kind(&self) -> &'static str {

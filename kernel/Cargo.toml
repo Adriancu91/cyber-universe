@@ -38,6 +38,8 @@ test-usb = ["qemu-test"]
 test-usbdisk = ["qemu-test"]
 # P3-08: ARP request through the network card, answer from QEMU's virtual gateway.
 test-net = ["qemu-test"]
+# P6-10d: memory allocations forced above 4 GiB (run with -m 6G): the network scenario must still work.
+test-high-dma = ["qemu-test"]
 # P5-03: names resolved through the harness's DNS server (tools/dns-test-server.py) at 10.0.2.2:15353.
 test-dns = ["qemu-test"]
 # P5-04: TCP against the harness's web server (tools/before-tcp.sh) at 10.0.2.2:18080.

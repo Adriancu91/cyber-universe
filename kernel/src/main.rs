@@ -97,6 +97,8 @@ extern "C" fn kernel_main() -> ! {
         error!("mem: nucleul nu poate gestiona memoria, opresc");
         panic!("initializarea memoriei a esuat");
     }
+    #[cfg(feature = "test-high-dma")]
+    test_high_dma();
     sched::init();
 
     let has_acpi = acpi::init();
@@ -218,6 +220,8 @@ fn run_tests() -> ! {
     info!("test: dupa breakpoint, nucleul continua");
 
     test_frames();
+    // With -m 6G (test-high-dma) touching every frame would take minutes under emulation.
+    #[cfg(not(feature = "test-high-dma"))]
     test_all_frames();
     test_paging();
     test_heap();
@@ -1069,6 +1073,26 @@ fn test_fat32_mbr() {
     assert!(fs::mount_disk(alloc::boxed::Box::new(WithMbr(block::MemDisk::new(image), mbr)), "/mbr"), "MBR negasit");
     assert!(fs::read_all("/mbr/salut.txt").unwrap() == b"salut de pe disc\n", "citire prin MBR");
     info!("test: FAT32 OK (partitia gasita si prin GPT, si prin MBR)");
+}
+
+/// P6-10d: with -m 6G, ordinary allocations are pushed above 4 GiB (as on the 8 GB laptop), while a DMA block asked
+/// for "below 4 GiB" must still come from below it and be contiguous.
+#[cfg(feature = "test-high-dma")]
+fn test_high_dma() {
+    use mem::frame;
+    assert!(frame::prefer_above_4g(), "test: nu exista memorie peste 4 GB (QEMU cu -m 6G?)");
+    let f = frame::alloc_frame().expect("test: niciun cadru");
+    assert!(f >= 1 << 32, "test: cadrul {:#x} nu e peste 4 GB", f);
+    frame::free_frame(f);
+    let block = frame::alloc_contiguous_below(128, 1 << 32).expect("test: niciun bloc de 128 cadre sub 4 GB");
+    assert!(block + 128 * 4096 <= 1 << 32);
+    // Contiguous: the next allocation of the same size does not overlap it.
+    let other = frame::alloc_contiguous_below(128, 1 << 32).expect("test: al doilea bloc");
+    assert!(other >= block + 128 * 4096 || other + 128 * 4096 <= block, "test: blocurile se suprapun");
+    for b in [block, other] {
+        (0..128).for_each(|k| frame::free_frame(b + k * 4096));
+    }
+    info!("test: alocari peste 4 GB (primul cadru {:#x}); bloc DMA de 128 cadre sub 4 GB la {:#x}", f, block);
 }
 
 /// Sends an ARP request for QEMU's virtual gateway (10.0.2.2, user networking; our address 10.0.2.15)

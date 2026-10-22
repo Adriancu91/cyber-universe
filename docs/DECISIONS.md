@@ -62,3 +62,12 @@ lucru pe laptopul de test: driver Realtek RTL8168, rădăcinile reale de încred
 confirmare pentru scriere/rulare), auto-actualizare din GitHub Releases, trimitere pe GitHub. Compilarea în OS nu e obiectiv.
 Faza 5 se închide fără P5-07/P5-08 (mutate după suită). Cheile (API Claude, token GitHub) stau doar pe stick, niciodată în repo.
 Înlocuiește descrierea veche a Fazei 6 din ROADMAP (auto-găzduire).
+
+### D-013 — Drivere testate pe hardware: o singură schimbare pe Release (2026-10-22)
+Regula lui Adrian (Cyber Hub, `DECIZII.md`, 2026-10-22 16:55, comanda C-8 punctul 7), după regresia de la testul 5:
+la un driver testat pe hardware real se face **o singură schimbare de comportament pe Release**, verificată pe laptop înainte
+de următoarea; orice registru de configurare (PCI, ale plăcii) se scrie doar citire → un singur bit → scriere, cu valoarea
+dinainte și de după în jurnal; la fiecare Release, `log rtl` (și echivalentul la alte drivere) arată registrele cheie, ca o poză
+să ajungă pentru comparația cu versiunea anterioară. O ipoteză e „confirmată” doar după testul pe hardware, nu după cod sau QEMU.
+Aplicare (P6-10d): pornirea implicită rămâne cea verificată; schimbările noi intră ca variante alese explicit din shell
+(`rtl porneste ...`), încercate pe laptop una câte una; abia una confirmată devine implicită în Release-ul următor.

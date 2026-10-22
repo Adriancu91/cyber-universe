@@ -53,8 +53,7 @@ fn send_frames_through_the_ring() {
         sent.push(f);
     }
     assert_eq!(c.sent, sent.len() as u64);
-    let pages = (RX_RING / 2) as u64; // each receive buffer page is synced once at start-up
-    assert_eq!(c.hw().syncs, pages + sent.len() as u64, "every frame written to memory before the card reads it");
+    assert_eq!(c.hw().syncs, 0, "the default start-up (as os-125) drops no cache line");
     let wire = &c.hw().wire;
     assert_eq!(wire.len(), sent.len());
     for (w, f) in wire.iter().zip(&sent) {
@@ -303,11 +302,21 @@ fn first_frames_are_summarised() {
     assert_eq!(summarize(&[0; 5]), (0, 0));
 }
 
+#[test]
+fn send_with_cache_option_syncs_each_frame() {
+    let mut c = Rtl8168::with_options(Model::new(), Options { cache: true, ..Options::default() }).unwrap();
+    for n in 0..5 {
+        assert!(c.send(&frame([0xFF; 6], 100, n)));
+    }
+    let pages = (RX_RING / 2) as u64; // each receive buffer page is synced once at start-up
+    assert_eq!(c.hw().syncs, pages + 5, "every frame written to memory before the card reads it");
+}
+
 /// 12 frames of different types, each one in its own buffer; `burst` = all arrive before the driver looks.
-fn twelve_frames(no_snoop: bool, burst: bool) -> Rtl8168<Model> {
+fn twelve_frames(no_snoop: bool, burst: bool, options: Options) -> Rtl8168<Model> {
     let mut m = Model::new();
     m.no_snoop = no_snoop;
-    let mut c = Rtl8168::new(m).unwrap();
+    let mut c = Rtl8168::with_options(m, options).unwrap();
     let types: Vec<u16> = (0..12u16).map(|k| [0x0806, 0x0800, 0x86DD, 0x88CC][k as usize % 4] + (k / 4) * 0x100).collect();
     let make = |k: usize| {
         let mut f = frame([0xFF; 6], 40 + k * 13, k as u8);
@@ -344,19 +353,87 @@ fn twelve_frames(no_snoop: bool, burst: bool) -> Rtl8168<Model> {
 
 #[test]
 fn consecutive_frames_each_read_from_own_buffer() {
-    for burst in [false, true] {
-        let mut c = twelve_frames(false, burst);
-        assert_eq!(c.fixed_by_sync, 0, "coherent memory: nothing to repair");
-        assert!(c.detail.iter().all(|d| d.before == d.after));
-        assert!(c.hw().syncs >= 12);
+    let block = Options { rx_block: true, ..Options::default() };
+    let cache = Options { cache: true, ..Options::default() };
+    for options in [Options::default(), block, cache] {
+        for burst in [false, true] {
+            let mut c = twelve_frames(false, burst, options);
+            assert_eq!(c.fixed_by_sync, 0, "coherent memory: nothing to repair");
+            assert!(c.detail.iter().all(|d| d.before == d.after));
+            assert_eq!(c.hw().syncs >= 12, options.cache);
+        }
     }
+}
+
+#[test]
+fn rx_block_buffers_are_contiguous_below_4g() {
+    let mut c = Rtl8168::with_options(Model::new(), Options { rx_block: true, ..Options::default() }).unwrap();
+    let first: [u64; RX_RING] = c.rx_buffer_addresses();
+    for (i, a) in first.iter().enumerate() {
+        assert_eq!(*a, first[0] + (i * BUF) as u64, "buffer {i}: base + i * 2048");
+        assert!(*a + BUF as u64 <= 1 << 32, "below 4 GiB");
+        assert!(c.hw().in_low_block(*a));
+    }
+    // A frame lands in the block and is read back from it.
+    let f = frame(MAC, 300, 9);
+    assert!(c.hw().deliver(&f));
+    let mut buf = [0u8; 2048];
+    assert_eq!(c.receive(&mut buf), Some(f.len()));
+    assert_eq!(&buf[..f.len()], &f[..]);
+    assert_eq!(c.detail[0].desc_addr, first[0]);
+}
+
+#[test]
+fn full_64_bit_addresses_in_registers_and_descriptors() {
+    // The model's pages lie above 4 GiB (0x1_2340_0000...): the high halves must reach the card.
+    let mut c = card();
+    let (rx, tx) = c.ring_addresses();
+    assert!(rx > u32::MAX as u64 && tx > u32::MAX as u64);
+    let d = c.diag();
+    assert_eq!((d.rdsar, d.tnpds), (rx, tx), "RDSAR/TNPDS hold all 64 bits");
+    let f = frame(MAC, 64, 3);
+    assert!(c.hw().deliver(&f));
+    let mut buf = [0u8; 2048];
+    assert_eq!(c.receive(&mut buf), Some(f.len()));
+    assert!(c.detail[0].desc_addr > u32::MAX as u64, "descriptor holds the high half");
+    assert_eq!(c.detail[0].desc_addr, c.detail[0].read_addr);
+    assert!(c.send(&frame([0xFF; 6], 64, 4)), "the card reads a transmit buffer above 4 GiB");
+}
+
+#[test]
+fn rxdv_gate_left_set_stops_all_dma_unless_cleared() {
+    // What test 5 looked like: link up, but 0 sent and 0 received.
+    let mut m = Model::new();
+    m.gate_rxdv();
+    let mut c = Rtl8168::new(m).unwrap();
+    assert_eq!(c.misc_change, None, "the default start-up does not touch MISC");
+    assert!(!c.send(&frame([0xFF; 6], 64, 1)));
+    assert!(!c.hw().deliver(&frame(MAC, 64, 2)));
+    assert_eq!((c.sent, c.received), (0, 0));
+    assert_ne!(c.diag().misc & MISC_RXDV_GATE, 0, "visible in log rtl");
+
+    let mut m = Model::new();
+    m.gate_rxdv();
+    let mut c = Rtl8168::with_options(m, Options { rxdv: true, ..Options::default() }).unwrap();
+    let (before, after) = c.misc_change.unwrap();
+    assert_eq!((before & MISC_RXDV_GATE, after & MISC_RXDV_GATE), (MISC_RXDV_GATE, 0));
+    assert_eq!(before & !MISC_RXDV_GATE, after, "only bit 19 changed");
+    assert!(c.send(&frame([0xFF; 6], 64, 1)));
+    assert!(c.hw().deliver(&frame(MAC, 64, 2)));
+    let mut buf = [0u8; 2048];
+    assert_eq!(c.receive(&mut buf), Some(78));
+
+    // Gate already open: nothing is written.
+    let c = Rtl8168::with_options(Model::new(), Options { rxdv: true, ..Options::default() }).unwrap();
+    let (before, after) = c.misc_change.unwrap();
+    assert_eq!(before, after);
 }
 
 #[test]
 fn no_snoop_frames_are_read_after_dropping_the_cache() {
     // What test 4 showed: the card's data is in memory but the CPU still sees the zeros of the fresh page.
     for burst in [false, true] {
-        let mut c = twelve_frames(true, burst);
+        let mut c = twelve_frames(true, burst, Options { cache: true, ..Options::default() });
         assert_eq!(c.fixed_by_sync, 12, "every frame read as zeros before the sync and right after it");
         assert!(c.detail.iter().all(|d| d.before == [0; 16]), "without the sync the driver would read zeros");
         // Each sync covers exactly the frame (plus CRC) inside its own buffer.

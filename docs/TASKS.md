@@ -192,8 +192,8 @@ Reparații după testul 4 pe Lenovo (comanda C-6, înaintea lui P6-10):
   Test: `cd rtl8168 && cargo test --release` (23 de teste: model cu memorie ne-coerentă, 12 cadre consecutive verificate); `tools/test.sh` (48 de scenarii). Pe laptop: testul 5.
 
 Reparații după testul 5 pe Lenovo (comanda C-8, înaintea lui P6-10):
-- [~] **P6-10d** Realtek: revenire după regresia 0/0 (fără scrieri în Device Control, configurarea PCI doar bit cu bit, în jurnal), buffere RX într-un bloc contiguu sub 4 GB, adrese pe 64 de biți, diagnostic `log rx`/`log rtl` cu adrese complete, scenariul `net-high` (-m 6G). Dep: P6-10c.
-  Test: `cd rtl8168 && cargo test --release`; `tools/test.sh` (cu `net-high`). Pe laptop: testul 6.
+- [x] **P6-10d** Realtek: revenire după regresia 0/0 (fără scrieri în Device Control, configurarea PCI doar bit cu bit, în jurnal), buffere RX într-un bloc contiguu sub 4 GB, adrese pe 64 de biți, diagnostic `log rx`/`log rtl` cu adrese complete, scenariul `net-high` (-m 6G). Dep: P6-10c.
+  Test: `cd rtl8168 && cargo test --release` (27 de teste: poarta RXDV, bloc sub 4 GB, adrese pe 64 de biți); `tools/test.sh` (50 de scenarii, cu `net-high` la -m 6G). Pe laptop: testul 6 (variantele una câte una).
 
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 

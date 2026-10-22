@@ -34,5 +34,19 @@
   Diagnostic: `log rx` (primele 8 cadre: index, lungime, adresa din descriptor și cea citită, primii 16 octeți înainte și după
   golirea cache-ului), iar `net` numără cadrele cu tipul 0000 și pe cele „reparate de golirea cache-ului”. Modelul are un mod
   cu memorie ne-coerentă (`no_snoop`); test cu 12 cadre consecutive, fiecare verificat (23 de teste).
+- **După testul 5 pe Lenovo (22 oct, P6-10d, comanda C-8):** os-136 n-a mai transferat nimic (0 trimise, 0 primite), iar
+  „No Snoop” era deja oprit (ipoteza de la P6-10c, infirmată). **Revenire:** pornirea implicită e iar exact cea din os-125 (testul 4):
+  nimic scris în Device Control, nicio golire de cache. Fiecare schimbare e acum o **variantă** (`Options`), aleasă din shell cu
+  `rtl porneste [bloc] [rxdv] [cache]`, ca pe laptop să se încerce, dintr-o pornire, câte o schimbare pe rând (regula lui Adrian din
+  22 oct): `bloc` = bufferele de primire într-un singur bloc contiguu sub 4 GB (adresa din descriptor derivată din același bloc);
+  `rxdv` = la reviziile 8168G și mai noi, registrul MISC (0xF0) are bitul 19 („poarta RXDV”) care ține oprite transferurile; dacă
+  e pus, se șterge (citire → un bit → scriere, valorile în jurnal); `cache` = golirea cache-ului de la P6-10c, doar pe buffere.
+  `log rtl` arată la fiecare pornire registrele (și MISC, MCU), RDSAR/TNPDS pe 64 de biți, primele 3 buffere, RAM-ul, Command (Bus
+  Master) și Device Control (doar citit); `log rx` arată adresa din descriptor pe 64 de biți, adresa virtuală citită și adresa
+  fizică a ei din tabelele de pagini. Modelul are „poarta RXDV” (cu ea închisă: 0 trimise, 0 primite, ca la testul 5), blocul
+  sub 4 GB și pagini peste 4 GB (27 de teste).
+  **Studiu (clean-room, doar idei, nimic copiat):** commit-ul FreeBSD r261531 (driverul `re(4)`, licență BSD) adaugă suportul
+  RTL8168G: la pornire șterge bitul 19 din MISC (0xF0) dacă placa e 8168G („RXDV gated”) și folosește „EarlyOff v2” (bitul 11 din
+  RxConfig). De aici varianta `rxdv`; bitul 11 rămâne candidat pentru o versiune următoare (o schimbare pe Release).
 - **Limite cunoscute:** nu setăm registrele PHY speciale pe care unele revizii le cer; dacă legătura nu se ridică pe un
   calculator, jurnalul arată revizia cipului (`revizia ...`) → sarcină nouă pentru acea revizie.

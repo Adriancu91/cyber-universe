@@ -126,6 +126,54 @@ pub fn alloc_frame() -> Option<u64> {
     })
 }
 
+/// Allocates `count` physically contiguous frames that all end at or below `limit` (e.g. 4 GiB for a device that
+/// must be given 32-bit addresses). Returns the physical address of the first; each frame is freed with `free_frame`.
+pub fn alloc_contiguous_below(count: u64, limit: u64) -> Option<u64> {
+    if count == 0 {
+        return None;
+    }
+    with_bitmap(|b| {
+        let last = (limit / PAGE_SIZE).min(b.frames); // frames [0, last) end at or below the limit
+        let mut run = 0;
+        for f in 1..last {
+            run = if b.is_used(f) { 0 } else { run + 1 };
+            if run == count {
+                let first = f + 1 - count;
+                for g in first..=f {
+                    b.set(g, true);
+                }
+                b.free -= count;
+                return Some(first * PAGE_SIZE);
+            }
+        }
+        None
+    })
+}
+
+/// Test only: from now on `alloc_frame` starts looking at 4 GiB, so ordinary allocations land above it (as on a
+/// laptop with 8 GB). Returns false if there is no RAM above 4 GiB.
+#[cfg(feature = "test-high-dma")]
+pub fn prefer_above_4g() -> bool {
+    with_bitmap(|b| {
+        let start = (1u64 << 32) / PAGE_SIZE;
+        if start >= b.frames {
+            return false;
+        }
+        b.next = start;
+        true
+    })
+}
+
+/// The end of the highest RAM the allocator knows (for `log rtl`: does the machine have memory above 4 GiB?).
+pub fn top_of_ram() -> u64 {
+    with_bitmap(|b| b.frames * PAGE_SIZE)
+}
+
+/// Frames in usable regions at boot, in bytes (total RAM the OS uses).
+pub fn usable_bytes() -> u64 {
+    USABLE.load(Ordering::Relaxed) * PAGE_SIZE
+}
+
 /// Releases a frame obtained from `alloc_frame`. Double frees and invalid addresses are logged and ignored.
 pub fn free_frame(addr: u64) {
     let ok = with_bitmap(|b| {

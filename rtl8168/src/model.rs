@@ -7,10 +7,13 @@ use std::{boxed::Box, vec, vec::Vec};
 
 pub const MAC: [u8; 6] = [0x00, 0xE0, 0x4C, 0x68, 0x01, 0x02];
 const PHYS_BASE: u64 = 0x1_2340_0000; // above 4 GiB: checks that the driver writes the high halves too
+const LOW_BASE: u64 = 0x0040_0000; // `alloc_block` pages: below 4 GiB, contiguous
 
 pub struct Model {
     regs: [u8; 256],
     pages: Vec<Box<[u8; 4096]>>,
+    /// The block handed out by `alloc_block` (contiguous, from LOW_BASE).
+    low: Vec<u8>,
     /// Reads of CHIPCMD before a reset finishes (u32::MAX: never).
     pub reset_reads: u32,
     reset_left: u32,
@@ -51,7 +54,7 @@ pub struct Model {
 impl Model {
     pub fn new() -> Model {
         let mut m = Model {
-            regs: [0; 256], pages: Vec::new(), reset_reads: 3, reset_left: 0, absent: false, page_limit: 160,
+            regs: [0; 256], pages: Vec::new(), low: Vec::new(), reset_reads: 3, reset_left: 0, absent: false, page_limit: 160,
             wire: Vec::new(), missed: 0, locked_writes: 0, tx_idx: 0, rx_idx: 0, delays_us: 0,
             bmcr: 1 << 12, cable: true, stall_on_overflow: true, stall_after_rdu: false,
             keep_index_on_restart: false, rx_stalled: false, no_snoop: false, hidden: Vec::new(), syncs: 0,
@@ -61,6 +64,22 @@ impl Model {
         m.set32(reg::TCR, 0x5480_0000); // a revision number in bits 23 and 26-30, like a real chip
         m.update_link();
         m
+    }
+
+    /// The RXDV gate (MISC bit 19) left set, as firmware may leave it on 8168G and later: no DMA in either direction
+    /// until the driver clears it (a software reset does not clear it). What test 5 looked like: 0 sent, 0 received.
+    pub fn gate_rxdv(&mut self) {
+        let m = self.get32(reg::MISC);
+        self.set32(reg::MISC, m | crate::MISC_RXDV_GATE);
+    }
+
+    fn gated(&self) -> bool {
+        self.get32(reg::MISC) & crate::MISC_RXDV_GATE != 0
+    }
+
+    /// Whether `phys` lies in the contiguous below-4-GiB block handed out by `alloc_block`.
+    pub fn in_low_block(&self, phys: u64) -> bool {
+        (LOW_BASE..LOW_BASE + self.low.len() as u64).contains(&phys)
     }
 
     pub fn set_link(&mut self, up: bool) {
@@ -104,7 +123,12 @@ impl Model {
 
     /// Bytes at a physical address (inside one allocated page).
     fn mem(&mut self, phys: u64, len: usize) -> &mut [u8] {
-        let off = phys.checked_sub(PHYS_BASE).expect("DMA below the pages") as usize;
+        if phys < PHYS_BASE {
+            let off = phys.checked_sub(LOW_BASE).expect("DMA outside the allocated memory") as usize;
+            assert!(off % 4096 + len <= 4096, "DMA crosses a page");
+            return &mut self.low[off..off + len];
+        }
+        let off = (phys - PHYS_BASE) as usize;
         let (page, at) = (off / 4096, off % 4096);
         assert!(at + len <= 4096, "DMA crosses a page");
         &mut self.pages[page][at..at + len]
@@ -187,7 +211,7 @@ impl Model {
     }
 
     fn transmit(&mut self) {
-        if self.regs[reg::CHIPCMD as usize] & CMD_TX == 0 {
+        if self.regs[reg::CHIPCMD as usize] & CMD_TX == 0 || self.gated() {
             return;
         }
         let ring = self.get64(reg::TNPDS);
@@ -210,6 +234,10 @@ impl Model {
     /// A frame arrives from the cable. Returns false if the card did not take it (off, filtered or no free descriptor).
     pub fn deliver(&mut self, frame: &[u8]) -> bool {
         if self.regs[reg::CHIPCMD as usize] & CMD_RX == 0 {
+            return false;
+        }
+        if self.gated() {
+            self.missed += 1;
             return false;
         }
         let rcr = self.get32(reg::RCR);
@@ -316,6 +344,11 @@ impl Hw for Model {
         self.pages.push(Box::new([0; 4096]));
         let phys = PHYS_BASE + (self.pages.len() as u64 - 1) * 4096;
         Some((phys, self.pages.last_mut().unwrap().as_mut_ptr()))
+    }
+    fn alloc_block(&mut self, pages: usize) -> Option<(u64, *mut u8)> {
+        assert!(self.low.is_empty(), "the model hands out one block");
+        self.low = vec![0u8; pages * 4096];
+        Some((LOW_BASE, self.low.as_mut_ptr()))
     }
     fn delay_us(&mut self, us: u32) {
         self.delays_us += us as u64;

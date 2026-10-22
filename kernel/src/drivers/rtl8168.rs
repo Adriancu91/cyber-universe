@@ -4,7 +4,7 @@
 
 use crate::mem::{frame, map::{PAGE_SIZE, phys_to_virt}, paging};
 use alloc::vec::Vec;
-use cyber_rtl8168::{Hw, InitError, Rtl8168};
+use cyber_rtl8168::{Hw, InitError, Options, Rtl8168};
 
 /// Cards this driver knows (vendor Realtek 0x10EC): the PCIe RTL8111/8168 family.
 const SUPPORTED: [u16; 1] = [0x8168];
@@ -49,8 +49,13 @@ impl Hw for KernelHw {
         let p = phys_to_virt(f);
         // SAFETY: a fresh frame, reachable through the HHDM; the driver keeps it for as long as the card runs.
         unsafe { core::ptr::write_bytes(p, 0, PAGE_SIZE as usize) };
-        // The zeros go to memory now, not later over what the card writes (descriptor rings included).
-        self.dma_sync(f, p, PAGE_SIZE as usize);
+        Some((f, p))
+    }
+    fn alloc_block(&mut self, pages: usize) -> Option<(u64, *mut u8)> {
+        let f = frame::alloc_contiguous_below(pages as u64, 1 << 32)?;
+        let p = phys_to_virt(f);
+        // SAFETY: `pages` fresh contiguous frames, reachable through the HHDM (one linear range); kept by the driver.
+        unsafe { core::ptr::write_bytes(p, 0, pages * PAGE_SIZE as usize) };
         Some((f, p))
     }
     fn dma_sync(&mut self, _phys: u64, ptr: *mut u8, len: usize) {
@@ -79,8 +84,7 @@ impl Hw for KernelHw {
 
 pub struct Card {
     inner: Rtl8168<KernelHw>,
-    /// PCI Express Device Control (before, after) switching No Snoop / Relaxed Ordering off.
-    devctl: Option<(u16, u16)>,
+    dev: crate::pci::Device,
     /// How many of the first frames were already written to the log (`log rx`).
     logged: usize,
 }
@@ -122,48 +126,84 @@ impl super::nic::Card for Card {
             "legatura: {}; primire: aruncate {}, pierdute de placa {}, ISR vazut {:04x}, descriptor RX {} = {:08x}, citiri {}\n\
              inel RX {}: index {}, ai placii {}; RDU vazut {} ori, reporniri {}, resincronizari {}; raspunsuri DHCP (udp 68) {}\n\
              primele cadre: {}\n\
-             cadre cu tip 0000: {}; reparate de golirea cache-ului: {}; PCIe No Snoop: {} (detalii: log rx)",
+             cadre cu tip 0000: {}; reparate de golirea cache-ului: {}; Bus Master: {}; MISC {:08x} (poarta RXDV {}); varianta: {} (detalii: log rx, log rtl)",
             link_text(d.phy), r.dropped, d.mpc, r.isr_seen, d.rx_next, d.rx_opts1, r.polls,
             cyber_rtl8168::RX_RING, d.rx_next, d.rx_owned, r.rdu_count, r.restarts, r.resyncs, r.dhcp_replies,
             if first.is_empty() { alloc::string::String::from("-") } else { first.join(" ") },
-            r.zero_type, r.fixed_by_sync, devctl_text(self.devctl)
+            r.zero_type, r.fixed_by_sync, if self.dev.command() & 1 << 2 != 0 { "da" } else { "NU" },
+            d.misc, if d.misc & cyber_rtl8168::MISC_RXDV_GATE != 0 { "INCHISA" } else { "deschisa" },
+            variant_text(r.options)
         ))
     }
 }
 
-/// `log rx`: one received frame, to tell an address mix-up (addresses differ) from a cache problem (zeros before
-/// the cache is dropped, real bytes after).
+/// `log rx`: one received frame: the full 64-bit address in the descriptor (high_low), the virtual address the driver
+/// copies from and the physical address the page tables give for it, and the first 16 bytes.
 fn log_frame(k: usize, d: &cyber_rtl8168::RxDetail) {
     let hex = |b: &[u8; 16]| b.iter().map(|x| alloc::format!("{:02x}", x)).collect::<Vec<_>>().join("");
+    let walked = paging::translate(d.read_ptr);
+    let same = walked == Some(d.desc_addr) && d.read_addr == d.desc_addr;
     crate::info!(
-        "net: rx cadru {}: index {}, lungime {}, adresa in descriptor {:x}, adresa citita {:x}{}, inainte {}, dupa {}",
-        k + 1, d.index, d.len, d.desc_addr, d.read_addr,
-        if d.desc_addr == d.read_addr { "" } else { " (DIFERITE)" },
-        hex(&d.before), hex(&d.after)
+        "net: rx cadru {}: index {}, lungime {}, descriptor {:08x}_{:08x}, citit din virtual {:x} = fizic {}{}, octeti {}{}",
+        k + 1, d.index, d.len, d.desc_addr >> 32, d.desc_addr as u32, d.read_ptr,
+        walked.map_or(alloc::string::String::from("?"), |a| alloc::format!("{:x}", a)),
+        if same { "" } else { " (DIFERITE)" },
+        hex(&d.before),
+        if d.after == d.before { alloc::string::String::new() } else { alloc::format!(", dupa golire {}", hex(&d.after)) }
     );
 }
 
-fn devctl_text(d: Option<(u16, u16)>) -> alloc::string::String {
-    match d {
-        None => alloc::string::String::from("fara capabilitate PCIe"),
-        Some((b, a)) => alloc::format!(
-            "{} (era {})",
-            if a & 1 << 11 == 0 { "oprit" } else { "PORNIT" },
-            if b & 1 << 11 == 0 { "oprit" } else { "pornit" }
-        ),
-    }
+fn below_4g(a: u64) -> &'static str {
+    if a < 1 << 32 { "sub 4 GB" } else { "PESTE 4 GB" }
 }
 
-/// One log line with what the card holds after start-up (`log rtl` shows it on a laptop without a serial port).
-fn log_registers(inner: &mut Rtl8168<KernelHw>) {
+fn variant_text(o: Options) -> alloc::string::String {
+    let mut parts = Vec::new();
+    if o.rx_block {
+        parts.push("bloc");
+    }
+    if o.rxdv {
+        parts.push("rxdv");
+    }
+    if o.cache {
+        parts.push("cache");
+    }
+    if parts.is_empty() { alloc::string::String::from("implicita (ca os-125)") } else { parts.join(" ") }
+}
+
+/// The lines `log rtl` shows after start-up: the card's registers (read back), the PCI side and where the memory is,
+/// so one photo can be compared with the previous version's.
+fn log_registers(inner: &mut Rtl8168<KernelHw>, dev: &crate::pci::Device) {
     let d = inner.diag();
     let (rx, tx) = inner.ring_addresses();
     crate::info!(
-        "net: rtl8168 registre: CR {:02x} RCR {:08x} TCR {:08x} IMR {:04x} ISR {:04x} RMS {} RDSAR {:x}{} TNPDS {:x}{} PHY {:02x}",
-        d.chipcmd, d.rcr, d.tcr, d.imr, d.isr, d.rms,
-        d.rdsar, if d.rdsar == rx { "" } else { " (GRESIT)" },
-        d.tnpds, if d.tnpds == tx { "" } else { " (GRESIT)" },
-        d.phy
+        "net: rtl8168 registre: CR {:02x} RCR {:08x} TCR {:08x} IMR {:04x} ISR {:04x} RMS {} MISC {:08x} MCU {:02x} PHY {:02x}",
+        d.chipcmd, d.rcr, d.tcr, d.imr, d.isr, d.rms, d.misc, d.mcu, d.phy
+    );
+    crate::info!(
+        "net: rtl8168 inele: RDSAR {:08x}_{:08x}{} TNPDS {:08x}_{:08x}{} ({}, {})",
+        d.rdsar >> 32, d.rdsar as u32, if d.rdsar == rx { "" } else { " (GRESIT)" },
+        d.tnpds >> 32, d.tnpds as u32, if d.tnpds == tx { "" } else { " (GRESIT)" },
+        below_4g(rx), below_4g(tx)
+    );
+    let b: [u64; 3] = inner.rx_buffer_addresses();
+    crate::info!(
+        "net: rtl8168 buffere RX: 0 la {:x}, 1 la {:x}, 2 la {:x} ({}); RAM {} MiB, cea mai mare adresa {:x} ({})",
+        b[0], b[1], b[2], below_4g(b[2].max(b[0]) + 2047),
+        frame::usable_bytes() >> 20, frame::top_of_ram(),
+        if frame::top_of_ram() > 1 << 32 { "are memorie peste 4 GB" } else { "toata sub 4 GB" }
+    );
+    let cmd = dev.command();
+    crate::info!(
+        "net: rtl8168 PCI {}: Command {:04x} (Bus Master {}, Memory {}), PCIe Device Control {} (doar citit); varianta {}{}",
+        dev.address(), cmd, if cmd & 1 << 2 != 0 { "da" } else { "NU" }, if cmd & 1 << 1 != 0 { "da" } else { "NU" },
+        dev.pcie_devctl().map_or(alloc::string::String::from("-"), |v| alloc::format!("{:04x}", v)),
+        variant_text(inner.options),
+        match inner.misc_change {
+            Some((a, b)) if a != b => alloc::format!("; MISC {:08x} -> {:08x} (poarta RXDV deschisa)", a, b),
+            Some((a, _)) => alloc::format!("; MISC {:08x} neschimbat (poarta RXDV era deschisa)", a),
+            None => alloc::string::String::new(),
+        }
     );
 }
 
@@ -176,23 +216,22 @@ fn link_text(phy: u8) -> alloc::string::String {
     alloc::format!("da, {} Mbit/s, {}", speed, if phy & 1 != 0 { "full duplex" } else { "half duplex" })
 }
 
-/// Finds a Realtek RTL8168 and starts it.
+/// Finds a Realtek RTL8168 and starts it the default way (exactly as Release os-125).
 pub fn init() -> Option<Card> {
+    init_with(Options::default())
+}
+
+/// Finds a Realtek RTL8168 and starts it with the given start-up choices (`rtl porneste ...` in the shell).
+pub fn init_with(options: Options) -> Option<Card> {
     let dev = crate::pci::devices().into_iter().find(|d| supports(d.vendor, d.device))?;
     dev.power_on();
-    // Before the card does any DMA: received frames must reach the CPU through its caches (test 4: with No Snoop on
-    // by default, frames 2+ read as the zeros still cached from start-up).
-    let devctl = dev.pcie_strict_dma();
-    if let Some((b, a)) = devctl {
-        crate::info!("net: rtl8168 PCIe Device Control {:04x} -> {:04x} (No Snoop si Relaxed Ordering oprite)", b, a);
-    }
-    dev.enable();
+    dev.enable_as("rtl8168");
     let Some(base) = dev.first_memory_bar() else {
         crate::warn!("net: Realtek {:04x}: niciun BAR de memorie", dev.device);
         return None;
     };
     let regs = paging::map_mmio(base, 4096).ok()?;
-    match Rtl8168::new(KernelHw { regs }) {
+    match Rtl8168::with_options(KernelHw { regs }, options) {
         Ok(mut inner) => {
             let m = inner.mac;
             // Power the PHY up and wait for auto-negotiation (2-3 s with a cable), so DHCP's first requests are not
@@ -203,11 +242,11 @@ pub fn init() -> Option<Card> {
                 "net: placa Realtek RTL8168 pornita (revizia {:08x}), MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}, legatura: {}",
                 inner.revision, m[0], m[1], m[2], m[3], m[4], m[5], link_text(phy)
             );
-            log_registers(&mut inner);
+            log_registers(&mut inner, &dev);
             if !up {
                 crate::warn!("net: Realtek: fara legatura dupa 4 s (cablu? PHYstatus {:02x}); DHCP reincearca singur", phy);
             }
-            Some(Card { inner, devctl, logged: 0 })
+            Some(Card { inner, dev, logged: 0 })
         }
         Err(e) => {
             let why = match e {
@@ -219,4 +258,19 @@ pub fn init() -> Option<Card> {
             None
         }
     }
+}
+
+/// Parses the words after `rtl porneste`: `bloc`, `rxdv`, `cache` (any order). `Err(word)` for an unknown word.
+pub fn parse_options<'a>(words: &[&'a str]) -> Result<Options, &'a str> {
+    let mut o = Options::default();
+    for &w in words {
+        match w {
+            "bloc" => o.rx_block = true,
+            "rxdv" => o.rxdv = true,
+            "cache" => o.cache = true,
+            "implicit" => {}
+            _ => return Err(w),
+        }
+    }
+    Ok(o)
 }
