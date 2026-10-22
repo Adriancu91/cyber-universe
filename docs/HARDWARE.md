@@ -34,5 +34,9 @@
   Samsung: `EFI/`, `System Volume Information/`). Realtek: MAC real `38:f3:ab:6b:11:34`, **4 trimise, 0 primite** → DHCP fără răspuns
   (reparat în `fix/rtl-rx`: PHY pornit + așteptarea legăturii, starea ISR ștearsă, DHCP reîncearcă). `/usb: nemontat` pe un stick
   formatat în Windows → stick-uri fără tabelă și comenzi de „trezire” SCSI adăugate; `hw` arată acum și motivul.
+- **Rețeaua de test (de la testul 7, 2026-10-22, decizia din hub 22:50):** cablu între laptopul de test și laptopul cu Windows, cu
+  **partajarea conexiunii (ICS)** pornită în Windows (Wi-Fi → Ethernet). Windows dă adrese **192.168.137.x**, ruta și DNS
+  **192.168.137.1**, și internet. Echivalent cu routerul (verificat: DHCP, DNS, HTTPS cu TLS 1.3). Testul 7: la cald, după
+  `rtl porneste`, adresa 192.168.137.88 și `fetch https://example.com/` corect; la rece 0 / 0.
 - Neverificat încă (testul 3): `ls /disk`, `ls /usb`, `net` după driverul Realtek, consola text (Esc), tastatură USB externă,
   timpul de pornire, comanda nouă `hw`.

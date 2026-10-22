@@ -57,6 +57,12 @@ ultimele 5. Depozitul e privat, deci trebuie să fii logat pe GitHub.
 
 Notez totul în `docs/HARDWARE.md` și repar ce nu merge.
 
+## 6b. Rețeaua pentru teste (partajarea din Windows)
+Fără router: un cablu de rețea între laptopul de test și un calculator cu Windows care are internet (de exemplu prin Wi-Fi).
+În Windows: *Panou de control → Rețea → Modificare setări adaptor* → clic dreapta pe conexiunea Wi-Fi → *Proprietăți* → fila
+*Partajare* → bifezi „Se permite altor utilizatori de rețea să se conecteze prin conexiunea la Internet a acestui computer” și alegi
+conexiunea **Ethernet**. Cyber Universe primește o adresă **192.168.137.x** (`net` o arată) și iese pe internet prin Windows.
+
 ## 7. Actualizarea din Cyber Universe (P6-08, fără Windows)
 Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet (cablu de rețea):
 1. O singură dată, în Windows: pune pe stick, în rădăcină, fișierul **`github.token`** — un singur rând, un token GitHub
