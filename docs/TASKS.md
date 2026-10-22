@@ -187,6 +187,10 @@ Reparații după testul 3 pe Lenovo (comanda C-5, înaintea lui P6-10):
 - [x] **P6-10b** Configurarea stick-ului pe xHCI real: `log usb` pas cu pas cu codurile TRB, verificările din plan. Dep: P6-01c.
   Test: scenariile `usb-disk` (stick USB 3, burst 15), `usb-disk-hs` nou (stick USB 2 pe port USB 2), `usb-enum`, `usb-floppy`. Pe laptop: testul 4.
 
+Reparații după testul 4 pe Lenovo (comanda C-6, înaintea lui P6-10):
+- [~] **P6-10c** Realtek: cadrele 2+ citite ca zero (DHCP 0): golirea cache-ului înainte de citire, No Snoop oprit, diagnostic `log rx` pe cadru. Dep: P6-10a.
+  Test: `cd rtl8168 && cargo test --release` (model cu memorie ne-coerentă, 12 cadre consecutive verificate); `tools/test.sh`. Pe laptop: testul 5.
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
