@@ -31,14 +31,22 @@ pub struct Model {
     pub cable: bool,
     /// Receive stalls while the FIFO-overflow bit (6) of ISR is set, as some revisions do.
     pub stall_on_overflow: bool,
+    /// After running out of descriptors (RDU), the card takes no frame until the receiver is switched off and on
+    /// again: what the laptop's RTL8168H showed at test 3 (16 frames, then nothing).
+    pub stall_after_rdu: bool,
+    /// The card keeps its receive index when the receiver is switched off and on (instead of restarting at the
+    /// ring start), so the driver has to find where it writes.
+    pub keep_index_on_restart: bool,
+    rx_stalled: bool,
 }
 
 impl Model {
     pub fn new() -> Model {
         let mut m = Model {
-            regs: [0; 256], pages: Vec::new(), reset_reads: 3, reset_left: 0, absent: false, page_limit: 64,
+            regs: [0; 256], pages: Vec::new(), reset_reads: 3, reset_left: 0, absent: false, page_limit: 160,
             wire: Vec::new(), missed: 0, locked_writes: 0, tx_idx: 0, rx_idx: 0, delays_us: 0,
-            bmcr: 1 << 12, cable: true, stall_on_overflow: true,
+            bmcr: 1 << 12, cable: true, stall_on_overflow: true, stall_after_rdu: false,
+            keep_index_on_restart: false, rx_stalled: false,
         };
         m.regs[..6].copy_from_slice(&MAC);
         m.set32(reg::TCR, 0x5480_0000); // a revision number in bits 23 and 26-30, like a real chip
@@ -124,6 +132,14 @@ impl Model {
                     self.tx_idx = 0;
                     self.rx_idx = 0;
                 } else {
+                    let was_on = self.regs[reg::CHIPCMD as usize] & CMD_RX != 0;
+                    if !was_on && v & CMD_RX != 0 {
+                        // Receiver switched on again: a stall after RDU ends; the ring is read from its start.
+                        self.rx_stalled = false;
+                        if !self.keep_index_on_restart {
+                            self.rx_idx = 0;
+                        }
+                    }
                     self.regs[reg::CHIPCMD as usize] = v & (CMD_RX | CMD_TX);
                 }
                 return;
@@ -204,7 +220,17 @@ impl Model {
         let size = (opts1 & desc::LEN) as usize;
         let max = u16::from_le_bytes([self.regs[0xDA], self.regs[0xDB]]) as usize;
         let len = frame.len() + 4; // plus the CRC
-        if opts1 & desc::OWN == 0 || len > size || len > max {
+        if self.rx_stalled {
+            self.missed += 1;
+            return false;
+        }
+        if opts1 & desc::OWN == 0 {
+            self.raise(crate::ISR_RDU);
+            self.rx_stalled = self.stall_after_rdu;
+            self.missed += 1;
+            return false;
+        }
+        if len > size || len > max {
             self.missed += 1;
             return false;
         }
@@ -214,7 +240,13 @@ impl Model {
         let eor = opts1 & desc::EOR;
         self.set_opts1(ring, self.rx_idx, eor | desc::FS | desc::LS | len as u32);
         self.rx_idx = if eor != 0 { 0 } else { self.rx_idx + 1 };
+        self.raise(1); // ROK
         true
+    }
+
+    /// The index of the receive descriptor the card will use next.
+    pub fn rx_index(&self) -> usize {
+        self.rx_idx
     }
 
     /// Marks the receive descriptor the card will use next as holding a frame with an error.

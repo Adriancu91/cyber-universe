@@ -47,7 +47,7 @@ fn no_memory() {
 fn send_frames_through_the_ring() {
     let mut c = card();
     let mut sent = Vec::new();
-    for n in 0..(RING * 3 + 5) {
+    for n in 0..(TX_RING * 3 + 5) {
         let f = frame([0xFF; 6], 20 + n * 37 % 1400, n as u8);
         assert!(c.send(&f), "frame {n}");
         sent.push(f);
@@ -83,13 +83,13 @@ fn receive_frames_through_the_ring() {
     let mut c = card();
     let mut buf = [0u8; 2048];
     assert_eq!(c.receive(&mut buf), None);
-    for n in 0..(RING * 4) {
+    for n in 0..(RX_RING * 4) {
         let f = frame(if n % 2 == 0 { MAC } else { [0xFF; 6] }, 46 + n * 53 % 1450, n as u8);
         assert!(c.hw().deliver(&f), "frame {n} taken");
         let len = c.receive(&mut buf).expect("frame");
         assert_eq!(&buf[..len], &f[..], "frame {n} without CRC");
     }
-    assert_eq!(c.received, (RING * 4) as u64);
+    assert_eq!(c.received, (RX_RING * 4) as u64);
     assert_eq!(c.receive(&mut buf), None);
 }
 
@@ -97,13 +97,13 @@ fn receive_frames_through_the_ring() {
 fn receive_filters_and_full_ring() {
     let mut c = card();
     assert!(!c.hw().deliver(&frame([2, 3, 4, 5, 6, 7], 50, 0)), "someone else's frame");
-    for n in 0..RING {
+    for n in 0..RX_RING {
         assert!(c.hw().deliver(&frame(MAC, 50, n as u8)));
     }
     assert!(!c.hw().deliver(&frame(MAC, 50, 99)), "ring full");
     assert_eq!(c.hw().missed, 1);
     let mut buf = [0u8; 2048];
-    for n in 0..RING {
+    for n in 0..RX_RING {
         let len = c.receive(&mut buf).unwrap();
         assert_eq!(buf[14], n as u8, "in order");
         assert_eq!(len, 64);
@@ -184,4 +184,119 @@ fn diag_reads_back_what_was_set() {
     c.receive(&mut buf);
     assert_eq!(c.isr_seen & (1 << 4), 1 << 4, "history kept after the bit was cleared");
     assert_eq!(c.polls, 1);
+}
+
+/// A DHCP answer (IPv4, UDP 67 -> 68) to broadcast.
+fn dhcp_offer() -> Vec<u8> {
+    let mut f = frame([0xFF; 6], 300, 0);
+    let ip = &mut f[14..];
+    ip[0] = 0x45;
+    ip[9] = 17;
+    ip[20..22].copy_from_slice(&67u16.to_be_bytes());
+    ip[22..24].copy_from_slice(&68u16.to_be_bytes());
+    f
+}
+
+#[test]
+fn ring_is_one_page_with_eor_on_the_last() {
+    let mut c = card();
+    let mut buf = [0u8; 2048];
+    // Around the ring twice: the card wraps only if the last descriptor has EOR, at start-up and after re-arming.
+    for n in 0..RX_RING * 2 + 3 {
+        assert!(c.hw().deliver(&frame(MAC, 50, n as u8)), "frame {n}");
+        assert_eq!(c.receive(&mut buf), Some(64));
+    }
+    assert_eq!(c.diag().rx_owned, RX_RING, "every descriptor handed back");
+    assert_eq!(c.restarts + c.resyncs, 0);
+}
+
+#[test]
+fn boot_burst_fills_ring_then_receiver_restarts() {
+    let mut m = Model::new();
+    m.stall_after_rdu = true;
+    let mut c = Rtl8168::new(m).unwrap();
+    // While the driver waits for the link at start-up nobody polls: the ring fills and the card reports RDU.
+    for n in 0..RX_RING + 10 {
+        c.hw().deliver(&frame([0xFF; 6], 50, n as u8));
+    }
+    assert_eq!(c.hw().missed, 10);
+    let mut buf = [0u8; 2048];
+    let mut got = 0;
+    while c.receive(&mut buf).is_some() {
+        got += 1;
+    }
+    assert_eq!(got, RX_RING);
+    assert!(c.rdu_count >= 1);
+    // The card is stuck (what test 3 showed): new frames are lost although every descriptor is free again.
+    assert!(!c.hw().deliver(&frame(MAC, 50, 1)));
+    for _ in 0..STALL_POLLS {
+        assert_eq!(c.receive(&mut buf), None);
+    }
+    assert_eq!(c.restarts, 1, "receiver restarted after the stall");
+    assert_eq!(c.hw().reg8(reg::CHIPCMD), CMD_RX | CMD_TX);
+    assert_eq!(c.hw().reg8(reg::CR9346), 0, "configuration locked again");
+    assert_eq!(c.hw().locked_writes, 0);
+    for n in 0..RX_RING * 2 {
+        assert!(c.hw().deliver(&frame(MAC, 50, n as u8)), "receiving again, frame {n}");
+        assert_eq!(c.receive(&mut buf), Some(64));
+    }
+    assert_eq!(c.received, (RX_RING * 3) as u64);
+    // A quiet network afterwards: no further restarts.
+    for _ in 0..STALL_POLLS * 4 {
+        c.receive(&mut buf);
+    }
+    assert_eq!(c.restarts, 1);
+}
+
+#[test]
+fn card_that_resumes_by_itself_is_not_restarted() {
+    let mut c = card();
+    for n in 0..RX_RING + 1 {
+        c.hw().deliver(&frame(MAC, 50, n as u8));
+    }
+    let mut buf = [0u8; 2048];
+    while c.receive(&mut buf).is_some() {}
+    assert_eq!(c.receive(&mut buf), None);
+    assert!(c.hw().deliver(&frame(MAC, 50, 5)), "this card goes on after RDU");
+    assert_eq!(c.receive(&mut buf), Some(64));
+    for _ in 0..STALL_POLLS * 2 {
+        c.receive(&mut buf);
+    }
+    assert_eq!(c.restarts, 0);
+}
+
+#[test]
+fn restart_with_kept_index_resyncs() {
+    let mut m = Model::new();
+    m.keep_index_on_restart = true;
+    let mut c = Rtl8168::new(m).unwrap();
+    let mut buf = [0u8; 2048];
+    for n in 0..5 {
+        c.hw().deliver(&frame(MAC, 50, n));
+        c.receive(&mut buf).unwrap();
+    }
+    c.restart_rx(); // the driver starts again at 0, the card goes on at 5
+    assert_eq!(c.hw().rx_index(), 5);
+    for n in 0..(RX_RING / 2) as u8 {
+        assert!(c.hw().deliver(&frame(MAC, 50, n)));
+        assert_eq!(c.receive(&mut buf), Some(64), "frame {n}");
+        assert_eq!(buf[14], n, "in order");
+    }
+    assert_eq!(c.resyncs, 1);
+}
+
+#[test]
+fn first_frames_are_summarised() {
+    let mut c = card();
+    let mut buf = [0u8; 2048];
+    let mut arp = frame([0xFF; 6], 28, 0);
+    arp[12..14].copy_from_slice(&[0x08, 0x06]);
+    for f in [arp.clone(), dhcp_offer(), arp] {
+        c.hw().deliver(&f);
+        c.receive(&mut buf).unwrap();
+    }
+    assert_eq!(&c.first[..3], &[(0x0806, 0), (0x0800, 68), (0x0806, 0)]);
+    assert_eq!(c.first[3], (0, 0));
+    assert_eq!(c.dhcp_replies, 1);
+    assert_eq!(summarize(&[0; 5]), (0, 0));
 }

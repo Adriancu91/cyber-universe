@@ -87,9 +87,18 @@ impl super::nic::Card for Card {
     }
     fn link_info(&mut self) -> Option<alloc::string::String> {
         let d = self.inner.diag();
+        let r = &self.inner;
+        let first: Vec<alloc::string::String> = r.first[..(r.received as usize).min(r.first.len())]
+            .iter()
+            .map(|&(et, port)| if port != 0 { alloc::format!("{:04x}/udp{}", et, port) } else { alloc::format!("{:04x}", et) })
+            .collect();
         Some(alloc::format!(
-            "legatura: {}; primire: aruncate {}, pierdute de placa {}, ISR vazut {:04x}, descriptor RX {} = {:08x}, citiri {}",
-            link_text(d.phy), self.inner.dropped, d.mpc, self.inner.isr_seen, d.rx_next, d.rx_opts1, self.inner.polls
+            "legatura: {}; primire: aruncate {}, pierdute de placa {}, ISR vazut {:04x}, descriptor RX {} = {:08x}, citiri {}\n\
+             inel RX {}: index {}, ai placii {}; RDU vazut {} ori, reporniri {}, resincronizari {}; raspunsuri DHCP (udp 68) {}\n\
+             primele cadre: {}",
+            link_text(d.phy), r.dropped, d.mpc, r.isr_seen, d.rx_next, d.rx_opts1, r.polls,
+            cyber_rtl8168::RX_RING, d.rx_next, d.rx_owned, r.rdu_count, r.restarts, r.resyncs, r.dhcp_replies,
+            if first.is_empty() { alloc::string::String::from("-") } else { first.join(" ") }
         ))
     }
 }

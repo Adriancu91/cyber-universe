@@ -86,7 +86,9 @@ fn dhcp_thread() {
                 if tries < 6 {
                     // What the card sees, for `log` on a real computer (the first minute only, not forever).
                     if let Some(info) = NIC.lock().as_mut().and_then(|n| n.link_info()) {
-                        crate::info!("net: {}", info);
+                        for line in info.lines() {
+                            crate::info!("net: {}", line);
+                        }
                     }
                 }
                 tries += 1;

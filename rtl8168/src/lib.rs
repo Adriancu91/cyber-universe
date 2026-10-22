@@ -56,9 +56,20 @@ pub const BMCR_AUTONEG_RESTART: u16 = 1 << 12 | 1 << 9;
 /// (FIFO overflow), TDU, SWInt. Some revisions stop receiving while an overflow or "no descriptor" bit stays set.
 pub const ISR_ACK: u16 = 0x01FF;
 
-/// Descriptors per ring (16 bytes each: one 256-byte-aligned block) and the buffer size (2 per 4 KiB page).
-pub const RING: usize = 16;
+/// ISR bit 4: the card found no free receive descriptor (RDU).
+pub const ISR_RDU: u16 = 1 << 4;
+
+/// Receive descriptors (16 bytes each: the ring fills exactly one 4 KiB page, so it is 256-byte aligned). Big enough
+/// that the broadcast traffic arriving while the driver waits for the link at start-up does not fill it (with 16, the
+/// laptop's RTL8168H filled the ring at boot, reported RDU and never received again: test 3, 2026-10-22).
+pub const RX_RING: usize = 256;
+/// Transmit descriptors (the driver waits for each frame, so a few are enough).
+pub const TX_RING: usize = 16;
 pub const BUF: usize = 2048;
+/// Polls without a frame, after an RDU, before the receiver is restarted.
+pub const STALL_POLLS: u32 = 50;
+/// How many received frames are summarised for diagnostics (`net`).
+pub const FIRST_FRAMES: usize = 8;
 /// Largest Ethernet frame we send (without CRC), and the shortest one on the wire (padded with zeros).
 pub const MAX_FRAME: usize = 1514;
 pub const MIN_FRAME: usize = 60;
@@ -93,6 +104,9 @@ struct Page {
     ptr: *mut u8,
 }
 
+// The receive ring and the list of its buffers each fit in one 4 KiB page.
+const _: () = assert!(RX_RING * 16 <= 4096 && RX_RING * core::mem::size_of::<Page>() <= 4096);
+
 pub struct Rtl8168<H: Hw> {
     hw: H,
     pub mac: [u8; 6],
@@ -100,8 +114,10 @@ pub struct Rtl8168<H: Hw> {
     pub revision: u32,
     rx_ring: Page,
     tx_ring: Page,
-    rx_bufs: [Page; RING],
-    tx_bufs: [Page; RING],
+    /// A page holding the RX_RING receive buffer addresses (`Page`, 16 bytes each): kept out of the struct so the
+    /// driver stays small on the kernel stack.
+    rx_book: Page,
+    tx_bufs: [Page; TX_RING],
     rx_next: usize,
     tx_next: usize,
     pub sent: u64,
@@ -112,6 +128,21 @@ pub struct Rtl8168<H: Hw> {
     pub isr_seen: u16,
     /// Receive polls so far.
     pub polls: u64,
+    /// Polls that saw the RDU bit (the card ran out of receive descriptors).
+    pub rdu_count: u64,
+    /// Receiver restarts after a stall (RDU seen, then no frame although every descriptor belongs to the card).
+    pub restarts: u64,
+    /// Times the driver jumped to another descriptor because the card had written there instead.
+    pub resyncs: u64,
+    /// UDP frames to port 68 (DHCP answers for a client) received.
+    pub dhcp_replies: u64,
+    /// The first received frames: (ethertype, UDP destination port or 0).
+    pub first: [(u16, u16); FIRST_FRAMES],
+    /// An RDU was seen and the card has not been seen receiving into a drained ring since.
+    rdu_pending: bool,
+    /// Since the last RDU, the driver found the ring empty (everything handed back to the card).
+    drained: bool,
+    idle_polls: u32,
 }
 
 /// Registers read back for diagnostics (`log rtl`, `net`): what the card really holds after our writes.
@@ -130,10 +161,12 @@ pub struct Diag {
     /// opts1 of the receive descriptor the driver looks at next (OWN set = still waiting for the card).
     pub rx_opts1: u32,
     pub rx_next: usize,
+    /// Receive descriptors that belong to the card right now (OWN set); all of them = the ring is free.
+    pub rx_owned: usize,
 }
 
 fn desc_ptr(ring: Page, i: usize) -> *mut u32 {
-    // SAFETY (for users): `ring` is a page owned by the driver and i < RING (16 * 16 bytes < 4096).
+    // SAFETY (for users): `ring` is a page owned by the driver and i < RX_RING (256 * 16 bytes = 4096).
     unsafe { ring.ptr.add(i * 16) as *mut u32 }
 }
 
@@ -156,8 +189,24 @@ fn write_desc(ring: Page, i: usize, opts1: u32, addr: u64) {
     core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
 }
 
-fn eor(i: usize) -> u32 {
-    if i == RING - 1 { desc::EOR } else { 0 }
+fn eor(i: usize, len: usize) -> u32 {
+    if i == len - 1 { desc::EOR } else { 0 }
+}
+
+/// (ethertype, UDP destination port or 0) of a frame, for diagnostics.
+pub fn summarize(frame: &[u8]) -> (u16, u16) {
+    if frame.len() < 14 {
+        return (0, 0);
+    }
+    let et = u16::from_be_bytes([frame[12], frame[13]]);
+    let ip = &frame[14..];
+    if et == 0x0800 && ip.len() >= 20 && ip[9] == 17 {
+        let ihl = (ip[0] & 0x0F) as usize * 4;
+        if ip.len() >= ihl + 4 {
+            return (et, u16::from_be_bytes([ip[ihl + 2], ip[ihl + 3]]));
+        }
+    }
+    (et, 0)
 }
 
 impl<H: Hw> Rtl8168<H> {
@@ -186,21 +235,22 @@ impl<H: Hw> Rtl8168<H> {
 
         let mut page = || hw_page(&mut hw);
         let (rx_ring, tx_ring) = (page().ok_or(InitError::NoMemory)?, page().ok_or(InitError::NoMemory)?);
-        let mut rx_bufs = [rx_ring; RING];
-        let mut tx_bufs = [tx_ring; RING];
-        for bufs in [&mut rx_bufs, &mut tx_bufs] {
-            for pair in bufs.chunks_mut(2) {
-                let p = hw_page(&mut hw).ok_or(InitError::NoMemory)?;
-                pair[0] = p;
-                // SAFETY: the second half of the same 4 KiB page.
-                pair[1] = Page { phys: p.phys + BUF as u64, ptr: unsafe { p.ptr.add(BUF) } };
+        let rx_book = hw_page(&mut hw).ok_or(InitError::NoMemory)?;
+        let mut tx_bufs = [tx_ring; TX_RING];
+        for i in (0..RX_RING).step_by(2) {
+            let p = hw_page(&mut hw).ok_or(InitError::NoMemory)?;
+            for (k, b) in halves(p).into_iter().enumerate() {
+                // SAFETY: the book page holds exactly RX_RING `Page`s (4096 bytes) and is page-aligned.
+                unsafe { (rx_book.ptr as *mut Page).add(i + k).write(b) };
+                write_desc(rx_ring, i + k, desc::OWN | eor(i + k, RX_RING) | BUF as u32, b.phys);
             }
         }
-        for (i, b) in rx_bufs.iter().enumerate() {
-            write_desc(rx_ring, i, desc::OWN | eor(i) | BUF as u32, b.phys);
+        for pair in tx_bufs.chunks_mut(2) {
+            let p = hw_page(&mut hw).ok_or(InitError::NoMemory)?;
+            pair.copy_from_slice(&halves(p));
         }
-        for i in 0..RING {
-            write_desc(tx_ring, i, eor(i), 0);
+        for i in 0..TX_RING {
+            write_desc(tx_ring, i, eor(i, TX_RING), 0);
         }
 
         hw.write8(reg::CR9346, 0xC0); // unlock configuration
@@ -221,8 +271,10 @@ impl<H: Hw> Rtl8168<H> {
         hw.write8(reg::CR9346, 0x00); // lock configuration
 
         Ok(Rtl8168 {
-            hw, mac, revision, rx_ring, tx_ring, rx_bufs, tx_bufs,
+            hw, mac, revision, rx_ring, tx_ring, rx_book, tx_bufs,
             rx_next: 0, tx_next: 0, sent: 0, received: 0, dropped: 0, isr_seen: 0, polls: 0,
+            rdu_count: 0, restarts: 0, resyncs: 0, dhcp_replies: 0, first: [(0, 0); FIRST_FRAMES],
+            rdu_pending: false, drained: false, idle_polls: 0,
         })
     }
 
@@ -278,8 +330,8 @@ impl<H: Hw> Rtl8168<H> {
             core::ptr::write_bytes(buf.ptr, 0, MIN_FRAME);
             core::ptr::copy_nonoverlapping(frame.as_ptr(), buf.ptr, frame.len());
         }
-        write_desc(self.tx_ring, i, desc::OWN | eor(i) | desc::FS | desc::LS | len as u32, buf.phys);
-        self.tx_next = (i + 1) % RING;
+        write_desc(self.tx_ring, i, desc::OWN | eor(i, TX_RING) | desc::FS | desc::LS | len as u32, buf.phys);
+        self.tx_next = (i + 1) % TX_RING;
         self.hw.write8(reg::TPPOLL, POLL_NORMAL);
         let done = self.wait_tx_free(i);
         if done {
@@ -306,10 +358,19 @@ impl<H: Hw> Rtl8168<H> {
         if isr & ISR_ACK != 0 {
             self.hw.write16(reg::ISR, isr & ISR_ACK);
         }
+        if isr & ISR_RDU != 0 {
+            self.rdu_count += 1;
+            self.rdu_pending = true;
+            self.drained = false;
+        }
         loop {
             let i = self.rx_next;
             let opts1 = read_desc(self.rx_ring, i);
             if opts1 & desc::OWN != 0 {
+                if self.resync() {
+                    continue;
+                }
+                self.check_stall();
                 return None; // nothing new
             }
             let whole = opts1 & (desc::FS | desc::LS) == desc::FS | desc::LS;
@@ -319,16 +380,95 @@ impl<H: Hw> Rtl8168<H> {
             if good {
                 n = (len - 4).min(out.len());
                 // SAFETY: the card wrote `len` <= BUF bytes into this driver-owned buffer and handed it back.
-                unsafe { core::ptr::copy_nonoverlapping(self.rx_bufs[i].ptr, out.as_mut_ptr(), n) };
+                unsafe { core::ptr::copy_nonoverlapping(self.rx_buf(i).ptr, out.as_mut_ptr(), n) };
             }
-            write_desc(self.rx_ring, i, desc::OWN | eor(i) | BUF as u32, self.rx_bufs[i].phys);
-            self.rx_next = (i + 1) % RING;
+            self.rearm(i);
+            self.rx_next = (i + 1) % RX_RING;
+            self.idle_polls = 0;
+            if self.drained {
+                // A frame arrived after the ring had been emptied: the card is receiving again by itself.
+                self.rdu_pending = false;
+                self.drained = false;
+            }
             if good {
+                let sum = summarize(&out[..n]);
+                if (self.received as usize) < FIRST_FRAMES {
+                    self.first[self.received as usize] = sum;
+                }
+                if sum == (0x0800, 68) {
+                    self.dhcp_replies += 1;
+                }
                 self.received += 1;
                 return Some(n);
             }
             self.dropped += 1;
         }
+    }
+
+    fn rx_buf(&self, i: usize) -> Page {
+        // SAFETY: i < RX_RING and every entry of the book was written in `new`.
+        unsafe { (self.rx_book.ptr as *const Page).add(i).read() }
+    }
+
+    /// Hands receive descriptor `i` back to the card (OWN, EOR on the last one, buffer size).
+    fn rearm(&mut self, i: usize) {
+        write_desc(self.rx_ring, i, desc::OWN | eor(i, RX_RING) | BUF as u32, self.rx_buf(i).phys);
+    }
+
+    /// The descriptor the driver expects is still the card's: if the card wrote a frame into another one (it started
+    /// from another index, e.g. after a restart), continue from the first such descriptor after `rx_next`.
+    fn resync(&mut self) -> bool {
+        for k in 1..RX_RING {
+            let j = (self.rx_next + k) % RX_RING;
+            if read_desc(self.rx_ring, j) & desc::OWN == 0 {
+                // The card fills descriptors in order: if the expected one is done by now, it simply finished
+                // writing while we looked, and nothing was skipped.
+                if read_desc(self.rx_ring, self.rx_next) & desc::OWN == 0 {
+                    return true;
+                }
+                self.rx_next = j;
+                self.resyncs += 1;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// After an RDU, some revisions (the laptop's RTL8168H) do not take frames again on their own once descriptors
+    /// are free. If no frame came for `STALL_POLLS` polls although every descriptor is the card's, restart the
+    /// receiver: off, descriptors re-armed, ring start written again, on. (On a quiet network this may restart once
+    /// for nothing, which costs nothing.)
+    fn check_stall(&mut self) {
+        if !self.rdu_pending {
+            return;
+        }
+        self.drained = true;
+        self.idle_polls += 1;
+        if self.idle_polls < STALL_POLLS {
+            return;
+        }
+        self.idle_polls = 0;
+        self.rdu_pending = false;
+        self.drained = false;
+        self.restart_rx();
+    }
+
+    /// Stops the receiver, gives every descriptor back to the card from index 0 and starts it again.
+    pub fn restart_rx(&mut self) {
+        self.restarts += 1;
+        self.hw.write8(reg::CHIPCMD, CMD_TX);
+        self.hw.delay_us(100);
+        for i in 0..RX_RING {
+            self.rearm(i);
+        }
+        self.rx_next = 0;
+        self.hw.write8(reg::CR9346, 0xC0);
+        self.hw.write32(reg::RDSAR, self.rx_ring.phys as u32);
+        self.hw.write32(reg::RDSAR + 4, (self.rx_ring.phys >> 32) as u32);
+        self.hw.write16(reg::ISR, ISR_ACK);
+        self.hw.write8(reg::CHIPCMD, CMD_RX | CMD_TX);
+        self.hw.write32(reg::RCR, RCR_VALUE);
+        self.hw.write8(reg::CR9346, 0x00);
     }
 
     /// Reads back the registers the driver set, plus the state of the next receive descriptor.
@@ -347,6 +487,7 @@ impl<H: Hw> Rtl8168<H> {
             mpc: self.hw.read32(reg::MPC) & 0x00FF_FFFF,
             rx_opts1: read_desc(self.rx_ring, self.rx_next),
             rx_next: self.rx_next,
+            rx_owned: (0..RX_RING).filter(|&i| read_desc(self.rx_ring, i) & desc::OWN != 0).count(),
         }
     }
 
@@ -359,6 +500,12 @@ impl<H: Hw> Rtl8168<H> {
     pub fn hw(&mut self) -> &mut H {
         &mut self.hw
     }
+}
+
+/// The two 2 KiB buffers of a 4 KiB page.
+fn halves(p: Page) -> [Page; 2] {
+    // SAFETY: the second half of the same 4 KiB page.
+    [p, Page { phys: p.phys + BUF as u64, ptr: unsafe { p.ptr.add(BUF) } }]
 }
 
 fn hw_page<H: Hw>(hw: &mut H) -> Option<Page> {

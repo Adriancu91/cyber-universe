@@ -337,7 +337,9 @@ fn net() {
             let (sent, received) = n.counters();
             out!("  pachete trimise {}, primite {}\n", sent, received);
             if let Some(info) = n.link_info() {
-                out!("  {}\n", info);
+                for line in info.lines() {
+                    out!("  {}\n", line);
+                }
             }
             if let Some(c) = crate::net::config().filter(|c| c.ip != [0; 4]) {
                 let ip = |a: [u8; 4]| format!("{}.{}.{}.{}", a[0], a[1], a[2], a[3]);

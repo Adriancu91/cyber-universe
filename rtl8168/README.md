@@ -17,5 +17,13 @@
   când nu pornește din rețea; așteptarea legăturii (max. 4 s) înainte de DHCP; la fiecare citire se șterg biții de stare din `ISR`
   (unele revizii nu mai primesc cât timp „FIFO plin” / „fără descriptor” rămâne setat). `net` arată acum legătura (viteză,
   duplex), `PHYstatus`, `ISR` și revizia cipului — pentru o poză de diagnostic. Modelul imită aceste trei situații (14 teste).
+- **După testul 3 pe Lenovo (22 oct, P6-10a):** placa primea exact 16 cadre (cât avea inelul), apoi nimic; ISR arăta RDU
+  („nu mai sunt descriptori liberi”). Placa pornește primirea înainte ca driverul să citească (așteptarea legăturii), inelul de
+  16 se umplea la pornire, iar revizia de pe laptop (`50800000`, familia 8168H, estimare) nu mai reia singură. Reparații: inelul
+  de primire are acum **256** de descriptori (o pagină întreagă), lista bufferelor stă într-o pagină separată (driverul rămâne
+  mic pe stivă); dacă după un RDU nu mai vine nimic `STALL_POLLS` citiri la rând, primirea e **repornită** (oprită, descriptorii
+  redați, `RDSAR` rescris, pornită); dacă placa scrie în alt descriptor decât cel așteptat, driverul se **re-sincronizează**.
+  `net` arată inelul (mărime, index, câți sunt ai plăcii), de câte ori s-a văzut RDU, repornirile, re-sincronizările, câte
+  răspunsuri DHCP (UDP 68) au venit și primele 8 cadre (ethertype, portul UDP). Modelul imită blocarea după RDU (20 de teste).
 - **Limite cunoscute:** nu setăm registrele PHY speciale pe care unele revizii le cer; dacă legătura nu se ridică pe un
   calculator, jurnalul arată revizia cipului (`revizia ...`) → sarcină nouă pentru acea revizie.
