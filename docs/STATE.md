@@ -17,6 +17,8 @@
     stick-ului apare în `log usb` cu codul TRB în cuvinte (Enable Slot, Address Device, descriptori, SET_CONFIGURATION, Configure Endpoint,
     INQUIRY pe etape CBW/date/CSW). STALL: Reset Endpoint + Set TR Dequeue + CLEAR_FEATURE(HALT). Transferuri întârziate ignorate.
     Burst SuperSpeed din descriptorul companion; Average TRB Length 3072 la bulk. INQUIRY reîncercat de 3 ori.
+- **Completare (a doua pornire a sesiunii, după C-5 completat la 09:40 cu poza `log usb`):** stick-ul e High-Speed; INQUIRY se
+    reîncearcă de 10 ori cu REQUEST SENSE (Unit Attention), iar jurnalul scrie starea CSW și Sense Key/ASC/ASCQ. Scenariile USB + `shell` trec.
 - **Build:** OK, fără avertismente. **Teste:** `tools/test.sh` → 49 de scenarii trecute (nou: `usb-disk-hs`, stick USB 2 pe port USB 2;
   `usb-disk` verifică acum pașii din jurnal și burst 15) + `https-real` sărit local; `cd rtl8168 && cargo test --release` → 20.
 - **Pe laptop:** urmează **testul 4** (lista în hub, `stare/cyber-universe.md`). Dacă primirea tot se oprește: din `net` se vede dacă

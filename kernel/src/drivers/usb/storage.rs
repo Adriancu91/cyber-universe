@@ -24,6 +24,8 @@ struct Bot {
     cmd: u64,
     data: u64,
     tag: u32,
+    /// Status byte of the last command's CSW (0 passed, 1 failed, 2 phase error); None if no valid CSW came.
+    last_csw: Option<u8>,
 }
 
 pub struct UsbDisk {
@@ -85,10 +87,37 @@ impl Bot {
         status.map_err(|_| BlockError::OutOfRange)?;
         // SAFETY: as above; the status (CSW) was written 64 bytes into the frame.
         let csw = unsafe { core::slice::from_raw_parts(phys_to_virt(self.cmd + 64), 13) };
-        let ok = u32::from_le_bytes(csw[0..4].try_into().unwrap()) == CSW_SIGNATURE
-            && u32::from_le_bytes(csw[4..8].try_into().unwrap()) == self.tag
-            && csw[12] == 0;
-        if ok { Ok(()) } else { Err(BlockError::OutOfRange) }
+        let valid = u32::from_le_bytes(csw[0..4].try_into().unwrap()) == CSW_SIGNATURE
+            && u32::from_le_bytes(csw[4..8].try_into().unwrap()) == self.tag;
+        if !valid {
+            crate::warn!("usb: port {}: SCSI {:02x}: stare (CSW) invalida (semnatura sau eticheta gresita)", self.port, op);
+            self.last_csw = None;
+            return Err(BlockError::OutOfRange);
+        }
+        self.last_csw = Some(csw[12]);
+        if csw[12] == 0 { Ok(()) } else { Err(BlockError::OutOfRange) }
+    }
+
+    /// REQUEST SENSE (SPC): (sense key, ASC, ASCQ) of the last failed command; it also clears "unit attention".
+    fn request_sense(&mut self, x: &mut Xhci) -> Option<[u8; 3]> {
+        self.scsi(x, &[0x03, 0, 0, 0, 18, 0], 18, false).ok()?;
+        let d = self.data(18);
+        Some([d[2] & 0x0F, d[12], d[13]])
+    }
+
+    /// A CSW status and sense data in words, for the log.
+    fn why(csw: Option<u8>, sense: Option<[u8; 3]>) -> alloc::string::String {
+        let csw = match csw {
+            Some(0) => "CSW 0 (reusit)",
+            Some(1) => "CSW 1 (comanda esuata)",
+            Some(2) => "CSW 2 (eroare de faza)",
+            Some(_) => "CSW necunoscut",
+            None => "fara CSW",
+        };
+        match sense {
+            Some(k) => alloc::format!("{}, sense {:x}/{:02x}/{:02x}{}", csw, k[0], k[1], k[2], if k[0] == 6 { " (unit attention)" } else { "" }),
+            None => alloc::format!("{}, fara sense", csw),
+        }
     }
 
     fn data(&self, len: usize) -> &[u8] {
@@ -121,17 +150,20 @@ impl UsbDisk {
         let (dci_in, ring_in) = rings.pop()?;
         let mut bot = Bot {
             slot: dev.slot, port, ep_in: ep_in.0, ep_out: ep_out.0, dci_in, dci_out, ring_in, ring_out,
-            cmd: frame::alloc_frame()?, data: frame::alloc_frame()?, tag: 0,
+            cmd: frame::alloc_frame()?, data: frame::alloc_frame()?, tag: 0, last_csw: None,
         };
-        // INQUIRY; a stick that is still waking up may miss the first one.
+        // INQUIRY; right after power-up a real stick may answer "command failed" (CSW 1, unit attention) until a
+        // REQUEST SENSE clears it (SPC): up to 10 tries, 100 ms apart.
         let mut inquired = false;
-        for attempt in 0..3 {
+        for attempt in 0..10 {
             if bot.scsi(x, &[0x12, 0, 0, 0, 36, 0], 36, false).is_ok() {
                 inquired = true;
                 break;
             }
-            crate::warn!("usb: port {}: INQUIRY, incercarea {} a esuat", port, attempt + 1);
-            crate::sched::sleep_ms(200);
+            let csw = bot.last_csw;
+            let sense = if csw == Some(1) { bot.request_sense(x) } else { None };
+            crate::warn!("usb: port {}: INQUIRY, incercarea {}: {}", port, attempt + 1, Bot::why(csw, sense));
+            crate::sched::sleep_ms(100);
         }
         if !inquired {
             crate::fs::note_failure("/usb", "stick-ul nu raspunde la INQUIRY (vezi log usb)");
@@ -147,21 +179,24 @@ impl UsbDisk {
         // followed by REQUEST SENSE (which clears that state, SCSI SPC), then TEST UNIT READY / READ CAPACITY are
         // retried for up to ~3 s.
         let mut capacity = None;
-        let mut sense = [0u8; 3];
+        let mut last = alloc::string::String::new();
         for attempt in 0..30 {
             let ready = bot.scsi(x, &[0x00, 0, 0, 0, 0, 0], 0, false).is_ok(); // TEST UNIT READY
             if ready && bot.scsi(x, &[0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0], 8, false).is_ok() {
                 capacity = Some(bot.data(8).to_vec());
                 break;
             }
-            if bot.scsi(x, &[0x03, 0, 0, 0, 18, 0], 18, false).is_ok() {
-                let d = bot.data(18);
-                sense = [d[2] & 0x0F, d[12], d[13]]; // sense key, ASC, ASCQ
+            let step = if ready { "READ CAPACITY" } else { "TEST UNIT READY" };
+            let csw = bot.last_csw;
+            let sense = bot.request_sense(x);
+            last = alloc::format!("{}: {}", step, Bot::why(csw, sense));
+            if attempt < 3 || attempt % 10 == 9 {
+                crate::warn!("usb: port {}: incercarea {}, {}", port, attempt + 1, last);
             }
             crate::sched::sleep_ms(if attempt < 5 { 20 } else { 100 });
         }
         let Some(c) = capacity else {
-            let why = alloc::format!("stick-ul {} nu e gata (sense {:x}/{:02x}/{:02x})", name, sense[0], sense[1], sense[2]);
+            let why = alloc::format!("stick-ul {} nu e gata ({})", name, last);
             crate::warn!("usb: {}", why);
             crate::fs::note_failure("/usb", &why);
             return None;
