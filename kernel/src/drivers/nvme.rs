@@ -64,6 +64,7 @@ fn wr64(a: u64, v: u64) {
 
 fn zeroed_frame() -> Option<u64> {
     let f = frame::alloc_frame()?;
+    frame::pin(f, 1, "nvme"); // the card writes here by DMA: never given to anyone else
     // SAFETY: fresh frame, reachable through the HHDM.
     unsafe { core::ptr::write_bytes(phys_to_virt(f), 0, PAGE_SIZE as usize) };
     Some(f)

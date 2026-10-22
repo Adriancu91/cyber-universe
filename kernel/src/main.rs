@@ -267,6 +267,7 @@ fn run_tests() -> ! {
     test_fat32_mbr();
     test_elf();
     test_user_files();
+    test_dma_guard();
 
     #[cfg(feature = "test-keyboard")]
     test_keyboard();
@@ -369,6 +370,29 @@ fn test_frames() {
     info!("test: {} cadre alocate, unice, eliberate; libere inainte={} dupa={}", N, before, after);
 }
 
+/// P6-10g: the DMA guard. After the boot, the programs and the tests above (processes created and gone), every page a
+/// driver gave its card is still marked used; freeing one is refused and logged; a DMA block lands where asked.
+#[cfg(feature = "qemu-test")]
+fn test_dma_guard() {
+    let (pinned, free, _, lost) = mem::frame::check_pins();
+    assert!(free == 0, "paza DMA: {} pagini ale placilor sunt libere in alocator", free);
+    assert!(lost == 0, "paza DMA: tabela plina");
+    #[cfg(feature = "test-net")]
+    assert!(pinned > 0, "paza DMA: placa de retea nu si-a marcat paginile");
+    let f = mem::frame::alloc_contiguous_between(4, 16 << 20, 1 << 32).expect("test: bloc DMA intre 16 MiB si 4 GB");
+    assert!(f >= 16 << 20 && f + 4 * mem::map::PAGE_SIZE <= 1 << 32, "bloc DMA in afara intervalului: {:#x}", f);
+    mem::frame::pin(f, 4, "test");
+    let (_, _, refused_before, _) = mem::frame::check_pins();
+    let free_before = mem::frame::free_frames();
+    mem::frame::free_frame(f + mem::map::PAGE_SIZE); // must be refused: the "card" may still write there
+    let (_, free_after_pin, refused_after, _) = mem::frame::check_pins();
+    assert!(refused_after == refused_before + 1 && free_after_pin == 0, "paza DMA: eliberarea nu a fost refuzata");
+    assert!(mem::frame::free_frames() == free_before, "paza DMA: cadrul a ajuns totusi liber");
+    assert!(mem::frame::pinned_by(f + 3 * mem::map::PAGE_SIZE) == Some("test"));
+    assert!(mem::frame::pinned_by(f + 4 * mem::map::PAGE_SIZE).is_none());
+    info!("test: paza DMA ok ({} pagini ale placilor pazite, bloc de test la {:#x}, eliberare refuzata)", pinned, f);
+}
+
 /// Allocates every free frame (including the reclaimed bootloader memory), writes to each one and frees
 /// them all: proves nothing still in use (page tables, stack, Limine data) was handed to the allocator.
 #[cfg(feature = "qemu-test")]
@@ -377,7 +401,12 @@ fn test_all_frames() {
     // after that, because reserving may itself grow the heap (it takes frames and keeps them).
     let mut frames = alloc::vec::Vec::with_capacity(mem::frame::free_frames() as usize);
     let before = mem::frame::free_frames();
+    let mut dma_given = 0u64;
     while let Some(f) = mem::frame::alloc_frame() {
+        if mem::frame::pinned_by(f).is_some() {
+            dma_given += 1; // a page a card writes to was handed out again: must never happen
+            continue; // and never written by the test
+        }
         // SAFETY: the frame was just allocated to this test and is reachable through the HHDM.
         unsafe { core::ptr::write_bytes(mem::map::phys_to_virt(f), 0xA5, mem::map::PAGE_SIZE as usize) };
         frames.push(f);
@@ -387,6 +416,7 @@ fn test_all_frames() {
         mem::frame::free_frame(f);
     }
     drop(frames);
+    assert!(dma_given == 0, "paza DMA: {} pagini ale placilor au fost date din nou", dma_given);
     assert!(mem::frame::free_frames() == before, "cadre pierdute dupa testul complet");
     info!("test: toate cele {} cadre libere scrise si eliberate", n);
 

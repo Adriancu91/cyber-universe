@@ -80,6 +80,7 @@ fn dma_frame(s64a: bool) -> Option<u64> {
         frame::free_frame(f);
         return None;
     }
+    frame::pin(f, 1, "ahci"); // the controller writes here by DMA: never given to anyone else
     // SAFETY: fresh frame, reachable through the HHDM.
     unsafe { core::ptr::write_bytes(phys_to_virt(f), 0, PAGE_SIZE as usize) };
     Some(f)

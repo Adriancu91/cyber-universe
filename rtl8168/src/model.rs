@@ -56,6 +56,9 @@ pub struct Model {
     pub cold: bool,
     /// MAC OCP registers written by the driver (address, value).
     ocp: Vec<(u16, u16)>,
+    /// Frame data never reaches memory (only the descriptor is written back): stands in for "the card's writes to the
+    /// buffers are lost", one of the two explanations of test 7's first start-up (the other: someone wipes the page).
+    pub lose_data: bool,
     /// The transmit queue never reports empty (TCR bit 11 stays clear): a wait that must time out.
     pub tx_never_empty: bool,
 }
@@ -67,7 +70,7 @@ impl Model {
             wire: Vec::new(), missed: 0, locked_writes: 0, tx_idx: 0, rx_idx: 0, delays_us: 0,
             bmcr: 1 << 12, cable: true, stall_on_overflow: true, stall_after_rdu: false,
             keep_index_on_restart: false, rx_stalled: false, no_snoop: false, hidden: Vec::new(), syncs: 0,
-            synced_bytes: 0, cold: false, ocp: Vec::new(), tx_never_empty: false,
+            synced_bytes: 0, cold: false, ocp: Vec::new(), tx_never_empty: false, lose_data: false,
         };
         m.regs[..6].copy_from_slice(&MAC);
         m.set32(reg::TCR, 0x5080_0000 | crate::TCR_TX_EMPTY); // the laptop's revision (8168GU), transmit queue empty
@@ -311,7 +314,9 @@ impl Model {
         let _ = self.mem(addr, len); // checks the buffer lies inside one page
         let mut data = frame.to_vec();
         data.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
-        if self.no_snoop {
+        if self.lose_data {
+            // nothing reaches the buffer
+        } else if self.no_snoop {
             self.hidden.push((addr, data));
         } else {
             self.mem(addr, len).copy_from_slice(&data);

@@ -113,6 +113,15 @@ pub struct Options {
     /// Cold start: 8168G order: TCR and RCR (with "early off" v2) written before the receiver and transmitter are
     /// switched on (FreeBSD re(4): "RX/TX MACs should be enabled after RX/TX configuration").
     pub order: bool,
+    /// The rings, the buffer list and every receive and transmit buffer from ONE physically contiguous block
+    /// (`Hw::alloc_block`; the kernel takes it between 16 MiB and 4 GiB), instead of page by page from wherever the
+    /// allocator is. Test 7: the first start-up (buffers at 3db000, low memory) read zeros, every restart (buffers
+    /// elsewhere) read correctly.
+    pub one_block: bool,
+    /// Diagnostic only (nothing on the card changes): receive buffers are filled with `PATTERN` instead of zeros,
+    /// and the first 64 bytes again each time a buffer is handed back. A frame that still starts with the pattern
+    /// was never written by the card (`unwritten`); zeros would mean someone else wrote the page.
+    pub pattern: bool,
 }
 
 impl Options {
@@ -164,6 +173,10 @@ pub const FIRST_FRAMES: usize = 8;
 /// Largest Ethernet frame we send (without CRC), and the shortest one on the wire (padded with zeros).
 pub const MAX_FRAME: usize = 1514;
 pub const MIN_FRAME: usize = 60;
+/// The byte `Options::pattern` fills receive buffers with.
+pub const PATTERN: u8 = 0xA5;
+/// Pages of the single DMA block (`Options::one_block`): RX ring, TX ring, buffer list, RX and TX buffers.
+pub const BLOCK_PAGES: usize = 3 + RX_RING / 2 + TX_RING / 2;
 
 /// Access to one card: its registers and memory it can reach by DMA.
 pub trait Hw {
@@ -268,6 +281,10 @@ pub struct Rtl8168<H: Hw> {
     pub zero_type: u64,
     /// Frames that read as zeros before dropping the CPU's cached copy and correctly after it.
     pub fixed_by_sync: u64,
+    /// Frames whose first 16 bytes were still `PATTERN` (with `Options::pattern`): the card did not write them.
+    pub unwritten: u64,
+    /// The single DMA block (physical address, pages), with `Options::one_block`.
+    pub block: Option<(u64, usize)>,
     /// An RDU was seen and the card has not been seen receiving into a drained ring since.
     rdu_pending: bool,
     /// Since the last RDU, the driver found the ring empty (everything handed back to the card).
@@ -476,9 +493,14 @@ impl<H: Hw> Rtl8168<H> {
             *b = hw.read8(reg::IDR0 + i as u16);
         }
 
-        let mut page = || hw_page(&mut hw);
-        let (rx_ring, tx_ring) = (page().ok_or(InitError::NoMemory)?, page().ok_or(InitError::NoMemory)?);
-        let rx_book = hw_page(&mut hw).ok_or(InitError::NoMemory)?;
+        let mut source = Pages { block: None, used: 0 };
+        if options.one_block {
+            let (phys, ptr) = hw.alloc_block(BLOCK_PAGES).ok_or(InitError::NoMemory)?;
+            source.block = Some(Page { phys, ptr });
+        }
+        let rx_ring = source.next(&mut hw).ok_or(InitError::NoMemory)?;
+        let tx_ring = source.next(&mut hw).ok_or(InitError::NoMemory)?;
+        let rx_book = source.next(&mut hw).ok_or(InitError::NoMemory)?;
         let mut tx_bufs = [tx_ring; TX_RING];
         let block = if options.rx_block {
             let (phys, ptr) = hw.alloc_block(RX_RING * BUF / 4096).ok_or(InitError::NoMemory)?;
@@ -490,8 +512,12 @@ impl<H: Hw> Rtl8168<H> {
             let p = match block {
                 // SAFETY: i * BUF < RX_RING * BUF, the block's size; physical and virtual addresses move together.
                 Some(b) => Page { phys: b.phys + (i * BUF) as u64, ptr: unsafe { b.ptr.add(i * BUF) } },
-                None => hw_page(&mut hw).ok_or(InitError::NoMemory)?,
+                None => source.next(&mut hw).ok_or(InitError::NoMemory)?,
             };
+            if options.pattern {
+                // SAFETY: the two buffers of this driver-owned page, 4096 bytes in all.
+                unsafe { core::ptr::write_bytes(p.ptr, PATTERN, 2 * BUF) };
+            }
             if options.cache {
                 // The page was zeroed by the CPU: push those zeros out of the cache before the card writes there.
                 hw.dma_sync(p.phys, p.ptr, 4096);
@@ -503,7 +529,7 @@ impl<H: Hw> Rtl8168<H> {
             }
         }
         for pair in tx_bufs.chunks_mut(2) {
-            let p = hw_page(&mut hw).ok_or(InitError::NoMemory)?;
+            let p = source.next(&mut hw).ok_or(InitError::NoMemory)?;
             pair.copy_from_slice(&halves(p));
         }
         for i in 0..TX_RING {
@@ -561,7 +587,8 @@ impl<H: Hw> Rtl8168<H> {
             hw, mac, revision, options, misc_change, steps, rcr_value, rx_ring, tx_ring, rx_book, tx_bufs,
             rx_next: 0, tx_next: 0, sent: 0, received: 0, dropped: 0, isr_seen: 0, polls: 0,
             rdu_count: 0, restarts: 0, resyncs: 0, dhcp_replies: 0, first: [(0, 0); FIRST_FRAMES],
-            detail: [RxDetail::default(); FIRST_FRAMES], zero_type: 0, fixed_by_sync: 0,
+            detail: [RxDetail::default(); FIRST_FRAMES], zero_type: 0, fixed_by_sync: 0, unwritten: 0,
+            block: source.block.map(|b| (b.phys, BLOCK_PAGES)),
             rdu_pending: false, drained: false, idle_polls: 0,
         })
     }
@@ -700,6 +727,9 @@ impl<H: Hw> Rtl8168<H> {
                 if n >= 14 && sum.0 == 0 {
                     self.zero_type += 1;
                 }
+                if self.options.pattern && detail.after == [PATTERN; 16] {
+                    self.unwritten += 1;
+                }
                 if detail.before[12..14] == [0, 0] && detail.after[12..14] != [0, 0] {
                     self.fixed_by_sync += 1;
                 }
@@ -720,6 +750,14 @@ impl<H: Hw> Rtl8168<H> {
 
     /// Hands receive descriptor `i` back to the card (OWN, EOR on the last one, buffer size).
     fn rearm(&mut self, i: usize) {
+        if self.options.pattern {
+            let b = self.rx_buf(i);
+            // SAFETY: the driver owns this buffer (OWN clear) and 64 < BUF.
+            unsafe { core::ptr::write_bytes(b.ptr, PATTERN, 64) };
+            if self.options.cache {
+                self.hw.dma_sync(b.phys, b.ptr, 64);
+            }
+        }
         write_desc(self.rx_ring, i, desc::OWN | eor(i, RX_RING) | BUF as u32, self.rx_buf(i).phys);
     }
 
@@ -827,6 +865,27 @@ fn halves(p: Page) -> [Page; 2] {
 
 fn hw_page<H: Hw>(hw: &mut H) -> Option<Page> {
     hw.alloc_page().map(|(phys, ptr)| Page { phys, ptr })
+}
+
+/// Where the driver's pages come from: the single block (`Options::one_block`), page after page, or the allocator.
+struct Pages {
+    block: Option<Page>,
+    used: usize,
+}
+
+impl Pages {
+    fn next<H: Hw>(&mut self, hw: &mut H) -> Option<Page> {
+        match self.block {
+            Some(b) if self.used < BLOCK_PAGES => {
+                let off = self.used * 4096;
+                self.used += 1;
+                // SAFETY: off < BLOCK_PAGES * 4096, the block's size; physical and virtual addresses move together.
+                Some(Page { phys: b.phys + off as u64, ptr: unsafe { b.ptr.add(off) } })
+            }
+            Some(_) => None,
+            None => hw_page(hw),
+        }
+    }
 }
 
 #[cfg(test)]

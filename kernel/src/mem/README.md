@@ -25,3 +25,7 @@ după ce nucleul are tabele și stivă proprii. Teste: `test: toate cele N cadre
 firele pornite cu `sched::spawn_in` văd datele spațiului lor, iar după distrugere toate cadrele revin.
 
 **Inspirație:** specificația protocolului Limine; OSDev Wiki „Page Frame Allocation” (doar descrierea).
+- **Paza DMA (P6-10g):** `frame::pin(adresă, pagini, proprietar)` marchează paginile în care scrie o placă (rtl8168, e1000, ahci, nvme).
+  `free_frame` refuză o astfel de pagină și scrie în jurnal cine a cerut-o („paza DMA ... REFUZATA”, cu fișier:linie), `reclaim_bootloader`
+  o sare, `check_pins()` verifică că toate sunt încă ocupate. `alloc_contiguous_between(n, jos, sus)` dă un bloc într-un interval
+  (driverul Realtek: între 16 MiB și 4 GB). Testat în QEMU de `test_dma_guard` și de `test_all_frames`.

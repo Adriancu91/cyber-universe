@@ -68,5 +68,14 @@
   cu cablul la router au mers DHCP, ping, DNS și HTTPS. De aceea **golirea cache-ului e acum implicită** (la primire și la trimitere,
   doar pe bufferele de date): pornirea = os-125 + `cache` (`boot_options()` în nucleu). `rtl porneste faracache` = exact os-125,
   pentru comparație; `net` arată „varianta: implicita (cache)”.
+- **După testul 7 pe Lenovo (22 oct, P6-10g, comanda C-10):** la cald, prima inițializare (bufferele la 3db000, în memoria de jos)
+  citea tot zerouri, iar orice repornire (bufferele mai sus, la 150a000 / 1595000) citea corect — **și fără golirea cache-ului**, deci
+  cache-ul nu era cauza. Schimbarea acestui Release (una): **inelele, lista bufferelor și toate bufferele RX/TX stau într-un singur bloc
+  contiguu între 16 MiB și 4 GB** (`Options::one_block`, `BLOCK_PAGES` = 139 de pagini), departe de memoria în care ajung alocările de
+  la pornire; `rtl porneste pagini` = alocarea veche. Diagnostic care nu atinge placa: bufferele RX se umplu cu `A5` (`PATTERN`), nu cu
+  zero, și primii 64 de octeți din nou la fiecare re-armare; `net` numără „necitite de placa (model A5)” — dacă cadrele rele încep cu
+  A5, placa nu a scris; dacă sunt zero, altcineva a șters pagina. În nucleu, paginile date plăcii sunt **pazite** (`frame::pin`): nu pot
+  fi eliberate de altcineva (încercarea apare în jurnal cu fișierul și linia), `net`/`log rtl` arată starea pazei și regiunea din harta
+  memoriei a inelului și a bufferelor. Modelul are `lose_data` (placa nu scrie datele) — 36 de teste.
 - **Limite cunoscute:** nu setăm registrele PHY speciale pe care unele revizii le cer; dacă legătura nu se ridică pe un
   calculator, jurnalul arată revizia cipului (`revizia ...`) → sarcină nouă pentru acea revizie.

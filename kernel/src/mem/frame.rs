@@ -126,16 +126,23 @@ pub fn alloc_frame() -> Option<u64> {
     })
 }
 
-/// Allocates `count` physically contiguous frames that all end at or below `limit` (e.g. 4 GiB for a device that
-/// must be given 32-bit addresses). Returns the physical address of the first; each frame is freed with `free_frame`.
+/// Allocates `count` physically contiguous frames that all end at or below `limit` (the lowest such run).
+#[cfg(feature = "test-high-dma")]
 pub fn alloc_contiguous_below(count: u64, limit: u64) -> Option<u64> {
+    alloc_contiguous_between(count, 0, limit)
+}
+
+/// Allocates `count` physically contiguous frames inside [`low`, `high`) (e.g. a DMA block between 16 MiB and
+/// 4 GiB, away from the low memory every boot-time allocation comes from). Searches upwards from `low`.
+pub fn alloc_contiguous_between(count: u64, low: u64, high: u64) -> Option<u64> {
     if count == 0 {
         return None;
     }
     with_bitmap(|b| {
-        let last = (limit / PAGE_SIZE).min(b.frames); // frames [0, last) end at or below the limit
+        let first_ok = (low.div_ceil(PAGE_SIZE)).max(1);
+        let last = (high / PAGE_SIZE).min(b.frames);
         let mut run = 0;
-        for f in 1..last {
+        for f in first_ok..last {
             run = if b.is_used(f) { 0 } else { run + 1 };
             if run == count {
                 let first = f + 1 - count;
@@ -148,6 +155,76 @@ pub fn alloc_contiguous_below(count: u64, limit: u64) -> Option<u64> {
         }
         None
     })
+}
+
+/// DMA guard: frames a device driver handed to its card. The card may write there at any moment, so nothing else
+/// may ever get them: `free_frame` refuses them (and logs who asked), `reclaim_bootloader` skips them, and
+/// `check_pins` verifies they are all still marked used. Adjacent pins of the same owner are merged.
+#[derive(Clone, Copy)]
+struct Pin {
+    start: u64,
+    end: u64,
+    owner: &'static str,
+}
+
+const MAX_PINS: usize = 64;
+static mut PINS: [Pin; MAX_PINS] = [Pin { start: 0, end: 0, owner: "" }; MAX_PINS];
+static PIN_COUNT: AtomicU64 = AtomicU64::new(0);
+static PIN_LOCK: AtomicBool = AtomicBool::new(false);
+/// Frees (or reclaims) of pinned frames refused since boot.
+static PIN_REFUSED: AtomicU64 = AtomicU64::new(0);
+/// Pins that did not fit in the table (the guard then does not cover them; shown by `check_pins`).
+static PIN_LOST: AtomicU64 = AtomicU64::new(0);
+
+fn with_pins<R>(f: impl FnOnce(&mut [Pin; MAX_PINS], &mut usize) -> R) -> R {
+    while PIN_LOCK.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+        core::hint::spin_loop();
+    }
+    let mut n = PIN_COUNT.load(Ordering::Relaxed) as usize;
+    // SAFETY: PIN_LOCK grants exclusive access until released below.
+    let r = f(unsafe { &mut *core::ptr::addr_of_mut!(PINS) }, &mut n);
+    PIN_COUNT.store(n as u64, Ordering::Relaxed);
+    PIN_LOCK.store(false, Ordering::Release);
+    r
+}
+
+/// Marks `pages` frames from `addr` as DMA memory of `owner` (a driver name).
+pub fn pin(addr: u64, pages: u64, owner: &'static str) {
+    let (start, end) = (addr, addr + pages * PAGE_SIZE);
+    with_pins(|pins, n| {
+        if let Some(p) = pins[..*n].iter_mut().find(|p| p.owner == owner && (p.end == start || p.start == end)) {
+            p.start = p.start.min(start);
+            p.end = p.end.max(end);
+        } else if *n < MAX_PINS {
+            pins[*n] = Pin { start, end, owner };
+            *n += 1;
+        } else {
+            PIN_LOST.fetch_add(1, Ordering::Relaxed);
+        }
+    });
+}
+
+/// The driver that pinned the frame holding `addr`, if any.
+pub fn pinned_by(addr: u64) -> Option<&'static str> {
+    with_pins(|pins, n| pins[..*n].iter().find(|p| (p.start..p.end).contains(&addr)).map(|p| p.owner))
+}
+
+/// (pinned frames, pinned frames the allocator thinks are free, refused frees, pins that did not fit).
+/// A non-zero second number means a DMA page could be given to someone else.
+pub fn check_pins() -> (u64, u64, u64, u64) {
+    let ranges: alloc::vec::Vec<(u64, u64)> = with_pins(|pins, n| pins[..*n].iter().map(|p| (p.start, p.end)).collect());
+    let (mut total, mut free) = (0, 0);
+    with_bitmap(|b| {
+        for (s, e) in ranges {
+            for f in s / PAGE_SIZE..(e / PAGE_SIZE).min(b.frames) {
+                total += 1;
+                if !b.is_used(f) {
+                    free += 1;
+                }
+            }
+        }
+    });
+    (total, free, PIN_REFUSED.load(Ordering::Relaxed), PIN_LOST.load(Ordering::Relaxed))
 }
 
 /// Test only: from now on `alloc_frame` starts looking at 4 GiB, so ordinary allocations land above it (as on a
@@ -174,8 +251,19 @@ pub fn usable_bytes() -> u64 {
     USABLE.load(Ordering::Relaxed) * PAGE_SIZE
 }
 
-/// Releases a frame obtained from `alloc_frame`. Double frees and invalid addresses are logged and ignored.
+/// Releases a frame obtained from `alloc_frame`. Double frees and invalid addresses are logged and ignored, and so
+/// is a frame a device driver pinned for DMA (`pin`): the caller's file and line go to the log.
+#[track_caller]
 pub fn free_frame(addr: u64) {
+    if let Some(owner) = pinned_by(addr) {
+        let at = core::panic::Location::caller();
+        PIN_REFUSED.fetch_add(1, Ordering::Relaxed);
+        crate::error!(
+            "mem: paza DMA: cadrul {:#x} e al lui {}, eliberarea ceruta de {}:{} a fost REFUZATA",
+            addr, owner, at.file(), at.line()
+        );
+        return;
+    }
     let ok = with_bitmap(|b| {
         let f = addr / PAGE_SIZE;
         if addr % PAGE_SIZE != 0 || f >= b.frames || !b.is_used(f) {
@@ -197,6 +285,12 @@ pub fn reclaim_bootloader() -> u64 {
     with_bitmap(|b| {
         for r in map::regions().iter().filter(|r| r.kind == Kind::BootloaderReclaimable) {
             for f in r.base.div_ceil(PAGE_SIZE)..(r.end() / PAGE_SIZE).min(b.frames) {
+                if pinned_by(f * PAGE_SIZE).is_some() {
+                    // A DMA page inside bootloader memory would mean the memory map overlaps: keep it, count it.
+                    PIN_REFUSED.fetch_add(1, Ordering::Relaxed);
+                    crate::error!("mem: paza DMA: cadrul {:#x} e in memoria bootloader-ului, nu il recuperez", f * PAGE_SIZE);
+                    continue;
+                }
                 if b.is_used(f) {
                     b.set(f, false);
                     b.free += 1;

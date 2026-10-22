@@ -13,6 +13,9 @@ pub fn supports(vendor: u16, device: u16) -> bool {
     vendor == 0x10EC && SUPPORTED.contains(&device)
 }
 
+/// Lowest address of the driver's DMA block (`Options::one_block`, `bloc`).
+const DMA_LOW: u64 = 16 << 20;
+
 pub struct KernelHw {
     regs: u64,
 }
@@ -46,13 +49,17 @@ impl Hw for KernelHw {
     }
     fn alloc_page(&mut self) -> Option<(u64, *mut u8)> {
         let f = frame::alloc_frame()?;
+        frame::pin(f, 1, "rtl8168"); // the card writes here by DMA: never given to anyone else
         let p = phys_to_virt(f);
         // SAFETY: a fresh frame, reachable through the HHDM; the driver keeps it for as long as the card runs.
         unsafe { core::ptr::write_bytes(p, 0, PAGE_SIZE as usize) };
         Some((f, p))
     }
     fn alloc_block(&mut self, pages: usize) -> Option<(u64, *mut u8)> {
-        let f = frame::alloc_contiguous_below(pages as u64, 1 << 32)?;
+        // Between 16 MiB and 4 GiB: away from the low memory every boot-time allocation comes from (test 7: the first
+        // start-up, with buffers at 3db000, read zeros; every restart, with buffers higher up, read correctly).
+        let f = frame::alloc_contiguous_between(pages as u64, DMA_LOW, 1 << 32)?;
+        frame::pin(f, pages as u64, "rtl8168");
         let p = phys_to_virt(f);
         // SAFETY: `pages` fresh contiguous frames, reachable through the HHDM (one linear range); kept by the driver.
         unsafe { core::ptr::write_bytes(p, 0, pages * PAGE_SIZE as usize) };
@@ -126,11 +133,11 @@ impl super::nic::Card for Card {
             "legatura: {}; primire: aruncate {}, pierdute de placa {}, ISR vazut {:04x}, descriptor RX {} = {:08x}, citiri {}\n\
              inel RX {}: index {}, ai placii {}; RDU vazut {} ori, reporniri {}, resincronizari {}; raspunsuri DHCP (udp 68) {}\n\
              primele cadre: {}\n\
-             cadre cu tip 0000: {}; reparate de golirea cache-ului: {}; Bus Master: {}; MISC {:08x} (poarta RXDV {}); varianta: {} (detalii: log rx, log rtl)",
+             cadre cu tip 0000: {}; necitite de placa (model A5): {}; reparate de golirea cache-ului: {}; paza memoriei: {}; Bus Master: {}; MISC {:08x} (poarta RXDV {}); varianta: {} (detalii: log rx, log rtl)",
             link_text(d.phy), r.dropped, d.mpc, r.isr_seen, d.rx_next, d.rx_opts1, r.polls,
             cyber_rtl8168::RX_RING, d.rx_next, d.rx_owned, r.rdu_count, r.restarts, r.resyncs, r.dhcp_replies,
             if first.is_empty() { alloc::string::String::from("-") } else { first.join(" ") },
-            r.zero_type, r.fixed_by_sync, if self.dev.command() & 1 << 2 != 0 { "da" } else { "NU" },
+            r.zero_type, r.unwritten, r.fixed_by_sync, guard_text(), if self.dev.command() & 1 << 2 != 0 { "da" } else { "NU" },
             d.misc, if d.misc & cyber_rtl8168::MISC_RXDV_GATE != 0 { "INCHISA" } else { "deschisa" },
             variant_text(r.options)
         ))
@@ -153,6 +160,24 @@ fn log_frame(k: usize, d: &cyber_rtl8168::RxDetail) {
     );
 }
 
+/// The DMA guard in words: "ok" or what went wrong (pages of a driver the allocator thinks free, refused frees).
+fn guard_text() -> alloc::string::String {
+    let (pinned, free, refused, lost) = frame::check_pins();
+    if free == 0 && refused == 0 && lost == 0 {
+        alloc::format!("ok ({} pagini DMA pazite)", pinned)
+    } else {
+        alloc::format!("PROBLEMA: {} pagini DMA libere, {} eliberari refuzate, {} nepazite (vezi log paza)", free, refused, lost)
+    }
+}
+
+/// "3db000 in 100000-9fffff utilizabila" for `log rtl`: the memory-map region a DMA address lies in.
+fn region_text(a: u64) -> alloc::string::String {
+    match crate::mem::map::region_of(a) {
+        Some(r) => alloc::format!("{:x} in {:x}-{:x} {}", a, r.base, r.end() - 1, r.kind.name()),
+        None => alloc::format!("{:x} in nicio regiune din harta memoriei", a),
+    }
+}
+
 fn below_4g(a: u64) -> &'static str {
     if a < 1 << 32 { "sub 4 GB" } else { "PESTE 4 GB" }
 }
@@ -167,6 +192,10 @@ fn variant_text(o: Options) -> alloc::string::String {
     }
     if o.cache {
         parts.push("cache");
+    }
+    parts.push(if o.one_block { "bloc-dma" } else { "pagini" });
+    if o.pattern {
+        parts.push("model");
     }
     for (on, name) in [(o.mcu, "mcu"), (o.phy, "phy"), (o.cplus, "cplus"), (o.order, "ordine")] {
         if on {
@@ -218,6 +247,14 @@ fn log_registers(inner: &mut Rtl8168<KernelHw>, dev: &crate::pci::Device) {
         frame::usable_bytes() >> 20, frame::top_of_ram(),
         if frame::top_of_ram() > 1 << 32 { "are memorie peste 4 GB" } else { "toata sub 4 GB" }
     );
+    crate::info!(
+        "net: rtl8168 memorie DMA: {}; inel RX {}; buffer RX 0 {}; paza: {}",
+        match inner.block {
+            Some((b, n)) => alloc::format!("un bloc {:x}-{:x} ({} pagini)", b, b + n as u64 * 4096 - 1, n),
+            None => alloc::string::String::from("pagina cu pagina (ca os-149)"),
+        },
+        region_text(rx), region_text(b[0]), guard_text()
+    );
     let cmd = dev.command();
     crate::info!(
         "net: rtl8168 PCI {}: Command {:04x} (Bus Master {}, Memory {}), PCIe Device Control {} (doar citit); varianta {}{}",
@@ -241,11 +278,12 @@ fn link_text(phy: u8) -> alloc::string::String {
     alloc::format!("da, {} Mbit/s, {}", speed, if phy & 1 != 0 { "full duplex" } else { "half duplex" })
 }
 
-/// The start-up used at boot and as the base of `rtl porneste`: os-125 plus dropping the CPU cache for every
-/// received and sent frame (`cache`). Confirmed on the laptop (test 6 G–L, 2026-10-22: all frames read correctly,
-/// DHCP, ping, DNS and HTTPS with `rtl porneste cache`). `faracache` goes back to exactly os-125.
+/// The start-up used at boot and as the base of `rtl porneste`: os-149 (os-125 + `cache`) plus, as the one change of
+/// this Release (C-10, test 7), the rings and all buffers in one block between 16 MiB and 4 GiB (`one_block`) — on
+/// the laptop every restart, with its memory elsewhere, read every frame; only the first start-up (low memory) read
+/// zeros. `pattern` is a diagnostic: it changes nothing on the card. `pagini` goes back to os-149's allocation.
 pub fn boot_options() -> Options {
-    Options { cache: true, ..Options::default() }
+    Options { cache: true, one_block: true, pattern: true, ..Options::default() }
 }
 
 /// Finds a Realtek RTL8168 and starts it the default way (`boot_options`).
@@ -303,7 +341,7 @@ fn chip_name(rev: u32) -> &'static str {
     }
 }
 
-/// Parses the words after `rtl porneste`, starting from `boot_options`: `bloc`, `rxdv`, `cache`, `faracache`, the
+/// Parses the words after `rtl porneste`, starting from `boot_options`: `bloc`, `rxdv`, `cache`, `faracache`, `pagini`, the
 /// cold-start steps `mcu`, `phy`, `cplus`, `ordine`, and `rece` = all cold-start steps (any order). `Err(word)` for an
 /// unknown word.
 pub fn parse_options<'a>(words: &[&'a str]) -> Result<Options, &'a str> {
@@ -314,6 +352,7 @@ pub fn parse_options<'a>(words: &[&'a str]) -> Result<Options, &'a str> {
             "rxdv" => o.rxdv = true,
             "cache" => o.cache = true,
             "faracache" => o.cache = false,
+            "pagini" => o.one_block = false,
             "mcu" => o.mcu = true,
             "phy" => o.phy = true,
             "cplus" => o.cplus = true,

@@ -33,7 +33,7 @@ impl Kind {
         }
     }
 
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Kind::Usable => "utilizabila",
             Kind::Reserved => "rezervata",
@@ -120,6 +120,11 @@ pub fn regions() -> &'static [Region] {
         let all: &'static [Region; MAX_REGIONS] = &*core::ptr::addr_of!(REGIONS);
         &all[..REGION_COUNT]
     }
+}
+
+/// The memory-map region holding `addr` (for the DMA logs: is a buffer in plain usable RAM?).
+pub fn region_of(addr: u64) -> Option<Region> {
+    regions().iter().copied().find(|r| (r.base..r.end()).contains(&addr))
 }
 
 /// Virtual address at which the physical address `phys` can be accessed (through the HHDM).

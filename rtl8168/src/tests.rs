@@ -542,3 +542,71 @@ fn a_wait_that_runs_out_is_noted_and_start_up_goes_on() {
     assert!(c.hw().delays_us >= 100_000, "waited about 100 ms, not forever");
     assert!(c.send(&frame([0xFF; 6], 64, 1)));
 }
+
+#[test]
+fn one_block_holds_rings_and_every_buffer() {
+    let o = Options { one_block: true, pattern: true, cache: true, ..Options::default() };
+    let mut c = Rtl8168::with_options(Model::new(), o).unwrap();
+    let (base, pages) = c.block.expect("one block");
+    assert_eq!(pages, BLOCK_PAGES);
+    let (rx, tx) = c.ring_addresses();
+    assert_eq!((rx, tx), (base, base + 4096), "rings first, in the block");
+    let bufs: [u64; RX_RING] = c.rx_buffer_addresses();
+    for a in bufs {
+        assert!(c.hw().in_low_block(a), "receive buffer {a:x} inside the block");
+    }
+    assert!(c.send(&frame([0xFF; 6], 64, 1)), "transmit buffer inside the block");
+    let sent = c.hw().wire.len();
+    assert_eq!(sent, 1);
+}
+
+#[test]
+fn one_block_with_pattern_reads_every_frame() {
+    let o = Options { one_block: true, pattern: true, cache: true, ..Options::default() };
+    for burst in [false, true] {
+        let c = twelve_frames(false, burst, o);
+        assert_eq!(c.unwritten, 0, "every frame was written by the card");
+    }
+    // Without the cache option too (the restart in test 7 C3 needed no cache flush).
+    let c = twelve_frames(false, false, Options { one_block: true, pattern: true, ..Options::default() });
+    assert_eq!(c.unwritten, 0);
+}
+
+#[test]
+fn frames_the_card_never_wrote_show_the_pattern() {
+    let mut m = Model::new();
+    m.lose_data = true;
+    let o = Options { one_block: true, pattern: true, cache: true, ..Options::default() };
+    let mut c = Rtl8168::with_options(m, o).unwrap();
+    let mut buf = [0u8; 2048];
+    for k in 0..3 {
+        assert!(c.hw().deliver(&frame([0xFF; 6], 100, k)));
+        assert!(c.receive(&mut buf).is_some());
+    }
+    assert_eq!(c.unwritten, 3, "pattern still there: the card did not write");
+    assert_eq!(c.zero_type, 0, "not zeros: nobody wiped the page");
+    // Without the pattern the same loss looks like test 7: zero type.
+    let mut m = Model::new();
+    m.lose_data = true;
+    let mut c = Rtl8168::with_options(m, Options { cache: true, ..Options::default() }).unwrap();
+    assert!(c.hw().deliver(&frame([0xFF; 6], 100, 0)));
+    assert!(c.receive(&mut buf).is_some());
+    assert_eq!((c.unwritten, c.zero_type), (0, 1));
+}
+
+#[test]
+fn reused_buffer_gets_the_pattern_again() {
+    // A buffer used once and handed back starts with the pattern again, so a later lost write is not mistaken for
+    // the previous frame.
+    let o = Options { one_block: true, pattern: true, ..Options::default() };
+    let mut c = Rtl8168::with_options(Model::new(), o).unwrap();
+    let mut buf = [0u8; 2048];
+    for k in 0..RX_RING {
+        assert!(c.hw().deliver(&frame([0xFF; 6], 80, k as u8)));
+        assert!(c.receive(&mut buf).is_some());
+    }
+    c.hw().lose_data = true;
+    assert!(c.hw().deliver(&frame([0xFF; 6], 80, 7)));
+    assert!(c.receive(&mut buf).is_some());
+    assert_eq!(c.unwritten, 1);
+}

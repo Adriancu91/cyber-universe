@@ -61,6 +61,7 @@ fn wr(a: u64, v: u32) {
 
 fn zeroed_frame() -> Option<u64> {
     let f = frame::alloc_frame()?;
+    frame::pin(f, 1, "e1000"); // the card writes here by DMA: never given to anyone else
     // SAFETY: fresh frame, reachable through the HHDM.
     unsafe { core::ptr::write_bytes(phys_to_virt(f), 0, PAGE_SIZE as usize) };
     Some(f)

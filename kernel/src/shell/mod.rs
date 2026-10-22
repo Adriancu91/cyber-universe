@@ -356,16 +356,17 @@ fn net() {
     }
 }
 
-/// `rtl porneste [bloc] [rxdv] [cache|faracache] [rece|mcu|phy|cplus|ordine]`: resets and restarts the Realtek card with the given start-up choices, so
+/// `rtl porneste [bloc] [rxdv] [cache|faracache] [pagini] [rece|mcu|phy|cplus|ordine]`: resets and restarts the Realtek card with the given start-up choices, so
 /// several variants can be tried on the laptop from one boot, one change at a time (`log rtl` shows each start).
 fn rtl(args: &[&str]) {
     let Some((&"porneste", words)) = args.split_first() else {
         out!("folosire: rtl porneste [variante]\n");
         out!("  bloc   bufferele de primire intr-un singur bloc sub 4 GB\n");
         out!("  rxdv   deschide poarta RXDV (MISC bit 19), daca e inchisa\n");
-        out!("  (fara variante = ca la pornire: os-125 + golirea cache-ului)\n");
+        out!("  (fara variante = ca la pornire: golirea cache-ului + un bloc DMA peste 16 MiB)\n");
         out!("  cache     goleste cache-ul pentru fiecare pachet primit/trimis (implicit)\n");
         out!("  faracache fara golirea cache-ului (exact ca os-125)\n");
+        out!("  pagini    inele si buffere pagina cu pagina (ca os-149), nu intr-un bloc peste 16 MiB\n");
         out!("  rece   pornirea completa la rece = mcu phy cplus ordine rxdv (pasii in `log rtl`)\n");
         out!("  mcu    preia placa de la firmware (MCU, OCP E8DE) inainte de resetare\n");
         out!("  phy    trezeste PHY-ul (PMCH bit 7, PHY 1F=0, 0E=0)\n");
@@ -376,7 +377,7 @@ fn rtl(args: &[&str]) {
     let options = match crate::drivers::rtl8168::parse_options(words) {
         Ok(o) => o,
         Err(w) => {
-            out!("rtl: varianta necunoscuta: {} (bloc, rxdv, cache, faracache, rece, mcu, phy, cplus, ordine)\n", w);
+            out!("rtl: varianta necunoscuta: {} (bloc, rxdv, cache, faracache, pagini, rece, mcu, phy, cplus, ordine)\n", w);
             return;
         }
     };
