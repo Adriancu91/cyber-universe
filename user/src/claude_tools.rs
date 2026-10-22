@@ -1,4 +1,5 @@
-//! The tools Claude may ask for in the chat (P6-06): read a file, list a folder, write a file, run a shell command.
+//! The tools Claude may ask for in the chat (P6-06): read a file, list a folder, write a file, run a shell command,
+//! and send a file to GitHub (P6-09, through /bin/gh-trimite).
 //! Reading and listing happen at once; writing and running need Adrian's "Da" on screen (the app asks through
 //! `confirm`). Paths are limited to /disk, /usb and /tmp (never /bin or /etc), without "..".
 
@@ -16,7 +17,8 @@ pub const DEFINITIONS: &str = r#"[
  {"name":"read_file","description":"Citeste un fisier text din Cyber Universe OS (doar sub /disk, /usb sau /tmp; cel mult 32 KiB).","input_schema":{"type":"object","properties":{"path":{"type":"string","description":"calea completa, de ex. /disk/note.txt"}},"required":["path"]}},
  {"name":"list_dir","description":"Listeaza un dosar (doar sub /disk, /usb sau /tmp). Dosarele se termina cu /.","input_schema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}},
  {"name":"write_file","description":"Scrie (sau inlocuieste) un fisier text sub /disk, /usb sau /tmp. Adrian trebuie sa confirme pe ecran.","input_schema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},
- {"name":"run_command","description":"Ruleaza o comanda in shell-ul Cyber Universe (de ex. ls /disk, hw, net). Adrian trebuie sa confirme pe ecran. Iesirea e taiata la 8 KiB.","input_schema":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}}
+ {"name":"run_command","description":"Ruleaza o comanda in shell-ul Cyber Universe (de ex. ls /disk, hw, net). Adrian trebuie sa confirme pe ecran. Iesirea e taiata la 8 KiB.","input_schema":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}},
+ {"name":"github_push","description":"Trimite un fisier (de sub /disk, /usb sau /tmp, cel mult 1 MiB) intr-un depozit GitHub, ca un commit al proprietarului tokenului din /usb/github.token. Adrian trebuie sa confirme pe ecran. Caile fara spatii.","input_schema":{"type":"object","properties":{"file":{"type":"string","description":"fisierul din Cyber Universe"},"repo":{"type":"string","description":"proprietar/depozit"},"path":{"type":"string","description":"calea in depozit, de ex. note/azi.txt"}},"required":["file","repo","path"]}}
 ]"#;
 
 /// Is `path` one Claude may touch?
@@ -31,6 +33,8 @@ pub enum Request {
     List(String),
     Write(String, String),
     Run(String),
+    /// File, repository, path in the repository.
+    Push(String, String, String),
 }
 
 impl Request {
@@ -42,13 +46,14 @@ impl Request {
             "list_dir" => Request::List(field("path")?),
             "write_file" => Request::Write(field("path")?, field("content")?),
             "run_command" => Request::Run(field("command")?),
+            "github_push" => Request::Push(field("file")?, field("repo")?, field("path")?),
             other => return Err(alloc::format!("unealta necunoscuta: {}", other)),
         })
     }
 
     /// Writing and running need Adrian's "Da".
     pub fn needs_confirmation(&self) -> bool {
-        matches!(self, Request::Write(..) | Request::Run(_))
+        matches!(self, Request::Write(..) | Request::Run(_) | Request::Push(..))
     }
 
     /// One line for the conversation and the serial log.
@@ -58,6 +63,7 @@ impl Request {
             Request::List(p) => alloc::format!("listez {}", p),
             Request::Write(p, c) => alloc::format!("scriu {} ({} octeti)", p, c.len()),
             Request::Run(c) => alloc::format!("rulez: {}", c),
+            Request::Push(f, r, p) => alloc::format!("trimit pe GitHub {} -> {}:{}", f, r, p),
         }
     }
 
@@ -70,6 +76,11 @@ impl Request {
                 v
             }
             Request::Run(c) => alloc::vec!["Claude vrea sa ruleze comanda:".to_string(), alloc::format!("  {}", c)],
+            Request::Push(f, r, p) => alloc::vec![
+                "Claude vrea sa trimita pe GitHub fisierul".to_string(),
+                alloc::format!("  {}", f),
+                alloc::format!("in depozitul {}, la {}", r, p),
+            ],
             _ => Vec::new(),
         }
     }
@@ -126,6 +137,13 @@ impl Request {
                 if done == bytes.len() { Ok(alloc::format!("scris {} ({} octeti)", p, done)) } else { Err("scriere incompleta".to_string()) }
             }
             Request::Run(command) => run_command(command, term),
+            Request::Push(f, _, _) if !allowed(f) => Err(alloc::format!("fisierul {} nu e permis (doar /disk, /usb, /tmp, fara ..)", f)),
+            Request::Push(f, r, p) => {
+                if [f, r, p].iter().any(|x| x.is_empty() || x.contains([' ', '\n', '\t'])) {
+                    return Err("fisierul, depozitul si calea trebuie sa fie fara spatii".to_string());
+                }
+                run_command(&alloc::format!("run gh-trimite {} {} {}", f, r, p), term)
+            }
         }
     }
 }

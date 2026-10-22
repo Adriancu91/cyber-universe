@@ -179,7 +179,8 @@ Reparații după testul 2 pe Lenovo (comanda C-4, înaintea restului fazei):
   Test: jobul `release` din CI pe `main`; `GH_TOKEN=… tools/check-release.sh` (depozitul e privat → descărcarea cere token).
 - [x] **P6-08** Comanda „Actualizează”: descarcă ultimul Release prin HTTPS, verifică sumele, rescrie stick-ul. Dep: P6-02, P6-07.
   Test: scenariul `update` (imitație GitHub: fără token, sumă greșită, actualizare întreruptă reparată, actualizare, „la zi”) + `tools/after-update.sh`.
-- [ ] **P6-09** Trimitere pe GitHub din OS (API `contents`, token din `/usb/github.token`). Dep: P6-02, P6-03.
+- [x] **P6-09** Trimitere pe GitHub din OS (API `contents`, token din `/usb/github.token`). Dep: P6-02, P6-03.
+  Test: scenariul `ghpush` (imitația API-ului contents) + unealta `github_push` în `claude-tools`; `cd json && cargo test --release` (base64).
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)

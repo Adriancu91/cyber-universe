@@ -12,3 +12,5 @@
   erorii), limitele, și o verificare încrucișată cu modulul `json` din Python pe 200 de documente generate (o parte
   stricate intenționat): același verdict, aceleași date după ce scriem și Python citește din nou.
 - **Surse:** RFC 8259, ECMA-404. Cod propriu.
+- **Base64 (P6-09):** `base64::encode` / `base64::decode` (RFC 4648 §4, cu `=`; `decode` ignoră rândurile noi, cum le pune GitHub).
+  Test: `tests/base64.rs` (vectorii RFC 4648 §10, toți octeții 0–255 față de Python, 300 de dus-întors, intrări greșite).

@@ -251,6 +251,8 @@ fn run_tests() -> ! {
     test_claude_tools();
     #[cfg(feature = "test-update")]
     test_update();
+    #[cfg(feature = "test-ghpush")]
+    test_ghpush();
     #[cfg(feature = "test-usb")]
     assert!(boot::medium() == boot::Medium::Disk, "test: pornit de pe {:?}, nu de pe stick", boot::medium());
     #[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
@@ -1221,7 +1223,7 @@ fn test_https() {
 
 /// Adds the test root (tls/tests/data, its private key is public) to /etc/certs, under the name the programs look
 /// for (its subject id). Only test builds do this.
-#[cfg(any(feature = "test-https", feature = "test-claude", feature = "test-claude-app", feature = "test-claude-tools", feature = "test-update"))]
+#[cfg(any(feature = "test-https", feature = "test-claude", feature = "test-claude-app", feature = "test-claude-tools", feature = "test-update", feature = "test-ghpush"))]
 fn add_test_root() {
     let root: &[u8] = include_bytes!("../../tls/tests/data/root.der");
     let subject = cyber_crypto::x509::Cert::parse(root).expect("test: radacina de test").subject;
@@ -1294,7 +1296,8 @@ fn test_claude_app() {
 
 /// Claude's tools in the chat window (P6-06): the imitation of the API asks for each tool in turn (list, read, write,
 /// write again, run a command, write outside the allowed folders). The keys answer the confirmation boxes: "Nu" to the
-/// first write, "Da" to the second and to the command; the write to /etc is refused without asking. Then the disk is
+/// first write, "Da" to the second, to the command and to sending a file to GitHub (P6-09; the test disk has no token,
+/// so gh-trimite says so); the write to /etc is refused without asking. Then the disk is
 /// checked here and by tools/after-claude-tools.sh.
 #[cfg(feature = "test-claude-tools")]
 fn test_claude_tools() {
@@ -1318,7 +1321,7 @@ fn test_claude_tools() {
     }
     push_key(Key::Enter);
     // The app reads these only when it shows a confirmation box, in this order.
-    for (k, wait) in [('n', 1500), ('d', 1500), ('d', 4000)] {
+    for (k, wait) in [('n', 1500), ('d', 1500), ('d', 4000), ('d', 4000)] {
         sched::sleep_ms(wait);
         push_key(Key::Char(k));
     }
@@ -1371,6 +1374,47 @@ fn test_update() {
     assert!(run(Some(b"tok-bun"), "a doua oara") == 0, "test: a doua rulare a esuat");
     assert!(fs::read_all("/disk/boot/kernel").is_ok_and(|k| k != old_kernel && k.len() == 1_300_007), "test: nucleul nu e cel nou");
     info!("test: actualizarea OK (fara token refuzat, suma gresita fara schimbari, copie veche refacuta, la zi a doua oara)");
+}
+
+/// Sending files to GitHub (P6-09): /bin/gh-trimite against the imitation of the contents API
+/// (tools/ghpush-test-server.py): no token, a wrong token, a new file (diacritics), the same again (nothing sent),
+/// an existing file (its sha must be sent), a name with a space, a 300 KB file, a path with "..".
+#[cfg(feature = "test-ghpush")]
+fn test_ghpush() {
+    assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
+    add_test_root();
+    let put = |path: &str, data: &[u8]| {
+        let _ = fs::remove(path);
+        fs::create(path, fs::Kind::File).expect("test: fisier");
+        fs::write(path, 0, data).expect("test: fisier");
+    };
+    put("/etc/github.conf", b"host = test.cyber.local\nport = 18447\naddress = 10.0.2.2\ntoken = /etc/gh-test.token\n");
+    put("/etc/nota.txt", "nota din Cyber Universe, cu diacritice: \u{103}\u{ee}\u{219}\u{21b}\n".as_bytes());
+    let big: alloc::vec::Vec<u8> = (0..300_000u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
+    put("/etc/mare.bin", &big);
+    let run = |token: Option<&[u8]>, args: &[&str], what: &str| {
+        let _ = fs::remove("/etc/gh-test.token");
+        if let Some(t) = token {
+            put("/etc/gh-test.token", t);
+        }
+        let mut all = alloc::vec!["gh-trimite"];
+        all.extend_from_slice(args);
+        let id = proc::spawn_path("/bin/gh-trimite", &all).expect("test: /bin/gh-trimite");
+        let code = proc::wait_child(id);
+        info!("test: gh-trimite ({}) a iesit cu codul {}", what, code);
+        code
+    };
+    const R: &str = "Adriancu91/note-test";
+    let good = Some(&b"tok-gh\n"[..]);
+    assert!(run(None, &["/etc/nota.txt", R, "note/azi.txt"], "fara token") == 1);
+    assert!(run(Some(b"tok-rau"), &["/etc/nota.txt", R, "note/azi.txt"], "token gresit") == 1);
+    assert!(run(good, &["/etc/nota.txt", R, "note/azi.txt"], "fisier nou") == 0);
+    assert!(run(good, &["/etc/nota.txt", R, "note/azi.txt"], "la fel") == 0);
+    assert!(run(good, &["/etc/nota.txt", R, "note/vechi.txt", "Nota", "actualizata"], "fisier existent") == 0);
+    assert!(run(good, &["/etc/nota.txt", R, "note/cu spatiu.txt"], "nume cu spatiu") == 0);
+    assert!(run(good, &["/etc/mare.bin", R, "date/mare.bin"], "300 KB") == 0);
+    assert!(run(good, &["/etc/nota.txt", R, "../afara.txt"], "cale cu ..") == 1);
+    info!("test: trimiterea pe GitHub OK");
 }
 
 /// HTTPS with real web sites (P6-02): /bin/fetch resolves the name, connects through QEMU's network to the

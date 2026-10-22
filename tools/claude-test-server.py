@@ -54,14 +54,17 @@ STEPS = [
     ("write_file", {"path": "/disk/claude.txt", "content": "scris de Claude\n"}, lambda r, e: r.startswith("salut de pe disc") and not e),
     ("write_file", {"path": "/disk/claude.txt", "content": "scris de Claude\n"}, lambda r, e: e and "refuzat" in r),
     ("run_command", {"command": "ls /disk"}, lambda r, e: not e and "scris /disk/claude.txt" in r),
-    ("write_file", {"path": "/etc/rau.txt", "content": "nu"}, lambda r, e: not e and "claude.txt" in r and "salut.txt" in r),
+    ("github_push", {"file": "/disk/claude.txt", "repo": "Adriancu91/note-test", "path": "note/claude.txt"},
+     lambda r, e: not e and "claude.txt" in r and "salut.txt" in r),
+    # No token on the test disk: gh-trimite runs and says so (P6-09).
+    ("write_file", {"path": "/etc/rau.txt", "content": "nu"}, lambda r, e: not e and "gh-trimite: lipseste tokenul GitHub" in r),
     (None, None, lambda r, e: e and "nu e permisa" in r),
 ]
 
 
 def tools_step(req, m):
     """Returns ("tool", block) or ("text", text) for the next answer."""
-    if not isinstance(req.get("tools"), list) or {t.get("name") for t in req["tools"]} != {"read_file", "list_dir", "write_file", "run_command"}:
+    if not isinstance(req.get("tools"), list) or {t.get("name") for t in req["tools"]} != {"read_file", "list_dir", "write_file", "run_command", "github_push"}:
         return ("text", "Testul uneltelor a esuat: uneltele nu au fost declarate")
     results = [x["content"][0] for x in m if x["role"] == "user" and isinstance(x["content"], list)]
     n = len(results)

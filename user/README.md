@@ -75,3 +75,11 @@
   Test: scenariul `update`, față de o imitație a GitHub (`tools/update-test-server.py`: API + stocare, ca la un depozit
   privat), fără token, cu o sumă greșită, cu o actualizare întreruptă de reparat, apoi actualizarea și „la zi”;
   `tools/after-update.sh` compară discul cu fișierele versiunii.
+- `gh-trimite <fișier> <proprietar/depozit> <cale> [mesaj]` (P6-09) — pune un fișier într-un depozit GitHub prin API-ul
+  „contents”: `GET` întâi (dacă există: `sha`-ul lui; dacă e deja identic, nu trimite nimic), apoi `PUT` cu conținutul în
+  base64 (`cyber_json::base64`), mesajul commit-ului (implicit „Din Cyber Universe: <cale>”) și `sha`-ul. Cel mult 1 MiB.
+  Tokenul: același `/usb/github.token` (pentru trimitere trebuie „Contents: Read and write” pe depozitul ales); nu se
+  afișează. `/etc/github.conf` (opțional): `host`, `port`, `address`, `token`. Claude îl poate folosi din chat prin unealta
+  `github_push` (cu confirmarea lui Adrian pe ecran, ca la scriere și rulare). Clientul HTTPS comun cu `actualizeaza`:
+  `src/http_client.rs`. Test: scenariul `ghpush` față de `tools/ghpush-test-server.py` (fără token, token greșit, fișier
+  nou cu diacritice, „deja la fel”, fișier existent cu `sha`, nume cu spațiu, 300 KB, cale cu `..`); unealta: `claude-tools`.

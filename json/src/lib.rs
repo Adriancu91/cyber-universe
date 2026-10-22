@@ -6,6 +6,8 @@
 
 extern crate alloc;
 
+pub mod base64;
+
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Write;
