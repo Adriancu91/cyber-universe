@@ -377,6 +377,8 @@ impl<H: Hw> Rtl8168<H> {
             core::ptr::write_bytes(buf.ptr, 0, MIN_FRAME);
             core::ptr::copy_nonoverlapping(frame.as_ptr(), buf.ptr, frame.len());
         }
+        // The frame must be in memory, not only in the CPU's cache, before the card reads it (No Snoop reads).
+        self.hw.dma_sync(buf.phys, buf.ptr, len);
         write_desc(self.tx_ring, i, desc::OWN | eor(i, TX_RING) | desc::FS | desc::LS | len as u32, buf.phys);
         self.tx_next = (i + 1) % TX_RING;
         self.hw.write8(reg::TPPOLL, POLL_NORMAL);
