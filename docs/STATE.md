@@ -3,6 +3,30 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-22 11:25–12:30 UTC (14:25–15:30 ora României), în cloud, fără Adrian
+- **Hub:** comanda nouă **C-6** (testul 4: stick-ul merge, primirea nu se mai blochează, dar cadrele 2+ au tipul 0000 → DHCP 0)
+  → preluată; **P6-10c** adăugată în TASKS cu plan.
+- **Terminată (1 sarcină): P6-10c** — verificate în cod ipotezele (a)–(c) din C-6: adresa din descriptor = adresa citită
+  (aceeași listă, pas 2048 = RMS, HHDM), copierea e înainte de re-armare, indexul e corect. Cauza cea mai probabilă: **cache-ul**
+  (PCIe „Enable No Snoop” e 1 implicit → placa scrie în memorie fără să anunțe cache-ul; procesorul vede zerourile din pornire).
+  Reparații: `Device::capability` + `pcie_strict_dma` (No Snoop și Relaxed Ordering oprite, în `log rtl`); `Hw::dma_sync`
+  (`CLFLUSH` + `MFENCE`) după zeroizarea fiecărei pagini DMA și înainte de citirea fiecărui cadru; barieră Acquire după OWN.
+  Diagnostic: `log rx` — primele 8 cadre (index, lungime, adresa din descriptor / adresa citită, 16 octeți înainte și după
+  golire); `net` — „cadre cu tip 0000”, „reparate de golirea cache-ului”, „PCIe No Snoop: oprit (era pornit)”.
+  Model: mod `no_snoop` (datele devin vizibile doar după `dma_sync`), test cu 12 cadre consecutive (unul câte unul și în rafală).
+  Plus, la cererea lui Adrian (completarea C-6 de la 14:45, „log arp nu are niciun rând”): primele 16 pachete ARP primite apar în
+  jurnal (`log arp`: cerere/răspuns, de la cine, pentru cine), înainte de verificarea adresei; scenariul `net` verifică rândul.
+  Completarea 14:45 bănuia buffere alocate separat cu adresa `baza + i × 2048`; în codul nostru fiecare adresă vine din pagina ei
+  (`p.phys`, `p.phys + 2048`), deci nu e cazul — `log rx` o arată oricum la testul 5 („(DIFERITE)” dacă n-ar fi așa).
+- **Sesiune paralelă:** o altă sesiune a făcut tot P6-10c pornind de la commit-ul meu „în lucru” și a pus varianta ei pe
+  **`wip/P6-10c-b`** (nefolosită; din ea s-a luat doar rândul ARP). Poate fi ștearsă de Adrian oricând.
+- **Build:** OK, fără avertismente. **Teste:** `tools/test.sh` → 48 trecute + `https-real` sărit local (`https` a picat o dată la
+  verificarea temporizatorului — „79 intreruperi”, calculator încărcat, problemă cunoscută; rulat singur trece);
+  `cd rtl8168 && cargo test --release` → 23. Verificat că testul nou pică dacă se scoate golirea cache-ului.
+- **Pe laptop:** urmează **testul 5** (lista în hub, `stare/cyber-universe.md`). Cum se citește: „reparate de golirea cache-ului”
+  > 0 → cauza era cache-ul; `(DIFERITE)` în `log rx` → adrese; zerouri și după golire → placa scrie altundeva (revizia H).
+
+### (anterioară)
 ### Sesiunea programată 2026-10-22 08:40 UTC (11:40 ora României), în cloud, fără Adrian — fără lucru nou
 - Hub: nicio comandă `nou` pentru `cyber-universe` (C-5 e `gata`); rezultatele testului 4 nu există încă în hub (`rezultate/`).
 - `docs/TASKS.md`: nicio sarcină liberă (P6-10 și P3-10 așteaptă testul 4 pe laptop; P5-07/P5-08 după suită) → oprire (CLAUDE.md §3).
