@@ -1,6 +1,7 @@
 //! Terminal: the shell (`help`, `ls`, `cat`, `run`, `mem`...) in a window. Programs started from it
 //! write here too. `exit` (or closing the window) ends it. Every finished line is also copied to the
-//! serial port with the prefix `terminal: ` (for tests and debugging).
+//! serial port with the prefix `terminal: ` (for tests and debugging). `terminal <command>` types the command into
+//! the shell at start (the Settings window opens `terminal run actualizeaza` this way, P6-08).
 #![no_std]
 #![no_main]
 
@@ -91,6 +92,10 @@ fn main() -> i64 {
         }
     };
     let id = term::open();
+    if let Some(command) = cyber_user::args().nth(1) {
+        term::write(id, command);
+        term::write(id, "\n");
+    }
     // SAFETY: one thread; the only reference to PIXELS.
     let mut c = Canvas::new(W, H, unsafe { &mut *core::ptr::addr_of_mut!(PIXELS) });
     let mut s = Screen { lines: [[0; 4 * COLS]; ROWS], lens: [0; ROWS], chars: [0; ROWS], cur: 0 };

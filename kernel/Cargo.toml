@@ -56,6 +56,8 @@ test-claude = ["qemu-test"]
 test-claude-app = ["qemu-test"]
 # P6-06: Claude's tools in the chat window, with the confirmation boxes.
 test-claude-tools = ["qemu-test"]
+# P6-08: /bin/actualizeaza against an imitation of GitHub (API + file storage) on the host, writing the test disk.
+test-update = ["qemu-test"]
 # P4-01: the harness moves the mouse and clicks; the kernel must receive both events.
 test-mouse = ["qemu-test"]
 # P4-04: two windows; the harness types keys and drags the top one by its title bar with the mouse.

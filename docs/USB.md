@@ -34,6 +34,8 @@ ultimele 5. Depozitul e privat, deci trebuie să fii logat pe GitHub.
    - `boot/initrd.tar`
    - `boot/limine/limine.conf`
    - `boot/limine/limine-uefi-cd.bin`
+   - `cyber.rw` (din Release, în rădăcina stick-ului, lângă dosarele `EFI` și `boot`) — îi dă voie sistemului să scrie pe
+     stick; fără el, comanda de actualizare (secțiunea 7) refuză. Stick-urile scrise cu varianta A îl au deja.
 3. Gata: stick-ul pornește ca la varianta A, iar ce mai ai pe el rămâne neatins.
 
 ## 4. Pornește calculatorul de pe stick (ThinkPad)
@@ -55,11 +57,24 @@ ultimele 5. Depozitul e privat, deci trebuie să fii logat pe GitHub.
 
 Notez totul în `docs/HARDWARE.md` și repar ce nu merge.
 
+## 7. Actualizarea din Cyber Universe (P6-08, fără Windows)
+Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet (cablu de rețea):
+1. O singură dată, în Windows: pune pe stick, în rădăcină, fișierul **`github.token`** — un singur rând, un token GitHub
+   cu drept de **citire** pe depozitul `cyber-universe` (depozitul e privat). Pe GitHub: poza ta → *Settings* →
+   *Developer settings* → *Personal access tokens* → *Fine-grained tokens* → *Generate new token*; la *Repository access*
+   alegi doar `cyber-universe`, la *Permissions* → *Contents*: **Read-only**. Tokenul nu apare niciodată pe ecran.
+   Verifică și că pe stick e `cyber.rw` (secțiunea 3).
+2. În Cyber Universe: **Start → settings → Actualizeaza** (sau, în terminal, `run actualizeaza`).
+3. Aștepți mesajul **„gata - stick-ul are acum os-…”**, apoi repornești calculatorul. Dacă scrie „nimic schimbat pe
+   stick”, stick-ul a rămas exact cum era (pornește ca înainte) — trimite-mi o poză cu mesajul.
+
 ## Pentru Claude (tehnic)
 - Varianta B merge pentru că firmware-ul UEFI caută `EFI/BOOT/BOOTX64.EFI` pe orice partiție FAT32, iar Limine își citește
   `boot/limine/limine.conf` și fișierele de pe aceeași partiție (`limine-uefi-cd.bin` nu e necesar la pornirea de pe stick,
   dar e copiat ca să fie lista identică cu cea testată).
 - Imaginea: `tools/build.sh --usb` → `build/cyber-universe-usb.img` (GPT, o partiție de sistem EFI FAT32 de 62 MiB cu
-  `EFI/BOOT/BOOTX64.EFI` (Limine), `boot/limine/limine.conf`, `boot/kernel`, `boot/initrd.tar`).
+  `EFI/BOOT/BOOTX64.EFI` (Limine), `boot/limine/limine.conf`, `boot/kernel`, `boot/initrd.tar`, `cyber.rw`).
+- Actualizarea: `/bin/actualizeaza` (vezi `user/README.md`); fișierele noi se scriu ca `.nou`, se citesc înapoi, apoi
+  se pun în locul celor vechi prin redenumire (apelul de sistem `rename`, doar FAT32) și `sync` (SYNCHRONIZE CACHE).
 - Test automat: scenariul `usb` — QEMU pornește de pe imagine atașată ca stick USB (XHCI + usb-storage) și nucleul
   verifică faptul că a fost încărcat de pe disc, nu de pe CD.

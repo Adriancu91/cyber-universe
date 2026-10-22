@@ -23,6 +23,11 @@ pub trait BlockDevice: Send + Sync {
     fn write(&self, _lba: u64, _buf: &[u8]) -> Result<(), BlockError> {
         Err(BlockError::ReadOnly)
     }
+    /// Makes sure everything written so far is on the medium, not only in the device's cache (USB sticks keep
+    /// writes in memory for a while). Devices without a cache keep this default.
+    fn flush(&self) -> Result<(), BlockError> {
+        Ok(())
+    }
 }
 
 /// A disk image in memory (for now: a file loaded by Limine), read only.
@@ -84,5 +89,9 @@ impl BlockDevice for Partition {
             return Err(BlockError::OutOfRange);
         }
         self.dev.write(self.start + lba, buf)
+    }
+
+    fn flush(&self) -> Result<(), BlockError> {
+        self.dev.flush()
     }
 }

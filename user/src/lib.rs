@@ -31,6 +31,8 @@ pub const SYS_TERM_OPEN: u64 = 22;
 pub const SYS_TERM_READ: u64 = 23;
 pub const SYS_TERM_WRITE: u64 = 24;
 pub const SYS_RANDOM: u64 = 32;
+pub const SYS_RENAME: u64 = 33;
+pub const SYS_SYNC: u64 = 34;
 
 /// A shell running for this program (see kernel/src/term.rs).
 pub mod term {
@@ -218,6 +220,16 @@ pub fn remove(path: &str) -> i64 {
     syscall3(SYS_REMOVE, path.as_ptr() as u64, path.len() as u64, 0)
 }
 
+/// Gives the file `from` the name `to` (same disk; `to` must not exist).
+pub fn rename(from: &str, to: &str) -> i64 {
+    syscall4(SYS_RENAME, from.as_ptr() as u64, from.len() as u64, to.as_ptr() as u64, to.len() as u64)
+}
+
+/// Writes out what the disk holding `path` still keeps in its cache.
+pub fn sync(path: &str) -> i64 {
+    syscall3(SYS_SYNC, path.as_ptr() as u64, path.len() as u64, 0)
+}
+
 /// Date and time from the computer's clock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DateTime {
@@ -322,7 +334,9 @@ pub struct Console;
 
 impl core::fmt::Write for Console {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        if write(1, s.as_bytes()) < 0 { Err(core::fmt::Error) } else { Ok(()) }
+        // An empty piece (e.g. an empty "{}") is not written: the kernel refuses an empty buffer, and the error would
+        // stop the rest of the line.
+        if !s.is_empty() && write(1, s.as_bytes()) < 0 { Err(core::fmt::Error) } else { Ok(()) }
     }
 }
 

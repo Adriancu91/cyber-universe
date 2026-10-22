@@ -51,6 +51,15 @@ pub trait FileSystem: Send + Sync {
     fn create(&self, path: &[&str], kind: Kind) -> Result<(), FsError>;
     fn list(&self, path: &[&str]) -> Result<Vec<(String, Kind)>, FsError>;
     fn remove(&self, path: &[&str]) -> Result<(), FsError>;
+    /// Gives the file `from` the name `to` (both in this file system; `to` must not exist). File systems that
+    /// cannot rename keep this default.
+    fn rename(&self, _from: &[&str], _to: &[&str]) -> Result<(), FsError> {
+        Err(FsError::ReadOnly)
+    }
+    /// Writes out everything the disk under the file system still holds in its cache.
+    fn flush(&self) -> Result<(), FsError> {
+        Ok(())
+    }
 }
 
 /// Splits an absolute path into components, resolving `.` and `..`.
@@ -83,6 +92,27 @@ pub fn mount(at: &str, fs: Box<dyn FileSystem>) -> Result<(), FsError> {
     let at: Vec<String> = components(at)?.into_iter().map(String::from).collect();
     MOUNTS.lock().push(Mount { at, fs });
     Ok(())
+}
+
+/// Runs `f` with the file system that holds both `a` and `b` and the two paths inside it; `InvalidPath` if they are
+/// on different file systems.
+pub fn with_fs2<R>(a: &str, b: &str, f: impl FnOnce(&dyn FileSystem, &[&str], &[&str]) -> Result<R, FsError>) -> Result<R, FsError> {
+    let (pa, pb) = (components(a)?, components(b)?);
+    let mounts = MOUNTS.lock();
+    let best = |parts: &[&str]| {
+        mounts
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.at.len() <= parts.len() && m.at.iter().zip(parts).all(|(x, y)| x == y))
+            .max_by_key(|(_, m)| m.at.len())
+            .map(|(i, _)| i)
+    };
+    let (ia, ib) = (best(&pa).ok_or(FsError::NotFound)?, best(&pb).ok_or(FsError::NotFound)?);
+    if ia != ib {
+        return Err(FsError::InvalidPath);
+    }
+    let m = &mounts[ia];
+    f(m.fs.as_ref(), &pa[m.at.len()..], &pb[m.at.len()..])
 }
 
 /// Runs `f` with the file system that holds `path` (longest matching mount point) and the path inside it.

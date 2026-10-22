@@ -37,6 +37,9 @@ pub struct Fat32 {
     writable: bool,
     /// Where to start looking for a free cluster.
     next_free: AtomicU32,
+    /// The FAT sector read last (its number and bytes): walking a chain reads 128 entries per sector, so a
+    /// multi-megabyte file is walked with one disk read per 128 clusters instead of one per cluster.
+    fat_cache: crate::sched::Mutex<(u64, [u8; SECTOR])>,
 }
 
 #[derive(Clone)]
@@ -125,6 +128,7 @@ impl Fat32 {
             fsinfo,
             writable: false,
             next_free: AtomicU32::new(hint),
+            fat_cache: crate::sched::Mutex::new((u64::MAX, [0; SECTOR])),
         };
         fat.writable = fat.lookup(&[WRITE_MARKER]).is_ok_and(|e| !e.is_dir);
         Ok(fat)
@@ -151,9 +155,14 @@ impl Fat32 {
     /// The cluster after `cluster` in its chain, or `None` at the end (or on a damaged chain).
     fn next(&self, cluster: u32) -> Option<u32> {
         let offset = cluster as u64 * 4;
-        let mut sector = [0u8; SECTOR];
-        self.dev.read(self.fat_start + offset / SECTOR as u64, &mut sector).ok()?;
-        let v = u32_at(&sector, (offset % SECTOR as u64) as usize) & 0x0FFF_FFFF;
+        let lba = self.fat_start + offset / SECTOR as u64;
+        let mut cache = self.fat_cache.lock();
+        if cache.0 != lba {
+            cache.0 = u64::MAX; // stays invalid if the read fails
+            self.dev.read(lba, &mut cache.1).ok()?;
+            cache.0 = lba;
+        }
+        let v = u32_at(&cache.1, (offset % SECTOR as u64) as usize) & 0x0FFF_FFFF;
         (v < END_OF_CHAIN && self.valid(v)).then_some(v)
     }
 
@@ -421,6 +430,11 @@ impl Fat32 {
             let at = (offset % SECTOR as u64) as usize;
             let old = u32_at(&sector, at);
             sector[at..at + 4].copy_from_slice(&((old & 0xF000_0000) | (value & 0x0FFF_FFFF)).to_le_bytes());
+            let mut cache = self.fat_cache.lock();
+            if cache.0 == lba {
+                cache.0 = u64::MAX; // written below; read again next time
+            }
+            drop(cache);
             self.dev.write(lba, &sector).map_err(io)?;
         }
         Ok(())
@@ -716,5 +730,33 @@ impl FileSystem for Fat32 {
             self.free_chain(e.cluster)?;
         }
         Ok(())
+    }
+
+    /// Files only. The new entry is written before the old one is marked free: if the write stops in between, the
+    /// file has two names (fsck fixes that) but is never lost.
+    fn rename(&self, from: &[&str], to: &[&str]) -> Result<(), FsError> {
+        self.check_writable()?;
+        if from.is_empty() || to.is_empty() {
+            return Err(FsError::InvalidPath);
+        }
+        let e = self.lookup(from)?;
+        if e.is_dir {
+            return Err(FsError::IsADirectory);
+        }
+        let (dir, name) = self.parent_and_name(to)?;
+        if self.read_dir(dir.cluster)?.iter().any(|d| d.name.eq_ignore_ascii_case(name)) {
+            return Err(FsError::AlreadyExists);
+        }
+        self.add_entry(&dir, name, ATTR_ARCHIVE, e.cluster)?;
+        let new = self.lookup(to)?;
+        self.update_entry(&new, e.cluster, e.size)?;
+        for &(c, off) in &e.slots {
+            self.write_slot(c, off, &[0xE5])?;
+        }
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), FsError> {
+        self.dev.flush().map_err(io)
     }
 }

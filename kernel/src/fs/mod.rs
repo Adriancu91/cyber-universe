@@ -143,3 +143,13 @@ pub fn list(path: &str) -> Result<Vec<(String, Kind)>, FsError> {
 pub fn remove(path: &str) -> Result<(), FsError> {
     vfs::with_fs(path, |fs, p| fs.remove(p))
 }
+
+/// Renames a file (both paths on the same file system; used by /bin/actualizeaza, P6-08).
+pub fn rename(from: &str, to: &str) -> Result<(), FsError> {
+    vfs::with_fs2(from, to, |fs, a, b| fs.rename(a, b))
+}
+
+/// Writes out the cache of the disk that holds `path`.
+pub fn flush(path: &str) -> Result<(), FsError> {
+    vfs::with_fs(path, |fs, _| fs.flush())
+}

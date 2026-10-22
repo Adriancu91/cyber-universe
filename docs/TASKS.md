@@ -177,7 +177,8 @@ Reparații după testul 2 pe Lenovo (comanda C-4, înaintea restului fazei):
   Test: scenariul `claude-tools` (Nu respectat, Da executat, scriere în /etc refuzată; discul verificat pe gazdă).
 - [x] **P6-07** CI publică un GitHub Release cu fișierele stick-ului și sumele SHA-256. Dep: —.
   Test: jobul `release` din CI pe `main`; `GH_TOKEN=… tools/check-release.sh` (depozitul e privat → descărcarea cere token).
-- [~] **P6-08** Comanda „Actualizează”: descarcă ultimul Release prin HTTPS, verifică sumele, rescrie stick-ul. Dep: P6-02, P6-07.
+- [x] **P6-08** Comanda „Actualizează”: descarcă ultimul Release prin HTTPS, verifică sumele, rescrie stick-ul. Dep: P6-02, P6-07.
+  Test: scenariul `update` (imitație GitHub: fără token, sumă greșită, actualizare întreruptă reparată, actualizare, „la zi”) + `tools/after-update.sh`.
 - [ ] **P6-09** Trimitere pe GitHub din OS (API `contents`, token din `/usb/github.token`). Dep: P6-02, P6-03.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 

@@ -10,9 +10,11 @@ rm -rf "$OUT" && mkdir -p "$OUT"
 cp "$SRC/EFI/BOOT/BOOTX64.EFI" "$SRC/boot/kernel" "$SRC/boot/initrd.tar" "$SRC/boot/limine/limine.conf" \
    "$SRC/boot/limine/limine-uefi-cd.bin" "$OUT/"
 cp "$ROOT/build/cyber-universe-usb.img" "$OUT/"
+# The write marker (P6-08): copied to the stick's root (variant B), it lets /bin/actualizeaza update the stick.
+printf 'Cyber Universe: sistemul poate scrie pe acest stick (comanda actualizeaza).\n' > "$OUT/cyber.rw"
 {
     echo "commit $(git -C "$ROOT" rev-parse HEAD)"
     echo "data $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } > "$OUT/VERSIUNE"
-( cd "$OUT" && sha256sum BOOTX64.EFI kernel initrd.tar limine.conf limine-uefi-cd.bin cyber-universe-usb.img VERSIUNE > SHA256SUMS )
+( cd "$OUT" && sha256sum BOOTX64.EFI kernel initrd.tar limine.conf limine-uefi-cd.bin cyber.rw cyber-universe-usb.img VERSIUNE > SHA256SUMS )
 echo "[release] $(ls "$OUT" | wc -l) fisiere in build/release/"

@@ -139,5 +139,8 @@ if (( USB )) || [[ ",$EXTRA_FEATURES," == *",test-usb,"* ]]; then
         | PATH="$PATH:/usr/sbin:/sbin" sfdisk -q "$USB_IMG"
     PATH="$PATH:/usr/sbin:/sbin" mkfs.fat -F 32 -s 1 -n CYBERUNIV --offset 2048 "$USB_IMG" $((62 * 1024)) >/dev/null 2>&1
     MTOOLS_SKIP_CHECK=1 mcopy -s -i "$USB_IMG@@1M" "$ISO_ROOT/EFI" "$ISO_ROOT/boot" ::/
+    # The marker that lets the OS write on its own stick (kernel/src/fs/fat32.rs), needed by /bin/actualizeaza (P6-08).
+    printf 'Cyber Universe: sistemul poate scrie pe acest stick (comanda actualizeaza).\n' > "$BUILD/cyber.rw.stick"
+    MTOOLS_SKIP_CHECK=1 mcopy -o -i "$USB_IMG@@1M" "$BUILD/cyber.rw.stick" ::/cyber.rw
     echo "[build] Gata: build/$(basename "$USB_IMG") (de scris pe stick, vezi docs/USB.md)"
 fi

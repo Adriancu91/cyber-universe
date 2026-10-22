@@ -93,7 +93,7 @@ P3-10 așteaptă testul 3; P5-07/P5-08 după suită.
   `user/src/claude_tools.rs` (incluse cu `#[path]`, ca biblioteca `cyber_user` să rămână fără heap).
 - **Imitația API-ului Claude:** `tools/claude-test-server.py` (port 18444, cheia `sk-test-cyber`); scenariile `claude-cli`,
   `claude-app`, `claude-tools`. Nu rula două `tools/test.sh` deodată: serverele de test folosesc porturi fixe.
-- Meniul Start are 14 programe; `test_desktop` caută `demo` după nume (nu mai depinde de poziție).
+- Meniul Start are 15 programe; `test_desktop` caută `demo` după nume (nu mai depinde de poziție).
 - Fiecare sesiune cloud nouă: rulează întâi `tools/env-check.sh --install` (acum instalează și dosfstools, mtools, fdisk).
 - **Cyber Hub:** se clonează direct `https://github.com/Adriancu91/Cyber-hub` (fără add_repo); merge din sesiunile programate.
 - Nu edita `tools/test.sh` cât rulează un test în fundal (bash citește scriptul pe bucăți).

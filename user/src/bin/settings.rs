@@ -24,6 +24,8 @@ const MINUS: (usize, usize, usize, usize, &str) = (260, 36, 40, 26, "-");
 const PLUS: (usize, usize, usize, usize, &str) = (310, 36, 40, 26, "+");
 const LAYOUT: (usize, usize, usize, usize, &str) = (260, 76, 100, 26, "schimba");
 const SAVE: (usize, usize, usize, usize, &str) = (20, 150, 120, 28, "Salveaza");
+/// Opens a terminal that runs /bin/actualizeaza (P6-08), so its messages are visible.
+const UPDATE: (usize, usize, usize, usize, &str) = (160, 150, 160, 28, "Actualizeaza");
 
 static mut PIXELS: [u32; W * H] = [0; W * H];
 
@@ -75,7 +77,7 @@ impl Settings {
         let mut layout = Line::new();
         layout.push("Tastatura: ").push(if self.ro { "romana" } else { "engleza (SUA)" });
         c.text(20, 82, layout.as_str(), TEXT, 2);
-        for b in [MINUS, PLUS, LAYOUT, SAVE] {
+        for b in [MINUS, PLUS, LAYOUT, SAVE, UPDATE] {
             c.fill(b.0, b.1, b.2, b.3, BUTTON);
             c.text(b.0 + (b.2 - b.4.len() * 12) / 2, b.1 + 4, b.4, WHITE, 2);
         }
@@ -111,6 +113,8 @@ fn main() -> i64 {
                     s.ro = !s.ro;
                 } else if inside(SAVE, x, y) {
                     s.save();
+                } else if inside(UPDATE, x, y) {
+                    cyber_user::spawn_with("/bin/terminal", "run actualizeaza");
                 }
             }
             _ => {}

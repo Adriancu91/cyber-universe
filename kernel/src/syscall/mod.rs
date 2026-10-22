@@ -37,6 +37,8 @@ pub const SYS_UDP_RECV: u64 = 29;
 pub const SYS_NET_INFO: u64 = 30;
 pub const SYS_PING: u64 = 31;
 pub const SYS_RANDOM: u64 = 32;
+pub const SYS_RENAME: u64 = 33;
+pub const SYS_SYNC: u64 = 34;
 
 mod net;
 mod ui;
@@ -107,6 +109,8 @@ fn call(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64, a5: u64) -> i64 {
         }
         SYS_CREATE => create(a1, a2, _a3),
         SYS_REMOVE => remove(a1, a2),
+        SYS_RENAME => rename(a1, a2, _a3, a4),
+        SYS_SYNC => sync(a1, a2),
         SYS_MODULE => module(a1, a2, _a3, a4, a5),
         SYS_TERM_OPEN => crate::term::open(sched::current_id()) as i64,
         SYS_TERM_READ => term_read(a1, a2, _a3),
@@ -406,6 +410,23 @@ fn create(ptr: u64, len: u64, kind: u64) -> i64 {
         _ => return E_INVALID,
     };
     crate::fs::create(&path, kind).map_or_else(fs_error, |()| 0)
+}
+
+/// rename(from, length, to, length): a file gets a new name on the same disk (P6-08).
+fn rename(p1: u64, l1: u64, p2: u64, l2: u64) -> i64 {
+    let (from, to) = match (user_path(p1, l1), user_path(p2, l2)) {
+        (Ok(a), Ok(b)) => (a, b),
+        (Err(e), _) | (_, Err(e)) => return e,
+    };
+    crate::fs::rename(&from, &to).map_or_else(fs_error, |()| 0)
+}
+
+/// sync(path, length): what the disk holding `path` still keeps in its cache is written out (P6-08).
+fn sync(ptr: u64, len: u64) -> i64 {
+    match user_path(ptr, len) {
+        Ok(path) => crate::fs::flush(&path).map_or_else(fs_error, |()| 0),
+        Err(e) => e,
+    }
 }
 
 /// remove(path, length): deletes a file or an empty folder.

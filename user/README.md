@@ -62,3 +62,16 @@
 - **Biblioteca** are și `text::Line` (text fără heap), `mem_info`, `programs`, `kill`, `create`, `remove`, `spawn`, `spawn_with` (program + un argument), `wait`, `settings` (citirea setărilor), `list`, `time`, `screen_size`, și `open`, `read`, `close`, `stat`, `args()` (argumentele programului) și `error_text`.
 - **Cum se testează:** scenariul `log` (`hello din ELF`, `test: ELF OK`).
 - **Depinde de:** apelurile de sistem ale nucleului (`kernel/src/syscall/README.md`).
+- `actualizeaza [--forteaza]` (P6-08) — actualizează sistemul de pe stick: întreabă GitHub de ultimul Release (`os-<număr>`,
+  P6-07; API `releases/latest`, apoi fiecare fișier cu `Accept: application/octet-stream`, urmând redirecționarea către
+  stocarea GitHub — tokenul se trimite doar API-ului), verifică fiecare fișier cu `SHA256SUMS`, îl scrie ca `<nume>.nou`
+  și îl citește înapoi; abia când toate sunt bune: vechiul devine `.vechi`, noul îi ia numele, vechiul se șterge, apoi
+  golirea memoriei stick-ului (apelul `sync`). Dacă ceva pică înainte, stick-ul rămâne neatins; o actualizare oprită la
+  mijloc e reparată la pornirea următoare a comenzii (`.vechi` → numele lui). Dacă `VERSIUNE` de pe stick e aceeași:
+  „nimic de făcut” (`--forteaza` rescrie oricum). Tokenul GitHub: un rând în `/usb/github.token` (depozitul e privat;
+  drept de citire ajunge) — nu se afișează. Stick-ul trebuie marcat pentru scriere (`cyber.rw` în rădăcină).
+  `/etc/update.conf` (opțional): `repo`, `host`, `port`, `address`, `token`, `dir`. Din Setări: butonul „Actualizeaza”
+  deschide un terminal care rulează comanda (`terminal <comandă>` scrie comanda în shell la pornire).
+  Test: scenariul `update`, față de o imitație a GitHub (`tools/update-test-server.py`: API + stocare, ca la un depozit
+  privat), fără token, cu o sumă greșită, cu o actualizare întreruptă de reparat, apoi actualizarea și „la zi”;
+  `tools/after-update.sh` compară discul cu fișierele versiunii.

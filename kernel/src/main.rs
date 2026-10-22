@@ -249,6 +249,8 @@ fn run_tests() -> ! {
     test_claude_app();
     #[cfg(feature = "test-claude-tools")]
     test_claude_tools();
+    #[cfg(feature = "test-update")]
+    test_update();
     #[cfg(feature = "test-usb")]
     assert!(boot::medium() == boot::Medium::Disk, "test: pornit de pe {:?}, nu de pe stick", boot::medium());
     #[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
@@ -1219,7 +1221,7 @@ fn test_https() {
 
 /// Adds the test root (tls/tests/data, its private key is public) to /etc/certs, under the name the programs look
 /// for (its subject id). Only test builds do this.
-#[cfg(any(feature = "test-https", feature = "test-claude", feature = "test-claude-app", feature = "test-claude-tools"))]
+#[cfg(any(feature = "test-https", feature = "test-claude", feature = "test-claude-app", feature = "test-claude-tools", feature = "test-update"))]
 fn add_test_root() {
     let root: &[u8] = include_bytes!("../../tls/tests/data/root.der");
     let subject = cyber_crypto::x509::Cert::parse(root).expect("test: radacina de test").subject;
@@ -1329,6 +1331,46 @@ fn test_claude_tools() {
     assert!(written == b"scris de Claude\n", "test: claude.txt are alt continut");
     assert!(fs::read_all("/etc/rau.txt").is_err(), "test: /etc/rau.txt a fost scris");
     info!("test: uneltele lui Claude OK (Nu respectat, Da executat, /etc refuzat)");
+}
+
+/// The update command (P6-08) against the imitation of GitHub (tools/update-test-server.py): without a token (the
+/// private repository answers 404), with a release whose kernel does not match its sum (nothing may change; before it
+/// an interrupted earlier update is imitated, which must be repaired), then the real update and once more (already up
+/// to date). tools/after-update.sh then compares the disk with the release files.
+#[cfg(feature = "test-update")]
+fn test_update() {
+    assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
+    add_test_root();
+    let conf = b"host = test.cyber.local\nport = 18445\naddress = 10.0.2.2\ntoken = /etc/update-test.token\ndir = /disk\n";
+    let _ = fs::create("/etc/update.conf", fs::Kind::File);
+    fs::write("/etc/update.conf", 0, conf).expect("test: /etc/update.conf");
+    let old_kernel = fs::read_all("/disk/boot/kernel").expect("test: /disk/boot/kernel");
+    let run = |token: Option<&[u8]>, what: &str| {
+        let _ = fs::remove("/etc/update-test.token");
+        if let Some(t) = token {
+            fs::create("/etc/update-test.token", fs::Kind::File).expect("test: tokenul");
+            fs::write("/etc/update-test.token", 0, t).expect("test: tokenul");
+        }
+        let start = arch::x86_64::apic::ticks();
+        let id = proc::spawn_path("/bin/actualizeaza", &["actualizeaza"]).expect("test: /bin/actualizeaza");
+        let code = proc::wait_child(id);
+        let ms = (arch::x86_64::apic::ticks() - start) * 1000 / arch::x86_64::apic::HZ;
+        info!("test: actualizeaza ({}) a iesit cu codul {} in {} ms", what, code, ms);
+        code
+    };
+    assert!(run(None, "fara token") == 1, "test: fara token trebuia sa pice");
+    // An update that stopped between "old -> .vechi" and ".nou -> name".
+    fs::rename("/disk/boot/initrd.tar", "/disk/boot/initrd.tar.vechi").expect("test: redenumire");
+    assert!(run(Some(b"tok-stricat\n"), "suma gresita") == 1, "test: suma gresita trebuia sa pice");
+    assert!(fs::read_all("/disk/boot/kernel").ok() == Some(old_kernel.clone()), "test: nucleul vechi a fost atins");
+    assert!(fs::read_all("/disk/boot/initrd.tar").is_ok_and(|d| d == b"initrd vechi\n"), "test: initrd.tar nu a fost refacut");
+    for f in ["/disk/boot/kernel.nou", "/disk/EFI/BOOT/BOOTX64.EFI.nou", "/disk/boot/initrd.tar.vechi"] {
+        assert!(fs::kind(f).is_err(), "test: {} a ramas pe disc", f);
+    }
+    assert!(run(Some(b"tok-bun\n"), "actualizare") == 0, "test: actualizarea a esuat");
+    assert!(run(Some(b"tok-bun"), "a doua oara") == 0, "test: a doua rulare a esuat");
+    assert!(fs::read_all("/disk/boot/kernel").is_ok_and(|k| k != old_kernel && k.len() == 1_300_007), "test: nucleul nu e cel nou");
+    info!("test: actualizarea OK (fara token refuzat, suma gresita fara schimbari, copie veche refacuta, la zi a doua oara)");
 }
 
 /// HTTPS with real web sites (P6-02): /bin/fetch resolves the name, connects through QEMU's network to the

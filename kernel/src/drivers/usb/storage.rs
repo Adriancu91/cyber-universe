@@ -170,4 +170,11 @@ impl BlockDevice for UsbDisk {
         }
         Ok(())
     }
+
+    /// SYNCHRONIZE CACHE(10) for the whole stick (SBC-3): writes held in the stick's memory go to its flash.
+    fn flush(&self) -> Result<(), BlockError> {
+        let mut bot = self.bot.lock();
+        let cmd = [0x35, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        super::with_controller(|x| bot.scsi(x, &cmd, 0, false)).ok_or(BlockError::OutOfRange)?
+    }
 }
