@@ -53,6 +53,8 @@ fn send_frames_through_the_ring() {
         sent.push(f);
     }
     assert_eq!(c.sent, sent.len() as u64);
+    let pages = (RX_RING / 2) as u64; // each receive buffer page is synced once at start-up
+    assert_eq!(c.hw().syncs, pages + sent.len() as u64, "every frame written to memory before the card reads it");
     let wire = &c.hw().wire;
     assert_eq!(wire.len(), sent.len());
     for (w, f) in wire.iter().zip(&sent) {

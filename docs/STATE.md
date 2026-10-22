@@ -19,7 +19,8 @@
   Completarea 14:45 bănuia buffere alocate separat cu adresa `baza + i × 2048`; în codul nostru fiecare adresă vine din pagina ei
   (`p.phys`, `p.phys + 2048`), deci nu e cazul — `log rx` o arată oricum la testul 5 („(DIFERITE)” dacă n-ar fi așa).
 - **Sesiune paralelă:** o altă sesiune a făcut tot P6-10c pornind de la commit-ul meu „în lucru” și a pus varianta ei pe
-  **`wip/P6-10c-b`** (nefolosită; din ea s-a luat doar rândul ARP). Poate fi ștearsă de Adrian oricând.
+  **`wip/P6-10c-b`** (nefolosită; din ea s-au luat ideile: rândul ARP și golirea cache-ului și pentru cadrele TRIMISE — dacă placa
+  citea cu No Snoop, cererile DHCP puteau pleca cu octeți vechi). Ramura poate fi ștearsă de Adrian oricând.
 - **Build:** OK, fără avertismente. **Teste:** `tools/test.sh` → 48 trecute + `https-real` sărit local (`https` a picat o dată la
   verificarea temporizatorului — „79 intreruperi”, calculator încărcat, problemă cunoscută; rulat singur trece);
   `cd rtl8168 && cargo test --release` → 23. Verificat că testul nou pică dacă se scoate golirea cache-ului.

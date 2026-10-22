@@ -377,6 +377,9 @@ impl<H: Hw> Rtl8168<H> {
             core::ptr::write_bytes(buf.ptr, 0, MIN_FRAME);
             core::ptr::copy_nonoverlapping(frame.as_ptr(), buf.ptr, frame.len());
         }
+        // The frame goes from the CPU cache to memory before the card reads it (a card reading with "No Snoop" would
+        // otherwise send stale bytes: possibly why the router never answered our DHCP requests).
+        self.hw.dma_sync(buf.phys, buf.ptr, len);
         write_desc(self.tx_ring, i, desc::OWN | eor(i, TX_RING) | desc::FS | desc::LS | len as u32, buf.phys);
         self.tx_next = (i + 1) % TX_RING;
         self.hw.write8(reg::TPPOLL, POLL_NORMAL);
