@@ -3,6 +3,30 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-22 13:28–14:30 UTC (16:28–17:30 ora României), în cloud, fără Adrian — P6-10d (C-8)
+- **Pornire:** clonele vechi din `/home/claude` aveau alt istoric (fără bază comună cu GitHub) → mutate deoparte (`*.vechi`), clonat curat.
+- **Hub:** comanda nouă **C-8** (testul 5: regresie 0 trimise / 0 primite; No Snoop era deja oprit; completări 16:45 studiu, 16:50 RCR,
+  16:55 regula „o schimbare pe Release”) → preluată; **P6-10d** în TASKS cu plan. Regula scrisă ca **D-013** în DECISIONS.md.
+- **Terminată: P6-10d.**
+  - **Revenire:** pornirea implicită e iar exact cea din os-125: nu se mai scrie Device Control (P6-10c ștersese Relaxed Ordering:
+    2010 → 2000), nicio golire de cache. Configurarea PCI: Command doar bit cu bit (Memory, Bus Master), PMCSR doar câmpul de stare,
+    fiecare scriere în jurnal; `log rtl` arată Command, Bus Master, Device Control (doar citit).
+  - **RCR 0002c70a (os-125) vs 0000c70a (os-136):** driverul scrie aceeași valoare (`0000e70a`) în ambele versiuni și nu atinge bitul 17
+    → diferența vine din starea plăcii la pornire, nu din cod. Bănuială: testul 5 a pornit „la rece” direct de pe stick (BIOS setat),
+    testele anterioare poate după Windows → poarta RXDV (MISC bit 19, 8168G+) lăsată închisă de firmware oprește orice transfer.
+  - **Variante, alese din shell, câte una:** `rtl porneste [bloc] [rxdv] [cache]` repornește placa: `bloc` = buffere RX într-un bloc
+    contiguu sub 4 GB; `rxdv` = deschide poarta RXDV dacă e închisă (citire → bit 19 → scriere, în jurnal); `cache` = golirea de la P6-10c.
+  - **Diagnostic:** `log rtl` (registre + MISC/MCU, RDSAR/TNPDS pe 64 de biți, primele 3 buffere, RAM, PCI); `log rx` (adresa din descriptor
+    pe 64 de biți, adresa virtuală citită și fizica ei din tabelele de pagini, primii 16 octeți); `net` (Bus Master, MISC, varianta).
+  - **Studiu clean-room:** FreeBSD `re(4)` (r261531, BSD): la 8168G șterge bitul 19 din MISC (0xF0) la pornire și folosește EarlyOff v2
+    (RCR bit 11). Bitul 11 = candidat pentru o versiune următoare. SerenityOS/Haiku nu au fost citite în această sesiune.
+  - **QEMU:** scenariul nou `net-high` (`-m 6G`, alocările forțate peste 4 GB): e1000e cu inele la 0x1_0010_9000 face DHCP + ping;
+    blocul „sub 4 GB” chiar e sub 4 GB. `shell` verifică `rtl porneste`. `alloc_contiguous_below` nou în alocatorul de cadre.
+- **Teste:** `cd rtl8168 && cargo test --release` → 27 (poarta RXDV reproduce exact 0/0 de la testul 5); `tools/test.sh` → 49 trecute +
+  `https-real` sărit local; `tcp`, `mouse`, `appwindow` au picat o dată în rularea completă (calculator încărcat) și trec rulate singure.
+- **Următorul pas:** testul 6 pe laptop (lista în hub, `stare/cyber-universe.md`). Apoi varianta confirmată devine implicită (o schimbare).
+- **Avertisment:** dacă testul 6 arată „Bus Master NU” sau MISC fără bitul 19 și tot 0/0, cauza e alta (inițializarea 8168G/H: OOB/MCU) → sarcină nouă.
+
 ### Sesiunea programată 2026-10-22 11:40–13:00 UTC (14:40–16:00 ora României), în cloud, fără Adrian — paralelă, fără lucru nou pe `main`
 - A pornit în timp ce sesiunea de la 11:25 lucra deja la P6-10c (marcat `[~]` la 11:30) și a făcut aceeași sarcină în paralel
   (ramura `wip/P6-10c-b`). Sesiunea de la 11:25 a pus-o pe `main` prima; din varianta de aici a preluat rândul `log arp` și
