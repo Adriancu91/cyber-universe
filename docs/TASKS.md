@@ -181,6 +181,12 @@ Reparații după testul 2 pe Lenovo (comanda C-4, înaintea restului fazei):
   Test: scenariul `update` (imitație GitHub: fără token, sumă greșită, actualizare întreruptă reparată, actualizare, „la zi”) + `tools/after-update.sh`.
 - [x] **P6-09** Trimitere pe GitHub din OS (API `contents`, token din `/usb/github.token`). Dep: P6-02, P6-03.
   Test: scenariul `ghpush` (imitația API-ului contents) + unealta `github_push` în `claude-tools`; `cd json && cargo test --release` (base64).
+Reparații după testul 3 pe Lenovo (comanda C-5, înaintea lui P6-10):
+- [~] **P6-10a** Recepția Realtek după inel plin: inel RX de 256, re-pornirea recepției după RDU, re-sincronizare, `net` cu inelul și primele cadre. Dep: P6-01b.
+  Test: `cd rtl8168 && cargo test --release` (modelul imită blocarea după RDU). Pe laptop: testul 4.
+- [ ] **P6-10b** Configurarea stick-ului pe xHCI real: `log usb` pas cu pas cu codurile TRB, verificările din plan. Dep: P6-01c.
+  Test: scenariile USB din `tools/test.sh` (+ `log usb`). Pe laptop: testul 4.
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
