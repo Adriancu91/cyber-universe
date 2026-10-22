@@ -3,6 +3,16 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-22 11:40–13:00 UTC (14:40–16:00 ora României), în cloud, fără Adrian — paralelă, fără lucru nou pe `main`
+- A pornit în timp ce sesiunea de la 11:25 lucra deja la P6-10c (marcat `[~]` la 11:30) și a făcut aceeași sarcină în paralel
+  (ramura `wip/P6-10c-b`). Sesiunea de la 11:25 a pus-o pe `main` prima; din varianta de aici a preluat rândul `log arp` și
+  golirea cache-ului pentru cadrele trimise (`c1a03d5`). Testele locale pe varianta de aici: 48 trecute + 1 sărit, `rtl8168` 23.
+- Greșeală de proces: un `push -f` pe propria ramură `wip/P6-10c-b` (la 2 minute după creare); commit-ul inițial `629019f` a fost
+  pus înapoi în istoric printr-un merge (`d0e648b`), nimic pierdut. Pe `wip/P6-10c-b`, `0aa9c75` are autorul „Claude” în loc de Adriancu91.
+- Coada: nicio sarcină liberă (P6-10 așteaptă testul 5 pe laptop; C-7 rămâne `nou` până merge rețeaua pe laptop). `wip/P6-10c-b` poate fi ștearsă.
+- **Avertisment:** două sesiuni pornesc uneori la câteva minute distanță. La pornire, dacă ultimul commit e un „în lucru” de mai puțin
+  de ~2 ore și nu există STATE pentru el, sesiunea nouă nu reia aceeași sarcină: verifică hub-ul/CI și se oprește sau ia altă sarcină independentă.
+
 ### Sesiunea programată 2026-10-22 11:25–12:30 UTC (14:25–15:30 ora României), în cloud, fără Adrian
 - **Hub:** comanda nouă **C-6** (testul 4: stick-ul merge, primirea nu se mai blochează, dar cadrele 2+ au tipul 0000 → DHCP 0)
   → preluată; **P6-10c** adăugată în TASKS cu plan.
