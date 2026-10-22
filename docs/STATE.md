@@ -24,6 +24,8 @@
 - **Build:** OK, fără avertismente. **Teste:** `tools/test.sh` → 48 trecute + `https-real` sărit local (`https` a picat o dată la
   verificarea temporizatorului — „79 intreruperi”, calculator încărcat, problemă cunoscută; rulat singur trece);
   `cd rtl8168 && cargo test --release` → 23. Verificat că testul nou pică dacă se scoate golirea cache-ului.
+- **CI verde** pe `3a64f7d` (os-128), `bb383c5` (os-131), `c1a03d5` (**Release `os-134`** = versiunea pentru testul 5).
+- **C-7** (bucla de test automată) rămâne `nou` în hub: comanda spune explicit că se preia abia când rețeaua merge pe laptop.
 - **Pe laptop:** urmează **testul 5** (lista în hub, `stare/cyber-universe.md`). Cum se citește: „reparate de golirea cache-ului”
   > 0 → cauza era cache-ul; `(DIFERITE)` în `log rx` → adrese; zerouri și după golire → placa scrie altundeva (revizia H).
 
