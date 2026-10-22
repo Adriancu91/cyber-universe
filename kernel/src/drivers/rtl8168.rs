@@ -173,7 +173,17 @@ fn variant_text(o: Options) -> alloc::string::String {
             parts.push(name);
         }
     }
-    if parts.is_empty() { alloc::string::String::from("implicita (ca os-125)") } else { parts.join(" ") }
+    if !o.cache {
+        parts.push("faracache");
+    }
+    let text = if parts.is_empty() { alloc::string::String::from("-") } else { parts.join(" ") };
+    if o == boot_options() {
+        alloc::format!("implicita ({})", text)
+    } else if o == Options::default() {
+        alloc::format!("ca os-125 ({})", text)
+    } else {
+        text
+    }
 }
 
 /// The lines `log rtl` shows after start-up: the card's registers (read back), the PCI side and where the memory is,
@@ -231,9 +241,16 @@ fn link_text(phy: u8) -> alloc::string::String {
     alloc::format!("da, {} Mbit/s, {}", speed, if phy & 1 != 0 { "full duplex" } else { "half duplex" })
 }
 
-/// Finds a Realtek RTL8168 and starts it the default way (exactly as Release os-125).
+/// The start-up used at boot and as the base of `rtl porneste`: os-125 plus dropping the CPU cache for every
+/// received and sent frame (`cache`). Confirmed on the laptop (test 6 G–L, 2026-10-22: all frames read correctly,
+/// DHCP, ping, DNS and HTTPS with `rtl porneste cache`). `faracache` goes back to exactly os-125.
+pub fn boot_options() -> Options {
+    Options { cache: true, ..Options::default() }
+}
+
+/// Finds a Realtek RTL8168 and starts it the default way (`boot_options`).
 pub fn init() -> Option<Card> {
-    init_with(Options::default())
+    init_with(boot_options())
 }
 
 /// Finds a Realtek RTL8168 and starts it with the given start-up choices (`rtl porneste ...` in the shell).
@@ -286,15 +303,17 @@ fn chip_name(rev: u32) -> &'static str {
     }
 }
 
-/// Parses the words after `rtl porneste`: `bloc`, `rxdv`, `cache`, the cold-start steps `mcu`, `phy`, `cplus`,
-/// `ordine`, and `rece` = all cold-start steps (any order). `Err(word)` for an unknown word.
+/// Parses the words after `rtl porneste`, starting from `boot_options`: `bloc`, `rxdv`, `cache`, `faracache`, the
+/// cold-start steps `mcu`, `phy`, `cplus`, `ordine`, and `rece` = all cold-start steps (any order). `Err(word)` for an
+/// unknown word.
 pub fn parse_options<'a>(words: &[&'a str]) -> Result<Options, &'a str> {
-    let mut o = Options::default();
+    let mut o = boot_options();
     for &w in words {
         match w {
             "bloc" => o.rx_block = true,
             "rxdv" => o.rxdv = true,
             "cache" => o.cache = true,
+            "faracache" => o.cache = false,
             "mcu" => o.mcu = true,
             "phy" => o.phy = true,
             "cplus" => o.cplus = true,

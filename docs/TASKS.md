@@ -198,7 +198,7 @@ Reparații după testul 5 pe Lenovo (comanda C-8, înaintea lui P6-10):
 Reparații după testul 6 pe Lenovo (comanda C-9, înaintea lui P6-10):
 - [x] **P6-10e** Realtek: inițializarea completă la pornirea „la rece” (variante `rtl porneste rece|mcu|phy|cplus|ordine`, fiecare pas în `log rtl`). Dep: P6-10d.
   Test: `cd rtl8168 && cargo test --release` (32 de teste: mod „rece” al modelului, pașii în ordine, așteptări cu limită); `tools/test.sh` (50 de scenarii; `shell` verifică `rtl porneste rece`). Pe laptop: testul 7 (R).
-- [~] **P6-10f** Realtek: cadrele 2+ citite ca zero — golirea cache-ului devine implicită (RX și TX), confirmată pe laptop la testul 6 G–L; plus alias `fetch` și mesajul lui `host` (C-9, completările 18:20 și 18:30). Dep: P6-10d.
+- [x] **P6-10f** Realtek: cadrele 2+ citite ca zero — golirea cache-ului devine implicită (RX și TX), confirmată pe laptop la testul 6 G–L; plus alias `fetch` și mesajul lui `host` (C-9, completările 18:20 și 18:30). Dep: P6-10d.
   Test: `cd rtl8168 && cargo test --release`; `tools/test.sh`. Pe laptop: testul 7 (rece, fără `rtl porneste cache`).
 
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.

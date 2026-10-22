@@ -47,6 +47,7 @@ pub fn run() {
             "ls" => ls(args.first().copied().unwrap_or("/")),
             "cat" => cat(args),
             "run" => run_program(args),
+            "fetch" => run_program(&words), // same as `run fetch ...` (test 6 L: typed without `run`)
             "desktop" => run_program(&["desktop"]),
             "mod" => module(args),
             "tastatura" => layout(args),
@@ -109,6 +110,7 @@ fn help() {
     out!("  mod list|install <pachet.cum>|start|stop|remove <nume>  module\n");
     out!("  ping <adresa>    trimite 4 ping-uri (ICMP); merge si cu un nume\n");
     out!("  host <nume>      afla adresa IPv4 a unui nume (DNS)\n");
+    out!("  fetch <url>      descarca o pagina (HTTP/HTTPS), la fel ca `run fetch <url>`\n");
     out!("  http <nume> [port] [cale]  cere o pagina web (HTTP prin TCP), arata inceputul\n");
     out!("  tastatura [ro|us]  aranjamentul tastaturii (romana standard sau engleza SUA)\n");
     out!("  mem              memoria libera si cea folosita\n");
@@ -207,7 +209,7 @@ fn host(args: &[&str]) {
     };
     match crate::net::dns::resolve(name) {
         Ok((ip, cache)) => {
-            out!("{} are adresa {}.{}.{}.{}{}\n", name, ip[0], ip[1], ip[2], ip[3], if cache { " (din memorie)" } else { "" })
+            out!("{} = {}.{}.{}.{}{}\n", name, ip[0], ip[1], ip[2], ip[3], if cache { " (din memorie)" } else { "" })
         }
         Err(e) => out!("host: {}: {}\n", name, e.message()),
     }
@@ -354,14 +356,16 @@ fn net() {
     }
 }
 
-/// `rtl porneste [bloc] [rxdv] [cache] [rece|mcu|phy|cplus|ordine]`: resets and restarts the Realtek card with the given start-up choices, so
+/// `rtl porneste [bloc] [rxdv] [cache|faracache] [rece|mcu|phy|cplus|ordine]`: resets and restarts the Realtek card with the given start-up choices, so
 /// several variants can be tried on the laptop from one boot, one change at a time (`log rtl` shows each start).
 fn rtl(args: &[&str]) {
     let Some((&"porneste", words)) = args.split_first() else {
         out!("folosire: rtl porneste [variante]\n");
         out!("  bloc   bufferele de primire intr-un singur bloc sub 4 GB\n");
         out!("  rxdv   deschide poarta RXDV (MISC bit 19), daca e inchisa\n");
-        out!("  cache  goleste cache-ul pentru fiecare pachet primit/trimis\n");
+        out!("  (fara variante = ca la pornire: os-125 + golirea cache-ului)\n");
+        out!("  cache     goleste cache-ul pentru fiecare pachet primit/trimis (implicit)\n");
+        out!("  faracache fara golirea cache-ului (exact ca os-125)\n");
         out!("  rece   pornirea completa la rece = mcu phy cplus ordine rxdv (pasii in `log rtl`)\n");
         out!("  mcu    preia placa de la firmware (MCU, OCP E8DE) inainte de resetare\n");
         out!("  phy    trezeste PHY-ul (PMCH bit 7, PHY 1F=0, 0E=0)\n");
@@ -372,7 +376,7 @@ fn rtl(args: &[&str]) {
     let options = match crate::drivers::rtl8168::parse_options(words) {
         Ok(o) => o,
         Err(w) => {
-            out!("rtl: varianta necunoscuta: {} (bloc, rxdv, cache, rece, mcu, phy, cplus, ordine)\n", w);
+            out!("rtl: varianta necunoscuta: {} (bloc, rxdv, cache, faracache, rece, mcu, phy, cplus, ordine)\n", w);
             return;
         }
     };

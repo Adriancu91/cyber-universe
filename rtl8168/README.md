@@ -64,5 +64,9 @@
   înaintea oricărui alt registru, oprește poarta RXDV, scrie TCR/RCR (cu EarlyOff v2) și abia apoi pornește RX/TX; la atașare trezește
   PHY-ul (registrele 1F și 0E). SerenityOS (`Kernel/Net/Realtek/RTL8168NetworkAdapter.cpp`, BSD-2): la 8168G+ face preluarea de la
   MCU (pașii `mcu`) înainte de reset; pentru GU are restul neimplementat. Linux `r8169` (GPL) nu a fost folosit.
+- **După testul 6 G–L (22 oct, P6-10f, comanda C-9):** pe laptop, la cald, `rtl porneste cache` a citit corect toate cadrele, iar
+  cu cablul la router au mers DHCP, ping, DNS și HTTPS. De aceea **golirea cache-ului e acum implicită** (la primire și la trimitere,
+  doar pe bufferele de date): pornirea = os-125 + `cache` (`boot_options()` în nucleu). `rtl porneste faracache` = exact os-125,
+  pentru comparație; `net` arată „varianta: implicita (cache)”.
 - **Limite cunoscute:** nu setăm registrele PHY speciale pe care unele revizii le cer; dacă legătura nu se ridică pe un
   calculator, jurnalul arată revizia cipului (`revizia ...`) → sarcină nouă pentru acea revizie.
