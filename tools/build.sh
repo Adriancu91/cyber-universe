@@ -116,6 +116,12 @@ FLOPPY="$BUILD/floppy.img"
 rm -f "$FLOPPY" && truncate -s 40M "$FLOPPY"
 PATH="$PATH:/usr/sbin:/sbin" mkfs.fat -F 32 -s 1 -n CYBERSTICK "$FLOPPY" >/dev/null 2>&1
 MTOOLS_SKIP_CHECK=1 mcopy -s -i "$FLOPPY" "$DISK_ROOT"/* ::/
+# A "Release stick" for usb-pick: the same files + cyber.rw + VERSIUNE (the OS must pick it among several disks).
+PICK="$BUILD/stick-pick.img"
+cp "$FLOPPY" "$PICK"
+echo "scriere permisa" > "$BUILD/cyber.rw.pick" && echo "test usb-pick" > "$BUILD/VERSIUNE.pick"
+MTOOLS_SKIP_CHECK=1 mcopy -o -i "$PICK" "$BUILD/cyber.rw.pick" ::/cyber.rw
+MTOOLS_SKIP_CHECK=1 mcopy -o -i "$PICK" "$BUILD/VERSIUNE.pick" ::/VERSIUNE
 if [[ ",$EXTRA_FEATURES," == *",test-disk,"* ]]; then
     cp "$DISK" "$ISO_ROOT/boot/disk.img"
     echo "    module_path: boot():/boot/disk.img" >> "$ISO_ROOT/boot/limine/limine.conf"

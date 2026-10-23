@@ -75,7 +75,7 @@ pub fn with_controller<R>(f: impl FnOnce(&mut xhci::Xhci) -> R) -> Option<R> {
     CONTROLLER.lock().as_mut().map(f)
 }
 
-/// The first USB stick found at start-up (each one is handed out once).
-pub fn take_disk() -> Option<storage::UsbDisk> {
-    DISKS.lock().pop()
+/// The USB sticks found at start-up, in the order they were found (handed out once).
+pub fn take_disks() -> Vec<storage::UsbDisk> {
+    core::mem::take(&mut *DISKS.lock())
 }

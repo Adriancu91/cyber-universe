@@ -132,8 +132,9 @@ extern "C" fn kernel_main() -> ! {
     }
     drivers::nic::init_global();
     net::init();
-    if let Some(stick) = drivers::usb::take_disk() {
-        fs::mount_disk(alloc::boxed::Box::new(stick), "/usb");
+    let sticks = drivers::usb::take_disks();
+    if !sticks.is_empty() {
+        fs::mount_best(sticks.into_iter().map(|s| alloc::boxed::Box::new(s) as alloc::boxed::Box<dyn block::BlockDevice>).collect(), "/usb");
     }
     apply_settings();
     // Every Limine response has been read (memory map, HHDM, framebuffer, RSDP, modules): its memory can be reused.

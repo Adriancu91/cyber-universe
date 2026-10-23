@@ -17,3 +17,9 @@
   jurnalul arată tastatura (0627:0001, HID) și stick-ul (46f4:0001, Mass Storage); `usb-kbd` — QEMU tastează pe tastatura
   USB și nucleul primește tastele; `usb-disk` — discul de test ca stick USB → `/usb` citit corect; `shell` (`lsusb` fără dispozitive).
 - **Surse:** USB Mass Storage Bulk-Only Transport 1.0, SCSI Primary/Block Commands (descrieri publice); USB HID 1.11 (anexa B) și HID Usage Tables; eXtensible Host Controller Interface for USB (xHCI) 1.2 (Intel, publică); USB 2.0 Specification, cap. 9. Cod propriu.
+
+## Hubs and the boot stick (P6-14, P6-15)
+- `xhci::explore_hub`: hub descriptor, Configure Endpoint with the Hub bit, SET_HUB_DEPTH (SuperSpeed), port power, reset,
+  then Address Device with Route String / TT (USB 2.0 ch. 11, USB 3.2 ch. 10, xHCI 1.2 §4.6.6, §8.9). Test: `usb-hub`.
+- `storage`: "Medium Not Present" (sense 2/3A) five times in a row = card reader without a card, skipped.
+  `fs::mount_best` mounts at `/usb` the stick with `cyber.rw` and `VERSIUNE`. Test: `usb-pick`.

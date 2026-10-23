@@ -84,3 +84,9 @@ Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet 
   se pun în locul celor vechi prin redenumire (apelul de sistem `rename`, doar FAT32) și `sync` (SYNCHRONIZE CACHE).
 - Test automat: scenariul `usb` — QEMU pornește de pe imagine atașată ca stick USB (XHCI + usb-storage) și nucleul
   verifică faptul că a fost încărcat de pe disc, nu de pe CD.
+
+## 7. Hub-uri și alegerea stick-ului (P6-14, P6-15 — 2026-10-23)
+- Dispozitivele din spatele unui hub (inclusiv hub-urile interne ale calculatorului) sunt găsite acum: în `lsusb` apar ca
+  `port 26.3` = portul 3 al hub-ului de pe portul 26. `log usb` arată fiecare hub („hub 26: …, N porturi”) și fiecare port conectat.
+- `/usb` = stick-ul de pe care a pornit OS-ul: dintre toate stick-urile, cel care are `cyber.rw` și `VERSIUNE` (orice stick
+  scris din Release le are). Cititoarele de carduri fără card („fara mediu”) sunt sărite.

@@ -62,19 +62,52 @@ pub fn failure(at: &str) -> Option<String> {
 
 /// Finds the FAT partition of `dev` and mounts it at `at` (writable only if it has `fat32::WRITE_MARKER`).
 pub fn mount_disk(dev: Box<dyn crate::block::BlockDevice>, at: &str) -> bool {
+    match open_fat(dev, at) {
+        Some((fat, p)) => mount_fat(fat, p, at),
+        None => false,
+    }
+}
+
+/// The FAT file system of `dev` (failures are logged and noted for `at`).
+fn open_fat(dev: Box<dyn crate::block::BlockDevice>, at: &str) -> Option<(fat32::Fat32, part::Found)> {
     let Some(p) = part::find_fat(dev.as_ref()) else {
         crate::warn!("fs: disc fara partitie FAT ({})", at);
         note_failure(at, "nicio partitie FAT (nici GPT, nici MBR, nici fara tabela)");
-        return false;
+        return None;
     };
-    let fat = match fat32::Fat32::new(Box::new(crate::block::Partition::new(dev, p.start, p.sectors))) {
-        Ok(f) => f,
+    match fat32::Fat32::new(Box::new(crate::block::Partition::new(dev, p.start, p.sectors))) {
+        Ok(f) => Some((f, p)),
         Err(msg) => {
             crate::warn!("fs: partitia {} de la sectorul {}: {}", p.table, p.start, msg);
             note_failure(at, &alloc::format!("partitia {} de la sectorul {}: {}", p.table, p.start, msg));
-            return false;
+            None
         }
-    };
+    }
+}
+
+/// Mounts at `at` the disk the OS started from, out of `disks` (P6-15, the workstation has a card reader and
+/// several sticks): the first one with both `cyber.rw` and `VERSIUNE` in its root (what a Release stick has),
+/// otherwise the first one with a FAT file system.
+pub fn mount_best(disks: Vec<Box<dyn crate::block::BlockDevice>>, at: &str) -> bool {
+    let total = disks.len();
+    let mut opened: Vec<(fat32::Fat32, part::Found)> = disks.into_iter().filter_map(|d| open_fat(d, at)).collect();
+    if opened.is_empty() {
+        return false;
+    }
+    use vfs::FileSystem as _;
+    let has = |f: &fat32::Fat32, name: &str| f.kind(&[name]).is_ok();
+    let pick = opened.iter().position(|(f, _)| has(f, fat32::WRITE_MARKER) && has(f, "VERSIUNE"));
+    if total > 1 {
+        match pick {
+            Some(i) => crate::info!("fs: {}: aleg discul {} din {} (are cyber.rw si VERSIUNE)", at, i + 1, total),
+            None => crate::info!("fs: {}: niciun disc cu cyber.rw si VERSIUNE, aleg primul din {}", at, total),
+        }
+    }
+    let (fat, p) = opened.swap_remove(pick.unwrap_or(0));
+    mount_fat(fat, p, at)
+}
+
+fn mount_fat(fat: fat32::Fat32, p: part::Found, at: &str) -> bool {
     let rw = if fat.writable() { " (scriere permisa)" } else { "" };
     let ok = create_dirs(at).is_ok() && vfs::mount(at, Box::new(fat)).is_ok();
     if ok {

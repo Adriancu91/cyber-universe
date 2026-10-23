@@ -180,6 +180,7 @@ impl UsbDisk {
         // retried for up to ~3 s.
         let mut capacity = None;
         let mut last = alloc::string::String::new();
+        let mut no_medium = 0; // consecutive "Medium Not Present" answers (sense 2/3A, SPC): a card reader without a card
         for attempt in 0..30 {
             let ready = bot.scsi(x, &[0x00, 0, 0, 0, 0, 0], 0, false).is_ok(); // TEST UNIT READY
             if ready && bot.scsi(x, &[0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0], 8, false).is_ok() {
@@ -189,6 +190,11 @@ impl UsbDisk {
             let step = if ready { "READ CAPACITY" } else { "TEST UNIT READY" };
             let csw = bot.last_csw;
             let sense = bot.request_sense(x);
+            no_medium = if sense.is_some_and(|k| k[0] == 2 && k[1] == 0x3A) { no_medium + 1 } else { 0 };
+            if no_medium == 5 {
+                crate::info!("usb: port {}: {} fara mediu (sense 2/3a, de ex. cititor de carduri gol): sar peste", port, name);
+                return None;
+            }
             last = alloc::format!("{}: {}", step, Bot::why(csw, sense));
             if attempt < 3 || attempt % 10 == 9 {
                 crate::warn!("usb: port {}: incercarea {}, {}", port, attempt + 1, last);
