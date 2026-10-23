@@ -23,10 +23,10 @@ pub fn init() {
     for d in devices.iter().filter(|d| d.class == (0x03, 0x01, 0x01) || d.class == (0x03, 0x01, 0x02)) {
         match hid::Keyboard::start(&mut x, d) {
             Some(k) => {
-                crate::info!("usb: {} de pe portul {} pornit(a)", d.kind(), d.port);
+                crate::info!("usb: {} de pe portul {} pornit(a)", d.kind(), d.location());
                 keyboards.push(k);
             }
-            None => crate::warn!("usb: {} de pe portul {} nu porneste", d.kind(), d.port),
+            None => crate::warn!("usb: {} de pe portul {} nu porneste", d.kind(), d.location()),
         }
     }
     let mut disks = Vec::new();
@@ -34,7 +34,7 @@ pub fn init() {
         match storage::UsbDisk::start(&mut x, d) {
             Some(disk) => disks.push(disk),
             None => {
-                crate::warn!("usb: stick-ul de pe portul {} nu porneste", d.port);
+                crate::warn!("usb: stick-ul de pe portul {} nu porneste", d.location());
                 if crate::fs::failure("/usb").is_none() {
                     crate::fs::note_failure("/usb", "stick-ul nu porneste (configurare USB; vezi log usb)");
                 }

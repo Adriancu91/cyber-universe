@@ -347,7 +347,7 @@ fn lsusb() {
         out!("(niciun dispozitiv USB)\n");
     }
     for d in devices {
-        out!("  port {}  {:04x}:{:04x}  {}\n", d.port, d.vendor, d.product, d.kind());
+        out!("  port {}  {:04x}:{:04x}  {}\n", d.location(), d.vendor, d.product, d.kind());
     }
 }
 

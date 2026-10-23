@@ -186,6 +186,15 @@ pub struct UsbDevice {
     pub endpoints: [Option<(u8, u8, u16, u8)>; 4],
     /// For each endpoint, bMaxBurst from its SuperSpeed companion descriptor (0 below SuperSpeed).
     pub bursts: [u8; 4],
+    /// Route String (xHCI 1.2 §8.9): one 4-bit hub port number per hub tier below the root port; 0 on a root port.
+    pub route: u32,
+    /// Number of hubs between the root port and the device (0 = on a root port).
+    pub tier: u8,
+    /// Transaction translator for a full/low-speed device behind a high-speed hub: (hub slot, hub port); (0, 0) = none.
+    pub tt: (u8, u8),
+    /// For a hub, after `explore_hub`: its number of ports and TT think time (slot context fields); 0 otherwise.
+    pub hub_ports: u8,
+    pub hub_ttt: u8,
 }
 
 /// Endpoint transfer types (USB attributes bits 0-1).
@@ -200,6 +209,15 @@ impl UsbDevice {
 }
 
 impl UsbDevice {
+    /// Where the device is: the root port, then the hub port on each tier ("26.3" = port 3 of the hub on root port 26).
+    pub fn location(&self) -> alloc::string::String {
+        let mut s = alloc::format!("{}", self.port);
+        for t in 0..self.tier {
+            s += &alloc::format!(".{}", self.route >> (4 * t as u32) & 0xF);
+        }
+        s
+    }
+
     pub fn kind(&self) -> &'static str {
         match self.class {
             (0x03, 0x01, 0x01) => "tastatura (HID)",
@@ -393,16 +411,19 @@ impl Xhci {
         unsafe {
             self.ctx(input, 0).add(1).write_volatile(add);
             let slot_ctx = self.ctx(input, 1);
-            slot_ctx.write_volatile(last << 27 | (dev.speed as u32) << 20);
-            slot_ctx.add(1).write_volatile((dev.port as u32) << 16);
+            // A hub also gets the Hub bit, its port count and (high speed) TT think time here (xHCI 1.2 §4.6.6, §6.2.2).
+            let hub = (dev.hub_ports != 0) as u32;
+            slot_ctx.write_volatile(last << 27 | hub << 26 | (dev.speed as u32) << 20 | dev.route);
+            slot_ctx.add(1).write_volatile((dev.hub_ports as u32) << 24 | (dev.port as u32) << 16);
+            slot_ctx.add(2).write_volatile((dev.hub_ttt as u32 * hub) << 16 | (dev.tt.1 as u32) << 8 | dev.tt.0 as u32);
         }
         let r = self.command([input as u32, (input >> 32) as u32, 0, TRB_CONFIGURE_ENDPOINT << 10 | (dev.slot as u32) << 24]);
         frame::free_frame(input);
         if let Err(code) = r {
-            crate::warn!("usb: port {}: Configure Endpoint a esuat (cod {}: {})", dev.port, code, cc_name(code));
+            crate::warn!("usb: port {}: Configure Endpoint a esuat (cod {}: {})", dev.location(), code, cc_name(code));
             return None;
         }
-        crate::info!("usb: port {}: Configure Endpoint ok ({} endpoint-uri)", dev.port, eps.len());
+        crate::info!("usb: port {}: Configure Endpoint ok ({} endpoint-uri)", dev.location(), eps.len());
         Some(out)
     }
 
@@ -451,9 +472,18 @@ impl Xhci {
             }
         }
         let speed = ((rd(reg) >> 10) & 0xF) as u8;
-        // Each step of the enumeration goes to the log (`log usb`) with the controller's completion code.
+        self.address(port, 0, 0, speed, (0, 0))
+    }
+
+    /// Gives an address to the device on root port `port` (directly, or behind hubs: `route`, `tier`, `tt`) and reads
+    /// its descriptors. Every step goes to the log (`log usb`) with the controller's completion code.
+    fn address(&mut self, port: u8, route: u32, tier: u8, speed: u8, tt: (u8, u8)) -> Option<UsbDevice> {
+        let mut at = alloc::format!("{}", port);
+        for t in 0..tier {
+            at += &alloc::format!(".{}", route >> (4 * t as u32) & 0xF);
+        }
         let fail = |step: &str, code: u32| -> Option<UsbDevice> {
-            crate::warn!("usb: port {}: {} a esuat (cod {}: {})", port, step, code, cc_name(code));
+            crate::warn!("usb: port {}: {} a esuat (cod {}: {})", at, step, code, cc_name(code));
             None
         };
         let slot = match self.command([0, 0, 0, TRB_ENABLE_SLOT << 10]) {
@@ -476,8 +506,9 @@ impl Xhci {
         unsafe {
             self.ctx(input, 0).add(1).write_volatile(0b11); // add slot context and endpoint 0
             let slot_ctx = self.ctx(input, 1);
-            slot_ctx.write_volatile(1 << 27 | (speed as u32) << 20); // one context entry, speed
+            slot_ctx.write_volatile(1 << 27 | (speed as u32) << 20 | route); // one context entry, speed, route
             slot_ctx.add(1).write_volatile((port as u32) << 16); // root hub port
+            slot_ctx.add(2).write_volatile((tt.1 as u32) << 8 | tt.0 as u32); // TT hub slot and port (behind a hub)
             let ep0 = self.ctx(input, 2);
             ep0.add(1).write_volatile(max_packet << 16 | 4 << 3 | 3 << 1); // control endpoint, 3 retries
             ep0.add(2).write_volatile(ring.base as u32 | 1); // dequeue pointer, cycle state 1
@@ -563,11 +594,127 @@ impl Xhci {
         frame::free_frame(input);
         crate::info!(
             "usb: port {}: slot {}, viteza {}, pachet maxim EP0 {}, configuratia {} ({} octeti), endpoint-uri {}",
-            port, slot, speed, if speed < 3 && mps0 != 0 { mps0 } else { max_packet }, config, total,
+            at, slot, speed, if speed < 3 && mps0 != 0 { mps0 } else { max_packet }, config, total,
             endpoints.iter().flatten().zip(bursts).map(|(e, b)| alloc::format!("{:02x}/{}/{}/b{}", e.0, e.1 & 3, e.2, b))
                 .collect::<Vec<_>>().join(" ")
         );
-        Some(UsbDevice { slot, port, speed, vendor, product, class, interface, config, endpoints, bursts })
+        Some(UsbDevice {
+            slot, port, speed, vendor, product, class, interface, config, endpoints, bursts,
+            route, tier, tt, hub_ports: 0, hub_ttt: 0,
+        })
+    }
+
+    /// Hub class request on endpoint 0 of `hub` without data (USB 2.0 §11.24.2, USB 3.2 §10.16.2).
+    fn hub_out(&mut self, hub: &UsbDevice, request: u8, value: u16, index: u16) -> Result<(), u32> {
+        // Recipient: the hub itself (index 0, e.g. SET_HUB_DEPTH) or one of its ports.
+        let kind = if index == 0 { 0x20 } else { 0x23 };
+        self.control_out(hub.slot, [kind, request, value as u8, (value >> 8) as u8, index as u8, (index >> 8) as u8, 0, 0])
+    }
+
+    /// GET_STATUS of hub port `p`: (wPortStatus, wPortChange).
+    fn hub_port_status(&mut self, hub: &UsbDevice, p: u8, buf: u64) -> Option<(u16, u16)> {
+        self.control_in(hub.slot, [0xA3, 0, 0, 0, p, 0, 4, 0], buf, 4).ok()?;
+        // SAFETY: the buffer frame belongs to the driver; 4 bytes were written.
+        let b = unsafe { core::slice::from_raw_parts(phys_to_virt(buf), 4) };
+        Some((u16::from_le_bytes([b[0], b[1]]), u16::from_le_bytes([b[2], b[3]])))
+    }
+
+    /// Turns `hub` into a hub for the controller and gives an address to every device on its ports (USB 2.0 chapter 11,
+    /// USB 3.2 chapter 10, xHCI 1.2 §4.6.6 and §8.9). Returns those devices; `hub` gets its port count.
+    fn explore_hub(&mut self, hub: &mut UsbDevice) -> Vec<UsbDevice> {
+        let mut out = Vec::new();
+        let at = hub.location();
+        let warn = |step: &str, code: u32| {
+            crate::warn!("usb: hub {}: {} a esuat (cod {}: {})", at, step, code, cc_name(code));
+        };
+        if hub.tier >= 5 {
+            crate::warn!("usb: hub {}: prea multe hub-uri unul dupa altul (maxim 5)", at);
+            return out;
+        }
+        let Some(buf) = dma_frame() else { return out };
+        if let Err(c) = self.control_out(hub.slot, [0, 9, hub.config, 0, 0, 0, 0, 0]) {
+            warn("SET_CONFIGURATION", c);
+            frame::free_frame(buf);
+            return out;
+        }
+        // Hub descriptor: type 0x2A for SuperSpeed hubs, 0x29 for USB 2 hubs.
+        let (kind, len) = if hub.speed >= 4 { (0x2Au8, 12u8) } else { (0x29, 71) };
+        if let Err(c) = self.control_in(hub.slot, [0xA0, 6, 0, kind, 0, 0, len, 0], buf, len as u16) {
+            warn("GET_DESCRIPTOR hub", c);
+            frame::free_frame(buf);
+            return out;
+        }
+        // SAFETY: as above; at least the fixed part (7 bytes) of the descriptor was requested.
+        let d = unsafe { core::slice::from_raw_parts(phys_to_virt(buf), 8) };
+        let ports = d[2].min(15);
+        let characteristics = u16::from_le_bytes([d[3], d[4]]);
+        let power_ms = (d[5] as u64 * 2).max(20);
+        hub.hub_ports = ports;
+        hub.hub_ttt = if hub.speed == 3 { (characteristics >> 5 & 3) as u8 } else { 0 };
+        // The controller learns it is a hub (Hub bit, ports, TT) through Configure Endpoint; the status-change
+        // endpoint is configured with it but not used (the ports are read once, here).
+        let eps: Vec<_> = hub.endpoint(INTERRUPT, true).into_iter().collect();
+        if self.configure_endpoints(hub, &eps).is_none() {
+            return out;
+        }
+        if hub.speed >= 4 {
+            if let Err(c) = self.hub_out(hub, 12, hub.tier as u16, 0) {
+                warn("SET_HUB_DEPTH", c); // SuperSpeed hubs need their tier for the route string
+            }
+        }
+        crate::info!(
+            "usb: hub {}: {:04x}:{:04x}, viteza {}, {} porturi, alimentare {} ms",
+            at, hub.vendor, hub.product, hub.speed, ports, power_ms
+        );
+        for p in 1..=ports {
+            if let Err(c) = self.hub_out(hub, 3, 8, p as u16) {
+                warn("SET_FEATURE PORT_POWER", c);
+            }
+        }
+        crate::sched::sleep_ms(power_ms + 100); // power good + connect debounce (USB 2.0 §7.1.7.3)
+        for p in 1..=ports {
+            let Some((status, _)) = self.hub_port_status(hub, p, buf) else {
+                crate::warn!("usb: hub {} port {}: GET_STATUS a esuat", at, p);
+                continue;
+            };
+            if status & 1 == 0 {
+                continue; // nothing connected
+            }
+            if let Err(c) = self.hub_out(hub, 3, 4, p as u16) {
+                warn("SET_FEATURE PORT_RESET", c);
+                continue;
+            }
+            // Wait for C_PORT_RESET (change bit 4) with the port enabled (status bit 1).
+            let done = wait_ms(500, || {
+                crate::sched::sleep_ms(10);
+                self.hub_port_status(hub, p, buf).filter(|&(s, c)| c & 1 << 4 != 0 && s & 2 != 0)
+            });
+            let _ = self.hub_out(hub, 1, 20, p as u16); // clear C_PORT_RESET
+            let _ = self.hub_out(hub, 1, 16, p as u16); // clear C_PORT_CONNECTION
+            let Some((status, _)) = done else {
+                crate::warn!("usb: hub {} port {}: resetul nu s-a terminat", at, p);
+                continue;
+            };
+            crate::sched::sleep_ms(10); // reset recovery (USB 2.0 §7.1.7.5)
+            // xHCI speed codes: 1 full, 2 low, 3 high, 4 SuperSpeed.
+            let speed = if hub.speed >= 4 {
+                4
+            } else if status & 1 << 9 != 0 {
+                2
+            } else if status & 1 << 10 != 0 {
+                3
+            } else {
+                1
+            };
+            let route = hub.route | (p as u32) << (4 * hub.tier as u32);
+            let tt = if hub.speed == 3 && speed < 3 { (hub.slot, p) } else { hub.tt };
+            crate::info!("usb: hub {} port {}: dispozitiv conectat, viteza {} (stare {:04x})", at, p, speed, status);
+            if let Some(d) = self.address(hub.port, route, hub.tier + 1, speed, tt) {
+                out.push(d);
+            }
+        }
+        frame::free_frame(buf);
+        out
     }
 }
 
@@ -676,6 +823,23 @@ pub fn init() -> Option<Xhci> {
             );
             x.devices.push(d);
         }
+    }
+    // Devices behind hubs (P6-14): each hub found, root or not, is explored once; its devices join the list.
+    let mut i = 0;
+    while i < x.devices.len() {
+        if x.devices[i].class.0 == 0x09 {
+            let mut hub = x.devices[i];
+            let found = x.explore_hub(&mut hub);
+            x.devices[i] = hub;
+            for d in found {
+                crate::info!(
+                    "usb: port {}: {:04x}:{:04x} {} (clasa {:02x}:{:02x}:{:02x}, viteza {})",
+                    d.location(), d.vendor, d.product, d.kind(), d.class.0, d.class.1, d.class.2, d.speed
+                );
+                x.devices.push(d);
+            }
+        }
+        i += 1;
     }
     crate::info!("usb: controler XHCI pornit, {} porturi, {} dispozitive", x.ports, x.devices.len());
     Some(x)
