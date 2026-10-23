@@ -3,6 +3,36 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-23 17:40–19:30 UTC (20:40–22:30 ora României), în cloud, fără Adrian — C-16: P6-19 (OS + Cyber-GPU)
+- **Hub:** comanda nouă **C-16** → preluată → **P6-19**. Clona veche a hub-ului avea alt istoric (50 de commit-uri, fără bază comună cu
+  GitHub) → lucrul făcut dintr-o clonă nouă (`/home/claude/hub2`); nimic șters, nimic forțat.
+- **Punctul de revenire (pasul 0):** tag-ul adnotat `stabil-2026-10-23` pe `9f67d7b` creat local, dar **urcarea tag-urilor e refuzată**
+  din sesiunea cloud (HTTP 403 de la proxy, politică — nu se reîncearcă). În locul lui: ramura **`revenire/stabil-2026-10-23`** pe exact
+  `9f67d7b` (urcată). Copie offline: `cyber-universe-stabil-2026-10-23.bundle` (trimisă lui Adrian în conversație).
+  **Cum se revine:** `git checkout revenire/stabil-2026-10-23` (sau `git checkout stabil-2026-10-23` după ce Adrian urcă tag-ul).
+  Stick-ul pentru starea asta: **Release `os-187`** (= `9f67d7b` + o reparație doar în codul de test) — de acum CI-ul **nu-l mai șterge**.
+  **ATENȚIE:** os-150 (internet pe laptop) și os-161 (pornire pe workstation) **nu mai există** — regula „ultimele 5 Release-uri” le-a șters
+  demult (decizia din hub spune greșit că rămân). Commit-urile lor există; se pot reconstrui la cerere.
+- **Integrarea (ramura `wip/integrare-gpu`):** dependențe git pe `cyber-gpu` fixate pe `rev = "41e44ba"` (licență MIT, fără dependențe
+  externe): nucleul — `gpu-core`, `gpu-pci`, `nvidia-ga104`, plus `gpu-sim` doar în build-ul de test (`test-gpu-sim`); programele —
+  `gpu-compute` (care trage și `gpu-memory`, `gpu-command`: dependențele lui, tot MIT/no_std).
+  - `gpu identifica`: fiecare placă trece prin `nvidia_ga104::probe` printr-un adaptor din `drivers/gpu.rs` care **refuză și numără orice
+    scriere** (configurație PCI și registre); BAR0 tot prin fereastra fără drept de scriere. `tools/after-gpu.sh` verifică sursa
+    (adaptoarele doar refuză; dimensionarea BAR doar în blocul de simulare) — testat și cu o scriere introdusă intenționat (pică, corect).
+  - `gpu identifica --sim` (doar build de test): modelul plăcii workstation-ului, BAR0 16 MiB / BAR1 256 MiB / BAR3 32 MiB, fiecare rând „SIMULARE”.
+  - `/bin/kronos-calcul`: bloc de tip Kronos (bf16) referință vs. pe n fire → identic bit cu bit; matmul 128³: kernels (toleranță 0) și
+    nucleu vectorial propriu în assembler (AVX2+FMA, toleranță 1e-5·(1+|ref|); AVX2/SSE2, toleranță 0), timpi pe 1 și n fire.
+    (Ținta `x86_64-unknown-none` refuză `#[target_feature]` cu SSE → assembler, ca la `vectori`.) Apel nou: `sysinfo` tip 2 = nucleele care rulează fire.
+  - Scenarii noi: `gpu-sim`, `kronos-calcul` (`-smp 4 -cpu max`), `kronos-calcul-1`; `gpu` extins; `log` (/bin) și `desktop` (20 de programe).
+- **Teste local:** `tools/test.sh` → 70 trecute + 3 picate la testul vechi al temporizatorului (50–86/s, mașina de 2 nuclee încărcată:
+  `crypto`, `keyboard`, `fpu-smp`), toate trecute la reluare; `https-real` sărit. Total: 74 de scenarii (3 noi).
+- **CI:** run 188 verde pe `wip/integrare-gpu` → unit în `main` (commit de unire, fără rescrierea istoriei); Release-ul iese din `main`
+  după CI (vezi hub-ul pentru numărul lui). `wip/integrare-gpu` rămâne pe GitHub ca istoric.
+- **Coada:** fără sarcini libere (P6-10, P6-12 p.2 așteaptă hardware; P3-10 cere Adrian; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian).
+- **Pentru sesiunea următoare:** verifică CI-ul pe `main` (unirea P6-19) și Release-ul; dacă Adrian a urcat tag-ul `stabil-2026-10-23`,
+  șterge din STATE mențiunea „ramura în loc de tag” (ramura rămâne). Meniul desktopului e **plin** (20 de programe = maximul):
+  următorul program nou cere mărirea `MAX_ITEMS` în `user/src/bin/desktop.rs`.
+
 ### Sesiunea programată 2026-10-23 16:09–17:05 UTC (19:09–20:05 ora României), în cloud, fără Adrian — C-15 gata: P6-18
 - **Hub:** comanda nouă **C-15** (repo-ul `cyber-universe` e **public** — verificat, `visibility: public`) → preluată → **P6-18**.
   Clona locală a hub-ului era iar „superficială” (shallow) și părea divergentă → `git fetch --unshallow`, apoi fast-forward; nimic pierdut.
