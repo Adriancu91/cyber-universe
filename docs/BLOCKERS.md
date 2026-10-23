@@ -15,7 +15,7 @@
 - **Nevoie de Adrian:** mai târziu, nu acum.
 
 ### B-004 · CI / Release · 2026-10-23
-- **Problema:** GitHub Actions nu mai pornește joburile din 2026-10-23 11:03 UTC (runs 178–181): „failure” în 2–4 s, fără log
+- **Problema:** GitHub Actions nu mai pornește joburile din 2026-10-23 11:03 UTC (runs 178–184, ultima verificare 15:17 UTC): „failure” în 2–4 s, fără log
   (descărcarea logului dă 404). Aceeași problemă e raportată în hub de Cyber-GPU (de la 13:46 ora României).
 - **Am încercat:** 1) verificat joburile: `build-and-test` se termină în 2 s, fără pași rulați; 2) log-ul jobului nu există;
   3) testele locale trec (68). Cauza probabilă: minutele gratuite GitHub Actions ale contului s-au terminat (repo-uri private).

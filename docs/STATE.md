@@ -3,6 +3,27 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-23 14:40–15:25 UTC (17:40–18:25 ora României), în cloud, fără Adrian — C-14 terminată: K6-04
+- **Hub:** nicio comandă nouă pentru `cyber-universe`; C-7 și C-11 rămân `nou` (doar după întoarcerea lui Adrian).
+  Clona locală a hub-ului avea istoria divergentă față de GitHub (50/50 commit-uri) → păstrată local ca ramura
+  `backup-local-main-20261023`, lucrul pornit din `origin/main` (nimic șters pe GitHub, nimic forțat).
+- **K6-04 (commit `70b32df`):** fire multiple într-un proces. Apeluri noi `37 thread_spawn(intrare, stivă, arg0, arg1)`,
+  `38 thread_join(id)`, `39 thread_exit(cod)`. Id-ul programului = firul principal. La ieșire, toate firele sunt oprite și
+  **așteptate** înainte să se elibereze memoria; `exit` sau o excepție într-un fir oprește tot programul cu acel cod;
+  `kill` pe program le oprește pe toate. `mem_unmap` e refuzat (`-23`) cât timp alte fire rulează → nu e nevoie de golirea
+  TLB pentru paginile programelor. Biblioteca: `cyber_user::thread` (spawn, spawn_with_stack, join, exit); heap-ul din
+  `user/` are acum încuietoare (firele pot aloca în același timp). `/bin/fire`: 4 fire adună 64 MiB comuni → suma exactă.
+  Scenarii noi `fire` (`-smp 4`) și `fire-1` (un nucleu). Meniul desktop: 19 programe.
+- **Teste local:** `tools/test.sh` → **68 trecute** + `https-real` sărit; `panic` și `memorie-smp` au picat o dată sub
+  încărcare (mașina are 2 nuclee, `memorie-smp` rulează cu `-smp 4`) și au trecut la reluare (`memorie-smp` de 6 ori la rând,
+  și în paralel cu `fire`). Total după reluare: 70 trecute.
+- **CI pe GitHub tot oprit** (B-004): runs 182–184 „failure” în 4–5 s, fără log. → fără Release pentru K6-02b, K6-03, K6-04
+  (ultimul Release: `os-177`). Primul push după ce CI revine face Release-ul cu toate trei.
+- **C-14 gata** (toți pașii 1–5). **Coada nu mai are sarcini libere:** P6-10 și P6-12 (pasul 2) așteaptă testul 8 / Adrian,
+  P3-10 are nevoie de Adrian, P5-07 BLOCAT (B-003), C-7 și C-11 doar după întoarcerea lui Adrian.
+- **Pentru sesiunea următoare:** verifică CI (`list_workflow_runs`). Dacă merge: un push mic → Release cu K6-02b..K6-04.
+  Dacă nu există comandă nouă și nici rezultat nou în `rezultate/`: oprire scurtă (nimic de lucrat), fără commit-uri doar cu STATE.md.
+
 ### Sesiunea programată 2026-10-23 11:40–13:15 UTC (14:40–16:15 ora României), în cloud, fără Adrian — C-14: K6-02b, K6-03
 - **K6-02b (commit `076dacd`):** planificatorul rulează fire pe **toate nucleele** pornite cu `cpu porneste` (pornirea obișnuită
   rămâne pe un nucleu = opțiunea „un singur nucleu” din plan). Date per nucleu prin `IA32_KERNEL_GS_BASE` (`percpu.rs`;
