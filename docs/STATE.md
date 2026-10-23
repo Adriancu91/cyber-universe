@@ -3,7 +3,31 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
-### Sesiunea programată 2026-10-23 07:05–08:35 UTC (10:05–11:35 ora României), în cloud, fără Adrian — C-13: P6-13, P6-14, P6-15
+### Sesiunea programată 2026-10-23 08:40–10:40 UTC (11:40–13:40 ora României), în cloud, fără Adrian — C-13 terminată, C-14: P6-16, K6-01, K6-02
+- **P6-17 (C-13 p.5b) → Release `os-172`:** `reboot` încearcă pe rând ACPI RESET_REG (citit din FADT la pornire), portul 0xCF9 (0x02, apoi
+  0x06), 8042 (0xFE), triple fault; câte un rând pe ecran și în jurnal; `reboot acpi|cf9|8042|triplu` = o singură metodă. Teste noi:
+  `reboot`, `reboot-cf9`, `reboot-8042`, `reboot-triplu` (QEMU `-no-reboot` iese la resetare; `qemutest.py --expect-exit reset`).
+  → **C-13 gata** în hub.
+- **C-14 preluată** (Adrian plecat câteva zile, doar QEMU/CI): P6-16, K6-01 … K6-04 în TASKS, cu planuri.
+- **P6-16 → Release `os-174`:** driverul Intel mutat în biblioteca `e1000e/` (ca `rtl8168/`: trăsătura `Hw`, model software, 12 teste pe
+  gazdă, pas nou în CI). Familia PCH (I217/I218/I219, inclusiv `8086:15e3` de pe workstation): semafor PHY (`EXTCNF_CTRL`), PHY la adresa 2,
+  ciclu LANPHYPC dacă PHY-ul nu răspunde, RX/TX oprite înainte de reset, așteptarea `LAN_INIT_DONE`; comun: bloc DMA păzit 16 MiB–4 GB,
+  golirea cache-ului la primire, pașii în jurnal (`log e1000`), `net` cu registrele. În QEMU (82574) PHY-ul se citește acum prin MDIC.
+  Pașii PCH sunt verificați doar pe model → workstation.
+- **CI:** runs 171 și 173 anulate la limita de 20 min (instalarea uneltelor a durat 18 min) → limita jobului 45 min (`983b5f1`, os-174 verde).
+- **K6-01 (run 175):** SSE/AVX pornite (CR0, CR4, XCR0 doar cu biții din CPUID), registrele vectoriale salvate per fir (XSAVE, sau FXSAVE
+  fără XSAVE) la fiecare comutare. Teste noi `fpu` (`-cpu max`: AVX + `/bin/vectori` cu AVX2) și `fpu-fx` (FXSAVE, SSE2); fără salvare
+  testul pică. Meniul desktop: până la 20 de programe (era 16; `vectori` a făcut 17).
+- **K6-02 partea 1 (run 176):** celelalte nuclee pornite cu INIT-SIPI-SIPI (trambulină proprie sub 1 MiB, păstrată de alocatorul de cadre la
+  pornire; tabele temporare; GDT/TSS/APIC/XCR0 per nucleu), apoi **parcate**; doar la cerere (`cpu porneste`), pornirea implicită neschimbată.
+  Teste noi `smp-start` (`-smp 4`) și `cpu` (shell, `-smp 2`). Partea 2 (planificator pe toate nucleele) = **K6-02b**, sarcină separată.
+- **Teste:** `tools/test.sh` → 62 trecute + `https-real` sărit. Testul vechi al temporizatorului (90–110 întreruperi/s) a picat de 2 ori
+  sub încărcare (80, 89; problemă cunoscută, vezi mai jos) și a trecut la reluare; cu `-smp 4 -cpu max` pică des pe mașina de 2 nuclee.
+- **Pentru sesiunea următoare:** verifică CI pe `c6a8e5a` (K6-01, run 175) și `e1a302f` (K6-02, run 176); apoi **K6-02b** (încuietori, date
+  per nucleu prin GS, planificator pe toate nucleele), apoi K6-03 (memorie mare), K6-04 opțional. C-7 și C-11 nu se pornesc până nu se
+  întoarce Adrian. Listele pentru hardware sunt în hub (`stare/cyber-universe.md`).
+
+### (anterioară) ### Sesiunea programată 2026-10-23 07:05–08:35 UTC (10:05–11:35 ora României), în cloud, fără Adrian — C-13: P6-13, P6-14, P6-15
 - **Hub:** comanda nouă **C-13** (prima pornire pe workstation, `rezultate/2026-10-23-workstation-os/`) → preluată; **P6-13 … P6-16** în TASKS,
   cu planuri. Câte un Release pentru fiecare schimbare (D-013), în ordinea cerută:
   - **P6-13 → Release `os-166`:** PCI caută pe **toate** magistralele-rădăcină din MCFG după parcurgerea punților (fără dubluri, ordine
