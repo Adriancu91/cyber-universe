@@ -17,6 +17,9 @@
 - **Observațiile Cyber-GPU** (copiate în hub) judecate: `docs/research/OBSERVATII-CYBER-GPU.md` (1 și 4 adevărate, 2 adevărată dar
   intenționată, 3 și 6 fără efect, 5 parțial falsă). Nicio schimbare de cod din ele acum; 1 rămâne P6-12.
 - **Teste:** `tools/test.sh` → **54 trecute** + `https-real` sărit (după P6-15). CI verde pe `b6312c0` (os-166) și `417e6ae` (os-167).
+- **CI roșu o dată** pe `80f7c7c` (P6-15): scenariul `desktop` — programul desktop a scris „desktop: ceas” după rândul nucleului
+  „TASTATURA: astept taste” (ordine întâmplătoare, veche, ca la `modules`). Reparat doar în test: rândul TASTATURA nu mai e cerut
+  în ordine (el doar declanșează mișcarea mouse-ului; meniul deschis arată că a apărut). Nu ține de P6-15.
 - **Coada:** P6-16 (I219-LM) „mai târziu, după 1–3” → după fereastra a doua pe workstation; P6-12 pasul 1 (diagnostic) liber; P6-10
   așteaptă testul 8; C-7 după testul 8 (R); C-11 după C-7.
 - **Pentru sesiunea următoare:** verifică CI pe commit-ul P6-15 și `rezultate/` (fereastra a doua pe workstation, testul 8).
