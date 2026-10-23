@@ -61,6 +61,7 @@ pub fn run() {
             "rtl" => rtl(args),
             "hw" => hw(),
             "gpu" => gpu(args),
+            "cpu" => cpu(args),
             "log" => show_log(args),
             "uptime" => uptime(),
             "reboot" => reboot(args),
@@ -123,6 +124,7 @@ fn help() {
     out!("  hw               raport hardware pe o pagina (pentru o singura poza)\n");
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
     out!("  uptime           de cat timp merge sistemul\n");
+    out!("  cpu [porneste]   nucleele procesorului (porneste = porneste-le pe celelalte, parcate)\n");
     out!("  reboot [acpi|cf9|8042|triplu]  reporneste (implicit: toate metodele, pe rand)\n");
     out!("  exit             inchide terminalul (doar in fereastra Terminal)\n");
 }
@@ -502,6 +504,20 @@ fn uptime() {
     match crate::time::uptime_ms() {
         Some(ms) => out!("pornit de {}.{:02} s\n", ms / 1000, (ms % 1000) / 10),
         None => out!("uptime: ceasul nu merge\n"),
+    }
+}
+
+/// `cpu`: how many processors the MADT lists and how many run; `cpu porneste` starts the others (K6-02, parked).
+fn cpu(args: &[&str]) {
+    let listed = crate::acpi::madt::get().cpu_count;
+    match args.first().copied() {
+        None => out!("procesor: {}; nuclee in MADT: {}; pornite: {}\n", cpu_name(), listed, crate::arch::x86_64::smp::online()),
+        Some("porneste") => {
+            out!("cpu: pornesc celelalte nuclee (detalii: log smp)...\n");
+            let n = crate::arch::x86_64::smp::start_all();
+            out!("cpu: {} nuclee pornite din {} (parcate: firele raman pe primul nucleu)\n", n, listed);
+        }
+        Some(other) => out!("cpu: necunoscut: {} (cpu, cpu porneste)\n", other),
     }
 }
 

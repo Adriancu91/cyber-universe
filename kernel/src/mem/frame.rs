@@ -47,6 +47,15 @@ impl Bitmap {
 }
 
 /// Builds the bitmap from the memory map. Must run after `map::init`.
+/// The page below 1 MiB kept at start-up for the processor trampoline (0 = none).
+static LOW_PAGE: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+/// Takes the page below 1 MiB kept at start-up (once).
+pub fn take_low_page() -> Option<u64> {
+    let p = LOW_PAGE.swap(0, Ordering::Relaxed);
+    (p != 0).then_some(p)
+}
+
 pub fn init() -> bool {
     let regions = map::regions();
     // Bootloader memory is RAM too: the bitmap covers it so it can be reclaimed later.
@@ -94,6 +103,13 @@ pub fn init() -> bool {
         if !b.is_used(0) {
             b.set(0, true); // never hand out physical address 0
             b.free -= 1;
+        }
+        // One page below 1 MiB for the trampoline of the other processors (K6-02): a start-up IPI can only point
+        // there, and every later allocation would otherwise take low memory first.
+        if let Some(f) = (1..0x100).find(|&f| f < b.frames && !b.is_used(f)) {
+            b.set(f, true);
+            b.free -= 1;
+            LOW_PAGE.store(f * PAGE_SIZE, Ordering::Relaxed);
         }
     });
 

@@ -95,6 +95,16 @@ pub fn init() {
     unsafe { asm!("lidt [{}]", in(reg) &ptr, options(readonly, nostack, preserves_flags)) }
 }
 
+/// Loads the (shared) IDT on an additional processor (K6-02).
+pub fn load_ap() {
+    let ptr = DescriptorPointer {
+        limit: (size_of::<[Entry; 256]>() - 1) as u16,
+        base: core::ptr::addr_of!(IDT) as u64,
+    };
+    // SAFETY: the IDT is a static filled by the boot CPU before any other processor starts.
+    unsafe { asm!("lidt [{}]", in(reg) &ptr, options(readonly, nostack, preserves_flags)) }
+}
+
 /// Installs (or replaces) the handler of one vector after the IDT is loaded (used by device drivers).
 pub fn set_handler(vector: u8, handler: u64) {
     // SAFETY: a single aligned 16-byte entry is replaced while interrupts for this vector are not yet enabled.

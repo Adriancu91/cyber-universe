@@ -98,6 +98,7 @@ extern "C" fn kernel_main() -> ! {
         error!("mem: nucleul nu poate gestiona memoria, opresc");
         panic!("initializarea memoriei a esuat");
     }
+    arch::x86_64::smp::reserve_trampoline(); // before low memory is handed out (K6-02)
     #[cfg(feature = "test-high-dma")]
     test_high_dma();
     sched::init();
@@ -321,6 +322,17 @@ fn run_tests() -> ! {
 
     #[cfg(feature = "test-fpu")]
     tests::fpu::run();
+
+    #[cfg(feature = "test-smp")]
+    {
+        let n = arch::x86_64::smp::start_all();
+        let cpus = acpi::madt::get().cpu_count as u32;
+        assert!(n == cpus, "smp: {} nuclee pornite din {}", n, cpus);
+        assert!(arch::x86_64::smp::start_all() == n, "smp: a doua pornire a schimbat ceva");
+        // the boot CPU goes on alone: the scheduler still works
+        sched::sleep_ms(50);
+        info!("test: smp: {} nuclee pornite si parcate, planificatorul merge pe nucleul de pornire", n);
+    }
 
     #[cfg(feature = "test-stress")]
     tests::stress::run();

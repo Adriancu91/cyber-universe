@@ -42,6 +42,29 @@ fn lapic_write(reg: usize, value: u32) {
 }
 
 /// Signals end-of-interrupt to the local APIC. Every handler of an APIC-delivered interrupt must call it.
+/// APIC id of the processor running this code.
+pub fn lapic_id() -> u8 {
+    (lapic_read(0x20) >> 24) as u8
+}
+
+/// Sends an inter-processor interrupt: `low` = ICR bits 0–31 (vector, delivery mode, level), to `apic_id`.
+/// Waits until the local APIC has sent it (delivery status, bit 12).
+pub fn send_ipi(apic_id: u8, low: u32) {
+    lapic_write(0x310, (apic_id as u32) << 24);
+    lapic_write(0x300, low);
+    for _ in 0..1_000_000 {
+        if lapic_read(0x300) & (1 << 12) == 0 {
+            break;
+        }
+        core::hint::spin_loop();
+    }
+}
+
+/// Switches on the local APIC of an additional processor (same spurious vector as the boot CPU; no timer yet).
+pub fn enable_ap() {
+    lapic_write(LAPIC_SVR, 0x100 | SPURIOUS_VECTOR as u32);
+}
+
 pub fn eoi() {
     lapic_write(LAPIC_EOI, 0);
 }

@@ -109,6 +109,55 @@ pub fn init() {
     }
 }
 
+/// The GDT, TSS and double-fault stack of one additional processor (K6-02): each CPU needs its own TSS,
+/// because `ltr` marks the TSS descriptor busy.
+#[repr(C, align(16))]
+struct ApTables {
+    gdt: [u64; 7],
+    tss: TaskStateSegment,
+    df_stack: Stack,
+}
+
+/// Builds and loads this processor's own GDT and TSS (same layout and selectors as the boot CPU's). The tables
+/// are leaked: an additional processor keeps them as long as the kernel runs.
+pub fn init_ap() {
+    // Zeroed on the heap directly (the 16 KiB stack inside must not pass through the small AP stack).
+    // SAFETY: all-zero bytes are a valid ApTables (plain integers and byte arrays).
+    let mut t = unsafe { alloc::boxed::Box::<ApTables>::new_zeroed().assume_init() };
+    // SAFETY: the boot CPU wrote GDT once in `init`, long before any other processor starts.
+    t.gdt = unsafe { *core::ptr::addr_of!(GDT) };
+    t.tss.iomap_base = size_of::<TaskStateSegment>() as u16;
+    let stack_top = core::ptr::addr_of!(t.df_stack) as u64 + IST_STACK_SIZE as u64;
+    t.tss.interrupt_stacks[(DOUBLE_FAULT_IST - 1) as usize] = stack_top;
+    let base = core::ptr::addr_of!(t.tss) as u64;
+    let limit = (size_of::<TaskStateSegment>() - 1) as u64;
+    t.gdt[5] = (limit & 0xFFFF) | ((base & 0xFF_FFFF) << 16) | (0x89 << 40) | (((limit >> 16) & 0xF) << 48) | (((base >> 24) & 0xFF) << 56);
+    t.gdt[6] = base >> 32;
+    let t = alloc::boxed::Box::leak(t);
+    let ptr = DescriptorPointer { limit: (size_of::<[u64; 7]>() - 1) as u16, base: t.gdt.as_ptr() as u64 };
+    // SAFETY: the tables live forever (leaked); same selectors as the boot CPU, so reloading the segments is valid.
+    unsafe {
+        asm!("lgdt [{}]", in(reg) &ptr, options(readonly, nostack, preserves_flags));
+        asm!(
+            "push {code}",
+            "lea {tmp}, [rip + 2f]",
+            "push {tmp}",
+            "retfq",
+            "2:",
+            "mov ds, {data:x}",
+            "mov es, {data:x}",
+            "mov ss, {data:x}",
+            "xor {tmp:e}, {tmp:e}",
+            "mov fs, {tmp:x}",
+            "mov gs, {tmp:x}",
+            code = in(reg) KERNEL_CODE as u64,
+            data = in(reg) KERNEL_DATA as u64,
+            tmp = lateout(reg) _,
+        );
+        asm!("ltr {:x}", in(reg) TSS_SELECTOR, options(nostack, preserves_flags));
+    }
+}
+
 /// Sets the stack the CPU switches to when an interrupt or exception arrives in ring 3 (TSS.RSP0).
 pub fn set_privilege_stack(top: u64) {
     // SAFETY: a single aligned-enough 64-bit store into the TSS; the CPU reads RSP0 only on a ring change,

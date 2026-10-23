@@ -115,6 +115,16 @@ pub fn init() {
     );
 }
 
+/// Switches the vector unit on for an additional processor, exactly as on the boot CPU (CR0/CR4 copied by the
+/// caller; here only XCR0, which is per processor).
+pub fn init_ap() {
+    if MODE.load(Ordering::Relaxed) == 2 {
+        let m = XCR0.load(Ordering::Relaxed);
+        // SAFETY: CR4.OSXSAVE is set (copied from the boot CPU); `m` was accepted by XSETBV on the boot CPU.
+        unsafe { asm!("xsetbv", in("ecx") 0u32, in("eax") m as u32, in("edx") (m >> 32) as u32, options(nomem, nostack)) };
+    }
+}
+
 /// Fills a new thread's save area with the clean state.
 ///
 /// # Safety
