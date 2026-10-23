@@ -3,6 +3,26 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-23 16:09–17:05 UTC (19:09–20:05 ora României), în cloud, fără Adrian — C-15 gata: P6-18
+- **Hub:** comanda nouă **C-15** (repo-ul `cyber-universe` e **public** — verificat, `visibility: public`) → preluată → **P6-18**.
+  Clona locală a hub-ului era iar „superficială” (shallow) și părea divergentă → `git fetch --unshallow`, apoi fast-forward; nimic pierdut.
+- **CI mai econom (`9f67d7b`):** `paths-ignore` (`docs/**`, `**/*.md`, `tests/screens/**`) la push și PR → commit-urile doar cu
+  documente/STATE.md nu mai pornesc CI și nu fac Release; `concurrency` `ci-<ramură>` cu `cancel-in-progress`; cache și pentru
+  `target/` din `crypto/ tls/ json/ rtl8168/ e1000e/` (cheia din toate `Cargo.toml`/`Cargo.lock`/`rust-toolchain.toml`, cu `restore-keys`);
+  `stress.yml` doar lunea (03:17 UTC). Instalarea uneltelor în CI: 22 s (înainte ~20 min).
+- **CI roșu o dată (run 186):** `log-smp` și `fire` — panică „ordine gresita a firelor: AB 11 C1 …” în testul din nucleu: pe 4 nuclee două
+  fire scriau litera și pasul în locuri separate și se amestecau. Greșeala era în **test**, nu în planificator. Reparat (`972fa21`):
+  litera și pasul se rezervă împreună. Local: `log-smp`+`fire` de 3 ori la rând verzi, plus `log boot smp-start fpu-smp cpu fire-1`.
+- **Run 187 verde → Release `os-187`** = K6-02b + K6-03 + K6-04 (tot C-14). **B-004 închis** (cauza exactă: facturarea Actions la repo privat).
+- **`actualizeaza` fără token:** codul trimitea deja cererea fără token când lipsește `github.token`; cu repo-ul public GitHub o acceptă.
+  Notat în `docs/USB.md`: tokenul trebuie doar pentru `gh-trimite`. (Din cloud nu pot face o cerere 100% fără cont — proxy-ul adaugă
+  autentificarea —, deci confirmarea finală e pe stick: `run actualizeaza` fără `github.token`.)
+- **Teste local:** `tools/test.sh` → 69 trecute + 1 (`cpu`: testul vechi al temporizatorului, 72/s pe mașina încărcată) trecut la reluare;
+  `https-real` sărit.
+- **Coada:** fără sarcini libere (P6-10, P6-12 p.2 așteaptă hardware; P3-10 cere Adrian; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian).
+- **Pentru sesiunea următoare:** verifică că acest commit (doar `docs/`) **nu** a pornit CI. Dacă nu e comandă nouă și nici rezultat în
+  `rezultate/`: oprire scurtă, fără commit-uri doar cu STATE.md.
+
 ### Sesiunea programată 2026-10-23 14:40–15:25 UTC (17:40–18:25 ora României), în cloud, fără Adrian — C-14 terminată: K6-04
 - **Hub:** nicio comandă nouă pentru `cyber-universe`; C-7 și C-11 rămân `nou` (doar după întoarcerea lui Adrian).
   Clona locală a hub-ului avea istoria divergentă față de GitHub (50/50 commit-uri) → păstrată local ca ramura
