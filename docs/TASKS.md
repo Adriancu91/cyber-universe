@@ -242,6 +242,10 @@ Comanda C-15 (repo-ul devine public: GitHub Actions gratuit; B-004 = facturarea)
   Test: CI verde pe GitHub pe commit-ul cu cod → Release `os-<n>`; un commit doar cu documente nu mai pornește CI.
   Rezultat: run 186 (primul după 5 ore) a pornit, uneltele se instalează în 22 s (înainte ~20 min), dar `log-smp` și `fire` roșii: cursă în testul ordinii firelor pe 4 nuclee (litera și pasul scrise separat) → reparat în test (`972fa21`); run 187 verde → **Release `os-187`** (K6-02b, K6-03, K6-04). Local: 70 trecute (`cpu` picat o dată la testul vechi al temporizatorului, trecut la reluare).
 
+Comanda C-16 (OS + Cyber-GPU integrate și testate automat, cu punct de revenire), după C-15:
+- [~] **P6-19** Dependență pe Cyber-GPU fixată pe `41e44ba` (`gpu-core`, `gpu-pci`, `nvidia-ga104`, `gpu-compute`; `gpu-sim` doar la teste), adaptor PCI fără scrieri; `gpu identifica` prin `nvidia-ga104`, `gpu identifica --sim` (SIMULARE, workstation), `/bin/kronos-calcul` (matmul + operațiile Kronos pe toate nucleele, SSE/AVX, comparat cu referința). Lucru pe `wip/integrare-gpu`; punct de revenire `stabil-2026-10-23`. Dep: P6-18.
+  Test: toate scenariile vechi + `gpu`, `gpu-sim`, `kronos-calcul`, `kronos-calcul-1`; CI verde pe ramură, apoi pe `main` → Release.
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
