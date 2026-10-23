@@ -13,6 +13,13 @@ cyber_crypto = { path = "../crypto" }
 cyber_rtl8168 = { path = "../rtl8168" }
 # P6-16: Intel e1000/82574/I219 driver logic (tested on the host against a model).
 cyber_e1000e = { path = "../e1000e" }
+# P6-19 (C-16): the Cyber-GPU libraries (MIT, same author), pinned to one commit (tag `stabil-2026-10-23` of cyber-gpu).
+# Read-only use: PCI decoding, the GA104 level-0 probe. The kernel's ConfigSpace adapter refuses every write (drivers/gpu.rs).
+gpu-core = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "41e44ba" }
+gpu-pci = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "41e44ba" }
+nvidia-ga104 = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "41e44ba" }
+# SIMULATION only (`gpu identifica --sim` in test builds); never compiled into the kernel people boot.
+gpu-sim = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "41e44ba", optional = true }
 
 [features]
 # Test build: the kernel waits for a byte on COM1, then exits QEMU through isa-debug-exit.
@@ -86,6 +93,10 @@ test-phase4 = ["qemu-test"]
 test-terminal = ["qemu-test"]
 # P6-11: a write through the read-only register window of `gpu` must fault.
 test-gpu-write = ["qemu-test"]
+# P6-19: `gpu identifica --sim` on the gpu-sim model of the workstation board (output marked SIMULARE).
+test-gpu-sim = ["test-shell", "dep:gpu-sim"]
+# P6-19: /bin/kronos-calcul (gpu-compute on every processor) started by the kernel test.
+test-kronos-calc = ["qemu-test"]
 # P1-13: a write to .rodata must fault (the kernel image keeps its per-segment rights).
 test-rodata = ["qemu-test"]
 # Stability test (P1-11): 5 minutes; the quick variant runs the same loop for 15 seconds.

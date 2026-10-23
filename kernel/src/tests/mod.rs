@@ -10,3 +10,5 @@ pub mod smp;
 pub mod memory;
 #[cfg(feature = "test-threads")]
 pub mod threads;
+#[cfg(feature = "test-kronos-calc")]
+pub mod kronos;

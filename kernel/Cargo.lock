@@ -23,12 +23,45 @@ dependencies = [
  "cyber_crypto",
  "cyber_e1000e",
  "cyber_rtl8168",
+ "gpu-core",
+ "gpu-pci",
+ "gpu-sim",
  "limine",
+ "nvidia-ga104",
 ]
 
 [[package]]
 name = "cyber_rtl8168"
 version = "0.1.0"
+
+[[package]]
+name = "gpu-command"
+version = "0.1.0"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=41e44ba#41e44ba492c606ba5abf15126210caf1313b9e6e"
+dependencies = [
+ "gpu-core",
+]
+
+[[package]]
+name = "gpu-core"
+version = "0.1.0"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=41e44ba#41e44ba492c606ba5abf15126210caf1313b9e6e"
+
+[[package]]
+name = "gpu-pci"
+version = "0.1.0"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=41e44ba#41e44ba492c606ba5abf15126210caf1313b9e6e"
+dependencies = [
+ "gpu-core",
+]
+
+[[package]]
+name = "gpu-sim"
+version = "0.1.0"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=41e44ba#41e44ba492c606ba5abf15126210caf1313b9e6e"
+dependencies = [
+ "gpu-core",
+]
 
 [[package]]
 name = "limine"
@@ -37,4 +70,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af6d2ee42712e7bd2c787365cd1dab06ef59a61becbf87bec7b32b970bd2594b"
 dependencies = [
  "bitflags",
+]
+
+[[package]]
+name = "nvidia-ga104"
+version = "0.1.0"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=41e44ba#41e44ba492c606ba5abf15126210caf1313b9e6e"
+dependencies = [
+ "gpu-command",
+ "gpu-core",
+ "gpu-pci",
 ]

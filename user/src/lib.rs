@@ -207,6 +207,13 @@ pub fn mem_info() -> Option<MemInfo> {
     })
 }
 
+/// Processors that run threads now (P6-19); 1 if the kernel does not say.
+pub fn cpus() -> u64 {
+    let mut v = [0u64; 1];
+    let r = syscall3(SYS_SYSINFO, 2, v.as_mut_ptr() as u64, 8);
+    if r == 8 && v[0] > 0 { v[0] } else { 1 }
+}
+
 /// The running programs, one per line: `id processor_ticks name`. Returns the bytes written to `buf`.
 pub fn programs(buf: &mut [u8]) -> i64 {
     syscall3(SYS_SYSINFO, 1, buf.as_mut_ptr() as u64, buf.len() as u64)

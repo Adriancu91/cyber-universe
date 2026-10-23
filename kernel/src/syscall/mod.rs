@@ -486,7 +486,8 @@ fn remove(ptr: u64, len: u64) -> i64 {
 
 /// sysinfo(kind, buf, len). Kind 0 = memory and time, 7 u64 values: total memory, used memory, kernel
 /// heap used, heap reserved (bytes), uptime (ms), idle processor time (ticks), ticks per second.
-/// Kind 1 = running programs, one per line: `id processor_ticks name`. Returns the bytes written.
+/// Kind 1 = running programs, one per line: `id processor_ticks name`. Kind 2 = processors running threads (u64).
+/// Returns the bytes written.
 fn sysinfo(kind: u64, buf: u64, len: u64) -> i64 {
     use crate::mem::{frame, heap, map::PAGE_SIZE};
     let data: alloc::vec::Vec<u8> = match kind {
@@ -511,6 +512,8 @@ fn sysinfo(kind: u64, buf: u64, len: u64) -> i64 {
             }
             text.into_bytes()
         }
+        // P6-19: processors that run threads (1 until `cpu porneste`, or all of them in SMP test builds).
+        2 => sched::running_cpus().to_le_bytes().to_vec(),
         _ => return E_INVALID,
     };
     if (data.len() as u64) > len {

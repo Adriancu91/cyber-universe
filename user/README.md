@@ -24,6 +24,15 @@
   scriu tot acolo; `exit` sau închiderea ferestrei îl termină. Test: scenariul `terminal`.
 - `network` (P5-05) — aplicația „Rețea”: placa (MAC), adresa, masca, ruta, DNS-ul, cât mai ține adresa DHCP, pachetele;
   o căsuță pentru ping (adresă sau nume, Enter = 4 ping-uri). Test: scenariul `appnet` (captura `tests/screens/appnet.png`).
+- `kronos-calcul [n]` (P6-19, comanda C-16) — calculul lui Kronos pe procesor, cu operațiile bibliotecii `gpu-compute` din
+  proiectul Cyber-GPU (backend CPU, fixat pe `41e44ba`): un bloc de tip Kronos (embedding, layernorm, QKV, atenție cauzală,
+  MLP cu GELU, logit-uri, cross-entropy; greutăți bf16) calculat o dată cu referința bibliotecii pe un fir și o dată pe `n` fire
+  (implicit: toate nucleele pornite) — **toleranță 0** (biblioteca promite rezultate identice bit cu bit); apoi un matmul 128³:
+  referința, `kernels::matmul_blocked` pe 1 și n fire (toleranță 0) și nucleul nostru vectorial (AVX2+FMA / AVX2 / SSE2, în
+  assembler: ținta `x86_64-unknown-none` nu permite `target_feature` cu SSE) pe 1 și n fire — cu FMA toleranța e
+  `|dif| <= 1e-5·(1+|ref|)`, fără FMA 0. Afișează timpii pe 1 și pe n fire; cod 0 dacă totul e în toleranță.
+  Timpii din QEMU nu spun nimic despre hardware (AVX e emulat încet). Test: scenariile `kronos-calcul` (`-smp 4 -cpu max`)
+  și `kronos-calcul-1` (un nucleu, SSE2).
 - `fetch <nume> [port] [cale]` (P5-05) — descarcă o pagină web prin HTTP (TCP) și o scrie (fără antet); cod 0 dacă serverul a răspuns 200.
   `fetch https://<nume>[:port][/cale] [adresă]` (P5-16) — la fel prin HTTPS (TLS 1.3, biblioteca `tls/`): certificatul
   serverului se verifică față de certificatele din `/etc/certs/` (DER), ora din ceasul RTC (luată ca UTC), cheile din
