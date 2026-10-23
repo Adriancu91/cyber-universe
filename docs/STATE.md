@@ -3,6 +3,20 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-23 20:35–21:10 UTC (23:35–00:10 ora României), în cloud, fără Adrian — C-17 gata: P6-20
+- **Hub:** comanda nouă **C-17** → preluată → **P6-20**. Clona hub-ului avea iar alt istoric (50/50) → păstrată local ca `backup-local-main`,
+  `main` mutat pe `origin/main` (nimic șters pe GitHub). Hub-ul s-a mutat la `Adriancu91/Cyber-hub` (remote actualizat).
+- **`docs/RELEASES_PASTRATE.md`:** os-120, os-125, os-136, os-138, os-150, os-161 (testate pe hardware, din `rezultate/*/REZULTAT.md`) și
+  os-187 (punct de revenire), cu commit, id-ul rulării CI și motivul. Jobul `release` din `ci.yml` citește doar acest fișier (checkout parțial)
+  și sare peste tag-urile din el la curățare (os-187 rămâne și scris direct). Altceva nu s-a schimbat în CI.
+- **Republicare:** workflow nou, doar manual, `.github/workflows/republica.yml` (tag + id rulare): verifică lista, rularea veche (verde, `main`,
+  același număr), descarcă artefactul `release` original, `sha256sum -c`, Release fără „latest”. Rulat pentru **os-150** și **os-161** → există
+  din nou. os-125/136/138 se pot republica la fel până expiră artefactele (ian. 2027); os-120 nu mai are artefact (doar commit-ul).
+- **CI:** run 190 verde → **Release `os-190`** (latest); curățarea a șters os-172, cele păstrate au rămas. Local: doar YAML + sintaxa shell
+  verificate (codul OS-ului neschimbat; testele complete au rulat în CI).
+- **Coada:** fără sarcini libere (P6-10, P6-12 p.2 așteaptă hardware; P3-10 cere Adrian; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian).
+- **Pentru sesiunea următoare:** dacă nu e comandă nouă și nici rezultat nou: oprire scurtă. Meniul desktopului e plin (20 = `MAX_ITEMS`).
+
 ### Sesiunea programată 2026-10-23 17:40–19:30 UTC (20:40–22:30 ora României), în cloud, fără Adrian — C-16: P6-19 (OS + Cyber-GPU)
 - **Hub:** comanda nouă **C-16** → preluată → **P6-19**. Clona veche a hub-ului avea alt istoric (50 de commit-uri, fără bază comună cu
   GitHub) → lucrul făcut dintr-o clonă nouă (`/home/claude/hub2`); nimic șters, nimic forțat.
