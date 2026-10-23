@@ -237,6 +237,10 @@ Comanda C-14 (Adrian plecat câteva zile: doar QEMU și CI, câte o sarcină pe 
 - [x] **K6-04** (opțional) Fire multiple într-un proces: `thread_spawn`/`thread_join`/`thread_exit` (37–39), oprirea tuturor firelor la ieșire, heap comun cu încuietoare, `/bin/fire`. Dep: K6-03.
   Test: un program cu 4 fire care lucrează pe aceeași memorie, rezultat exact.
 
+Comanda C-15 (repo-ul devine public: GitHub Actions gratuit; B-004 = facturarea), după C-14:
+- [~] **P6-18** CI mai econom + Release-ul cu munca din C-14: `paths-ignore` (`docs/**`, `**/*.md`, `tests/screens/**`), `concurrency` cu `cancel-in-progress`, testul de stres săptămânal, cache și pentru `target/` din bibliotecile pe gazdă; Release cu K6-02b..K6-04; B-004 închis; `actualizeaza` fără token notat în `docs/USB.md`. Dep: K6-04.
+  Test: CI verde pe GitHub pe commit-ul cu cod → Release `os-<n>`; un commit doar cu documente nu mai pornește CI.
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
