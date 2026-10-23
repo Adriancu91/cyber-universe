@@ -4,6 +4,7 @@
 - `map.rs` — copiază harta memoriei fizice și adresa HHDM (toată memoria fizică mapată de Limine) și le raportează în jurnal.
 - `frame.rs` — alocatorul de cadre fizice (4 KiB): o hartă de biți, câte un bit pe cadru.
 - `paging.rs` — paginare pe 4 niveluri: mapare, demapare, traducere adresă virtuală → fizică (inclusiv pagini mari); activează bitul NX și CR0.WP.
+  Adrese virtuale fixe: `0xFFFF_9000_0000_0000` heap, `0xFFFF_C000_…` teste, `0xFFFF_C100_0000_0000` fereastra de registre `gpu` (o pagină, doar citire).
   La pornire copiază tabelele Limine în cadre proprii (`adopt_tables`), ca memoria bootloader-ului să poată fi recuperată.
 - `address_space.rs` — spații de adrese pentru procese (P2-04): fiecare are PML4 propriu; jumătatea de sus (nucleul)
   e comună, jumătatea de jos e a procesului; la distrugere se eliberează toate cadrele și tabelele lui.

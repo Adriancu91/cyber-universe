@@ -224,6 +224,7 @@ fn run_tests() -> ! {
     #[cfg(not(feature = "test-high-dma"))]
     test_all_frames();
     test_paging();
+    test_gpu_decode();
     test_heap();
     test_timer();
     test_threads();
@@ -426,6 +427,23 @@ fn test_all_frames() {
         // SAFETY: deliberate write to a read-only kernel page; must raise a page fault.
         unsafe { (core::ptr::addr_of!(READ_ONLY) as *mut u64).write_volatile(0) };
     }
+}
+
+/// The NVIDIA identity decoding (P6-11) on known register values; nothing touches a card.
+#[cfg(feature = "qemu-test")]
+fn test_gpu_decode() {
+    use drivers::gpu::{decode_nv, nv_architecture, nv_chip_name};
+    // BOOT_42 layout: architecture 0x17 (Ampere), implementation 4, revision a1 -> chip 0x174 (GA104).
+    let id = decode_nv(0x1740_00a1, 0x1740_a000);
+    assert!(id.chip == 0x174 && id.revision == 0x0a, "gpu: BOOT_42 decodat gresit: {:?}", id);
+    assert!(nv_chip_name(id.chip) == Some("GA104") && nv_architecture(id.chip) == "Ampere", "gpu: nume gresit");
+    // BOOT_42 missing (older chips): BOOT_0 is used.
+    let old = decode_nv(0x1640_00a1, 0);
+    assert!(old.chip == 0x164 && old.revision == 0xa1, "gpu: BOOT_0 decodat gresit: {:?}", old);
+    assert!(nv_architecture(0x120) == "necunoscuta", "gpu: arhitectura inventata");
+    info!("test: gpu decodare OK (GA104 din BOOT_42, TU104 din BOOT_0)");
+    #[cfg(feature = "test-gpu-write")]
+    drivers::gpu::test_write_faults();
 }
 
 /// Maps a fresh frame at an unused address, checks writes are visible through the HHDM, then unmaps it.

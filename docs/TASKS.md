@@ -208,8 +208,10 @@ Reparații după testul 7 pe Lenovo (comanda C-10, înaintea lui P6-10):
   Test: `cd rtl8168 && cargo test --release` (39: bitul 15 care se șterge singur, OCP care nu răspunde, C+ bit 3 fix); `tools/test.sh shell net boot`. Pe laptop: testul 8 (R).
 
 Comanda C-12 (Cyber-GPU, fereastra de pe workstation), înaintea lui P6-10:
-- [~] **P6-11** Comanda `gpu` (nivel 0, doar citire): plăcile video din PCI, BAR-uri, Resizable BAR, două registre publice NVIDIA (BOOT_0, BOOT_42) printr-o pagină fără drept de scriere; `gpu plan`. Dep: P6-01.
-  Test: `tools/test.sh gpu gpu-ro shell`. Pe hardware: fereastra de pe workstation.
+- [x] **P6-11** Comanda `gpu` (nivel 0, doar citire): plăcile video din PCI, BAR-uri, Resizable BAR, două registre publice NVIDIA (BOOT_0, BOOT_42) printr-o pagină fără drept de scriere; `gpu plan`. Dep: P6-01.
+  Test: `tools/test.sh` (51 trecute + `https-real` sărit; `gpu`, `gpu-ro`, `tools/after-gpu.sh`). Pe hardware: fereastra de pe workstation.
+- [ ] **P6-12** `map_mmio` garantează registre fără cache (observația Cyber-GPU, adevărată ca posibilitate): întâi diagnostic în jurnal, apoi fereastră MMIO proprie — după testul 8, o schimbare pe Release. Dep: P6-10g.
+  Test: scenariile cu drivere + verificarea biților PCD/PWT.
 
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 

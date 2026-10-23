@@ -48,3 +48,17 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   Placa Intel I219 din ThinkPad (tot familia e1000e) are diferențe (PHY, registre) — se tratează după testul pe calculatorul real.
 - **Test:** scenariile `net` (e1000e, implicită la q35) și `net-e1000`: o cerere ARP către poarta virtuală QEMU (10.0.2.2)
   primește răspuns. **Surse:** Intel 8254x Software Developer's Manual, Intel 82574 datasheet, RFC 826 (ARP).
+
+## Plăci video (nivel 0, doar citire)
+
+- `gpu.rs` — comanda `gpu` (P6-11, comanda C-12): plăcile de clasă 03 din PCI (furnizor, model, subsistem, Command, starea
+  de alimentare, BAR-uri citite din configurație — fără dimensionare, Resizable BAR doar citit) și, **doar la NVIDIA**, două
+  registre publice de identitate: `NV_PMC_BOOT_0` (BAR0+0x0) și `NV_PMC_BOOT_42` (BAR0+0xA00) → cipul (de ex. `0x174` = GA104).
+  **Zero scrieri:** nicio scriere în configurația PCI (nu pornim „Memory Space”, nu schimbăm starea D), iar pagina de registre se
+  mapează la `0xFFFF_C100_0000_0000` **fără drept de scriere** și fără cache, apoi se demapează. `gpu plan` = pașii ferestrei de pe workstation.
+- **Test:** scenariul `gpu` (VGA-ul QEMU → „nicio placa NVIDIA”, `gpu plan`, `log gpu`) + `tools/after-gpu.sh` (sursa nu conține
+  nicio funcție de scriere); scenariul `gpu-ro` (o scriere prin fereastra de registre dă page fault); `test_gpu_decode` (decodarea
+  BOOT_0/BOOT_42 pe valori cunoscute). Calea NVIDIA nu se poate rula în QEMU: se verifică doar pe workstation.
+- **Surse:** specificațiile PCI / PCI Express (antet, BAR-uri, capabilitatea extinsă 0x15); documentația publică NVIDIA
+  (open-gpu-doc) și antetele MIT `dev_boot.h` din open-gpu-kernel-modules, citite doar pentru adresele și câmpurile celor două
+  registre. Niciun cod copiat. Patch-ul proiectului Cyber-GPU nu a putut fi citit (repo privat) — comanda e scrisă de la zero.

@@ -60,6 +60,7 @@ pub fn run() {
             "net" => net(),
             "rtl" => rtl(args),
             "hw" => hw(),
+            "gpu" => gpu(args),
             "log" => show_log(args),
             "uptime" => uptime(),
             "reboot" => reboot(),
@@ -118,6 +119,7 @@ fn help() {
     out!("  lsusb            dispozitivele USB conectate\n");
     out!("  net              placa de retea (adresa MAC, pachete)\n");
     out!("  rtl porneste [variante]  reporneste placa Realtek cu variantele date (fara: ca la pornire; `rtl` le arata)\n");
+    out!("  gpu [identifica|plan]  placile video (nivel 0: doar citire; NVIDIA: registrele de identitate)\n");
     out!("  hw               raport hardware pe o pagina (pentru o singura poza)\n");
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
     out!("  uptime           de cat timp merge sistemul\n");
@@ -320,6 +322,22 @@ fn mem() {
 fn lspci() {
     for d in crate::pci::devices() {
         out!("  {:02x}:{:02x}.{}  {:04x}:{:04x}  {}\n", d.bus, d.dev, d.func, d.vendor, d.device, d.kind());
+    }
+}
+
+fn gpu(args: &[&str]) {
+    match args.first().copied() {
+        None | Some("identifica") => {
+            for l in crate::drivers::gpu::identify() {
+                out!("{}\n", l);
+            }
+        }
+        Some("plan") => {
+            for l in crate::drivers::gpu::PLAN {
+                out!("{}\n", l);
+            }
+        }
+        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu plan)\n", other),
     }
 }
 
