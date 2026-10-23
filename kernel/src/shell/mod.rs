@@ -63,7 +63,7 @@ pub fn run() {
             "gpu" => gpu(args),
             "log" => show_log(args),
             "uptime" => uptime(),
-            "reboot" => reboot(),
+            "reboot" => reboot(args),
             "exit" => match crate::term::of_shell(crate::sched::current_id()) {
                 Some(t) => {
                     crate::term::close(t);
@@ -123,7 +123,7 @@ fn help() {
     out!("  hw               raport hardware pe o pagina (pentru o singura poza)\n");
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
     out!("  uptime           de cat timp merge sistemul\n");
-    out!("  reboot           reporneste calculatorul\n");
+    out!("  reboot [acpi|cf9|8042|triplu]  reporneste (implicit: toate metodele, pe rand)\n");
     out!("  exit             inchide terminalul (doar in fereastra Terminal)\n");
 }
 
@@ -505,10 +505,20 @@ fn uptime() {
     }
 }
 
-/// Restarts the machine through the keyboard controller's reset line (works on PCs and in QEMU).
-fn reboot() -> ! {
+/// Restarts the machine: every method in turn (ACPI, 0xCF9, 8042, triple fault), or only the one named.
+fn reboot(args: &[&str]) {
+    let arg = args.first().copied().unwrap_or("");
+    let only = if arg.is_empty() {
+        None
+    } else {
+        match crate::power::Method::parse(arg) {
+            Some(m) => Some(m),
+            None => {
+                out!("reboot: metoda necunoscuta: {} (acpi, cf9, 8042, triplu)\n", arg);
+                return;
+            }
+        }
+    };
     out!("repornesc...\n");
-    // SAFETY: command 0xFE to the 8042 pulses the CPU reset line; nothing runs after it.
-    unsafe { crate::arch::x86_64::outb(0x64, 0xFE) };
-    crate::arch::x86_64::halt_forever()
+    crate::power::reboot(only)
 }

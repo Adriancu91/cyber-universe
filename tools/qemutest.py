@@ -19,6 +19,7 @@ import zlib
 
 QEMU_SUCCESS = 33  # isa-debug-exit: (0x10 << 1) | 1
 QEMU_FAILED = 35   # isa-debug-exit: (0x11 << 1) | 1
+QEMU_RESET = 0     # -no-reboot: a machine reset (or triple fault) makes QEMU exit normally
 READY = "TEST READY"
 
 
@@ -74,8 +75,9 @@ def main():
     ap.add_argument("--keys", help="QEMU key names to type (space-separated) once the kernel prints --keys-when")
     ap.add_argument("--keys-when", default="TASTATURA: astept taste")
     ap.add_argument("--monitor", help="QEMU monitor commands to send at --keys-when, separated by ',' (':' = space)")
-    ap.add_argument("--expect-exit", choices=["success", "failed"], default="success",
-                    help="how the kernel must end: success (code 33) or a reported failure (code 35)")
+    ap.add_argument("--expect-exit", choices=["success", "failed", "reset"], default="success",
+                    help="how the kernel must end: success (code 33), a reported failure (code 35) "
+                         "or a machine reset (QEMU runs with -no-reboot, so a reset ends it with code 0)")
     ap.add_argument("qemu_args", nargs=argparse.REMAINDER)
     a = ap.parse_args()
 
@@ -157,11 +159,11 @@ def main():
             problems.append(f"lipseste textul: {e!r}")
         else:
             pos = i + len(e)
-    wanted = QEMU_SUCCESS if a.expect_exit == "success" else QEMU_FAILED
+    wanted = {"success": QEMU_SUCCESS, "failed": QEMU_FAILED, "reset": QEMU_RESET}[a.expect_exit]
     if timed_out:
         problems.append(f"timeout dupa {a.timeout:.0f}s")
     elif code != wanted:
-        names = {QEMU_SUCCESS: "succes (33)", QEMU_FAILED: "esec raportat de nucleu (35)"}
+        names = {QEMU_SUCCESS: "succes (33)", QEMU_FAILED: "esec raportat de nucleu (35)", QEMU_RESET: "resetare (0)"}
         problems.append(f"QEMU a iesit cu {names.get(code, f'codul {code}')}, asteptat {names[wanted]}")
     if screen_msg:
         print(f"[test] captura: {screen_msg}")

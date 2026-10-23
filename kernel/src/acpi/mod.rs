@@ -3,6 +3,7 @@
 //! Only table discovery and the MADT for now; the AML interpreter (power management, devices) is a separate,
 //! much larger task for Phase 3. Written from the ACPI Specification 6.5, chapter 5.
 
+pub mod fadt;
 pub mod madt;
 
 use crate::mem::map::{PAGE_SIZE, phys_to_virt};

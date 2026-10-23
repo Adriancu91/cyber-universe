@@ -19,6 +19,7 @@ mod mem;
 mod net;
 mod modmgr;
 mod pci;
+mod power;
 mod proc;
 mod sched;
 mod shell;
@@ -102,6 +103,9 @@ extern "C" fn kernel_main() -> ! {
     sched::init();
 
     let has_acpi = acpi::init();
+    if has_acpi {
+        acpi::fadt::init();
+    }
     if has_acpi && acpi::madt::init() && arch::x86_64::apic::init() {
         time::start();
         if drivers::keyboard::init() {
@@ -226,6 +230,8 @@ fn run_tests() -> ! {
     test_all_frames();
     test_paging();
     test_gpu_decode();
+    assert!(acpi::fadt::self_test(), "acpi: FADT RESET_REG decodat gresit");
+    info!("test: FADT RESET_REG decodare OK");
     test_heap();
     test_timer();
     test_threads();
