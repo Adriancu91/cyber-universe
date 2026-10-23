@@ -65,10 +65,11 @@ conexiunea **Ethernet**. Cyber Universe primește o adresă **192.168.137.x** (`
 
 ## 7. Actualizarea din Cyber Universe (P6-08, fără Windows)
 Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet (cablu de rețea):
-1. O singură dată, în Windows: pune pe stick, în rădăcină, fișierul **`github.token`** — un singur rând, un token GitHub
-   cu drept de **citire** pe depozitul `cyber-universe` (depozitul e privat). Pe GitHub: poza ta → *Settings* →
-   *Developer settings* → *Personal access tokens* → *Fine-grained tokens* → *Generate new token*; la *Repository access*
-   alegi doar `cyber-universe`, la *Permissions* → *Contents*: **Read-only**. Tokenul nu apare niciodată pe ecran.
+1. **Nu mai e nevoie de token** (din 2026-10-23 depozitul `cyber-universe` e public): `actualizeaza` întreabă GitHub fără token.
+   Dacă pe stick există deja `github.token`, e folosit în continuare (nu strică). Tokenul rămâne necesar **doar pentru
+   `gh-trimite`** (trimiterea de fișiere spre GitHub, care cere drept de scriere). Pentru `gh-trimite`: pe GitHub, poza ta →
+   *Settings* → *Developer settings* → *Personal access tokens* → *Fine-grained tokens* → *Generate new token*, doar depozitul
+   respectiv, *Contents*: **Read and write**; fișierul `github.token` (un rând) în rădăcina stick-ului. Tokenul nu apare pe ecran.
    Verifică și că pe stick e `cyber.rw` (secțiunea 3).
 2. În Cyber Universe: **Start → settings → Actualizeaza** (sau, în terminal, `run actualizeaza`).
 3. Aștepți mesajul **„gata - stick-ul are acum os-…”**, apoi repornești calculatorul. Dacă scrie „nimic schimbat pe

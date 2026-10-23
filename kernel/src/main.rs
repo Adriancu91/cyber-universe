@@ -563,13 +563,15 @@ fn test_threads() {
     use core::sync::atomic::{AtomicUsize, Ordering};
     static TRACE: [core::sync::atomic::AtomicU8; 32] = [const { core::sync::atomic::AtomicU8::new(0) }; 32];
     static LEN: AtomicUsize = AtomicUsize::new(0);
-    fn record(c: u8) {
-        TRACE[LEN.fetch_add(1, Ordering::Relaxed)].store(c, Ordering::Relaxed);
+    // One slot pair per step, reserved at once: with several processors two workers must not interleave name and step.
+    fn record(name: u8, step: u8) {
+        let i = LEN.fetch_add(2, Ordering::Relaxed);
+        TRACE[i].store(name, Ordering::Relaxed);
+        TRACE[i + 1].store(step, Ordering::Relaxed);
     }
     fn worker(name: u8) {
         for step in 1..=3u8 {
-            record(name);
-            record(b'0' + step);
+            record(name, b'0' + step);
             sched::yield_now();
         }
     }

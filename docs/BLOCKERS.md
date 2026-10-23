@@ -14,16 +14,6 @@
 - **Ce ar debloca:** suita își atinge ținta, iar Adrian decide cum ajunge codul (sau doar formatul fișierelor) la OS.
 - **Nevoie de Adrian:** mai târziu, nu acum.
 
-### B-004 · CI / Release · 2026-10-23
-- **Problema:** GitHub Actions nu mai pornește joburile din 2026-10-23 11:03 UTC (runs 178–184, ultima verificare 15:17 UTC): „failure” în 2–4 s, fără log
-  (descărcarea logului dă 404). Aceeași problemă e raportată în hub de Cyber-GPU (de la 13:46 ora României).
-- **Am încercat:** 1) verificat joburile: `build-and-test` se termină în 2 s, fără pași rulați; 2) log-ul jobului nu există;
-  3) testele locale trec (68). Cauza probabilă: minutele gratuite GitHub Actions ale contului s-au terminat (repo-uri private).
-- **Eroarea exactă:** `failed to download logs: HTTP 404` (jobul nu a primit calculator).
-- **Ce ar debloca:** Adrian verifică pe GitHub → Settings → Billing and plans → Actions (minute / limită de cheltuieli), sau face
-  repo-ul public, sau așteaptă resetarea lunară a minutelor.
-- **Nevoie de Adrian:** da — 2 minute de pe telefon, când poate (punctul 1 din PANOU-ul hub-ului e aceeași cauză).
-
 <!-- Șablon:
 ### B-001 · P0-01 · 2026-10-27
 - **Problema:** ...
@@ -34,6 +24,21 @@
 -->
 
 ## Rezolvate
+
+### B-004 · CI / Release · 2026-10-23
+- **Problema:** GitHub Actions nu mai pornește joburile din 2026-10-23 11:03 UTC (runs 178–184, ultima verificare 15:17 UTC): „failure” în 2–4 s, fără log
+  (descărcarea logului dă 404). Aceeași problemă e raportată în hub de Cyber-GPU (de la 13:46 ora României).
+- **Am încercat:** 1) verificat joburile: `build-and-test` se termină în 2 s, fără pași rulați; 2) log-ul jobului nu există;
+  3) testele locale trec (68). Cauza probabilă: minutele gratuite GitHub Actions ale contului s-au terminat (repo-uri private).
+- **Eroarea exactă:** `failed to download logs: HTTP 404` (jobul nu a primit calculator).
+- **Ce ar debloca:** Adrian verifică pe GitHub → Settings → Billing and plans → Actions (minute / limită de cheltuieli), sau face
+  repo-ul public, sau așteaptă resetarea lunară a minutelor.
+- **Nevoie de Adrian:** da — 2 minute de pe telefon, când poate (punctul 1 din PANOU-ul hub-ului e aceeași cauză).
+- **Rezolvat 2026-10-23 (comanda C-15):** cauza exactă = facturarea GitHub: „The job was not started because recent account
+  payments have failed or your spending limit needs to be increased” — minutele gratuite pentru repo-uri private s-au terminat.
+  Adrian a făcut repo-ul **public** (19:05 ora României) → Actions e gratuit; prima rulare după (run 186, `9f67d7b`) a pornit normal.
+  CI-ul e și mai econom acum (P6-18): fără rulări la commit-uri doar cu documente, rularea veche anulată de una nouă, stres săptămânal.
+
 
 ### B-001 · P3-09 · 2026-10-20
 - **Problema:** testul pe calculatoare reale cere acces fizic la ThinkPad L15 Gen 2 și la încă un calculator.
