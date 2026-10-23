@@ -247,6 +247,10 @@ Comanda C-16 (OS + Cyber-GPU integrate și testate automat, cu punct de revenire
   Test: toate scenariile vechi + `gpu`, `gpu-sim`, `kronos-calcul`, `kronos-calcul-1`; CI verde pe ramură, apoi pe `main` → Release.
   Rezultat: local 74 de scenarii (70 + 3 picate la testul vechi al temporizatorului, trecute la reluare; `https-real` sărit); CI verde pe `wip/integrare-gpu` (run 188) → unit în `main`. Bloc Kronos pe 4 fire identic bit cu bit cu referința; matmul AVX2+FMA eroare maximă 3.8e-6 (toleranța 1e-5). Tag-ul `stabil-2026-10-23` nu se poate urca din cloud (403) → ramura `revenire/stabil-2026-10-23`; os-187 păstrat de CI.
 
+Comanda C-17 (Release-urile testate pe hardware nu se mai șterg), după C-16:
+- [~] **P6-20** Lista `docs/RELEASES_PASTRATE.md` (tag, commit, motiv); curățarea din CI sare peste tag-urile din listă; os-150 și os-161 republicate ca Release-uri păstrate din fișierele originale ale rulărilor CI 150 și 161 (nemarcate „latest”). Dep: P6-19.
+  Test: CI verde pe `main` → Release nou, iar toate tag-urile din listă încă există; os-150 și os-161 apar din nou la Releases, cu aceleași sume SHA-256 ca rularea originală.
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)

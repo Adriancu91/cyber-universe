@@ -1,0 +1,69 @@
+# C-17 (P6-20): republish a kept Release (listed in docs/RELEASES_PASTRATE.md) from the original files of the CI run that
+# built it. Manual only. Never marks the Release as "latest", so `actualizeaza` on the stick still takes the newest normal one.
+name: Republica un Release păstrat
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag-ul Release-ului (ex. os-150); trebuie să fie în docs/RELEASES_PASTRATE.md"
+        required: true
+      run_id:
+        description: "Id-ul rulării CI care l-a construit (coloana „Rularea CI” din listă)"
+        required: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  republica:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: docs/RELEASES_PASTRATE.md
+          sparse-checkout-cone-mode: false
+
+      - name: Verificări (tag din listă, rularea veche verde pe main, cu același număr)
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          [[ "$TAG" =~ ^os-[0-9]+$ ]] || { echo "Tag invalid: $TAG"; exit 1; }
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "Id de rulare invalid: $RUN_ID"; exit 1; }
+          grep -qE "^\| *$TAG *\|" docs/RELEASES_PASTRATE.md || { echo "$TAG nu e în docs/RELEASES_PASTRATE.md"; exit 1; }
+          if gh release view "$TAG" >/dev/null 2>&1; then echo "$TAG există deja"; exit 1; fi
+          INFO=$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID" --jq '[.run_number, .head_sha, .head_branch, .conclusion, .path] | @tsv')
+          IFS=$'\t' read -r NUM SHA BRANCH CONCL WF <<< "$INFO"
+          echo "Rularea $RUN_ID: numărul $NUM, commit $SHA, ramura $BRANCH, $CONCL, $WF"
+          [ "os-$NUM" = "$TAG" ] || { echo "Rularea are numărul $NUM, nu $TAG"; exit 1; }
+          [ "$BRANCH" = main ] && [ "$CONCL" = success ] && [ "$WF" = .github/workflows/ci.yml ] \
+            || { echo "Rularea nu e un CI verde pe main"; exit 1; }
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: release
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Sumele SHA-256 ale fișierelor originale
+        run: cd release && sha256sum -c SHA256SUMS
+
+      - name: Release păstrat (fără „latest”)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+          RUN_ID: ${{ inputs.run_id }}
+          SHA: ${{ steps.check.outputs.sha }}
+        run: |
+          gh release create "$TAG" release/* --target "$SHA" --latest=false \
+            --title "Cyber Universe OS $TAG (păstrat)" \
+            --notes "Republicat (C-17) cu fișierele originale ale rulării CI $RUN_ID, din commit-ul $SHA. Release testat pe hardware: vezi docs/RELEASES_PASTRATE.md. Nu se șterge. Sumele: SHA256SUMS."
