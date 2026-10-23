@@ -3,7 +3,27 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
-### OPRIT: necesită analiza lui Adrian
+### Sesiunea programată 2026-10-23 05:25–06:30 UTC (08:25–09:30 ora României), în cloud, fără Adrian — P6-11 (C-12)
+- **Oprirea de siguranță ridicată** de comanda nouă **C-12** a lui Adrian (08:45): preluată 05:3x UTC → **P6-11** (+ **P6-12** în coadă).
+- **Patch-ul Cyber-GPU nu a putut fi citit:** `Adriancu91/cyber-gpu` e **privat**, iar sesiunea OS nu are acces (clonarea:
+  `fatal: could not read Username for 'https://github.com': terminal prompts disabled`, de 2 ori, la 10 s distanță). C-12 permite
+  „rescrie-l în stilul nostru” → comanda `gpu` scrisă **de la zero**, din documentație publică, cu aceleași limite (nivel 0, zero scrieri).
+  Cele 6 observații: doar cea descrisă în hub (`map_mmio`) a putut fi verificată → **adevărată ca posibilitate** → P6-12. Restul de 5:
+  după ce Adrian dă acces sesiunii OS la `cyber-gpu`.
+- **Terminată: P6-11** — `gpu identifica` (plăcile de clasă 03: furnizor, model, subsistem, Command, starea D, BAR-uri citite fără
+  dimensionare, Resizable BAR citit; la NVIDIA `NV_PMC_BOOT_0`/`BOOT_42` → cipul, de ex. `0x174` = GA104), `gpu plan`, `log gpu`.
+  Nicio scriere în configurația PCI (nu pornim „Memory Space”); pagina de registre e mapată la `0xFFFF_C100_0000_0000` **fără drept de
+  scriere**, fără cache, apoi demapată. Pe AMD/Intel: doar identificare PCI (registrele AMD țin de C-11).
+- **Teste:** `tools/test.sh` → **51 trecute** + `https-real` sărit. Noi: `gpu` (QEMU: „nicio placa NVIDIA”), `gpu-ro` (o scriere prin
+  fereastră dă page fault), `tools/after-gpu.sh` (sursa fără funcții de scriere), `test_gpu_decode` (BOOT_0/BOOT_42). Calea NVIDIA
+  nu se poate rula în QEMU: se verifică doar pe workstation.
+- **CI verde** pe `8b38eef` (run 163) → **Release `os-163`** = P6-10g/h (ca os-155) + comanda `gpu`. Pornirea și rețeaua neschimbate
+  (`gpu` rulează doar la cerere) → os-163 e bun și pentru **testul 8** pe laptop, și pentru **fereastra de pe workstation**.
+- **Coada:** P6-10 așteaptă testul 8; **P6-12** (diagnostic `map_mmio`, fără schimbare de comportament) e liberă pentru sesiunea
+  următoare; pasul 2 al ei doar după testul 8. P3-10 are nevoie de Adrian; P5-07 BLOCAT; C-7 după testul 8 (R); C-11 după C-7.
+- **Pentru sesiunea următoare:** P6-12 pasul 1; verifică `rezultate/` (testul 8, fereastra workstation).
+
+### (anterioară) OPRIT: necesită analiza lui Adrian — ridicată de C-12 la 08:45 ora României
 ### Sesiunea programată 2026-10-23 02:40–02:50 UTC (05:40–05:50 ora României), în cloud, fără Adrian — oprire de siguranță
 - **Oprire de siguranță aplicată:** ultimele 3 sesiuni (23:45, 20:42, pornirea manuală 21:10) nu au terminat nicio sarcină, iar acum nu există
   nici rezultat de la testul 8 (`rezultate/` din hub se oprește la testul 7), nici comandă nouă pentru `cyber-universe`. Nu s-a început nicio sarcină.
