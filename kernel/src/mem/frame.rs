@@ -140,6 +140,40 @@ pub fn alloc_frame() -> Option<u64> {
     })
 }
 
+/// Allocates 512 contiguous frames starting on a 2 MiB boundary (one large page of a program's memory region, K6-03).
+/// Searches upwards from where the last one was found; `None` if the free memory is too fragmented (the caller then
+/// uses 4 KiB frames).
+pub fn alloc_huge() -> Option<u64> {
+    const N: u64 = 512;
+    with_bitmap(|b| {
+        let blocks = b.frames / N;
+        if b.free < N || blocks == 0 {
+            return None;
+        }
+        let start = HUGE_NEXT.load(Ordering::Relaxed) % blocks;
+        for i in 0..blocks {
+            let blk = (start + i) % blocks;
+            if blk == 0 {
+                continue; // the first 2 MiB hold low memory (trampoline, firmware): never a large page
+            }
+            // 512 frames = 64 bytes of the bitmap, all zero when the whole block is free.
+            // SAFETY: the block lies below `b.frames`, so its 64 bytes are inside the bitmap.
+            let bytes = unsafe { core::slice::from_raw_parts(b.bits.add((blk * N / 8) as usize), (N / 8) as usize) };
+            if bytes.iter().all(|&x| x == 0) {
+                for f in blk * N..(blk + 1) * N {
+                    b.set(f, true);
+                }
+                b.free -= N;
+                HUGE_NEXT.store(blk + 1, Ordering::Relaxed);
+                return Some(blk * N * PAGE_SIZE);
+            }
+        }
+        None
+    })
+}
+
+static HUGE_NEXT: AtomicU64 = AtomicU64::new(0);
+
 /// Allocates `count` physically contiguous frames that all end at or below `limit` (the lowest such run).
 #[cfg(feature = "test-high-dma")]
 pub fn alloc_contiguous_below(count: u64, limit: u64) -> Option<u64> {

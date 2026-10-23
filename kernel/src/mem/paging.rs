@@ -115,6 +115,67 @@ fn map_locked(root: u64, virt: u64, phys: u64, flags: u64) -> Result<(), MapErro
     Ok(())
 }
 
+/// Size of a large page (one entry of a page directory, K6-03).
+pub const HUGE_PAGE: u64 = 2 * 1024 * 1024;
+
+/// Maps the 2 MiB page at `phys` at `virt` (both 2 MiB aligned) in the tables at `root`, as one page-directory entry.
+pub fn map_huge_in(root: u64, virt: u64, phys: u64, flags: u64) -> Result<(), MapError> {
+    if virt % HUGE_PAGE != 0 || phys % HUGE_PAGE != 0 {
+        return Err(MapError::NotAligned);
+    }
+    let irq = crate::sched::spin::lock(&LOCK);
+    let r = (|| {
+        let idx = indices(virt);
+        let mut t = table(root);
+        for &i in &idx[..2] {
+            let entry = t[i];
+            if entry & PRESENT == 0 {
+                let new = frame::alloc_frame().ok_or(MapError::NoMemory)?;
+                // SAFETY: freshly allocated frame, reachable through the HHDM.
+                unsafe { core::ptr::write_bytes(phys_to_virt(new), 0, PAGE_SIZE as usize) };
+                t[i] = new | PRESENT | WRITABLE | (flags & USER);
+            } else if entry & HUGE != 0 {
+                return Err(MapError::HugePageInTheWay);
+            }
+            t = table(t[i] & ADDR_MASK);
+        }
+        if t[idx[2]] & PRESENT != 0 {
+            return Err(MapError::AlreadyMapped);
+        }
+        t[idx[2]] = phys | flags | PRESENT | HUGE;
+        invlpg(virt);
+        Ok(())
+    })();
+    crate::sched::spin::unlock(&LOCK, irq);
+    r
+}
+
+/// Removes the 2 MiB page mapped at `virt` in the tables at `root`; returns its physical address (not freed).
+/// Only for the lower half (user memory: no other processor can hold it in its TLB, see arch/x86_64/README.md).
+pub fn unmap_huge_in(root: u64, virt: u64) -> Option<u64> {
+    let irq = crate::sched::spin::lock(&LOCK);
+    let r = (|| {
+        let idx = indices(virt);
+        let mut t = table(root);
+        for &i in &idx[..2] {
+            let entry = t[i];
+            if entry & PRESENT == 0 || entry & HUGE != 0 {
+                return None;
+            }
+            t = table(entry & ADDR_MASK);
+        }
+        let entry = t[idx[2]];
+        if entry & PRESENT == 0 || entry & HUGE == 0 {
+            return None;
+        }
+        t[idx[2]] = 0;
+        invlpg(virt);
+        Some(entry & ADDR_MASK & !(HUGE_PAGE - 1))
+    })();
+    crate::sched::spin::unlock(&LOCK, irq);
+    r
+}
+
 #[allow(dead_code)] // API used by tests now, by process memory in Phase 2
 /// Removes the mapping of `virt` and returns the physical frame it pointed to (the frame is NOT freed).
 pub fn unmap(virt: u64) -> Option<u64> {
@@ -239,14 +300,20 @@ pub unsafe fn load(root: u64) {
 }
 
 /// Frees every table and every mapped frame of the lower half of `root`, then `root` itself.
-/// Huge pages are not used in the lower half. Returns the number of frames freed.
+/// 2 MiB pages (memory regions of programs, K6-03) free their 512 frames. Returns the number of frames freed.
 pub fn free_lower_half(root: u64) -> u64 {
     fn free_level(t: u64, level: u8, count: &mut u64) {
         let entries = table(t);
         let end = if level == 4 { 256 } else { 512 };
         for e in entries.iter_mut().take(end) {
             if *e & PRESENT != 0 {
-                if level > 1 {
+                if level == 2 && *e & HUGE != 0 {
+                    let base = *e & ADDR_MASK & !(HUGE_PAGE - 1);
+                    for k in 0..HUGE_PAGE / PAGE_SIZE {
+                        frame::free_frame(base + k * PAGE_SIZE);
+                    }
+                    *count += HUGE_PAGE / PAGE_SIZE;
+                } else if level > 1 {
                     free_level(*e & ADDR_MASK, level - 1, count);
                 } else {
                     frame::free_frame(*e & ADDR_MASK);
@@ -271,10 +338,11 @@ pub fn user_accessible(root: u64, virt: u64, write: bool) -> bool {
     let mut t = table(root);
     for (level, &i) in idx.iter().enumerate() {
         let e = t[i];
-        if e & need != need || (level < 3 && e & HUGE != 0) {
+        if e & need != need || (level < 2 && e & HUGE != 0) {
             return false;
         }
-        if level == 3 {
+        if level == 3 || e & HUGE != 0 {
+            // a 4 KiB page, or a 2 MiB page of a program's memory region (K6-03)
             return true;
         }
         t = table(e & ADDR_MASK);

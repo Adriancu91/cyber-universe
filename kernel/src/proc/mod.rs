@@ -203,6 +203,21 @@ pub fn add_file(file: OpenFile) -> Option<usize> {
     .flatten()
 }
 
+/// `mem_map` for the program on the current thread (K6-03): a new zero-filled memory region of `len` bytes.
+pub fn map_region(len: u64) -> Result<crate::mem::address_space::Mapped, paging::MapError> {
+    let id = sched::current_id();
+    let mut procs = PROCS.lock();
+    let p = procs.iter_mut().find(|p| p.thread == id).ok_or(paging::MapError::NoMemory)?;
+    p._space.map_region(len)
+}
+
+/// `mem_unmap` for the program on the current thread. Returns the frames freed, `None` if there is no such region.
+pub fn unmap_region(addr: u64, len: u64) -> Option<u64> {
+    let id = sched::current_id();
+    let mut procs = PROCS.lock();
+    procs.iter_mut().find(|p| p.thread == id)?._space.unmap_region(addr, len)
+}
+
 /// Called when the program on thread `id` ends: frees its memory and files, records the exit code.
 pub fn on_exit(id: u64, code: i64) {
     if sched::current_id() == id {
@@ -259,14 +274,23 @@ pub fn wait_child(id: u64) -> i64 {
 #[allow(dead_code)] // used by the self-tests now, by the shell (`run`, P2-09)
 pub fn wait(id: u64) -> i64 {
     let mut code = None;
-    EXIT_WAIT.wait_until(|| {
-        // Checked with interrupts off: take the lock only if it is free, never sleep here.
-        if let Some(mut list) = EXITED.try_lock() {
-            if let Some(i) = list.iter().position(|&(t, _)| t == id) {
-                code = Some(list.swap_remove(i).1);
+    loop {
+        EXIT_WAIT.wait_until(|| {
+            // Checked with interrupts off: take the lock only if it is free, never sleep here. If someone else holds it
+            // (maybe on another processor), do not sleep either: nobody would wake us when they release it; try again.
+            match EXITED.try_lock() {
+                Some(mut list) => {
+                    if let Some(i) = list.iter().position(|&(t, _)| t == id) {
+                        code = Some(list.swap_remove(i).1);
+                    }
+                    code.is_some()
+                }
+                None => true,
             }
+        });
+        if let Some(c) = code {
+            return c;
         }
-        code.is_some()
-    });
-    code.unwrap()
+        sched::yield_now();
+    }
 }

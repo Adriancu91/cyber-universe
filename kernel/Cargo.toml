@@ -95,6 +95,8 @@ test-fpu = ["qemu-test"]
 test-smp = ["qemu-test"]
 # K6-02b: every processor started right after the clock, so the whole boot and every self-test run on all of them.
 test-smp-all = ["qemu-test"]
+# K6-03: /bin/memorie maps 1 GiB with mem_map (run with -m 2G).
+test-mem = ["qemu-test"]
 test-stress = ["qemu-test"]
 test-stress-quick = ["test-stress"]
 

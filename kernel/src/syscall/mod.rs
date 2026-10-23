@@ -39,6 +39,8 @@ pub const SYS_PING: u64 = 31;
 pub const SYS_RANDOM: u64 = 32;
 pub const SYS_RENAME: u64 = 33;
 pub const SYS_SYNC: u64 = 34;
+pub const SYS_MEM_MAP: u64 = 35;
+pub const SYS_MEM_UNMAP: u64 = 36;
 
 mod net;
 mod ui;
@@ -54,6 +56,7 @@ pub const E_EXISTS: i64 = -7; // a file or folder with that name exists
 pub const E_READ_ONLY: i64 = -8; // the disk is not marked for writing
 pub const E_NOT_EMPTY: i64 = -9; // folder not empty
 pub const E_NO_SPACE: i64 = -10; // disk full
+pub const E_NO_MEMORY: i64 = -22; // not enough free memory (mem_map, K6-03)
 // Module manager (call 21).
 pub const E_MOD_MISSING_DEPENDENCY: i64 = -11;
 pub const E_MOD_NEEDED: i64 = -12;
@@ -128,6 +131,11 @@ fn call(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64, a5: u64) -> i64 {
         SYS_NET_INFO => net::net_info(a1, a2),
         SYS_PING => net::ping(a1, a2, _a3),
         SYS_RANDOM => random(a1, a2),
+        SYS_MEM_MAP => mem_map(a1),
+        SYS_MEM_UNMAP => match crate::proc::unmap_region(a1, a2) {
+            Some(_) => 0,
+            None => E_INVALID,
+        },
         _ => E_INVALID,
     }
 }
@@ -542,5 +550,30 @@ fn term_read(id: u64, buf: u64, len: u64) -> i64 {
             n as i64
         }
         None => E_NOT_FOUND,
+    }
+}
+
+/// Largest region one `mem_map` call may ask for (64 GiB; the free memory is the real limit).
+const MEM_MAP_MAX: u64 = 64 << 30;
+
+/// `mem_map(len)` (K6-03): a new zero-filled memory region; returns its address, or `E_INVALID` / `E_NO_MEMORY`.
+fn mem_map(len: u64) -> i64 {
+    if len == 0 || len > MEM_MAP_MAX {
+        return E_INVALID;
+    }
+    match crate::proc::map_region(len) {
+        Ok(m) => {
+            if len >= crate::mem::paging::HUGE_PAGE {
+                crate::info!(
+                    "mem_map: {} KiB la {:#x} ({} pagini de 2 MiB, {} de 4 KiB)",
+                    len.div_ceil(1024),
+                    m.addr,
+                    m.huge_pages,
+                    m.small_pages
+                );
+            }
+            m.addr as i64
+        }
+        Err(_) => E_NO_MEMORY,
     }
 }

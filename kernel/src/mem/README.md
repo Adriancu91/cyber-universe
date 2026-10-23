@@ -30,3 +30,11 @@ firele pornite cu `sched::spawn_in` văd datele spațiului lor, iar după distru
   `free_frame` refuză o astfel de pagină și scrie în jurnal cine a cerut-o („paza DMA ... REFUZATA”, cu fișier:linie), `reclaim_bootloader`
   o sare, `check_pins()` verifică că toate sunt încă ocupate. `alloc_contiguous_between(n, jos, sus)` dă un bloc într-un interval
   (driverul Realtek: între 16 MiB și 4 GB). Testat în QEMU de `test_dma_guard` și de `test_all_frames`.
+- **Memorie mare pentru programe (K6-03):** `AddressSpace::map_region(len)` / `unmap_region(adresă, len)` (apelurile `mem_map`,
+  `mem_unmap`): regiuni anonime de la `0x1000_0000_0000`, aliniate la 2 MiB, luate imediat și umplute cu zero.
+  `frame::alloc_huge()` caută un bloc liber de 512 cadre aliniat la 2 MiB (64 de octeți zero în harta de biți; primul bloc, cu
+  memoria joasă, nu e dat niciodată); `paging::map_huge_in` / `unmap_huge_in` pun și scot o pagină de 2 MiB (bitul PS din
+  directorul de pagini). Fără bloc liber de 2 MiB, regiunea folosește pagini de 4 KiB. `free_lower_half` eliberează și cele
+  512 cadre ale fiecărei pagini mari. Test: scenariile `memorie` și `memorie-smp`.
+- **Mai multe nuclee (K6-02b):** heap-ul, alocatorul de cadre, paza DMA și tabelele de pagini au încuietori cu întreruperile
+  oprite (`sched/spin.rs`); demaparea unei pagini a nucleului golește TLB-ul celorlalte nuclee (`apic::shootdown`).

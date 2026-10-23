@@ -232,7 +232,7 @@ Comanda C-14 (Adrian plecat câteva zile: doar QEMU și CI, câte o sarcină pe 
   Test: `tools/test.sh` → 62 trecute + `https-real` sărit (o dată `reboot-triplu` a picat la testul vechi al temporizatorului — 89/s, mașină încărcată —, trecut la reluare); noi: `smp-start` (QEMU `-smp 4`: trambulina la 0x3000, nucleele 1–3 pornite în ~10 ms fiecare, parcate, planificatorul merge mai departe), `cpu` (`cpu` / `cpu porneste` în shell, `-smp 2`). Cu `-smp 4 -cpu max` testul vechi al temporizatorului pică des pe mașina de 2 nuclee → scenariul rămâne fără `-cpu max`. Pe hardware: `cpu porneste` pe laptop și workstation.
 - [x] **K6-02b** SMP, partea 2: încuietori reale (spinlock cu întreruperile oprite), date per nucleu (GS), planificator pe toate nucleele, temporizator per nucleu. Dep: K6-02.
   Test: QEMU `-smp 4`: fire repartizate pe nuclee, testul de stres trece; nicio regresie cu `-smp 1`.
-- [ ] **K6-03** Memorie mare pentru programe: apel de sistem de alocare/eliberare de regiuni anonime (MiB–GiB, pagini mari unde se poate). Dep: K6-02b.
+- [x] **K6-03** Memorie mare pentru programe: apel de sistem de alocare/eliberare de regiuni anonime (MiB–GiB, pagini mari unde se poate). Dep: K6-02b.
   Test: un program alocă 1 GiB, îl scrie și îl verifică (QEMU cu memorie suficientă).
 - [ ] **K6-04** (opțional) Fire multiple într-un proces. Dep: K6-03.
   Test: un program cu 4 fire care lucrează pe aceeași memorie, rezultat exact.

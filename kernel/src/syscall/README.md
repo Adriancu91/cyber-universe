@@ -40,7 +40,17 @@
   `34 sync(cale, lungime)` — discul pe care e `cale` își golește memoria cache (la stick: SYNCHRONIZE CACHE).
   Socket-urile stau în același tabel ca fișierele și se închid când programul iese. Erori noi: `-17` fără răspuns la timp,
   `-18` refuzat/întrerupt, `-19` rețea fără adresă, `-20` conexiune închisă, `-21` numele nu există.
-- **Erori:** `-1` argument invalid, `-2` adresă invalidă, `-3` nu există, `-4` e director, `-5` descriptor închis, `-6` prea multe fișiere.
+- **Memorie mare (K6-03):** `35 mem_map(lungime)` → adresa unei regiuni noi, plină de zero, citire + scriere, fără execuție,
+  aliniată la 2 MiB (de la `0x1000_0000_0000` în sus, cu 2 MiB liberi între regiuni); `36 mem_unmap(adresă, lungime sau 0)`
+  eliberează exact o regiune dată de `mem_map`. Bucățile întregi de 2 MiB folosesc **pagini mari de 2 MiB** (o intrare de
+  director de pagini, 512 cadre contigue aliniate), restul pagini de 4 KiB; dacă memoria fizică nu mai are blocuri de 2 MiB libere,
+  totul merge cu 4 KiB. **Alegere:** memoria se ia imediat, nu la prima folosire: un program care cere memoria unui model o
+  folosește toată, iar „nu e destulă memorie” se vede la cerere (`-22`), nu ca o eroare în mijlocul calculului.
+  Nucleului îi rămân mereu 16 MiB. O cerere peste 64 GiB = `-1`. Regiunile rămase se eliberează când programul iese.
+  Apelurile de sistem primesc adrese din regiuni ca pe orice memorie a programului (și din paginile de 2 MiB).
+  Biblioteca: `cyber_user::mem_map(len)`, `cyber_user::mem_unmap(ptr, len)`. Test: scenariile `memorie` (`-m 2G`: `/bin/memorie`
+  alocă 1 GiB = 512 pagini de 2 MiB, scrie și verifică, eliberează; cadrele libere revin exact) și `memorie-smp` (pe 4 nuclee).
+- **Erori:** `-1` argument invalid, `-2` adresă invalidă, `-3` nu există, `-4` e director, `-5` descriptor închis, `-6` prea multe fișiere, `-22` memorie insuficientă.
 - **Siguranță:** orice pointer primit e verificat pagină cu pagină (`paging::user_accessible`): în jumătatea de jos,
   mapat cu drept USER la toate nivelurile. O excepție în ring 3 oprește doar programul (cod de ieșire `-1`).
 - **Depinde de:** `sched`, `mem::paging`, `proc`, `ui` (ferestre).

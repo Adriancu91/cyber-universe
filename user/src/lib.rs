@@ -33,6 +33,8 @@ pub const SYS_TERM_WRITE: u64 = 24;
 pub const SYS_RANDOM: u64 = 32;
 pub const SYS_RENAME: u64 = 33;
 pub const SYS_SYNC: u64 = 34;
+pub const SYS_MEM_MAP: u64 = 35;
+pub const SYS_MEM_UNMAP: u64 = 36;
 
 /// A shell running for this program (see kernel/src/term.rs).
 pub mod term {
@@ -86,6 +88,7 @@ pub fn error_text(e: i64) -> &'static str {
         -19 => "reteaua nu are adresa",
         -20 => "conexiune inchisa",
         -21 => "numele nu exista",
+        -22 => "memorie insuficienta",
         _ => "eroare",
     }
 }
@@ -368,4 +371,16 @@ macro_rules! entry {
 fn panic(info: &core::panic::PanicInfo) -> ! {
     println!("program: panica: {}", info.message());
     exit(101)
+}
+
+/// A new zero-filled memory region of `len` bytes (K6-03): returns its address (aligned to 2 MiB), or a negative error
+/// (`-22` = not enough memory). Large regions use 2 MiB pages. Freed with `mem_unmap` or when the program ends.
+pub fn mem_map(len: usize) -> Result<*mut u8, i64> {
+    let r = syscall3(SYS_MEM_MAP, len as u64, 0, 0);
+    if r < 0 { Err(r) } else { Ok(r as *mut u8) }
+}
+
+/// Frees the region returned by `mem_map` (`len` = its length, or 0). Returns 0 or a negative error.
+pub fn mem_unmap(addr: *mut u8, len: usize) -> i64 {
+    syscall3(SYS_MEM_UNMAP, addr as u64, len as u64, 0)
 }

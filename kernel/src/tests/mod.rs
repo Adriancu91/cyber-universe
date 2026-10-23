@@ -6,3 +6,5 @@ pub mod stress;
 pub mod fpu;
 #[cfg(feature = "test-smp")]
 pub mod smp;
+#[cfg(feature = "test-mem")]
+pub mod memory;

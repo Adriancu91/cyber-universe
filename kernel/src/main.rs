@@ -329,6 +329,9 @@ fn run_tests() -> ! {
     #[cfg(feature = "test-smp")]
     tests::smp::run();
 
+    #[cfg(feature = "test-mem")]
+    tests::memory::run();
+
     #[cfg(feature = "test-stress")]
     tests::stress::run();
 
@@ -516,7 +519,14 @@ fn test_heap() {
     }
     let (used_after, mapped) = mem::heap::stats();
     sched::irq_restore(flags);
-    assert!(used_after == used_before, "scurgere in heap: {} inainte, {} dupa", used_before, used_after);
+    // With several processors (test-smp-all) threads on the others may allocate meanwhile: the exact comparison is
+    // made by the single-processor scenarios.
+    assert!(
+        used_after == used_before || sched::running_cpus() > 1,
+        "scurgere in heap: {} inainte, {} dupa",
+        used_before,
+        used_after
+    );
     info!("test: heap OK (Vec de 1.000.000, 10.000 Box, String); heap mapat {} KiB", mapped / 1024);
 }
 
@@ -528,10 +538,18 @@ fn test_timer() {
     apic::pit_sleep_ms(1000);
     let n = apic::ticks() - start;
     assert!((90..=110).contains(&n), "temporizator: {} intreruperi intr-o secunda (asteptat 100)", n);
-    // `hlt` must wake up on the next timer interrupt.
+    // `hlt` must wake up on the next timer interrupt. With several processors this thread may run on one whose own
+    // timer wakes it without counting the time (only the boot processor counts): a few `hlt` then.
     let before = apic::ticks();
-    arch::x86_64::hlt();
-    assert!(apic::ticks() > before, "hlt nu a fost trezit de temporizator");
+    let mut woke = false;
+    for _ in 0..if sched::running_cpus() > 1 { 20 } else { 1 } {
+        arch::x86_64::hlt();
+        if apic::ticks() > before {
+            woke = true;
+            break;
+        }
+    }
+    assert!(woke, "hlt nu a fost trezit de temporizator");
     info!("test: temporizator OK ({} intreruperi intr-o secunda)", n);
 }
 
@@ -569,13 +587,31 @@ fn test_threads() {
         text.push(pair[1].load(Ordering::Relaxed) as char);
         text.push(' ');
     }
-    assert!(text.trim_end() == "A1 B1 C1 A2 B2 C2 A3 B3 C3", "ordine gresita a firelor: {}", text);
+    if sched::running_cpus() > 1 {
+        // Several processors (test-smp-all): the workers may run at the same time, so only each one's own order counts.
+        let steps: alloc::vec::Vec<&str> = text.split_whitespace().collect();
+        for w in ["A", "B", "C"] {
+            let mine: alloc::vec::Vec<&str> = steps.iter().copied().filter(|s| s.starts_with(w)).collect();
+            assert!(mine.len() == 3 && mine.windows(2).all(|p| p[0] < p[1]), "ordine gresita a firelor: {}", text);
+        }
+    } else {
+        assert!(text.trim_end() == "A1 B1 C1 A2 B2 C2 A3 B3 C3", "ordine gresita a firelor: {}", text);
+    }
     drop(text);
     let (heap_after, _) = mem::heap::stats();
-    assert!(heap_after == heap_before, "scurgere dupa fire: {} B inainte, {} B dupa", heap_before, heap_after);
+    assert!(
+        heap_after == heap_before || sched::running_cpus() > 1,
+        "scurgere dupa fire: {} B inainte, {} B dupa",
+        heap_before,
+        heap_after
+    );
     assert!(sched::current_id() == 0, "testul nu ruleaza pe firul 0");
     sched::preempt_enable();
-    info!("test: fire A1 B1 C1 A2 B2 C2 A3 B3 C3, stive eliberate");
+    if sched::running_cpus() > 1 {
+        info!("test: fire A, B, C fiecare in ordine (pe mai multe nuclee), stive eliberate");
+    } else {
+        info!("test: fire A1 B1 C1 A2 B2 C2 A3 B3 C3, stive eliberate");
+    }
 }
 
 /// Two threads spin without ever yielding; only the timer can switch between them. After one second
