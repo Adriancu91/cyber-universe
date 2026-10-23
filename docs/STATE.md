@@ -23,7 +23,10 @@
   Teste noi `smp-start` (`-smp 4`) și `cpu` (shell, `-smp 2`). Partea 2 (planificator pe toate nucleele) = **K6-02b**, sarcină separată.
 - **Teste:** `tools/test.sh` → 62 trecute + `https-real` sărit. Testul vechi al temporizatorului (90–110 întreruperi/s) a picat de 2 ori
   sub încărcare (80, 89; problemă cunoscută, vezi mai jos) și a trecut la reluare; cu `-smp 4 -cpu max` pică des pe mașina de 2 nuclee.
-- **Pentru sesiunea următoare:** verifică CI pe `c6a8e5a` (K6-01, run 175) și `e1a302f` (K6-02, run 176); apoi **K6-02b** (încuietori, date
+- **CI la final:** run 175 (K6-01) verde → **Release `os-175`**; run 176 (K6-02): testele verzi, doar jobul `release` a eșuat în 3 s
+  (fără log; run 177 al aceluiași cod + STATE.md terminase înainte) → **Release `os-177`** = K6-02 (verde). Instalarea uneltelor în CI
+  durează acum ~20 min (înainte ~2), de aceea rulările au ~38 min; limita e 45.
+- **Pentru sesiunea următoare:** **K6-02b** (încuietori, date
   per nucleu prin GS, planificator pe toate nucleele), apoi K6-03 (memorie mare), K6-04 opțional. C-7 și C-11 nu se pornesc până nu se
   întoarce Adrian. Listele pentru hardware sunt în hub (`stare/cyber-universe.md`).
 
