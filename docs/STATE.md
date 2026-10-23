@@ -3,6 +3,10 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### (paralelă) Pornire manuală 2026-10-23 ~06:25 UTC (cerută de centrul de comandă la 08:50 pentru C-12) — fără lucru nou
+- C-12 era deja făcută în această sesiune (P6-11, CI verde, Release os-163). Accesul la `cyber-gpu` reîncercat: tot refuzat
+  (repo privat). Nicio comandă nouă, niciun rezultat de la testul 8 → oprire (CLAUDE.md §3).
+
 ### Sesiunea programată 2026-10-23 05:25–06:30 UTC (08:25–09:30 ora României), în cloud, fără Adrian — P6-11 (C-12)
 - **Oprirea de siguranță ridicată** de comanda nouă **C-12** a lui Adrian (08:45): preluată 05:3x UTC → **P6-11** (+ **P6-12** în coadă).
 - **Patch-ul Cyber-GPU nu a putut fi citit:** `Adriancu91/cyber-gpu` e **privat**, iar sesiunea OS nu are acces (clonarea:
