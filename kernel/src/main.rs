@@ -332,6 +332,9 @@ fn run_tests() -> ! {
     #[cfg(feature = "test-mem")]
     tests::memory::run();
 
+    #[cfg(feature = "test-threads")]
+    tests::threads::run();
+
     #[cfg(feature = "test-stress")]
     tests::stress::run();
 

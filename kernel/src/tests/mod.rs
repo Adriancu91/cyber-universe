@@ -8,3 +8,5 @@ pub mod fpu;
 pub mod smp;
 #[cfg(feature = "test-mem")]
 pub mod memory;
+#[cfg(feature = "test-threads")]
+pub mod threads;

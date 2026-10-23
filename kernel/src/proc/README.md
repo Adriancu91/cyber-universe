@@ -15,4 +15,12 @@
   apel de sistem sau la întreruperea de ceas, deci și un program într-o buclă fără apeluri); un program care doarme
   sau așteaptă un eveniment e trezit. `list()` — programele care merg (id, nume); `running(id)`.
   Test: scenariul `log` (o buclă infinită `jmp $` e oprită), `modules`, `sysapps` (monitorul oprește `demo`).
+- **Fire multiple (K6-04):** `thread_spawn` adaugă un fir în același spațiu de adrese (aceeași memorie, aceleași fișiere și
+  ferestre); firul pornește în ring 3 la adresa dată, cu stiva dată, `rdi`/`rsi` = două argumente. Id-ul programului rămâne
+  id-ul firului principal (`wait`, `kill`, lista de programe). `thread_join(id)` dă codul firului. Reguli:
+  `exit` sau o excepție într-un fir oarecare **opresc tot programul** (cu acel cod); `thread_exit` oprește doar firul (pe firul
+  principal = tot programul); la ieșirea programului toate firele sunt oprite și **așteptate** înainte să se elibereze memoria;
+  `kill` pe program le oprește pe toate. `mem_unmap` merge doar când programul mai are un singur fir (`-23` altfel), ca niciun
+  alt nucleu să nu mai folosească paginile. Cel mult 64 de fire în plus. Biblioteca `user/`: `cyber_user::thread` și heap-ul
+  comun (încuietoare). Test: scenariile `fire` (4 nuclee) și `fire-1` (un nucleu), `/bin/fire`.
 

@@ -59,6 +59,11 @@
   să poată folosi `alloc` (Vec, String, JSON). Blocuri cu antet de 16 octeți, primul care încape; la eliberare, blocurile
   libere vecine se unesc, deci merge și pentru aplicații care rulează mult (chatul). Verificat pe gazdă cu 200 000 de
   alocări/eliberări/realocări la întâmplare (conținutul neatins, totul liber la final).
+  De la K6-04 heap-ul are o încuietoare: firele unui program pot aloca în același timp (verificat în `/bin/fire`).
+- **Fire (`cyber_user::thread`, K6-04):** `spawn(f, arg, stivă)` / `spawn_with_stack(f, arg)` (stivă de 256 KiB din `mem_map`)
+  pornesc `f(arg)` pe un fir nou al programului (aceeași memorie, pe toate nucleele); `join(id)` dă valoarea întoarsă de `f`;
+  `exit(cod)` oprește doar firul. `cyber_user::exit` dintr-un fir oprește tot programul. Stivele din `mem_map` se pot elibera
+  după `join` (`mem_unmap` dă `-23` cât timp alte fire rulează).
 - **Biblioteca** are și `text::Line` (text fără heap), `mem_info`, `programs`, `kill`, `create`, `remove`, `spawn`, `spawn_with` (program + un argument), `wait`, `settings` (citirea setărilor), `list`, `time`, `screen_size`, și `open`, `read`, `close`, `stat`, `args()` (argumentele programului) și `error_text`.
 - **Cum se testează:** scenariul `log` (`hello din ELF`, `test: ELF OK`).
 - **Depinde de:** apelurile de sistem ale nucleului (`kernel/src/syscall/README.md`).

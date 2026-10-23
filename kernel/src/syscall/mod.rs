@@ -41,6 +41,9 @@ pub const SYS_RENAME: u64 = 33;
 pub const SYS_SYNC: u64 = 34;
 pub const SYS_MEM_MAP: u64 = 35;
 pub const SYS_MEM_UNMAP: u64 = 36;
+pub const SYS_THREAD_SPAWN: u64 = 37;
+pub const SYS_THREAD_JOIN: u64 = 38;
+pub const SYS_THREAD_EXIT: u64 = 39;
 
 mod net;
 mod ui;
@@ -57,6 +60,7 @@ pub const E_READ_ONLY: i64 = -8; // the disk is not marked for writing
 pub const E_NOT_EMPTY: i64 = -9; // folder not empty
 pub const E_NO_SPACE: i64 = -10; // disk full
 pub const E_NO_MEMORY: i64 = -22; // not enough free memory (mem_map, K6-03)
+pub const E_BUSY: i64 = -23; // other threads of the program still run (mem_unmap, K6-04)
 // Module manager (call 21).
 pub const E_MOD_MISSING_DEPENDENCY: i64 = -11;
 pub const E_MOD_NEEDED: i64 = -12;
@@ -133,22 +137,57 @@ fn call(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64, a5: u64) -> i64 {
         SYS_RANDOM => random(a1, a2),
         SYS_MEM_MAP => mem_map(a1),
         SYS_MEM_UNMAP => match crate::proc::unmap_region(a1, a2) {
-            Some(_) => 0,
-            None => E_INVALID,
+            Ok(_) => 0,
+            Err(crate::proc::UnmapError::NoSuchRegion) => E_INVALID,
+            Err(crate::proc::UnmapError::ThreadsRunning) => E_BUSY,
+        },
+        SYS_THREAD_SPAWN => thread_spawn(a1, a2, _a3, a4),
+        SYS_THREAD_JOIN => crate::proc::thread_join(a1),
+        SYS_THREAD_EXIT => match crate::proc::main_of(sched::current_id()) {
+            Some(_) => end_thread(a1 as i64),
+            None => exit_current(a1 as i64), // the main thread: the whole program ends
         },
         _ => E_INVALID,
     }
 }
 
-/// Ends the program running on this thread with `code` and the thread with it.
+/// Ends the program running on this thread with `code` and the thread with it. On an additional thread (K6-04) the
+/// whole program ends too (its main thread is stopped and exits with `code`), unless this thread was itself asked to
+/// stop: then only this thread ends (the program is ending, or `kill`).
 pub fn exit_current(code: i64) -> ! {
     // SAFETY: re-enables interrupts if an exception handler called us with them off; we are on the
     // thread's own kernel stack, which stays valid until the scheduler frees it after the switch.
     unsafe { core::arch::asm!("sti", options(nomem, nostack)) }
     let id = sched::current_id();
-    crate::info!("proces: firul {} a iesit cu codul {}", id, code);
+    if let Some(main) = crate::proc::main_of(id) {
+        if !sched::killed() {
+            crate::proc::end_program(main, code);
+        }
+        end_thread(code)
+    }
+    crate::info!("proces: firul {} a iesit cu codul {}", id, crate::proc::exit_code(id, code));
     crate::proc::on_exit(id, code);
     sched::exit()
+}
+
+/// Ends only the current additional thread of a program (K6-04): `thread_exit`, or the thread was stopped.
+fn end_thread(code: i64) -> ! {
+    // SAFETY: as in `exit_current`.
+    unsafe { core::arch::asm!("sti", options(nomem, nostack)) }
+    crate::proc::thread_exited(sched::current_id(), code);
+    sched::exit()
+}
+
+/// thread_spawn(entry, stack_top, arg0, arg1) (K6-04): a new thread of this program; it starts at `entry` with
+/// `rsp = stack_top`, `rdi = arg0`, `rsi = arg1`. The 64 bytes under `stack_top` must be writable program memory.
+fn thread_spawn(entry: u64, stack_top: u64, arg0: u64, arg1: u64) -> i64 {
+    if entry == 0 || entry >= USER_END {
+        return E_INVALID;
+    }
+    if stack_top < 64 || !user_range_ok(stack_top - 64, 64, true) {
+        return E_FAULT;
+    }
+    crate::proc::thread_spawn(entry, stack_top, arg0, arg1)
 }
 
 /// True if every byte of `[addr, addr + len)` is in the program's half and mapped with USER rights

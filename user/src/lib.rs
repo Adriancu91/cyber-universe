@@ -35,6 +35,9 @@ pub const SYS_RENAME: u64 = 33;
 pub const SYS_SYNC: u64 = 34;
 pub const SYS_MEM_MAP: u64 = 35;
 pub const SYS_MEM_UNMAP: u64 = 36;
+pub const SYS_THREAD_SPAWN: u64 = 37;
+pub const SYS_THREAD_JOIN: u64 = 38;
+pub const SYS_THREAD_EXIT: u64 = 39;
 
 /// A shell running for this program (see kernel/src/term.rs).
 pub mod term {
@@ -89,6 +92,7 @@ pub fn error_text(e: i64) -> &'static str {
         -20 => "conexiune inchisa",
         -21 => "numele nu exista",
         -22 => "memorie insuficienta",
+        -23 => "alte fire ale programului ruleaza",
         _ => "eroare",
     }
 }
@@ -380,7 +384,54 @@ pub fn mem_map(len: usize) -> Result<*mut u8, i64> {
     if r < 0 { Err(r) } else { Ok(r as *mut u8) }
 }
 
-/// Frees the region returned by `mem_map` (`len` = its length, or 0). Returns 0 or a negative error.
+/// Frees the region returned by `mem_map` (`len` = its length, or 0). Returns 0 or a negative error (`-23` while other
+/// threads of the program still run: join them first).
 pub fn mem_unmap(addr: *mut u8, len: usize) -> i64 {
     syscall3(SYS_MEM_UNMAP, addr as u64, len as u64, 0)
+}
+
+/// Threads of one program (K6-04): they share its memory, files and windows and run on all processors.
+pub mod thread {
+    use super::{SYS_THREAD_EXIT, SYS_THREAD_JOIN, SYS_THREAD_SPAWN, syscall3, syscall4};
+
+    /// Stack size `spawn_with_stack` takes from `mem_map` for each thread.
+    pub const STACK: usize = 256 * 1024;
+
+    /// First code of a new thread (the kernel starts it with rdi = the function, rsi = its argument).
+    extern "C" fn start(f: u64, arg: u64) -> ! {
+        // SAFETY: `f` was an `extern "C" fn(u64) -> i64` given to `spawn` by this program.
+        let f: extern "C" fn(u64) -> i64 = unsafe { core::mem::transmute(f as usize) };
+        exit(f(arg))
+    }
+
+    /// Starts `f(arg)` on a new thread whose stack is `stack` (memory of this program that stays valid until the
+    /// thread ends). Returns the thread id, or a negative error (`-6` = too many threads). When `f` returns, the
+    /// thread ends with that value (see `join`).
+    pub fn spawn(f: extern "C" fn(u64) -> i64, arg: u64, stack: &'static mut [u8]) -> i64 {
+        // At a function's first instruction the stack pointer is 8 bytes below a 16-byte boundary (System V ABI).
+        let top = ((stack.as_mut_ptr() as usize + stack.len()) & !15) - 8;
+        syscall4(SYS_THREAD_SPAWN, start as extern "C" fn(u64, u64) -> ! as usize as u64, top as u64, f as usize as u64, arg)
+    }
+
+    /// Like `spawn`, with a new stack of `STACK` bytes from `mem_map` (freed when the program ends, or with
+    /// `mem_unmap` after `join`). Returns (thread id or negative error, stack address).
+    pub fn spawn_with_stack(f: extern "C" fn(u64) -> i64, arg: u64) -> (i64, *mut u8) {
+        match super::mem_map(STACK) {
+            // SAFETY: a fresh region of STACK bytes owned by this program.
+            Ok(p) => (spawn(f, arg, unsafe { core::slice::from_raw_parts_mut(p, STACK) }), p),
+            Err(e) => (e, core::ptr::null_mut()),
+        }
+    }
+
+    /// Waits until thread `id` of this program ends; returns its exit value (or a negative error: `-3` = no such
+    /// thread, or it was already joined).
+    pub fn join(id: i64) -> i64 {
+        syscall3(SYS_THREAD_JOIN, id as u64, 0, 0)
+    }
+
+    /// Ends the calling thread with `code` (on the main thread: the whole program, like `exit`).
+    pub fn exit(code: i64) -> ! {
+        syscall3(SYS_THREAD_EXIT, code as u64, 0, 0);
+        unreachable!()
+    }
 }

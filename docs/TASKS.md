@@ -234,7 +234,7 @@ Comanda C-14 (Adrian plecat câteva zile: doar QEMU și CI, câte o sarcină pe 
   Test: QEMU `-smp 4`: fire repartizate pe nuclee, testul de stres trece; nicio regresie cu `-smp 1`.
 - [x] **K6-03** Memorie mare pentru programe: apel de sistem de alocare/eliberare de regiuni anonime (MiB–GiB, pagini mari unde se poate). Dep: K6-02b.
   Test: un program alocă 1 GiB, îl scrie și îl verifică (QEMU cu memorie suficientă).
-- [~] **K6-04** (opțional) Fire multiple într-un proces. Dep: K6-03.
+- [x] **K6-04** (opțional) Fire multiple într-un proces: `thread_spawn`/`thread_join`/`thread_exit` (37–39), oprirea tuturor firelor la ieșire, heap comun cu încuietoare, `/bin/fire`. Dep: K6-03.
   Test: un program cu 4 fire care lucrează pe aceeași memorie, rezultat exact.
 
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.

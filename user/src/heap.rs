@@ -8,6 +8,7 @@
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::cell::UnsafeCell;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 const HEADER: usize = 16;
 const MIN_BLOCK: usize = 2 * HEADER;
@@ -18,9 +19,11 @@ struct Area<const N: usize>([u8; N]);
 pub struct Heap<const N: usize> {
     area: UnsafeCell<Area<N>>,
     ready: UnsafeCell<bool>,
+    /// Held while a thread walks or changes the blocks (programs may have several threads, K6-04).
+    lock: AtomicBool,
 }
 
-// SAFETY: programs have one thread, so the allocator is never entered twice at the same time.
+// SAFETY: every access to `area` and `ready` happens with `lock` held (see `locked`).
 unsafe impl<const N: usize> Sync for Heap<N> {}
 
 impl<const N: usize> Default for Heap<N> {
@@ -31,7 +34,24 @@ impl<const N: usize> Default for Heap<N> {
 
 impl<const N: usize> Heap<N> {
     pub const fn new() -> Heap<N> {
-        Heap { area: UnsafeCell::new(Area([0; N])), ready: UnsafeCell::new(false) }
+        Heap { area: UnsafeCell::new(Area([0; N])), ready: UnsafeCell::new(false), lock: AtomicBool::new(false) }
+    }
+
+    /// Runs `f` with the heap lock held. A thread that finds it taken gives up its processor after a short spin (the
+    /// holder may have been preempted).
+    fn locked<R>(&self, f: impl FnOnce() -> R) -> R {
+        let mut spins = 0u32;
+        while self.lock.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+            spins += 1;
+            if spins % 64 == 0 {
+                crate::yield_now();
+            } else {
+                core::hint::spin_loop();
+            }
+        }
+        let r = f();
+        self.lock.store(false, Ordering::Release);
+        r
     }
 
     /// Usable size of the area (a whole number of 16-byte units).
@@ -61,7 +81,7 @@ impl<const N: usize> Heap<N> {
     }
 
     fn init(&self) {
-        // SAFETY: single thread (see Sync above).
+        // SAFETY: called with the lock held (see Sync above).
         let ready = unsafe { &mut *self.ready.get() };
         if !*ready {
             self.set_header(0, Self::SIZE, true);
@@ -93,6 +113,10 @@ impl<const N: usize> Heap<N> {
 
     /// Bytes in free blocks (for tests and the program's own information).
     pub fn free(&self) -> usize {
+        self.locked(|| self.free_locked())
+    }
+
+    fn free_locked(&self) -> usize {
         self.init();
         let (mut off, mut total) = (0, 0);
         while off < Self::SIZE {
@@ -106,8 +130,8 @@ impl<const N: usize> Heap<N> {
     }
 }
 
-unsafe impl<const N: usize> GlobalAlloc for Heap<N> {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+impl<const N: usize> Heap<N> {
+    fn alloc_locked(&self, layout: Layout) -> *mut u8 {
         if layout.align() > HEADER {
             return core::ptr::null_mut();
         }
@@ -131,29 +155,39 @@ unsafe impl<const N: usize> GlobalAlloc for Heap<N> {
         core::ptr::null_mut()
     }
 
-    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+    fn dealloc_locked(&self, ptr: *mut u8) {
         let off = ptr as usize - self.base() as usize - HEADER;
         let (size, _) = self.header(off);
         self.set_header(off, size, true);
         self.merge();
     }
+}
+
+unsafe impl<const N: usize> GlobalAlloc for Heap<N> {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        self.locked(|| self.alloc_locked(layout))
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+        self.locked(|| self.dealloc_locked(ptr))
+    }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let off = ptr as usize - self.base() as usize - HEADER;
-        let (size, _) = self.header(off);
-        if HEADER + new_size <= size {
-            return ptr; // still fits
-        }
-        // SAFETY: the layout with the new size is valid (GlobalAlloc's contract for realloc).
-        let new = unsafe { self.alloc(Layout::from_size_align_unchecked(new_size, layout.align())) };
-        if !new.is_null() {
-            // SAFETY: both blocks are ours, distinct, and at least layout.size() long.
-            unsafe {
-                core::ptr::copy_nonoverlapping(ptr, new, layout.size());
-                self.dealloc(ptr, layout);
+        self.locked(|| {
+            let off = ptr as usize - self.base() as usize - HEADER;
+            let (size, _) = self.header(off);
+            if HEADER + new_size <= size {
+                return ptr; // still fits
             }
-        }
-        new
+            // SAFETY: the layout with the new size is valid (GlobalAlloc's contract for realloc).
+            let new = self.alloc_locked(unsafe { Layout::from_size_align_unchecked(new_size, layout.align()) });
+            if !new.is_null() {
+                // SAFETY: both blocks are ours, distinct, and at least layout.size() long.
+                unsafe { core::ptr::copy_nonoverlapping(ptr, new, layout.size()) };
+                self.dealloc_locked(ptr);
+            }
+            new
+        })
     }
 }
 

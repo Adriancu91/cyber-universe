@@ -50,6 +50,12 @@
   Apelurile de sistem primesc adrese din regiuni ca pe orice memorie a programului (și din paginile de 2 MiB).
   Biblioteca: `cyber_user::mem_map(len)`, `cyber_user::mem_unmap(ptr, len)`. Test: scenariile `memorie` (`-m 2G`: `/bin/memorie`
   alocă 1 GiB = 512 pagini de 2 MiB, scrie și verifică, eliberează; cadrele libere revin exact) și `memorie-smp` (pe 4 nuclee).
+- **Fire (K6-04):** `37 thread_spawn(intrare, vârful stivei, arg0, arg1)` → id-ul firului nou (pornește cu `rsp` = vârful dat,
+  `rdi = arg0`, `rsi = arg1`; cei 64 de octeți de sub vârf trebuie să fie memorie a programului cu drept de scriere, altfel `-2`;
+  peste 64 de fire `-6`); `38 thread_join(id)` → codul firului (`-3` dacă nu e al programului sau a fost deja cules);
+  `39 thread_exit(cod)` oprește firul (pe firul principal: tot programul). `exit` dintr-un fir oprește tot programul.
+  `mem_unmap` cu alte fire în viață → `-23`. Biblioteca: `cyber_user::thread::{spawn, spawn_with_stack, join, exit}`.
+  Detalii: `kernel/src/proc/README.md`. Test: scenariile `fire`, `fire-1`.
 - **Erori:** `-1` argument invalid, `-2` adresă invalidă, `-3` nu există, `-4` e director, `-5` descriptor închis, `-6` prea multe fișiere, `-22` memorie insuficientă.
 - **Siguranță:** orice pointer primit e verificat pagină cu pagină (`paging::user_accessible`): în jumătatea de jos,
   mapat cu drept USER la toate nivelurile. O excepție în ring 3 oprește doar programul (cod de ieșire `-1`).

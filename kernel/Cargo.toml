@@ -97,6 +97,8 @@ test-smp = ["qemu-test"]
 test-smp-all = ["qemu-test"]
 # K6-03: /bin/memorie maps 1 GiB with mem_map (run with -m 2G).
 test-mem = ["qemu-test"]
+# K6-04: /bin/fire (threads of one program; run with -smp 4 and test-smp-all).
+test-threads = ["qemu-test"]
 test-stress = ["qemu-test"]
 test-stress-quick = ["test-stress"]
 
