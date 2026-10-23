@@ -27,7 +27,7 @@
 - **Teste local:** `tools/test.sh` → 70 trecute + 3 picate la testul vechi al temporizatorului (50–86/s, mașina de 2 nuclee încărcată:
   `crypto`, `keyboard`, `fpu-smp`), toate trecute la reluare; `https-real` sărit. Total: 74 de scenarii (3 noi).
 - **CI:** run 188 verde pe `wip/integrare-gpu` → unit în `main` (commit de unire, fără rescrierea istoriei); Release-ul iese din `main`
-  după CI (vezi hub-ul pentru numărul lui). `wip/integrare-gpu` rămâne pe GitHub ca istoric.
+  după CI: **Release `os-189`** (run 189 verde; os-187 păstrat). `wip/integrare-gpu` rămâne pe GitHub ca istoric.
 - **Coada:** fără sarcini libere (P6-10, P6-12 p.2 așteaptă hardware; P3-10 cere Adrian; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian).
 - **Pentru sesiunea următoare:** verifică CI-ul pe `main` (unirea P6-19) și Release-ul; dacă Adrian a urcat tag-ul `stabil-2026-10-23`,
   șterge din STATE mențiunea „ramura în loc de tag” (ramura rămâne). Meniul desktopului e **plin** (20 de programe = maximul):
