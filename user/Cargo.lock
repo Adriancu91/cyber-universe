@@ -24,4 +24,36 @@ dependencies = [
  "cyber_crypto",
  "cyber_json",
  "cyber_tls",
+ "gpu-compute",
+]
+
+[[package]]
+name = "gpu-command"
+version = "0.1.0"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=41e44ba#41e44ba492c606ba5abf15126210caf1313b9e6e"
+dependencies = [
+ "gpu-core",
+]
+
+[[package]]
+name = "gpu-compute"
+version = "0.1.0"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=41e44ba#41e44ba492c606ba5abf15126210caf1313b9e6e"
+dependencies = [
+ "gpu-command",
+ "gpu-core",
+ "gpu-memory",
+]
+
+[[package]]
+name = "gpu-core"
+version = "0.1.0"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=41e44ba#41e44ba492c606ba5abf15126210caf1313b9e6e"
+
+[[package]]
+name = "gpu-memory"
+version = "0.1.0"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=41e44ba#41e44ba492c606ba5abf15126210caf1313b9e6e"
+dependencies = [
+ "gpu-core",
 ]

@@ -62,3 +62,14 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
 - **Surse:** specificațiile PCI / PCI Express (antet, BAR-uri, capabilitatea extinsă 0x15); documentația publică NVIDIA
   (open-gpu-doc) și antetele MIT `dev_boot.h` din open-gpu-kernel-modules, citite doar pentru adresele și câmpurile celor două
   registre. Niciun cod copiat. Patch-ul proiectului Cyber-GPU nu a putut fi citit (repo privat) — comanda e scrisă de la zero.
+- **Cyber-GPU (P6-19, comanda C-16):** `gpu identifica` trece acum fiecare placă video și prin bibliotecile proiectului Cyber-GPU
+  (MIT, același autor; fixate pe commit-ul `41e44ba` = tag-ul lor `stabil-2026-10-23`, în `kernel/Cargo.toml`): `nvidia-ga104::probe`
+  (configurația PCI, modelul, BAR0) și, la o placă cunoscută (RTX 3070 Ti `10de:2482`), citirea BOOT_0/BOOT_42 prin aceeași fereastră
+  fără drept de scriere. Biblioteca vede placa doar prin două adaptoare din `gpu.rs` (`ReadOnlyConfig`, `ReadOnlyWindow`):
+  **orice scriere cerută de bibliotecă e refuzată și numărată** (rândul final: „adaptorul cyber-gpu a refuzat 0 scrieri”).
+  Plăcile pe care biblioteca nu le cunoaște rămân pe calea veche (P6-11).
+  `gpu identifica --sim` există **doar în build-ul de test** (funcția `test-gpu-sim`, cu `gpu-sim`): același drum pe modelul plăcii de
+  pe workstation (datele inventarului K0: `10de:2482` la `b3:00.0`, BAR0 16 MiB, BAR1 256 MiB, BAR3 32 MiB); fiecare rând începe cu
+  **SIMULARE**, iar dimensionarea BAR-urilor (care scrie) se face doar în model.
+  Test: scenariile `gpu` (calea reală în QEMU → „nicio placa NVIDIA”, `--sim` refuzat în build-ul obișnuit) și `gpu-sim`;
+  `tools/after-gpu.sh` verifică în sursă că adaptoarele doar refuză (și că dimensionarea apare doar în blocul de simulare).

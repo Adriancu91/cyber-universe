@@ -9,6 +9,8 @@ description = "Cyber Universe OS user programs and their small runtime library"
 cyber_crypto = { path = "../crypto" }
 cyber_tls = { path = "../tls" }
 cyber_json = { path = "../json" }
+# P6-19 (C-16): Kronos operators and the CPU reference backend from Cyber-GPU (MIT, same author), pinned to one commit.
+gpu-compute = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "41e44ba" }
 
 [lib]
 path = "src/lib.rs"

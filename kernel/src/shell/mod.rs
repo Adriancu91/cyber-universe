@@ -329,6 +329,16 @@ fn lspci() {
 
 fn gpu(args: &[&str]) {
     match args.first().copied() {
+        #[cfg(feature = "test-gpu-sim")]
+        Some("identifica") if args.get(1) == Some(&"--sim") => {
+            for l in crate::drivers::gpu::identify_sim() {
+                out!("{}\n", l);
+            }
+        }
+        #[cfg(not(feature = "test-gpu-sim"))]
+        Some("identifica") if args.get(1) == Some(&"--sim") => {
+            out!("gpu: --sim exista doar in build-ul de test (modelul gpu-sim nu intra in sistemul pornit de pe stick)\n");
+        }
         None | Some("identifica") => {
             for l in crate::drivers::gpu::identify() {
                 out!("{}\n", l);

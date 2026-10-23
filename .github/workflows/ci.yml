@@ -113,7 +113,8 @@ jobs:
         with:
           name: release
           path: release
-      - name: Release os-<număr> (marcat „latest”), păstrează ultimele 5
+      # C-16: os-187 = the restore point chosen by Adrian (stabil-2026-10-23: 9f67d7b + a test-only fix) is never deleted.
+      - name: Release os-<număr> (marcat „latest”), păstrează ultimele 5 + os-187
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -123,4 +124,4 @@ jobs:
             --title "Cyber Universe OS $TAG" \
             --notes "Construit și testat de CI din commit-ul $GITHUB_SHA. Fișierele pentru stick: docs/USB.md (varianta B). Sumele: SHA256SUMS."
           gh release list --limit 100 --json tagName,createdAt --jq 'sort_by(.createdAt) | reverse | .[].tagName' \
-            | grep '^os-' | tail -n +6 | while read -r old; do gh release delete "$old" --yes --cleanup-tag; done
+            | grep '^os-' | grep -vxF -e os-187 | tail -n +6 | while read -r old; do gh release delete "$old" --yes --cleanup-tag; done

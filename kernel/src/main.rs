@@ -335,6 +335,9 @@ fn run_tests() -> ! {
     #[cfg(feature = "test-threads")]
     tests::threads::run();
 
+    #[cfg(feature = "test-kronos-calc")]
+    tests::kronos::run();
+
     #[cfg(feature = "test-stress")]
     tests::stress::run();
 
