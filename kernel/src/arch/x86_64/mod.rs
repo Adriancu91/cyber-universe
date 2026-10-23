@@ -1,6 +1,7 @@
 //! x86_64-specific primitives: port I/O and CPU control.
 
 pub mod apic;
+pub mod fpu;
 pub mod gdt;
 pub mod idt;
 pub mod syscall;
@@ -12,6 +13,7 @@ pub fn init() {
     gdt::init();
     idt::init();
     syscall::init();
+    fpu::init();
 }
 
 /// Writes one byte to an I/O port.

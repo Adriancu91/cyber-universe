@@ -27,4 +27,9 @@
   (trei fire care își cedează rândul; ordinea dovedește round-robin; heap-ul revine exact la valoarea de dinainte)
   și `test: preemptiune OK` (două fire care nu cedează niciodată procesorul primesc amândouă timp, în proporții apropiate),
   `test: sleep_ms(500) = 50 ticks; mutex: 4 fire x 10000 = 40000` și scenariul `keyboard` (care așteaptă tastele dormind).
-- **Surse:** System V AMD64 ABI (registrele păstrate de funcția chemată); OSDev Wiki „Kernel Multitasking” (doar ideea). Cod propriu.
+- **Registrele vectoriale (K6-01):** fiecare fir are o zonă `fpu::Area` (aliniată la 64 de octeți, mărimea din CPUID 0Dh);
+  la fiecare comutare, `yield_now` face XSAVE în zona firului care pleacă și XRSTOR din zona celui care vine (FXSAVE/FXRSTOR
+  pe procesoarele fără XSAVE). Nucleul e compilat fără SSE, deci registrele vectoriale sunt doar ale firelor și programelor.
+  `arch/x86_64/fpu.rs` pornește unitatea (CR0, CR4, XCR0 = x87 + SSE + AVX, doar ce raportează CPUID). Test: scenariile `fpu`
+  (`-cpu max`: XSAVE, AVX, un program ring 3 cu AVX2) și `fpu-fx` (procesor fără XSAVE: FXSAVE, SSE2); fără salvare testul pică.
+- **Surse:** Intel SDM vol. 1 cap. 13 (XSAVE), vol. 3 §2.5–2.6 (CR0, CR4, XCR0); System V AMD64 ABI (registrele păstrate de funcția chemată); OSDev Wiki „Kernel Multitasking” (doar ideea). Cod propriu.

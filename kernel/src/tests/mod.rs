@@ -2,3 +2,5 @@
 
 #[cfg(feature = "test-stress")]
 pub mod stress;
+#[cfg(feature = "test-fpu")]
+pub mod fpu;

@@ -319,6 +319,9 @@ fn run_tests() -> ! {
         shell::run();
     }
 
+    #[cfg(feature = "test-fpu")]
+    tests::fpu::run();
+
     #[cfg(feature = "test-stress")]
     tests::stress::run();
 

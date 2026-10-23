@@ -22,7 +22,7 @@ const START_X: usize = 4;
 const START_W: usize = 84;
 const ITEM_H: usize = 24;
 const MENU_W: usize = 200;
-const MAX_ITEMS: usize = 16;
+const MAX_ITEMS: usize = 20;
 const MENU_H_MAX: usize = MAX_ITEMS * ITEM_H + 8;
 
 static mut BAR_PIXELS: [u32; MAX_W * BAR_H] = [0; MAX_W * BAR_H];

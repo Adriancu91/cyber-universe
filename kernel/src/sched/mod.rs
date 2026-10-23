@@ -46,6 +46,8 @@ struct Thread {
     cpu_ticks: u64,
     /// The thread's stack; `None` for the boot thread, which runs on the kernel's boot stack.
     _stack: Option<Box<[u8]>>,
+    /// Saved vector registers (x87/SSE/AVX) while the thread is not running (K6-01).
+    fpu: Option<crate::arch::x86_64::fpu::Area>,
 }
 
 struct Scheduler {
@@ -103,7 +105,7 @@ pub fn init() {
         s.ready.reserve(16);
         s.blocked.reserve(16);
         s.zombies.reserve(16);
-        s.current = Some(Box::new(Thread { id: 0, state: State::Ready, rsp: 0, wait_key: 0, wake_at: 0, root: 0, kstack_top: 0, system: false, killed: false, cpu_ticks: 0, _stack: None }));
+        s.current = Some(Box::new(Thread { id: 0, state: State::Ready, rsp: 0, wait_key: 0, wake_at: 0, root: 0, kstack_top: 0, system: false, killed: false, cpu_ticks: 0, _stack: None, fpu: crate::arch::x86_64::fpu::Area::new() }));
     });
     let idle = new_thread(IDLE_ID, idle_loop);
     with_sched(|s| s.idle = Some(idle));
@@ -178,7 +180,7 @@ fn new_thread(id: u64, f: fn()) -> Box<Thread> {
     let top = (stack.as_ptr() as u64 + STACK_SIZE as u64) & !15;
     // SAFETY: the 56 bytes below `top` belong to `stack`, which the new thread owns.
     let rsp = unsafe { switch::initial_stack(top, f as *const () as usize) };
-    Box::new(Thread { id, state: State::Ready, rsp, wait_key: 0, wake_at: 0, root: 0, kstack_top: top, system: false, killed: false, cpu_ticks: 0, _stack: Some(stack) })
+    Box::new(Thread { id, state: State::Ready, rsp, wait_key: 0, wake_at: 0, root: 0, kstack_top: top, system: false, killed: false, cpu_ticks: 0, _stack: Some(stack), fpu: crate::arch::x86_64::fpu::Area::new() })
 }
 
 /// The idle thread: sleeps until an interrupt, then lets whoever was woken run.
@@ -315,6 +317,7 @@ pub fn yield_now() {
         };
         let mut prev = s.current.replace(next).expect("sched: niciun fir curent");
         let old_rsp: *mut u64 = &mut prev.rsp; // the Box keeps this address stable when it moves
+        let old_fpu = prev.fpu.as_ref().map_or(core::ptr::null_mut(), |a| a.as_ptr());
         match prev.state {
             State::Exited => s.zombies.push(prev),
             State::Blocked => s.blocked.push(prev),
@@ -322,9 +325,20 @@ pub fn yield_now() {
             State::Ready => s.ready.push_back(prev),
         }
         let next = s.current.as_ref().unwrap();
-        Some((old_rsp, next.rsp, next.root, next.kstack_top))
+        Some((old_rsp, next.rsp, next.root, next.kstack_top, old_fpu, next.fpu.as_ref().map_or(core::ptr::null_mut(), |a| a.as_ptr())))
     });
-    if let Some((old_rsp, new_rsp, root, kstack_top)) = switch {
+    if let Some((old_rsp, new_rsp, root, kstack_top, old_fpu, new_fpu)) = switch {
+        // The vector registers belong to the thread: saved here, loaded for the next one (the kernel never uses them).
+        // SAFETY: both areas come from `fpu::Area` (aligned, `area_size()` bytes) and live in Threads kept by the
+        // scheduler queues until after this switch (zombies are freed by `reap` afterwards).
+        unsafe {
+            if !old_fpu.is_null() {
+                crate::arch::x86_64::fpu::save(old_fpu);
+            }
+            if !new_fpu.is_null() {
+                crate::arch::x86_64::fpu::restore(new_fpu);
+            }
+        }
         if kstack_top != 0 {
             crate::arch::x86_64::syscall::set_kernel_stack(kstack_top);
         }
