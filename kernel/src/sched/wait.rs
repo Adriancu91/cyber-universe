@@ -1,6 +1,6 @@
 //! Waiting without using the CPU: wait queues and `sleep_ms`.
 
-use super::{block_current, irq_restore, irq_save, killed, wake};
+use super::{block_current, cancel_wait, irq_restore, irq_save, killed, prepare_wait, wake};
 use crate::arch::x86_64::apic;
 
 /// A place where threads wait for something (a key press, a free lock...). Threads are identified with
@@ -19,12 +19,15 @@ impl WaitQueue {
         self as *const Self as usize
     }
 
-    /// Blocks the current thread until `ready()` returns true. `ready` is checked with interrupts
-    /// disabled, so a wake-up from an interrupt handler between the check and the sleep cannot be lost.
+    /// Blocks the current thread until `ready()` returns true. `ready` is checked after `prepare_wait`, with
+    /// interrupts disabled, so a wake-up between the check and the sleep (from an interrupt handler or from another
+    /// processor) cannot be lost.
     pub fn wait_until(&self, mut ready: impl FnMut() -> bool) {
         loop {
             let flags = irq_save();
+            prepare_wait(self.key());
             if ready() {
+                cancel_wait();
                 irq_restore(flags);
                 return;
             }
@@ -38,11 +41,14 @@ impl WaitQueue {
     pub fn wait_until_or(&self, deadline: u64, mut ready: impl FnMut() -> bool) -> bool {
         loop {
             let flags = irq_save();
+            prepare_wait(self.key());
             if ready() {
+                cancel_wait();
                 irq_restore(flags);
                 return true;
             }
             if (deadline != 0 && apic::ticks() >= deadline) || killed() {
+                cancel_wait();
                 irq_restore(flags);
                 return false;
             }
@@ -69,6 +75,7 @@ pub fn sleep_ms(ms: u64) {
     let wake_at = apic::ticks() + ticks;
     while apic::ticks() < wake_at && !killed() {
         let flags = irq_save();
+        prepare_wait(0);
         block_current(0, wake_at);
         irq_restore(flags);
     }

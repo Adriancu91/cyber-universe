@@ -136,14 +136,25 @@ fn worker_a() {
 fn worker_b() {
     worker(0xB000_0000_0000_0000);
 }
+/// With several processors (K6-02b) more threads than processors, each with its own pattern, so threads keep
+/// switching and moving between processors.
+static NEXT: AtomicU64 = AtomicU64::new(0);
+fn worker_n() {
+    worker(0xD000_0000_0000_0000 + (NEXT.fetch_add(1, Ordering::Relaxed) << 40));
+}
 
 pub fn run() {
     let before = crate::sched::switches();
+    let cpus = crate::sched::running_cpus();
+    let threads = if cpus > 1 { 3 * cpus } else { 3 };
     crate::sched::spawn(worker_a);
     crate::sched::spawn(worker_b);
+    for _ in 3..threads {
+        crate::sched::spawn(worker_n);
+    }
     // the boot thread joins in with its own pattern
     worker(0xC000_0000_0000_0000);
-    while DONE.load(Ordering::Acquire) < 3 {
+    while DONE.load(Ordering::Acquire) < threads {
         crate::sched::yield_now();
     }
     let switches = crate::sched::switches() - before;
@@ -151,7 +162,8 @@ pub fn run() {
     assert!(errors == 0, "vectori: {} verificari gresite (registre amestecate intre fire)", errors);
     assert!(switches >= ROUNDS, "vectori: prea putine comutari ({})", switches);
     crate::info!(
-        "test: vectori: 3 fire x {} runde, {} comutari, registrele XMM{} pastrate",
+        "test: vectori: {} fire x {} runde, {} comutari, registrele XMM{} pastrate",
+        threads,
         ROUNDS,
         switches,
         if fpu::has_avx() { " si YMM" } else { "" }

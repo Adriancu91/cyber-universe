@@ -32,6 +32,8 @@ const QUEUE: usize = 64;
 static mut KEYS: [Option<Key>; QUEUE] = [None; QUEUE];
 static HEAD: AtomicUsize = AtomicUsize::new(0); // written by the interrupt handler
 static TAIL: AtomicUsize = AtomicUsize::new(0); // written by the reader
+/// Serialises the producers (interrupt handler, USB driver thread), which may run on different processors.
+static PUSH_LOCK: AtomicBool = AtomicBool::new(false);
 static SHIFT: AtomicBool = AtomicBool::new(false);
 static CAPS: AtomicBool = AtomicBool::new(false);
 static EXTENDED: AtomicBool = AtomicBool::new(false);
@@ -227,16 +229,16 @@ extern "x86-interrupt" fn handler(_frame: idt::InterruptStackFrame) {
 /// Adds a key press to the queue read by `read_key`/`wait_key`. Called by the PS/2 interrupt handler and
 /// by the USB keyboard driver; interrupts are off while the queue changes, so the two cannot mix.
 pub fn push_key(key: Key) {
-    let flags = crate::sched::irq_save();
+    let flags = crate::sched::spin::lock(&PUSH_LOCK);
     let head = HEAD.load(Ordering::Relaxed);
     let next = (head + 1) % QUEUE;
     if next != TAIL.load(Ordering::Acquire) {
-        // SAFETY: producers are serialised (interrupts off, one CPU); the reader only reads slots before HEAD.
+        // SAFETY: producers are serialised by PUSH_LOCK (from interrupts and from driver threads on any processor); the reader only reads slots before HEAD.
         unsafe { (*core::ptr::addr_of_mut!(KEYS))[head] = Some(key) };
         HEAD.store(next, Ordering::Release);
         KEY_WAIT.wake_all();
     } // queue full: the key is dropped
-    crate::sched::irq_restore(flags);
+    crate::sched::spin::unlock(&PUSH_LOCK, flags);
 }
 
 /// Initialises the 8042 controller and routes IRQ 1. Must run after `apic::init`.

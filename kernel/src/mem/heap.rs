@@ -8,7 +8,7 @@ use super::map::PAGE_SIZE;
 use super::{frame, paging};
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::null_mut;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
 
 /// Start of the heap's virtual area (well above the HHDM, unused by Limine).
 pub const HEAP_START: u64 = 0xFFFF_9000_0000_0000;
@@ -34,12 +34,10 @@ static mut HEAP: Heap = Heap { head: null_mut(), mapped: 0, used: 0 };
 static LOCK: AtomicBool = AtomicBool::new(false);
 
 fn with_heap<R>(f: impl FnOnce(&mut Heap) -> R) -> R {
-    while LOCK.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
-        core::hint::spin_loop();
-    }
+    let irq = crate::sched::spin::lock(&LOCK);
     // SAFETY: LOCK grants exclusive access until released below.
     let r = f(unsafe { &mut *core::ptr::addr_of_mut!(HEAP) });
-    LOCK.store(false, Ordering::Release);
+    crate::sched::spin::unlock(&LOCK, irq);
     r
 }
 

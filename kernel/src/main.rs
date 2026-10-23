@@ -112,6 +112,9 @@ extern "C" fn kernel_main() -> ! {
         if drivers::keyboard::init() {
             drivers::mouse::init();
         }
+        // Test builds that run everything (drivers, file systems, self-tests) on every processor (K6-02b).
+        #[cfg(feature = "test-smp-all")]
+        arch::x86_64::smp::start_all();
     } else {
         warn!("sistem: fara ceas (APIC indisponibil); continui fara intreruperi");
     }
@@ -324,15 +327,7 @@ fn run_tests() -> ! {
     tests::fpu::run();
 
     #[cfg(feature = "test-smp")]
-    {
-        let n = arch::x86_64::smp::start_all();
-        let cpus = acpi::madt::get().cpu_count as u32;
-        assert!(n == cpus, "smp: {} nuclee pornite din {}", n, cpus);
-        assert!(arch::x86_64::smp::start_all() == n, "smp: a doua pornire a schimbat ceva");
-        // the boot CPU goes on alone: the scheduler still works
-        sched::sleep_ms(50);
-        info!("test: smp: {} nuclee pornite si parcate, planificatorul merge pe nucleul de pornire", n);
-    }
+    tests::smp::run();
 
     #[cfg(feature = "test-stress")]
     tests::stress::run();

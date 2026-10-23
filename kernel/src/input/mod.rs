@@ -16,20 +16,22 @@ const QUEUE: usize = 64;
 static mut EVENTS: [MouseEvent; QUEUE] = [MouseEvent { dx: 0, dy: 0, buttons: 0 }; QUEUE];
 static HEAD: AtomicUsize = AtomicUsize::new(0);
 static TAIL: AtomicUsize = AtomicUsize::new(0);
+/// Serialises the producers (interrupt handler, USB driver thread), which may run on different processors.
+static PUSH_LOCK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 static WAIT: crate::sched::WaitQueue = crate::sched::WaitQueue::new();
 
 /// Adds an event (from an interrupt handler or a driver thread). Dropped if the queue is full.
 pub fn push_mouse(e: MouseEvent) {
-    let flags = crate::sched::irq_save();
+    let flags = crate::sched::spin::lock(&PUSH_LOCK);
     let head = HEAD.load(Ordering::Relaxed);
     let next = (head + 1) % QUEUE;
     if next != TAIL.load(Ordering::Acquire) {
-        // SAFETY: producers are serialised (interrupts off, one CPU); the reader only reads slots before HEAD.
+        // SAFETY: producers are serialised by PUSH_LOCK (from interrupts and from driver threads on any processor); the reader only reads slots before HEAD.
         unsafe { (*core::ptr::addr_of_mut!(EVENTS))[head] = e };
         HEAD.store(next, Ordering::Release);
         WAIT.wake_all();
     }
-    crate::sched::irq_restore(flags);
+    crate::sched::spin::unlock(&PUSH_LOCK, flags);
 }
 
 /// The next mouse event, if there is one.

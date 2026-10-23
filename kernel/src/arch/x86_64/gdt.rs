@@ -119,8 +119,8 @@ struct ApTables {
 }
 
 /// Builds and loads this processor's own GDT and TSS (same layout and selectors as the boot CPU's). The tables
-/// are leaked: an additional processor keeps them as long as the kernel runs.
-pub fn init_ap() {
+/// are leaked: an additional processor keeps them as long as the kernel runs. Returns the TSS address.
+pub fn init_ap() -> u64 {
     // Zeroed on the heap directly (the 16 KiB stack inside must not pass through the small AP stack).
     // SAFETY: all-zero bytes are a valid ApTables (plain integers and byte arrays).
     let mut t = unsafe { alloc::boxed::Box::<ApTables>::new_zeroed().assume_init() };
@@ -156,13 +156,21 @@ pub fn init_ap() {
         );
         asm!("ltr {:x}", in(reg) TSS_SELECTOR, options(nostack, preserves_flags));
     }
+    core::ptr::addr_of!(t.tss) as u64
 }
 
-/// Sets the stack the CPU switches to when an interrupt or exception arrives in ring 3 (TSS.RSP0).
-pub fn set_privilege_stack(top: u64) {
-    // SAFETY: a single aligned-enough 64-bit store into the TSS; the CPU reads RSP0 only on a ring change,
-    // and this runs with interrupts disabled (scheduler switch).
-    unsafe { core::ptr::addr_of_mut!(TSS.privilege_stacks).cast::<u64>().write_unaligned(top) }
+/// Sets the stack the CPU switches to when an interrupt or exception arrives in ring 3 (TSS.RSP0) in the TSS at
+/// `tss` (this processor's, from percpu.rs; 0 before `percpu::init` = the boot processor's).
+pub fn set_privilege_stack(tss: u64, top: u64) {
+    let tss = if tss == 0 { core::ptr::addr_of_mut!(TSS) } else { tss as *mut TaskStateSegment };
+    // SAFETY: `tss` is the boot TSS or an ApTables TSS (leaked, lives forever); a single 64-bit store; the CPU reads
+    // RSP0 only on a ring change, and this runs with interrupts disabled on the processor that owns the TSS.
+    unsafe { core::ptr::addr_of_mut!((*tss).privilege_stacks).cast::<u64>().write_unaligned(top) }
+}
+
+/// Address of the boot processor's TSS (for percpu.rs).
+pub fn boot_tss() -> u64 {
+    core::ptr::addr_of!(TSS) as u64
 }
 
 /// Current code segment selector.

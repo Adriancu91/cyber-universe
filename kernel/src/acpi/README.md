@@ -13,7 +13,8 @@ pe care îl folosește `power.rs` (comanda `reboot`: ACPI → portul 0xCF9 → 8
 resetarea îl oprește (cod 0); decodarea FADT are și un test pe octeți cunoscuți.
 
 **Procesoarele (K6-02):** lista din MADT e folosită de `arch/x86_64/smp.rs` (`cpu porneste`): INIT-SIPI-SIPI către fiecare
-nucleu, trambulina sub 1 MiB, apoi nucleele stau parcate. Test: `smp-start` (`-smp 4`), `cpu` (`-smp 2`).
+nucleu, trambulina sub 1 MiB; de la K6-02b nucleele pornite intră în planificator și rulează fire. Test: `smp-start` (`-smp 4`),
+`smp-2`, `cpu` (`-smp 2`), `log-smp`, `fpu-smp`, `stress-smp`.
 
 **Nu face încă:** interpretorul AML (alimentare, oprire, dispozitive) — sarcină mare, separată, în Faza 3.
 

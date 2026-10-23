@@ -4,13 +4,15 @@
 
 use super::{inb, outb};
 use crate::mem::paging;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// CPU vector of the system timer.
 pub const TIMER_VECTOR: u8 = 32;
 /// First CPU vector used for device IRQs routed through the I/O APIC (IRQ n -> vector 48 + n).
 pub const IRQ_BASE: u8 = 48;
 pub const SPURIOUS_VECTOR: u8 = 0xFF;
+/// Inter-processor interrupt: "remove the page SHOOT_ADDR from your TLB" (K6-02b).
+pub const SHOOTDOWN_VECTOR: u8 = 0xF0;
 /// Timer frequency.
 pub const HZ: u64 = 100;
 
@@ -25,6 +27,25 @@ static LAPIC_BASE: AtomicU64 = AtomicU64::new(0);
 static IOAPIC_BASE: AtomicU64 = AtomicU64::new(0);
 static IOAPIC_GSI_BASE: AtomicU64 = AtomicU64::new(0);
 static TICKS: AtomicU64 = AtomicU64::new(0);
+/// APIC id of the boot processor (device interrupts go there).
+static BSP_APIC: AtomicU64 = AtomicU64::new(0);
+/// APIC timer count for one tick (measured on the boot processor; the others use the same bus clock).
+static PER_TICK: AtomicU64 = AtomicU64::new(0);
+
+// TLB shootdown (K6-02b). The processors that run threads are marked in ACTIVE; the one that removes a kernel page
+// sets PENDING for each of the others and sends them an IPI; each one invalidates SHOOT_ADDR and clears its flag
+// (from the IPI handler, or from any spinlock wait loop if its interrupts are off).
+use super::percpu::MAX_CPUS;
+#[allow(clippy::declare_interior_mutable_const)]
+const NOT_PENDING: AtomicBool = AtomicBool::new(false);
+static ACTIVE: [AtomicBool; MAX_CPUS] = [NOT_PENDING; MAX_CPUS];
+static PENDING: [AtomicBool; MAX_CPUS] = [NOT_PENDING; MAX_CPUS];
+/// Processors marked in ACTIVE besides the boot processor (0 = nothing to shoot down: fast path).
+static OTHERS: AtomicU64 = AtomicU64::new(0);
+static SHOOT_LOCK: AtomicBool = AtomicBool::new(false);
+static SHOOT_ADDR: AtomicU64 = AtomicU64::new(0);
+/// Shootdowns done since boot (for the tests).
+static SHOOTDOWNS: AtomicU64 = AtomicU64::new(0);
 
 /// Maps a memory-mapped device page (uncached) and returns its virtual address.
 fn map_mmio(phys: u64) -> u64 {
@@ -41,7 +62,6 @@ fn lapic_write(reg: usize, value: u32) {
     unsafe { ((LAPIC_BASE.load(Ordering::Relaxed) as usize + reg) as *mut u32).write_volatile(value) }
 }
 
-/// Signals end-of-interrupt to the local APIC. Every handler of an APIC-delivered interrupt must call it.
 /// APIC id of the processor running this code.
 pub fn lapic_id() -> u8 {
     (lapic_read(0x20) >> 24) as u8
@@ -65,6 +85,79 @@ pub fn enable_ap() {
     lapic_write(LAPIC_SVR, 0x100 | SPURIOUS_VECTOR as u32);
 }
 
+/// Starts this (additional) processor's timer at `HZ`, with the boot processor's calibration (K6-02b).
+pub fn start_timer_ap() {
+    lapic_write(LAPIC_TIMER_DIVIDE, 0x3);
+    lapic_write(LAPIC_LVT_TIMER, TIMER_VECTOR as u32 | (1 << 17));
+    lapic_write(LAPIC_TIMER_INIT, PER_TICK.load(Ordering::Relaxed) as u32);
+}
+
+/// Marks processor `index` as one that runs threads: from now on it takes part in TLB shootdowns.
+pub fn mark_active(index: usize) {
+    ACTIVE[index].store(true, Ordering::Release);
+    if index != 0 {
+        OTHERS.fetch_add(1, Ordering::AcqRel);
+    }
+}
+
+/// Answers a pending shootdown request for this processor, if there is one. Cheap when only one processor runs.
+#[inline]
+pub fn serve_shootdown() {
+    if OTHERS.load(Ordering::Relaxed) == 0 {
+        return;
+    }
+    let me = super::percpu::index();
+    if PENDING[me].load(Ordering::Acquire) {
+        let virt = SHOOT_ADDR.load(Ordering::Acquire);
+        // SAFETY: invalidating a TLB entry is always safe.
+        unsafe { core::arch::asm!("invlpg [{}]", in(reg) virt, options(nostack, preserves_flags)) }
+        PENDING[me].store(false, Ordering::Release);
+    }
+}
+
+/// Removes the kernel page `virt` (already unmapped here) from the TLBs of every other processor that runs threads,
+/// and waits until each has done it.
+pub fn shootdown(virt: u64) {
+    if OTHERS.load(Ordering::Acquire) == 0 {
+        return;
+    }
+    let irq = crate::sched::spin::lock(&SHOOT_LOCK);
+    let me = super::percpu::index();
+    SHOOT_ADDR.store(virt, Ordering::Release);
+    for i in 0..MAX_CPUS {
+        if i != me && ACTIVE[i].load(Ordering::Acquire) {
+            PENDING[i].store(true, Ordering::Release);
+            send_ipi(super::percpu::get(i).apic_id.load(Ordering::Relaxed) as u8, SHOOTDOWN_VECTOR as u32);
+        }
+    }
+    let start = crate::time::since_boot_us().unwrap_or(0);
+    let mut late = false;
+    while (0..MAX_CPUS).any(|i| PENDING[i].load(Ordering::Acquire)) {
+        core::hint::spin_loop();
+        if crate::time::since_boot_us().is_some_and(|t| t > start + 1_000_000) {
+            late = true;
+            break;
+        }
+    }
+    SHOOTDOWNS.fetch_add(1, Ordering::Relaxed);
+    crate::sched::spin::unlock(&SHOOT_LOCK, irq);
+    if late {
+        crate::warn!("apic: TLB shootdown {:#x}: un nucleu nu a raspuns in 1 s", virt);
+    }
+}
+
+/// TLB shootdowns since boot.
+#[allow(dead_code)] // used by the SMP test
+pub fn shootdowns() -> u64 {
+    SHOOTDOWNS.load(Ordering::Relaxed)
+}
+
+extern "x86-interrupt" fn shootdown_handler(_frame: super::idt::InterruptStackFrame) {
+    serve_shootdown();
+    eoi();
+}
+
+/// Signals end-of-interrupt to the local APIC. Every handler of an APIC-delivered interrupt must call it.
 pub fn eoi() {
     lapic_write(LAPIC_EOI, 0);
 }
@@ -106,7 +199,10 @@ fn pit_wait_ms(ms: u64) {
 }
 
 extern "x86-interrupt" fn timer_handler(frame: super::idt::InterruptStackFrame) {
-    TICKS.fetch_add(1, Ordering::Relaxed);
+    // Every processor has its own timer; only the boot processor's counts the time.
+    if super::percpu::index() == 0 {
+        TICKS.fetch_add(1, Ordering::Relaxed);
+    }
     eoi();
     if frame.cs & 3 == 3 && crate::sched::killed() {
         // A user program asked to stop (`proc::kill`) that never makes system calls.
@@ -158,7 +254,7 @@ pub fn route_irq(irq: u8) {
     if (flags >> 2) & 0b11 == 0b11 {
         low |= 1 << 15; // level triggered
     }
-    let dest = (madt.cpu_apic_ids[0] as u32) << 24;
+    let dest = (BSP_APIC.load(Ordering::Relaxed) as u32) << 24;
     ioapic_write(0x10 + pin * 2 + 1, dest);
     ioapic_write(0x10 + pin * 2, low);
 }
@@ -179,6 +275,10 @@ pub fn init() -> bool {
 
     super::idt::set_handler(TIMER_VECTOR, timer_handler as super::idt::Handler as u64);
     super::idt::set_handler(SPURIOUS_VECTOR, spurious_handler as super::idt::Handler as u64);
+    super::idt::set_handler(SHOOTDOWN_VECTOR, shootdown_handler as super::idt::Handler as u64);
+    BSP_APIC.store(lapic_id() as u64, Ordering::Relaxed);
+    super::percpu::get(0).apic_id.store(lapic_id() as u64, Ordering::Relaxed);
+    mark_active(0);
 
     // Mask every I/O APIC line until a driver routes it.
     let lines = ((ioapic_read(1) >> 16) & 0xFF) + 1;
@@ -197,6 +297,7 @@ pub fn init() -> bool {
     let per_10ms = u32::MAX - lapic_read(LAPIC_TIMER_CURRENT);
     crate::time::set_tsc_per_ms((super::rdtsc() - tsc_start) / 10);
     let per_tick = per_10ms as u64 * 100 / HZ;
+    PER_TICK.store(per_tick, Ordering::Relaxed);
 
     lapic_write(LAPIC_LVT_TIMER, TIMER_VECTOR as u32 | (1 << 17)); // periodic
     lapic_write(LAPIC_TIMER_INIT, per_tick as u32);

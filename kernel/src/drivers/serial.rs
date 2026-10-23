@@ -83,16 +83,14 @@ pub fn write_str(s: &str) {
         return;
     }
     // Simple spinlock so lines from different contexts do not interleave.
-    while LOCK.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
-        core::hint::spin_loop();
-    }
+    let irq = crate::sched::spin::lock(&LOCK);
     for b in s.bytes() {
         if b == b'\n' {
             write_byte(b'\r');
         }
         write_byte(b);
     }
-    LOCK.store(false, Ordering::Release);
+    crate::sched::spin::unlock(&LOCK, irq);
 }
 
 /// Releases the output lock unconditionally. Only for the panic handler: the panicking code

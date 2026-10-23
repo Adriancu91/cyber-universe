@@ -111,8 +111,11 @@ pub fn init() -> bool {
 
 /// Runs `f` with exclusive access to the console slot.
 pub fn with_console<R>(f: impl FnOnce(&mut Option<Console>) -> R) -> R {
+    // Interrupts stay on: drawing can take long (the window server copies whole frames, tests wait for ticks).
+    // The holder may be switched out; others wait until it runs again.
     while LOCK.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
         core::hint::spin_loop();
+        crate::arch::x86_64::apic::serve_shootdown();
     }
     // SAFETY: LOCK guarantees exclusive access to CONSOLE until it is released below.
     let result = f(unsafe { &mut *core::ptr::addr_of_mut!(CONSOLE) });

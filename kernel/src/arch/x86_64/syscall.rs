@@ -6,17 +6,12 @@
 
 use super::gdt;
 use core::arch::{asm, naked_asm};
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::Ordering;
 
 const IA32_EFER: u32 = 0xC000_0080;
 const IA32_STAR: u32 = 0xC000_0081;
 const IA32_LSTAR: u32 = 0xC000_0082;
 const IA32_FMASK: u32 = 0xC000_0084;
-
-/// Top of the running thread's kernel stack: where `syscall` switches to (one CPU for now).
-static KERNEL_RSP: AtomicU64 = AtomicU64::new(0);
-/// The user stack pointer, kept here for the few instructions until it is pushed on the kernel stack.
-static USER_RSP: AtomicU64 = AtomicU64::new(0);
 
 fn wrmsr(msr: u32, value: u64) {
     // SAFETY: only called with the architectural MSRs above, which exist on every x86_64 CPU.
@@ -40,19 +35,24 @@ pub fn init() {
 }
 
 /// Sets the kernel stack used when the running thread enters the kernel from ring 3
-/// (by `syscall` or by an interrupt/exception). Called by the scheduler at every switch.
+/// (by `syscall` or by an interrupt/exception), on this processor. Called by the scheduler at every switch,
+/// with interrupts disabled.
 pub fn set_kernel_stack(top: u64) {
-    KERNEL_RSP.store(top, Ordering::Relaxed);
-    gdt::set_privilege_stack(top);
+    let cpu = super::percpu::this();
+    cpu.kernel_rsp.store(top, Ordering::Relaxed);
+    gdt::set_privilege_stack(cpu.tss.load(Ordering::Relaxed), top);
 }
 
 #[unsafe(naked)]
 unsafe extern "C" fn syscall_entry() {
     naked_asm!(
-        // Interrupts are off (FMASK), so the two statics cannot be changed under us.
-        "mov [rip + {user_rsp}], rsp",
-        "mov rsp, [rip + {kernel_rsp}]",
-        "push qword ptr [rip + {user_rsp}]",
+        // Interrupts are off (FMASK). `swapgs` brings this processor's block (percpu.rs) into GS for three
+        // instructions, then the second `swapgs` puts the program's GS base back: the kernel never uses GS.
+        "swapgs",
+        "mov gs:[{user_rsp}], rsp",
+        "mov rsp, gs:[{kernel_rsp}]",
+        "push qword ptr gs:[{user_rsp}]",
+        "swapgs",
         "push rcx", // user rip
         "push r11", // user rflags
         "push rdi",
@@ -82,8 +82,8 @@ unsafe extern "C" fn syscall_entry() {
         "pop rcx",
         "pop rsp",
         "sysretq",
-        user_rsp = sym USER_RSP,
-        kernel_rsp = sym KERNEL_RSP,
+        user_rsp = const super::percpu::USER_RSP_OFFSET,
+        kernel_rsp = const super::percpu::KERNEL_RSP_OFFSET,
         dispatch = sym crate::syscall::dispatch,
     )
 }

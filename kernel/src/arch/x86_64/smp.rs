@@ -1,8 +1,8 @@
 //! Starting the other processors (K6-02, first part): every processor listed in the MADT gets INIT-SIPI-SIPI,
 //! runs a small trampoline below 1 MiB (real mode -> protected mode -> long mode), then `ap_entry` in the kernel:
 //! the kernel's page tables, CR0/CR4/EFER as on the boot CPU, its own GDT and TSS, the shared IDT, its local APIC,
-//! the vector unit. For now the processors are only started and parked (`cli; hlt`): the scheduler still runs on
-//! the boot CPU alone (K6-02b). Started only on request (`cpu porneste`), so the default boot does not change.
+//! the vector unit, `syscall`, its own block in percpu.rs; then it joins the scheduler (K6-02b) and runs threads
+//! from the shared queue. Started only on request (`cpu porneste`), so the default boot does not change.
 //! Written from the Intel SDM vol. 3 §8.4 (MP initialization, INIT-SIPI-SIPI), §9.8–9.9 (switching to protected
 //! and long mode) and §10.6 (ICR), and the ACPI MADT.
 
@@ -107,7 +107,7 @@ unsafe extern "C" {
     static cu_t_entry: u8;
 }
 
-/// Stack of each additional processor (K6-02b will run threads on their own stacks).
+/// Start stack of each additional processor (afterwards the stack of its idle thread; threads have their own).
 const AP_STACK: usize = 32 * 1024;
 
 /// Physical page below 1 MiB for the trampoline (reserved at boot; 0 = none found).
@@ -165,6 +165,7 @@ fn read_cr(n: u8) -> u64 {
 }
 
 /// First kernel code on an additional processor (from the trampoline, on its own stack, with the temporary tables).
+/// `index` = the processor's index in percpu.rs (1, 2, ...).
 extern "C" fn ap_entry(index: u64) -> ! {
     // SAFETY: the kernel tables map everything this code touches (upper half); CR0/CR4 as on the boot CPU, which
     // runs the same kernel. PAE and paging are already on (set by the trampoline).
@@ -173,17 +174,15 @@ extern "C" fn ap_entry(index: u64) -> ! {
         core::arch::asm!("mov cr4, {}", in(reg) BSP_CR4.load(Ordering::Relaxed), options(nostack));
         core::arch::asm!("mov cr0, {}", in(reg) BSP_CR0.load(Ordering::Relaxed), options(nostack));
     }
-    super::gdt::init_ap();
+    let tss = super::gdt::init_ap();
     super::idt::load_ap();
+    super::syscall::init(); // STAR/LSTAR/FMASK are per-processor MSRs
     super::fpu::init_ap();
     super::apic::enable_ap();
+    super::percpu::init(index as usize, tss, super::apic::lapic_id());
     ONLINE.fetch_add(1, Ordering::AcqRel);
     ARRIVED.store(index, Ordering::Release);
-    loop {
-        // Parked until K6-02b gives it work: interrupts off, so `hlt` only ends with NMI/INIT/SIPI.
-        // SAFETY: `cli; hlt` touches nothing.
-        unsafe { core::arch::asm!("cli", "hlt", options(nomem, nostack)) }
-    }
+    crate::sched::ap_join(index as usize)
 }
 
 /// Starts every processor of the MADT that is not running yet. Returns how many processors run afterwards.
@@ -257,17 +256,23 @@ pub fn start_all() -> u32 {
 
     let mut stacks: Vec<alloc::boxed::Box<[u8]>> = Vec::new();
     let begin = crate::time::since_boot_us().unwrap_or(0);
+    let mut next_index = 1usize;
     for (k, &id) in madt.cpu_apic_ids[..madt.cpu_count].iter().enumerate() {
         if id == me {
             continue;
         }
+        if next_index >= super::percpu::MAX_CPUS {
+            crate::warn!("smp: nucleul {} (APIC {}) sarit: cel mult {} nuclee", k, id, super::percpu::MAX_CPUS);
+            continue;
+        }
+        let index = next_index;
         let stack = alloc::vec![0u8; AP_STACK].into_boxed_slice();
         let top = (stack.as_ptr() as u64 + AP_STACK as u64) & !15;
         stacks.push(stack);
         // SAFETY: label addresses only.
         unsafe {
             put64(core::ptr::addr_of!(cu_t_stack), top);
-            put64(core::ptr::addr_of!(cu_t_arg), k as u64);
+            put64(core::ptr::addr_of!(cu_t_arg), index as u64);
         }
         ARRIVED.store(u64::MAX, Ordering::Release);
         let t0 = crate::time::since_boot_us().unwrap_or(0);
@@ -279,7 +284,7 @@ pub fn start_all() -> u32 {
         let arrived = |limit_us: u64| {
             let t = crate::time::since_boot_us().unwrap_or(0);
             loop {
-                if ARRIVED.load(Ordering::Acquire) == k as u64 {
+                if ARRIVED.load(Ordering::Acquire) == index as u64 {
                     return true;
                 }
                 if crate::time::since_boot_us().is_none_or(|n| n > t + limit_us) {
@@ -294,19 +299,20 @@ pub fn start_all() -> u32 {
         };
         let ms = crate::time::since_boot_us().unwrap_or(0).saturating_sub(t0) / 1000;
         if ok {
+            next_index += 1;
             crate::info!("smp: nucleul {} (APIC {}) pornit in {} ms", k, id, ms);
         } else {
             crate::warn!("smp: nucleul {} (APIC {}) NU a raspuns in {} ms", k, id, ms);
         }
     }
-    core::mem::forget(stacks); // the parked processors keep running on them
+    core::mem::forget(stacks); // the started processors keep running on them (their idle threads)
     let n = online();
     crate::info!(
-        "smp: {} nuclee pornite din {} (in {} ms; celelalte asteapta, firele raman pe nucleul {})",
+        "smp: {} nuclee pornite din {} (in {} ms); planificatorul ruleaza fire pe {} nuclee",
         n,
         madt.cpu_count,
         crate::time::since_boot_us().unwrap_or(0).saturating_sub(begin) / 1000,
-        me
+        crate::sched::running_cpus()
     );
     n
 }

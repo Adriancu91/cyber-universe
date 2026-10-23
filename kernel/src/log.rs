@@ -107,15 +107,13 @@ static LOG: Ring = Ring {
     busy: core::sync::atomic::AtomicBool::new(false),
 };
 
-/// Runs `f` with the ring if nobody else holds it (a line logged from an interrupt in the middle is skipped, never waited for).
+/// Runs `f` with the ring (interrupts off while it is held, so an interrupt on this processor never finds it taken;
+/// another processor waits a little; after a fault in the middle of a line the line is skipped, never waited for).
 fn with_ring<R>(f: impl FnOnce(&mut [u8; RING], &core::sync::atomic::AtomicUsize) -> R) -> Option<R> {
-    use core::sync::atomic::Ordering;
-    if LOG.busy.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
-        return None;
-    }
+    let irq = crate::sched::spin::try_lock_for(&LOG.busy, 1_000_000)?;
     // SAFETY: `busy` is held, so this is the only reference to the buffer.
     let r = f(unsafe { &mut *LOG.buf.get() }, &LOG.written);
-    LOG.busy.store(false, Ordering::Release);
+    crate::sched::spin::unlock(&LOG.busy, irq);
     Some(r)
 }
 

@@ -22,12 +22,10 @@ static LOCK: AtomicBool = AtomicBool::new(false);
 static USABLE: AtomicU64 = AtomicU64::new(0);
 
 fn with_bitmap<R>(f: impl FnOnce(&mut Bitmap) -> R) -> R {
-    while LOCK.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
-        core::hint::spin_loop();
-    }
+    let irq = crate::sched::spin::lock(&LOCK);
     // SAFETY: LOCK grants exclusive access until released below.
     let r = f(unsafe { &mut *core::ptr::addr_of_mut!(BITMAP) });
-    LOCK.store(false, Ordering::Release);
+    crate::sched::spin::unlock(&LOCK, irq);
     r
 }
 
@@ -193,14 +191,12 @@ static PIN_REFUSED: AtomicU64 = AtomicU64::new(0);
 static PIN_LOST: AtomicU64 = AtomicU64::new(0);
 
 fn with_pins<R>(f: impl FnOnce(&mut [Pin; MAX_PINS], &mut usize) -> R) -> R {
-    while PIN_LOCK.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
-        core::hint::spin_loop();
-    }
+    let irq = crate::sched::spin::lock(&PIN_LOCK);
     let mut n = PIN_COUNT.load(Ordering::Relaxed) as usize;
     // SAFETY: PIN_LOCK grants exclusive access until released below.
     let r = f(unsafe { &mut *core::ptr::addr_of_mut!(PINS) }, &mut n);
     PIN_COUNT.store(n as u64, Ordering::Relaxed);
-    PIN_LOCK.store(false, Ordering::Release);
+    crate::sched::spin::unlock(&PIN_LOCK, irq);
     r
 }
 

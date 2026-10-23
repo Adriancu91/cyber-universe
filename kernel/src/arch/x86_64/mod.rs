@@ -4,6 +4,7 @@ pub mod apic;
 pub mod fpu;
 pub mod gdt;
 pub mod idt;
+pub mod percpu;
 pub mod smp;
 pub mod syscall;
 
@@ -12,6 +13,7 @@ use core::arch::asm;
 /// Sets up the CPU tables (GDT, TSS, IDT). Must run before anything that can fault or take interrupts.
 pub fn init() {
     gdt::init();
+    percpu::init(0, gdt::boot_tss(), 0); // the APIC id is filled in by `apic::init`
     idt::init();
     syscall::init();
     fpu::init();

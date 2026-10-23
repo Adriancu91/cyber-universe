@@ -77,11 +77,21 @@ pub fn map(virt: u64, phys: u64, flags: u64) -> Result<(), MapError> {
     map_in(cr3(), virt, phys, flags)
 }
 
+/// Serialises changes to page tables (K6-02b: two processors must not both add the same missing table).
+static LOCK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// Like `map`, in the tables whose PML4 is at physical address `root`.
 pub fn map_in(root: u64, virt: u64, phys: u64, flags: u64) -> Result<(), MapError> {
     if virt % PAGE_SIZE != 0 || phys % PAGE_SIZE != 0 {
         return Err(MapError::NotAligned);
     }
+    let irq = crate::sched::spin::lock(&LOCK);
+    let r = map_locked(root, virt, phys, flags);
+    crate::sched::spin::unlock(&LOCK, irq);
+    r
+}
+
+fn map_locked(root: u64, virt: u64, phys: u64, flags: u64) -> Result<(), MapError> {
     let idx = indices(virt);
     let mut t = table(root);
     for &i in &idx[..3] {
@@ -111,8 +121,19 @@ pub fn unmap(virt: u64) -> Option<u64> {
     unmap_in(cr3(), virt)
 }
 
-/// Like `unmap`, in the tables whose PML4 is at physical address `root`.
+/// Like `unmap`, in the tables whose PML4 is at physical address `root`. A page of the kernel half is also
+/// removed from the TLBs of the other processors (they share the kernel half) before this returns.
 pub fn unmap_in(root: u64, virt: u64) -> Option<u64> {
+    let irq = crate::sched::spin::lock(&LOCK);
+    let r = unmap_locked(root, virt);
+    crate::sched::spin::unlock(&LOCK, irq);
+    if r.is_some() && virt >= 0xFFFF_8000_0000_0000 {
+        crate::arch::x86_64::apic::shootdown(virt);
+    }
+    r
+}
+
+fn unmap_locked(root: u64, virt: u64) -> Option<u64> {
     let idx = indices(virt);
     let mut t = table(root);
     for &i in &idx[..3] {
