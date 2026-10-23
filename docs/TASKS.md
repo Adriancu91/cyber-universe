@@ -207,6 +207,10 @@ Reparații după testul 7 pe Lenovo (comanda C-10, înaintea lui P6-10):
 - [x] **P6-10h** Realtek: accesul MAC OCP verificat (citire înainte de scriere, bitul 15 din E8DE „se șterge singur”), pașii reci reinterpretați în `log rtl`. Dep: P6-10e.
   Test: `cd rtl8168 && cargo test --release` (39: bitul 15 care se șterge singur, OCP care nu răspunde, C+ bit 3 fix); `tools/test.sh shell net boot`. Pe laptop: testul 8 (R).
 
+Comanda C-12 (Cyber-GPU, fereastra de pe workstation), înaintea lui P6-10:
+- [~] **P6-11** Comanda `gpu` (nivel 0, doar citire): plăcile video din PCI, BAR-uri, Resizable BAR, două registre publice NVIDIA (BOOT_0, BOOT_42) printr-o pagină fără drept de scriere; `gpu plan`. Dep: P6-01.
+  Test: `tools/test.sh gpu gpu-ro shell`. Pe hardware: fereastra de pe workstation.
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
