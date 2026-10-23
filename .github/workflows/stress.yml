@@ -1,9 +1,9 @@
 name: Stress (5 minute)
 
-# The 5-minute stability test (P1-11). Too long for every push: runs daily and on demand.
+# The 5-minute stability test (P1-11). Too long for every push: runs weekly (Monday, C-15) and on demand.
 on:
   schedule:
-    - cron: "17 3 * * *"
+    - cron: "17 3 * * 1"
   workflow_dispatch:
 
 jobs:

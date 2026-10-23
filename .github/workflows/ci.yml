@@ -1,10 +1,18 @@
 name: CI
 
+# C-15: no run for commits that only touch documents (STATE.md, docs/, screenshots); a newer run on the same branch
+# cancels the older one. Release only comes from a push with code changes (documents never start a run).
 on:
   push:
     branches: [main, "wip/**"]
+    paths-ignore: ["docs/**", "**/*.md", "tests/screens/**"]
   pull_request:
+    paths-ignore: ["docs/**", "**/*.md", "tests/screens/**"]
   workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
@@ -29,7 +37,14 @@ jobs:
             ~/.cargo/git
             build/target-test*
             build/limine-*
-          key: ${{ runner.os }}-cu-${{ hashFiles('kernel/Cargo.toml', 'kernel/Cargo.lock', 'kernel/rust-toolchain.toml') }}
+            crypto/target
+            tls/target
+            json/target
+            rtl8168/target
+            e1000e/target
+          key: ${{ runner.os }}-cu2-${{ hashFiles('**/Cargo.toml', '**/Cargo.lock', '**/rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cu2-
 
       - name: Verificare mediu
         run: tools/env-check.sh
