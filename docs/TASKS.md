@@ -213,6 +213,15 @@ Comanda C-12 (Cyber-GPU, fereastra de pe workstation), înaintea lui P6-10:
 - [ ] **P6-12** `map_mmio` garantează registre fără cache (observația Cyber-GPU, adevărată ca posibilitate): întâi diagnostic în jurnal, apoi fereastră MMIO proprie — după testul 8, o schimbare pe Release. Dep: P6-10g.
   Test: scenariile cu drivere + verificarea biților PCD/PWT.
 
+Comanda C-13 (prima pornire pe workstation), înaintea lui P6-12 și P6-10 — o schimbare de comportament pe Release (D-013), în ordine:
+- [x] **P6-13** PCI pe toate magistralele-rădăcină din MCFG (după parcurgerea punților, fără dubluri, ordine bus/dev/fn; paginile goale demapate). Dep: P6-11.
+  Test: `tools/test.sh` → 52 trecute + `https-real` sărit; `pci-roots` (QEMU `pxb-pcie`: rădăcina 40 cu un dispozitiv la 41:00.0 apare; pe codul vechi testul pică), `log`, `pci-usb`, toate. Pe hardware: fereastra a doua pe workstation (`lspci` → `10de:2482` la b3).
+- [ ] **P6-14** USB: dispozitive în spatele hub-urilor (clasa 09: descriptorul de hub, Get Port Status, Set Port Feature RESET, Route String / TT în contextul slotului xHCI). Dep: P6-13 (Release separat).
+  Test: QEMU `-device usb-hub` cu stick și tastatură în spatele lui. Pe hardware: workstation (hub-urile `0bda:0411` / `0bda:5411`).
+- [ ] **P6-15** `/usb` = stick-ul de pe care am pornit: toate dispozitivele Mass Storage încercate, „Medium Not Present” (2/3A) sărit, preferat discul cu `cyber.rw` și `VERSIUNE`. Dep: P6-14 (Release separat).
+  Test: QEMU cu un cititor fără mediu înaintea stick-ului. Pe hardware: workstation.
+- [ ] **P6-16** Driver Intel I219-LM (`8086:15e3`, e1000e), din documentația publică Intel. Dep: P6-15. Mai târziu, după 1–3.
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)

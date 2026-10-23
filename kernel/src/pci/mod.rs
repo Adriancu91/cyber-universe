@@ -1,5 +1,5 @@
 //! PCI / PCI Express: finds every device through the memory-mapped configuration space (ECAM)
-//! described by the ACPI MCFG table, following PCI-to-PCI bridges from bus 0.
+//! described by the ACPI MCFG table: PCI-to-PCI bridges from the first bus, then every other root bus of the range.
 //! Written from the PCI Local Bus and PCI Express Base specifications (configuration header layout)
 //! and the ACPI specification (MCFG).
 
@@ -184,21 +184,30 @@ fn find_ecam() -> Option<Ecam> {
     Some(Ecam { base: u64::from_le_bytes(e[0..8].try_into().unwrap()), start_bus: e[10], end_bus: e[11] })
 }
 
-fn config_page(ecam: Ecam, bus: u8, dev: u8, func: u8) -> Option<u64> {
+/// Maps the configuration page of bus:dev.func and returns its virtual address and whether this call created the
+/// mapping (so an empty slot can be unmapped again: only what is read stays mapped).
+fn config_page(ecam: Ecam, bus: u8, dev: u8, func: u8) -> Option<(u64, bool)> {
     let phys = ecam.base + (((bus - ecam.start_bus) as u64) << 20 | (dev as u64) << 15 | (func as u64) << 12);
-    paging::map_mmio(phys, 4096).ok()
+    let was_mapped = paging::translate(crate::mem::map::phys_to_virt(phys) as u64).is_some();
+    paging::map_mmio(phys, 4096).ok().map(|v| (v, !was_mapped))
 }
 
-fn scan_bus(ecam: Ecam, bus: u8, out: &mut Vec<Device>, depth: u8) {
-    if bus < ecam.start_bus || bus > ecam.end_bus || depth > 8 {
+/// Scans one bus and, through PCI-to-PCI bridges, the buses behind it. `visited` marks every bus scanned, so a bus
+/// is never listed twice (bridge walk and root-bus sweep below).
+fn scan_bus(ecam: Ecam, bus: u8, out: &mut Vec<Device>, depth: u8, visited: &mut [bool; 256]) {
+    if bus < ecam.start_bus || bus > ecam.end_bus || depth > 8 || visited[bus as usize] {
         return;
     }
+    visited[bus as usize] = true;
     for dev in 0..32 {
         for func in 0..8 {
-            let Some(config) = config_page(ecam, bus, dev, func) else { return };
+            let Some((config, fresh)) = config_page(ecam, bus, dev, func) else { return };
             // SAFETY: just mapped; offset 0 holds vendor and device ids.
             let id = unsafe { (config as *const u32).read_volatile() };
             if id & 0xFFFF == 0xFFFF {
+                if fresh {
+                    paging::unmap(config); // nothing here: do not keep the page mapped
+                }
                 if func == 0 {
                     break; // no device in this slot
                 }
@@ -220,7 +229,7 @@ fn scan_bus(ecam: Ecam, bus: u8, out: &mut Vec<Device>, depth: u8) {
             let header = (d.read32(0x0C) >> 16) as u8;
             out.push(d);
             if header & 0x7F == 1 {
-                scan_bus(ecam, (d.read32(0x18) >> 8) as u8, out, depth + 1); // bridge: secondary bus
+                scan_bus(ecam, (d.read32(0x18) >> 8) as u8, out, depth + 1, visited); // bridge: secondary bus
             }
             if func == 0 && header & 0x80 == 0 {
                 break; // single-function device
@@ -230,20 +239,45 @@ fn scan_bus(ecam: Ecam, bus: u8, out: &mut Vec<Device>, depth: u8) {
 }
 
 /// Finds every PCI device and logs the list.
+///
+/// First the buses reachable from `start_bus` through bridges, then every other bus of the MCFG range: server
+/// processors (e.g. Cascade Lake-X, one root bus per IIO stack) and PCI expander bridges have several root buses
+/// that no bridge on bus 0 leads to (workstation test, 2026-10-23: the GPU at B3:00.0 was invisible). The sweep
+/// reads only the vendor id of function 0 of each slot (an absent device reads all ones, PCI Express Base spec:
+/// Unsupported Request on configuration reads) and writes nothing.
 pub fn init() {
     let Some(ecam) = find_ecam() else {
         crate::warn!("pci: tabela ACPI MCFG lipseste, nu pot gasi dispozitivele");
         return;
     };
+    let t0 = crate::time::since_boot_us().unwrap_or(0);
     let mut found = Vec::new();
-    scan_bus(ecam, ecam.start_bus, &mut found, 0);
+    let mut visited = [false; 256];
+    scan_bus(ecam, ecam.start_bus, &mut found, 0, &mut visited);
+    let mut roots = 1;
+    for bus in ecam.start_bus..=ecam.end_bus {
+        if visited[bus as usize] {
+            continue;
+        }
+        let before = found.len();
+        scan_bus(ecam, bus, &mut found, 0, &mut visited);
+        if found.len() > before {
+            roots += 1;
+            crate::info!("pci: radacina in plus: magistrala {:02x} ({} dispozitive, cu puntile ei)", bus, found.len() - before);
+        }
+    }
+    found.sort_by_key(|d| (d.bus, d.dev, d.func));
+    let ms = crate::time::since_boot_us().unwrap_or(0).saturating_sub(t0) / 1000;
     for d in &found {
         crate::info!(
             "pci: {:02x}:{:02x}.{} {:04x}:{:04x} clasa {:02x}:{:02x}:{:02x} {}",
             d.bus, d.dev, d.func, d.vendor, d.device, d.class, d.subclass, d.prog_if, d.kind()
         );
     }
-    crate::info!("pci: {} dispozitive (ECAM la {:#x}, magistralele {}-{})", found.len(), ecam.base, ecam.start_bus, ecam.end_bus);
+    crate::info!(
+        "pci: {} dispozitive pe {} radacini (ECAM la {:#x}, magistralele {:02x}-{:02x}, cautare {} ms)",
+        found.len(), roots, ecam.base, ecam.start_bus, ecam.end_bus, ms
+    );
     *DEVICES.lock() = found;
 }
 
