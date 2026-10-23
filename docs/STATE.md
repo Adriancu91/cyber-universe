@@ -3,6 +3,30 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-23 11:40–13:15 UTC (14:40–16:15 ora României), în cloud, fără Adrian — C-14: K6-02b, K6-03
+- **K6-02b (commit `076dacd`):** planificatorul rulează fire pe **toate nucleele** pornite cu `cpu porneste` (pornirea obișnuită
+  rămâne pe un nucleu = opțiunea „un singur nucleu” din plan). Date per nucleu prin `IA32_KERNEL_GS_BASE` (`percpu.rs`;
+  `syscall_entry` cu `swapgs` dus-întors), TSS.RSP0 per nucleu, `syscall::init` pe fiecare nucleu; o coadă comună, fir curent +
+  fir idle per nucleu, încuietoarea planificatorului predată peste comutare; `prepare_wait` = nicio trezire pierdută între nuclee;
+  încuietori cu întreruperile oprite (`sched/spin.rs`) pentru heap, cadre, paza DMA, tabele de pagini, jurnal, serial, cozile de
+  intrare (consola de pe ecran rămâne cu întreruperile pornite: desenul durează); temporizator pe fiecare nucleu, ceasul numărat doar
+  de nucleul de pornire; golirea TLB pe celelalte nuclee (IPI 0xF0) la demaparea paginilor nucleului.
+  Teste noi: `smp-start` (extins: fire pe 4 nuclee, mutex 40000, 2000 de predări, 8 programe în paralel, 50 de goliri TLB), `smp-2`,
+  `log-smp` (tot testul `log` pe 4 nuclee), `fpu-smp`, `stress-smp`.
+- **K6-03 (commit `f35bbcc`):** apelurile `mem_map` (35) / `mem_unmap` (36): regiuni plină de zero, aliniate la 2 MiB, pagini de
+  2 MiB unde se poate, alocare imediată, 16 MiB păstrați pentru nucleu. `/bin/memorie` alocă **1 GiB** (512 pagini de 2 MiB), scrie,
+  verifică, eliberează; cadrele libere revin exact. Scenarii `memorie` (`-m 2G`), `memorie-smp`. Reparat și `proc::wait` (putea adormi
+  fără trezire dacă lista de coduri era ținută de alt nucleu).
+- **Teste local:** `tools/test.sh` → **68 trecute** + `https-real` sărit. Testul vechi al temporizatorului (90–110/s) a picat iar de 2 ori
+  (84, 89; `log`, `usb-pick`) și a trecut la reluare — aceeași instabilitate cunoscută din QEMU, nu ține de schimbări.
+- **CI pe GitHub NU MAI PORNEȘTE din 11:03 UTC** (run 178–181: jobul „eșuează” în 2–4 s, fără niciun log; GitHub nu dă calculator).
+  Aceeași problemă ca la Cyber-GPU (în hub: probabil s-au terminat minutele gratuite GitHub Actions ale contului). Nu e din cod.
+  → **fără Release** pentru K6-02b și K6-03 (ultimul Release: `os-177`). B-004 în BLOCKERS.md. Când CI revine, primul push face Release.
+- **Pentru sesiunea următoare:** verifică întâi CI (`list_workflow_runs`); dacă merge, un push mic (sau re-rulare) ca să iasă Release-ul cu
+  K6-02b + K6-03. Coada C-14: **K6-04 (opțional, fire multiple într-un proces)** — atenție: cere golirea TLB și pentru paginile
+  programelor (README din `kernel/src/arch/x86_64/`), heap-ul din `user/` nu e sigur pentru mai multe fire, iar procesul e găsit azi
+  după id-ul firului. C-7 și C-11 nu se pornesc până nu se întoarce Adrian.
+
 ### Sesiunea programată 2026-10-23 08:40–10:40 UTC (11:40–13:40 ora României), în cloud, fără Adrian — C-13 terminată, C-14: P6-16, K6-01, K6-02
 - **P6-17 (C-13 p.5b) → Release `os-172`:** `reboot` încearcă pe rând ACPI RESET_REG (citit din FADT la pornire), portul 0xCF9 (0x02, apoi
   0x06), 8042 (0xFE), triple fault; câte un rând pe ecran și în jurnal; `reboot acpi|cf9|8042|triplu` = o singură metodă. Teste noi:
