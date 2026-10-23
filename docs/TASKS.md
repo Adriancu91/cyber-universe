@@ -220,6 +220,8 @@ Comanda C-13 (prima pornire pe workstation), înaintea lui P6-12 și P6-10 — o
   Test: `tools/test.sh` → 53 trecute + `https-real` sărit; `usb-hub` (QEMU `usb-hub` full-speed: tastatura la 5.1, stick-ul la 5.2, `/usb` montat). Hub-urile de mare viteză (TT) și USB 3 (SET_HUB_DEPTH) nu există în QEMU → doar pe workstation (`0bda:0411` / `0bda:5411`).
 - [x] **P6-15** `/usb` = stick-ul de pe care am pornit: toate dispozitivele Mass Storage încercate, „Medium Not Present” (2/3A) sărit, preferat discul cu `cyber.rw` și `VERSIUNE`. Dep: P6-14 (Release separat).
   Test: `tools/test.sh` → 54 trecute + `https-real` sărit; `usb-pick` (cititor CD fără mediu sărit, stick-ul cu `cyber.rw` + `VERSIUNE` ales înaintea discului GPT), toate. Pe hardware: workstation.
+- [~] **P6-17** `reboot` care chiar repornește pe workstation (C-13 p.5b): pe rând ACPI RESET_REG (FADT), portul 0xCF9 (2, apoi 6), controlerul 8042 (0xFE), triple fault; câte un rând pe ecran și în jurnal; `reboot acpi|cf9|8042|triplu` pentru o singură metodă. Dep: P6-15 (Release separat).
+  Test: `reboot`, `reboot-cf9`, `reboot-8042`, `reboot-triplu` (QEMU `-no-reboot` iese la resetare). Pe hardware: workstation (`reboot` → repornește; poza arată ultima metodă încercată dacă nu).
 - [ ] **P6-16** Driver Intel I219-LM (`8086:15e3`, e1000e), din documentația publică Intel. Dep: P6-15. Mai târziu, după 1–3.
 
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
