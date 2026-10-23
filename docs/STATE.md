@@ -3,6 +3,25 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-23 07:05–08:35 UTC (10:05–11:35 ora României), în cloud, fără Adrian — C-13: P6-13, P6-14, P6-15
+- **Hub:** comanda nouă **C-13** (prima pornire pe workstation, `rezultate/2026-10-23-workstation-os/`) → preluată; **P6-13 … P6-16** în TASKS,
+  cu planuri. Câte un Release pentru fiecare schimbare (D-013), în ordinea cerută:
+  - **P6-13 → Release `os-166`:** PCI caută pe **toate** magistralele-rădăcină din MCFG după parcurgerea punților (fără dubluri, ordine
+    bus/dev/fn, paginile goale demapate, nicio scriere). Test nou `pci-roots` (QEMU `pxb-pcie`, rădăcina 40) — pică pe codul vechi, trece acum.
+    Căutarea: 16 ms în QEMU pentru 256 de magistrale.
+  - **P6-14 → Release `os-167`:** USB în spatele hub-urilor (descriptorul de hub, Configure Endpoint cu bitul Hub, SET_HUB_DEPTH la USB 3,
+    alimentarea și resetul porturilor, Route String și TT). `lsusb` arată `port 5.2` = portul 2 al hub-ului de pe portul 5. Test nou `usb-hub`
+    (QEMU are doar hub full-speed: calea TT pentru hub-uri de mare viteză și calea USB 3 se verifică doar pe workstation).
+  - **P6-15 → Release-ul următor (os-168 sau mai nou, din acest commit):** `/usb` = stick-ul cu `cyber.rw` și `VERSIUNE`; cititoarele fără
+    card (sense 2/3A de 5 ori la rând) sunt sărite. Test nou `usb-pick`.
+- **Observațiile Cyber-GPU** (copiate în hub) judecate: `docs/research/OBSERVATII-CYBER-GPU.md` (1 și 4 adevărate, 2 adevărată dar
+  intenționată, 3 și 6 fără efect, 5 parțial falsă). Nicio schimbare de cod din ele acum; 1 rămâne P6-12.
+- **Teste:** `tools/test.sh` → **54 trecute** + `https-real` sărit (după P6-15). CI verde pe `b6312c0` (os-166) și `417e6ae` (os-167).
+- **Coada:** P6-16 (I219-LM) „mai târziu, după 1–3” → după fereastra a doua pe workstation; P6-12 pasul 1 (diagnostic) liber; P6-10
+  așteaptă testul 8; C-7 după testul 8 (R); C-11 după C-7.
+- **Pentru sesiunea următoare:** verifică CI pe commit-ul P6-15 și `rezultate/` (fereastra a doua pe workstation, testul 8).
+  Dacă `lspci` arată `10de:2482` la b3 → P6-13 confirmată. Dacă stick-ul apare în `lsusb` ca `port X.Y` → P6-14 confirmată.
+
 ### (paralelă) Pornire manuală 2026-10-23 ~06:25 UTC (cerută de centrul de comandă la 08:50 pentru C-12) — fără lucru nou
 - C-12 era deja făcută în această sesiune (P6-11, CI verde, Release os-163). Accesul la `cyber-gpu` reîncercat: tot refuzat
   (repo privat). Nicio comandă nouă, niciun rezultat de la testul 8 → oprire (CLAUDE.md §3).
