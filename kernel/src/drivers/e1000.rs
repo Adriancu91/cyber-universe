@@ -1,214 +1,140 @@
-//! Intel 8254x (e1000) and 82574 (e1000e) network cards: sends and receives raw Ethernet frames with
-//! the legacy descriptor rings, by polling. Written from the Intel PCI/PCI-X Family of Gigabit Ethernet
-//! Controllers Software Developer's Manual (8254x) and the 82574 datasheet (public documents).
+//! Intel gigabit Ethernet: 8254x (e1000), 82574 (e1000e) and the I217/I218/I219 family (e.g. the I219-LM
+//! `8086:15e3` of the Dell workstation). The driver logic lives in the `e1000e/` crate (tested on the host against a
+//! model); this file only gives it the hardware: memory-mapped registers, a guarded DMA block, a delay.
 
 use crate::mem::{frame, map::{PAGE_SIZE, phys_to_virt}, paging};
 use alloc::vec::Vec;
-
-const CTRL: u64 = 0x0000;
-const IMC: u64 = 0x00D8;
-const RCTL: u64 = 0x0100;
-const TCTL: u64 = 0x0400;
-const TIPG: u64 = 0x0410;
-const RDBAL: u64 = 0x2800;
-const RDBAH: u64 = 0x2804;
-const RDLEN: u64 = 0x2808;
-const RDH: u64 = 0x2810;
-const RDT: u64 = 0x2818;
-const TDBAL: u64 = 0x3800;
-const TDBAH: u64 = 0x3804;
-const TDLEN: u64 = 0x3808;
-const TDH: u64 = 0x3810;
-const TDT: u64 = 0x3818;
-const MTA: u64 = 0x5200;
-const RAL0: u64 = 0x5400;
-const RAH0: u64 = 0x5404;
-
-/// Descriptors per ring (16 bytes each: 32 fit in 512 bytes) and buffer size (2 per frame).
-const RING: usize = 32;
-const BUF: usize = 2048;
-
-/// Cards this driver knows: (device id, name). Vendor is always Intel (0x8086).
-const SUPPORTED: [(u16, &str); 3] = [(0x100E, "82540EM (e1000)"), (0x100F, "82545EM (e1000)"), (0x10D3, "82574L (e1000e)")];
+use cyber_e1000e::{E1000e, Family, Hw, Options, BUF};
 
 /// True if this driver knows the card.
 pub fn supports(vendor: u16, device: u16) -> bool {
-    vendor == 0x8086 && SUPPORTED.iter().any(|(id, _)| *id == device)
+    cyber_e1000e::identify(vendor, device).is_some()
+}
+
+/// Lowest address of the DMA block: away from the low memory boot-time allocations come from (lesson of test 7).
+const DMA_LOW: u64 = 16 << 20;
+/// Size of the register window mapped from BAR 0 (the highest register used, FWSM at 0x5B54, is inside).
+const REGS_LEN: u64 = 0x20000;
+
+pub struct KernelHw {
+    regs: u64,
+}
+
+// SAFETY (all register accesses below): `regs` is the mapped, uncached register block of the card (REGS_LEN bytes)
+// and every offset the driver uses is below REGS_LEN and 4-byte aligned.
+impl Hw for KernelHw {
+    fn read32(&mut self, reg: u32) -> u32 {
+        unsafe { ((self.regs + reg as u64) as *const u32).read_volatile() }
+    }
+    fn write32(&mut self, reg: u32, v: u32) {
+        unsafe { ((self.regs + reg as u64) as *mut u32).write_volatile(v) }
+    }
+    fn alloc_block(&mut self, pages: usize) -> Option<(u64, *mut u8)> {
+        let f = frame::alloc_contiguous_between(pages as u64, DMA_LOW, 1 << 32)?;
+        frame::pin(f, pages as u64, "e1000"); // the card writes here by DMA: never given to anyone else
+        let p = phys_to_virt(f);
+        // SAFETY: `pages` fresh contiguous frames, reachable through the HHDM (one linear range); kept by the driver.
+        unsafe { core::ptr::write_bytes(p, 0, pages * PAGE_SIZE as usize) };
+        Some((f, p))
+    }
+    fn delay_us(&mut self, us: u32) {
+        match crate::time::since_boot_us() {
+            Some(start) => while crate::time::since_boot_us().is_some_and(|t| t < start + us as u64) {
+                core::hint::spin_loop();
+            },
+            None => (0..us * 100).for_each(|_| core::hint::spin_loop()),
+        }
+    }
+    fn dma_sync(&mut self, ptr: *mut u8, len: usize) {
+        const LINE: usize = 64;
+        let start = ptr as usize & !(LINE - 1);
+        let end = ptr as usize + len;
+        // SAFETY: CLFLUSH drops cached copies of lines of a DMA buffer owned by this driver (mapped through the HHDM);
+        // MFENCE orders it against the reads around it.
+        unsafe {
+            core::arch::asm!("mfence", options(nostack, preserves_flags));
+            for a in (start..end).step_by(LINE) {
+                core::arch::asm!("clflush [{}]", in(reg) a, options(nostack, preserves_flags));
+            }
+            core::arch::asm!("mfence", options(nostack, preserves_flags));
+        }
+    }
 }
 
 pub struct Nic {
-    regs: u64,
-    pub mac: [u8; 6],
+    inner: E1000e<KernelHw>,
     pub name: &'static str,
-    rx_ring: u64,
-    tx_ring: u64,
-    rx_bufs: [u64; RING],
-    tx_bufs: [u64; RING],
-    rx_next: usize,
-    tx_next: usize,
-    pub sent: u64,
-    pub received: u64,
-}
-
-fn rd(a: u64) -> u32 {
-    // SAFETY: `a` is a register of the mapped (uncached) card register block.
-    unsafe { (a as *const u32).read_volatile() }
-}
-fn wr(a: u64, v: u32) {
-    // SAFETY: as in `rd`.
-    unsafe { (a as *mut u32).write_volatile(v) }
-}
-
-fn zeroed_frame() -> Option<u64> {
-    let f = frame::alloc_frame()?;
-    frame::pin(f, 1, "e1000"); // the card writes here by DMA: never given to anyone else
-    // SAFETY: fresh frame, reachable through the HHDM.
-    unsafe { core::ptr::write_bytes(phys_to_virt(f), 0, PAGE_SIZE as usize) };
-    Some(f)
-}
-
-/// One descriptor (16 bytes) of a ring, as two 64-bit words.
-fn desc(ring: u64, i: usize) -> *mut u64 {
-    // SAFETY (for users): `ring` is a descriptor frame owned by the driver; i < RING.
-    unsafe { (phys_to_virt(ring) as *mut u64).add(i * 2) }
-}
-
-/// Buffers for `RING` packets: two 2 KiB buffers per frame.
-fn buffers() -> Option<[u64; RING]> {
-    let mut bufs = [0u64; RING];
-    for pair in bufs.chunks_mut(2) {
-        let f = zeroed_frame()?;
-        pair[0] = f;
-        pair[1] = f + BUF as u64;
-    }
-    Some(bufs)
-}
-
-impl Nic {
-    /// Sends one Ethernet frame (destination, source, type, payload; at most 1514 bytes).
-    pub fn send(&mut self, packet: &[u8]) -> bool {
-        if packet.len() > 1514 {
-            return false;
-        }
-        let i = self.tx_next;
-        let len = packet.len().max(60); // shorter frames are padded with zeros
-        // SAFETY: the buffer and descriptor belong to this driver; the card finished with slot i
-        // (checked below before reuse: its "descriptor done" bit is set or it was never used).
-        unsafe {
-            let buf = phys_to_virt(self.tx_bufs[i]);
-            core::ptr::write_bytes(buf, 0, 60);
-            core::ptr::copy_nonoverlapping(packet.as_ptr(), buf, packet.len());
-            let d = desc(self.tx_ring, i);
-            d.write_volatile(self.tx_bufs[i]);
-            // length | CMD: EOP (end of packet), IFCS (add the checksum), RS (report status)
-            d.add(1).write_volatile(len as u64 | (0b1011u64 << 24));
-        }
-        self.tx_next = (i + 1) % RING;
-        wr(self.regs + TDT, self.tx_next as u32);
-        // SAFETY: as above; the status byte is at offset 12 of the descriptor.
-        let done = (0..1_000_000).any(|_| unsafe { (desc(self.tx_ring, i).add(1).read_volatile() >> 32) & 1 != 0 });
-        if done {
-            self.sent += 1;
-        }
-        done
-    }
-
-    /// The next received frame, if one has arrived.
-    pub fn receive(&mut self) -> Option<Vec<u8>> {
-        let i = self.rx_next;
-        // SAFETY: descriptor of this driver's ring; word 1 = length (bits 0-15), status (bits 32-39).
-        let w = unsafe { desc(self.rx_ring, i).add(1).read_volatile() };
-        if (w >> 32) & 1 == 0 {
-            return None; // descriptor not done
-        }
-        let len = (w & 0xFFFF) as usize;
-        // SAFETY: the card wrote `len` <= 2048 bytes into this buffer.
-        let data = unsafe { core::slice::from_raw_parts(phys_to_virt(self.rx_bufs[i]), len.min(BUF)) }.to_vec();
-        // SAFETY: give the descriptor back: clear its status, keep the buffer address.
-        unsafe { desc(self.rx_ring, i).add(1).write_volatile(0) };
-        wr(self.regs + RDT, i as u32);
-        self.rx_next = (i + 1) % RING;
-        self.received += 1;
-        Some(data)
-    }
 }
 
 impl super::nic::Card for Nic {
     fn send(&mut self, frame: &[u8]) -> bool {
-        Nic::send(self, frame)
+        self.inner.send(frame)
     }
     fn receive(&mut self) -> Option<Vec<u8>> {
-        Nic::receive(self)
+        let mut buf = [0u8; BUF];
+        let n = self.inner.receive_into(&mut buf)?;
+        Some(buf[..n].to_vec())
     }
     fn mac(&self) -> [u8; 6] {
-        self.mac
+        self.inner.mac
     }
     fn name(&self) -> &'static str {
         self.name
     }
     fn counters(&self) -> (u64, u64) {
-        (self.sent, self.received)
+        (self.inner.sent, self.inner.received)
+    }
+    fn link_info(&mut self) -> Option<alloc::string::String> {
+        let (up, speed, fd) = self.inner.link();
+        let bmsr = self.inner.phy_status();
+        let regs = self.inner.registers();
+        let r: Vec<alloc::string::String> = regs.iter().map(|(n, v)| alloc::format!("{} {:08x}", n, v)).collect();
+        Some(alloc::format!(
+            "legatura: {}; PHY {:08x} (BMSR {}); bloc DMA {:#x}\nregistre: {} (pasii de pornire: log e1000)",
+            if up { alloc::format!("da, {} Mb/s, {}", speed, if fd { "full duplex" } else { "half duplex" }) } else { "NU".into() },
+            self.inner.phy_id,
+            bmsr.map_or(alloc::string::String::from("nu raspunde"), |b| alloc::format!("{:04x}", b)),
+            self.inner.block_phys(),
+            r.join(", ")
+        ))
     }
 }
 
-/// Finds a supported Intel card and starts it (link up, receive and transmit rings).
+/// Finds a supported Intel card and starts it.
 pub fn init() -> Option<Nic> {
-    let (dev, name) = crate::pci::devices().into_iter().find_map(|d| {
-        if d.vendor != 0x8086 {
-            return None;
-        }
-        SUPPORTED.iter().find(|(id, _)| *id == d.device).map(|(_, n)| (d, *n))
+    let (dev, family, name) = crate::pci::devices().into_iter().find_map(|d| {
+        cyber_e1000e::identify(d.vendor, d.device).map(|(f, n)| (d, f, n))
     })?;
     dev.enable();
-    let regs = paging::map_mmio(dev.bar(0)?, 0x20000).ok()?;
-
-    wr(regs + IMC, u32::MAX); // no interrupts (polling)
-    wr(regs + CTRL, rd(regs + CTRL) | 1 << 26); // reset
-    for _ in 0..1_000_000 {
-        if rd(regs + CTRL) & (1 << 26) == 0 {
-            break;
+    let bar = dev.bar(0)?;
+    let regs = paging::map_mmio(bar, REGS_LEN).ok()?;
+    crate::info!("e1000: {} ({:04x}:{:04x}) la {}, familia {:?}, registre la {:#x}", name, dev.vendor, dev.device, dev.address(), family, bar);
+    let mut card = match E1000e::init(KernelHw { regs }, family, Options::DEFAULT) {
+        Ok(c) => c,
+        Err(e) => {
+            crate::warn!("net: placa {} nu porneste: {:?}", name, e);
+            return None;
         }
-        core::hint::spin_loop();
+    };
+    for s in &card.steps[..card.step_count] {
+        crate::info!("e1000: {}: reg {:#x} {:08x} -> {:08x}", s.what, s.reg, s.before, s.after);
     }
-    wr(regs + IMC, u32::MAX);
-    wr(regs + CTRL, rd(regs + CTRL) | 1 << 6 | 1 << 5); // set link up, auto speed detection
-
-    let (ral, rah) = (rd(regs + RAL0), rd(regs + RAH0));
-    if rah & (1 << 31) == 0 {
-        crate::warn!("net: placa {} nu are adresa MAC", name);
-        return None;
-    }
-    let mac = [ral as u8, (ral >> 8) as u8, (ral >> 16) as u8, (ral >> 24) as u8, rah as u8, (rah >> 8) as u8];
-    for i in 0..128 {
-        wr(regs + MTA + i * 4, 0);
-    }
-
-    let (rx_ring, tx_ring) = (zeroed_frame()?, zeroed_frame()?);
-    let (rx_bufs, tx_bufs) = (buffers()?, buffers()?);
-    for (i, &b) in rx_bufs.iter().enumerate() {
-        // SAFETY: descriptor frame owned by the driver; word 0 = buffer address.
-        unsafe { desc(rx_ring, i).write_volatile(b) };
-    }
-    let ring_bytes = (RING * 16) as u32;
-    wr(regs + RDBAL, rx_ring as u32);
-    wr(regs + RDBAH, (rx_ring >> 32) as u32);
-    wr(regs + RDLEN, ring_bytes);
-    wr(regs + RDH, 0);
-    wr(regs + RDT, (RING - 1) as u32);
-    wr(regs + RCTL, 1 << 1 | 1 << 15 | 1 << 26); // enable, accept broadcast, strip CRC; 2 KiB buffers
-
-    wr(regs + TDBAL, tx_ring as u32);
-    wr(regs + TDBAH, (tx_ring >> 32) as u32);
-    wr(regs + TDLEN, ring_bytes);
-    wr(regs + TDH, 0);
-    wr(regs + TDT, 0);
-    wr(regs + TCTL, 1 << 1 | 1 << 3 | 0x10 << 4 | 0x40 << 12); // enable, pad short packets, collision settings
-    wr(regs + TIPG, 0x0060_200A);
-
+    let block = card.block_phys();
     crate::info!(
-        "net: placa {} pornita, MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-        name, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+        "e1000: PHY {:08x} (adresa {}), bloc DMA de {} pagini la {:#x} ({}), primul buffer RX {:#x}",
+        card.phy_id,
+        family.phy_address(),
+        cyber_e1000e::BLOCK_PAGES,
+        block,
+        if block >= DMA_LOW && block + (cyber_e1000e::BLOCK_PAGES as u64) * PAGE_SIZE <= 1 << 32 { "intre 16 MiB si 4 GB" } else { "IN AFARA intervalului" },
+        block + 2 * PAGE_SIZE
     );
-    crate::info!("net: e1000 inele RX {:#x} TX {:#x}, primul buffer RX {:#x}", rx_ring, tx_ring, rx_bufs[0]);
-    Some(Nic { regs, mac, name, rx_ring, tx_ring, rx_bufs, tx_bufs, rx_next: 0, tx_next: 0, sent: 0, received: 0 })
+    let m = card.mac;
+    crate::info!("net: placa {} pornita, MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", name, m[0], m[1], m[2], m[3], m[4], m[5]);
+    if family == Family::Pch {
+        crate::info!("e1000: {}: pasii PCH sunt testati doar pe model (e1000e/); pe hardware: workstation", name);
+    }
+    let (up, speed, _) = card.link();
+    crate::info!("e1000: legatura {}", if up { alloc::format!("da ({} Mb/s)", speed) } else { "inca nu".into() });
+    Some(Nic { inner: card, name })
 }

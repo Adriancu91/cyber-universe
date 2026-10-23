@@ -45,6 +45,8 @@ jobs:
 
       - name: Driver Realtek RTL8168 — față de modelul cipului, pe gazdă (rtl8168/)
         run: cd rtl8168 && cargo test --release
+      - name: Driver Intel e1000/82574/I219 — față de modelul plăcii, pe gazdă (e1000e/)
+        run: cd e1000e && cargo test --release
 
       - name: Build + test în QEMU (cu scenariile care au nevoie de internet)
         run: CYBER_NET=1 tools/test.sh

@@ -13,10 +13,15 @@ name = "cyber_crypto"
 version = "0.1.0"
 
 [[package]]
+name = "cyber_e1000e"
+version = "0.1.0"
+
+[[package]]
 name = "cyber_kernel"
 version = "0.1.0"
 dependencies = [
  "cyber_crypto",
+ "cyber_e1000e",
  "cyber_rtl8168",
  "limine",
 ]

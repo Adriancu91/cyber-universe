@@ -11,6 +11,8 @@ limine = "=0.5.0"
 cyber_crypto = { path = "../crypto" }
 # P6-01: Realtek RTL8168/8111 driver logic (tested on the host against a model of the chip).
 cyber_rtl8168 = { path = "../rtl8168" }
+# P6-16: Intel e1000/82574/I219 driver logic (tested on the host against a model).
+cyber_e1000e = { path = "../e1000e" }
 
 [features]
 # Test build: the kernel waits for a byte on COM1, then exits QEMU through isa-debug-exit.

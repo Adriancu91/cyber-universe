@@ -224,8 +224,8 @@ Comanda C-13 (prima pornire pe workstation), înaintea lui P6-12 și P6-10 — o
   Test: `tools/test.sh` → 58 trecute + `https-real` sărit; noi: `reboot` (calea implicită → ACPI, FADT-ul OVMF: io 0xCF9 ← 0x0F), `reboot-cf9`, `reboot-8042`, `reboot-triplu` (QEMU `-no-reboot` iese la resetare, cod 0) + decodarea FADT pe octeți cunoscuți. Pe hardware: workstation (`reboot` → repornește; dacă nu, poza arată ultima metodă încercată).
 
 Comanda C-14 (Adrian plecat câteva zile: doar QEMU și CI, câte o sarcină pe rând, Release la fiecare), după C-13; nu se pornesc C-7 și C-11:
-- [~] **P6-16** Driver Intel I219-LM (`8086:15e3`, familia e1000e/PCH), din documentația publică Intel: logica în biblioteca `e1000e/` (model + teste pe gazdă), semafor PHY, LANPHYPC, bloc DMA păzit, `log e1000`. Dep: P6-17.
-  Test: `cd e1000e && cargo test --release`; QEMU: `net`, `net-e1000`, `net-high` și scenariile de rețea (calea comună pe 82574/82540). Pe hardware: workstation.
+- [x] **P6-16** Driver Intel I219-LM (`8086:15e3`, familia e1000e/PCH), din documentația publică Intel: logica în biblioteca `e1000e/` (model + teste pe gazdă), semafor PHY, LANPHYPC, bloc DMA păzit, `log e1000`. Dep: P6-17.
+  Test: `cd e1000e && cargo test --release` → 12 (model: PCH cu semafor și PHY la adresa 2, PHY adormit trezit cu LANPHYPC, semafor ținut de firmware, reset blocat, fără MAC, inele lăsate pornite, trimitere/primire); `tools/test.sh` → 58 trecute + `https-real` sărit (`net` citește acum PHY-ul 82574 prin MDIC: `01410cb1`). Pe hardware: workstation (`net`, `log e1000 40`, `ping 1.1.1.1`).
 - [ ] **K6-01** SSE/AVX în nucleu și în programe: CR0/CR4, XCR0 prin XSETBV (doar ce raportează CPUID), XSAVE/XRSTOR la comutarea firelor (zonă per fir, aliniată la 64, mărimea din CPUID 0Dh). Dep: P6-16.
   Test: două fire care calculează în registre vectoriale, rezultat exact după mii de comutări; un program ring 3 cu AVX2 (QEMU `-cpu max`).
 - [ ] **K6-02** SMP: pornirea celorlalte nuclee (MADT, INIT-SIPI-SIPI, trampolină sub 1 MiB, stivă + APIC per nucleu), încuietori reale, planificator pe mai multe nuclee. Dep: K6-01.
