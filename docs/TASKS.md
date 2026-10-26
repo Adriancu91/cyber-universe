@@ -252,6 +252,16 @@ Comanda C-17 (Release-urile testate pe hardware nu se mai șterg), după C-16:
   Test: CI verde pe `main` → Release nou, iar toate tag-urile din listă încă există; os-150 și os-161 apar din nou la Releases, cu aceleași sume SHA-256 ca rularea originală.
   Rezultat: `republica.yml` (manual) a republicat os-150 (din rularea 150, commit af7cd3d) și os-161 (rularea 161, d2da9e0) cu fișierele originale, sumele verificate, fără „latest”. CI run 190 verde → Release `os-190`; curățarea a șters doar os-172 (al 6-lea normal); os-150, os-161, os-187 au rămas. Codul OS-ului neschimbat (testele din CI: verzi).
 
+Comanda C-19 (`gpu gfw` și `gpu vbios`, doar citire), din 26 oct:
+- [~] **P6-21** Fixarea Cyber-GPU mutată de pe `41e44ba` pe `dac2e32` (ramura lor `g0-g2-fundatie`, „Stare: sesiunea 5”; doar adăugări); comenzile `gpu gfw` (I2: așteaptă GFW_BOOT, max 4 s) și `gpu vbios` (I3: imaginile din PROM, tabela BIT) prin `nvidia-ga104`, peste o fereastră BAR0 de 4 MiB mapată pagină cu pagină fără drept de scriere; scrierile cerute de bibliotecă refuzate și numărate; `--sim` în build-ul de test. Dep: P6-20.
+  Test: scenariul `gpu-sim` extins: `gpu gfw --sim` („gata 0xff”, 0 scrieri), `gpu vbios --sim` (PCI-AT, EFI, FWSEC, BIT 0x70, 0 scrieri); `gpu` pe QEMU: „nicio placa NVIDIA”; CI verde → Release.
+
+Comanda C-22 („cutia neagră” pe stick + permisiuni pe program), după C-19:
+- [ ] **P6-22** Comanda `raport`: scrie pe stick `/usb/raport/<data>-<nr>.txt` cu versiunea, `hw`, `lspci`, jurnalele `net`/`usb`/`pci`/`gpu`, registrele driverelor; automat la panică/erori grave (cât se poate); chei și token-uri filtrate. Dep: P6-21.
+  Test: QEMU scrie raportul pe discul virtual; testul citește fișierul de pe imagine și caută secțiunile; un token pus intenționat în jurnal nu apare.
+- [ ] **P6-23** Permisiuni pe program: apel nou „promisiuni” (grupuri de apeluri) + „căi vizibile”; după declarare nu se mai pot lărgi; `/usb/claude.key` și `/usb/github.token` vizibile doar programelor care le cer explicit. Dep: P6-22.
+  Test: în QEMU un program fără permisiune primește eroare la citirea cheii și la un apel nepromis; unul cu permisiune o citește.
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
