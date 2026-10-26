@@ -20,3 +20,14 @@
   Testat în scenariul `shell`.
 - **`log [cuvânt] [n]` (P6-01d):** ultimele n rânduri (implicit 30) din jurnalul nucleului, ținut în memorie (64 KiB), doar cele
   care conțin cuvântul (ex. `log rtl`, `log usb 50`). Pentru calculatoare fără port serial. Testat în scenariul `shell`.
+- **`raport` — „cutia neagră” (P6-22, comanda C-22):** scrie pe stick `/usb/raport/AAAALLZZ-<nr>.txt` (primul număr liber):
+  data, motivul, versiunea (nucleu, Cyber-GPU, `VERSIUNE` de pe stick), ieșirea lui `hw`, `lspci`, `net`, jurnalele `net`
+  (cu rândurile de registre ale plăcilor de rețea), `usb`, `pci`, `gpu`, erorile și avertismentele, apoi tot jurnalul păstrat.
+  **Automat:** înainte de prompt, dacă în jurnal a apărut un rând ERR nou și stick-ul e montat cu scriere, se scrie singur un raport
+  (cel mult 3 pe pornire). La panică **nu** se scrie (nucleul oprit poate ține încuietorile discului; scrierea ar putea strica stick-ul).
+  **Fără chei:** conținutul fișierelor `claude.key`/`github.token` (din `/usb`, `/disk`, `/etc`) și orice cuvânt care arată a cheie
+  (`sk-ant-`, `ghp_`, `github_pat_`, `Bearer`, `Authorization:`, `x-api-key:`) devine `[ascuns]`. Captura comenzilor: `emit` scrie
+  în raport în loc de ecran cât timp `raport` rulează o comandă pe același fir.
+  Test: scenariul `raport` (build `test-raport`: în QEMU raportul merge pe `/disk`): raportul automat (eroarea de test de la pornire)
+  și cel manual, `tools/after-raport.sh` le citește cu `mtools` (fsck curat, secțiunile, niciun token); filtrul are și un test la pornire.
+- **`cat` și fișierele secrete (P6-23):** `cat /usb/claude.key` (sau `github.token`) nu afișează nimic: „fisier secret”.

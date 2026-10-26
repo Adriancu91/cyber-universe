@@ -44,6 +44,9 @@ pub const SYS_MEM_UNMAP: u64 = 36;
 pub const SYS_THREAD_SPAWN: u64 = 37;
 pub const SYS_THREAD_JOIN: u64 = 38;
 pub const SYS_THREAD_EXIT: u64 = 39;
+pub const SYS_PROMISE: u64 = 40;
+pub const SYS_UNVEIL: u64 = 41;
+pub const SYS_SECRET: u64 = 42;
 
 mod net;
 mod ui;
@@ -61,6 +64,7 @@ pub const E_NOT_EMPTY: i64 = -9; // folder not empty
 pub const E_NO_SPACE: i64 = -10; // disk full
 pub const E_NO_MEMORY: i64 = -22; // not enough free memory (mem_map, K6-03)
 pub const E_BUSY: i64 = -23; // other threads of the program still run (mem_unmap, K6-04)
+pub const E_DENIED: i64 = -24; // outside the program's promises or rights (P6-23)
 // Module manager (call 21).
 pub const E_MOD_MISSING_DEPENDENCY: i64 = -11;
 pub const E_MOD_NEEDED: i64 = -12;
@@ -85,7 +89,44 @@ pub extern "C" fn dispatch(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64, a5: u64
 /// Exit code of a program stopped by `proc::kill`.
 pub const EXIT_KILLED: i64 = -9;
 
+/// The promise group a call belongs to (P6-23); `None` = always allowed (ending, and the calls that only narrow).
+fn group_of(nr: u64) -> Option<u64> {
+    use crate::proc::rights::*;
+    Some(match nr {
+        SYS_EXIT | SYS_THREAD_EXIT | SYS_PROMISE | SYS_UNVEIL | SYS_SECRET => return None,
+        SYS_WRITE | SYS_YIELD | SYS_SLEEP_MS | SYS_READ | SYS_CLOSE | SYS_TIME | SYS_SYSINFO | SYS_RANDOM
+        | SYS_MEM_MAP | SYS_MEM_UNMAP | SYS_THREAD_SPAWN | SYS_THREAD_JOIN => P_STDIO,
+        SYS_OPEN | SYS_STAT | SYS_LIST => P_RPATH,
+        SYS_CREATE | SYS_REMOVE | SYS_RENAME | SYS_SYNC => P_WPATH,
+        SYS_RESOLVE | SYS_TCP_CONNECT | SYS_UDP_OPEN | SYS_UDP_SEND | SYS_UDP_RECV | SYS_NET_INFO | SYS_PING => P_INET,
+        SYS_SPAWN | SYS_WAIT | SYS_KILL => P_PROC,
+        SYS_WINDOW_CREATE | SYS_WINDOW_PRESENT | SYS_EVENT_WAIT | SYS_WINDOW_CLOSE | SYS_SCREEN_SIZE | SYS_TERM_OPEN
+        | SYS_TERM_READ | SYS_TERM_WRITE => P_UI,
+        SYS_MODULE => P_MODULE,
+        _ => return None, // unknown: refused below as E_INVALID
+    })
+}
+
+/// May the current program reach `path` with `need` (`rights::R_*`)? A hidden path looks like a missing one.
+fn path_allowed(path: &str, need: u8) -> Result<(), i64> {
+    use crate::proc::rights::Denied;
+    match crate::proc::with_rights(|r| r.check_path(path, need)) {
+        None | Some(Ok(())) => Ok(()),
+        Some(Err(Denied::Hidden)) => Err(E_NOT_FOUND),
+        Some(Err(_)) => {
+            crate::warn!("drepturi: {}: {} refuzat (fara drept)", crate::proc::current_name(), path);
+            Err(E_DENIED)
+        }
+    }
+}
+
 fn call(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64, a5: u64) -> i64 {
+    if let Some(group) = group_of(nr)
+        && crate::proc::with_rights(|r| r.check_call(group)).is_some_and(|r| r.is_err())
+    {
+        crate::warn!("drepturi: {}: apelul {} refuzat (nu e in promisiuni)", crate::proc::current_name(), nr);
+        return E_DENIED;
+    }
     match nr {
         SYS_EXIT => exit_current(a1 as i64),
         SYS_WRITE => write(a1, a2, _a3),
@@ -147,6 +188,51 @@ fn call(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64, a5: u64) -> i64 {
             Some(_) => end_thread(a1 as i64),
             None => exit_current(a1 as i64), // the main thread: the whole program ends
         },
+        SYS_PROMISE => crate::proc::with_rights(|r| r.promise(a1) as i64).unwrap_or(E_INVALID),
+        SYS_UNVEIL => unveil(a1, a2, _a3),
+        SYS_SECRET => secret(a1, a2, _a3),
+        _ => E_INVALID,
+    }
+}
+
+/// unveil(path, length, rights): from now on only the listed paths are visible (rights: 1 read, 2 write,
+/// 4 create/delete); length 0 closes the list for good. P6-23.
+fn unveil(ptr: u64, len: u64, rights: u64) -> i64 {
+    let path = if len == 0 {
+        alloc::string::String::new()
+    } else {
+        match user_path(ptr, len) {
+            Ok(p) => p,
+            Err(e) => return e,
+        }
+    };
+    match crate::proc::with_rights(|r| r.unveil(&path, rights as u8)) {
+        Some(Ok(())) => 0,
+        Some(Err(crate::proc::rights::Denied::Hidden)) => E_INVALID,
+        Some(Err(_)) => E_DENIED,
+        None => E_INVALID,
+    }
+}
+
+/// secret(op, path, length): op 1 = this program asks for one secret file (`/usb/claude.key`,
+/// `/usb/github.token`); op 0 = it gives up every secret for good. P6-23.
+fn secret(op: u64, ptr: u64, len: u64) -> i64 {
+    match op {
+        0 => crate::proc::with_rights(|r| r.drop_secrets()).map_or(E_INVALID, |()| 0),
+        1 => {
+            let path = match user_path(ptr, len) {
+                Ok(p) => p,
+                Err(e) => return e,
+            };
+            match crate::proc::with_rights(|r| r.check_call(crate::proc::rights::P_RPATH).and_then(|()| r.ask_secret(&path))) {
+                Some(Ok(())) => {
+                    crate::info!("drepturi: {} a cerut {}", crate::proc::current_name(), path);
+                    0
+                }
+                Some(Err(_)) => E_DENIED,
+                None => E_INVALID,
+            }
+        }
         _ => E_INVALID,
     }
 }
@@ -230,6 +316,13 @@ fn write(fd: u64, buf: u64, len: u64) -> i64 {
         else {
             return E_BAD_FD;
         };
+        // Writing to a file: the program must have promised `wpath` and see the path with write rights (P6-23).
+        if crate::proc::with_rights(|r| r.check_call(crate::proc::rights::P_WPATH)).is_some_and(|r| r.is_err()) {
+            return E_DENIED;
+        }
+        if let Err(e) = path_allowed(&path, crate::proc::rights::R_WRITE) {
+            return e;
+        }
         // Copied first, so no file-system lock is held while touching user memory.
         let data = alloc::vec::Vec::from(bytes);
         let n = match crate::fs::write(&path, offset, &data) {
@@ -285,6 +378,9 @@ fn open(ptr: u64, len: u64) -> i64 {
         Ok(p) => p,
         Err(e) => return e,
     };
+    if let Err(e) = path_allowed(&path, crate::proc::rights::R_READ) {
+        return e;
+    }
     match crate::fs::kind(&path) {
         Ok(crate::fs::Kind::File) => {}
         Ok(crate::fs::Kind::Dir) => return E_IS_DIR,
@@ -352,6 +448,9 @@ fn stat(ptr: u64, len: u64) -> i64 {
         Ok(p) => p,
         Err(e) => return e,
     };
+    if let Err(e) = path_allowed(&path, crate::proc::rights::R_READ) {
+        return e;
+    }
     match crate::fs::kind(&path) {
         Ok(crate::fs::Kind::Dir) => E_IS_DIR,
         Ok(crate::fs::Kind::File) => crate::fs::size(&path).map(|s| s as i64).unwrap_or_else(fs_error),
@@ -374,6 +473,9 @@ fn spawn(ptr: u64, len: u64, arg: u64, arg_len: u64) -> i64 {
             Err(e) => return e,
         }
     };
+    if let Err(e) = path_allowed(&path, crate::proc::rights::R_READ) {
+        return e;
+    }
     let args: alloc::vec::Vec<&str> = core::iter::once(path.as_str()).chain(arg.as_deref()).collect();
     match crate::proc::spawn_path(&path, &args) {
         Ok(id) => id as i64,
@@ -392,10 +494,15 @@ fn list(ptr: u64, len: u64, buf: u64, buf_len: u64) -> i64 {
     if !user_range_ok(buf, buf_len, true) {
         return E_FAULT;
     }
-    let entries = match crate::fs::list(&path) {
+    if let Err(e) = path_allowed(&path, crate::proc::rights::R_READ) {
+        return e;
+    }
+    let mut entries = match crate::fs::list(&path) {
         Ok(e) => e,
         Err(e) => return fs_error(e),
     };
+    // Secrets not asked for, and paths outside the visible ones, are left out of the list (P6-23).
+    crate::proc::with_rights(|r| entries.retain(|(name, _)| r.visible_entry(&path, name)));
     // SAFETY: the range was checked to be writable user memory of this program.
     let out = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, buf_len as usize) };
     let mut n = 0;
@@ -456,6 +563,9 @@ fn create(ptr: u64, len: u64, kind: u64) -> i64 {
         1 => crate::fs::Kind::Dir,
         _ => return E_INVALID,
     };
+    if let Err(e) = path_allowed(&path, crate::proc::rights::R_CREATE) {
+        return e;
+    }
     crate::fs::create(&path, kind).map_or_else(fs_error, |()| 0)
 }
 
@@ -465,13 +575,21 @@ fn rename(p1: u64, l1: u64, p2: u64, l2: u64) -> i64 {
         (Ok(a), Ok(b)) => (a, b),
         (Err(e), _) | (_, Err(e)) => return e,
     };
+    for p in [&from, &to] {
+        if let Err(e) = path_allowed(p, crate::proc::rights::R_CREATE) {
+            return e;
+        }
+    }
     crate::fs::rename(&from, &to).map_or_else(fs_error, |()| 0)
 }
 
 /// sync(path, length): what the disk holding `path` still keeps in its cache is written out (P6-08).
 fn sync(ptr: u64, len: u64) -> i64 {
     match user_path(ptr, len) {
-        Ok(path) => crate::fs::flush(&path).map_or_else(fs_error, |()| 0),
+        Ok(path) => match path_allowed(&path, crate::proc::rights::R_WRITE) {
+            Ok(()) => crate::fs::flush(&path).map_or_else(fs_error, |()| 0),
+            Err(e) => e,
+        },
         Err(e) => e,
     }
 }
@@ -479,7 +597,10 @@ fn sync(ptr: u64, len: u64) -> i64 {
 /// remove(path, length): deletes a file or an empty folder.
 fn remove(ptr: u64, len: u64) -> i64 {
     match user_path(ptr, len) {
-        Ok(path) => crate::fs::remove(&path).map_or_else(fs_error, |()| 0),
+        Ok(path) => match path_allowed(&path, crate::proc::rights::R_CREATE) {
+            Ok(()) => crate::fs::remove(&path).map_or_else(fs_error, |()| 0),
+            Err(e) => e,
+        },
         Err(e) => e,
     }
 }

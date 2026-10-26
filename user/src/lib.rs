@@ -38,6 +38,46 @@ pub const SYS_MEM_UNMAP: u64 = 36;
 pub const SYS_THREAD_SPAWN: u64 = 37;
 pub const SYS_THREAD_JOIN: u64 = 38;
 pub const SYS_THREAD_EXIT: u64 = 39;
+pub const SYS_PROMISE: u64 = 40;
+pub const SYS_UNVEIL: u64 = 41;
+pub const SYS_SECRET: u64 = 42;
+/// Error: outside this program's promises or rights (P6-23).
+pub const E_DENIED: i64 = -24;
+
+/// Permissions (P6-23, kernel/src/proc/rights.rs): a program can only narrow what it may do.
+pub mod rights {
+    use super::{SYS_PROMISE, SYS_SECRET, SYS_UNVEIL, syscall3};
+    pub const STDIO: u64 = 1 << 0;
+    pub const RPATH: u64 = 1 << 1;
+    pub const WPATH: u64 = 1 << 2;
+    pub const INET: u64 = 1 << 3;
+    pub const PROC: u64 = 1 << 4;
+    pub const UI: u64 = 1 << 5;
+    pub const MODULE: u64 = 1 << 6;
+    pub const READ: u8 = 1;
+    pub const WRITE: u8 = 2;
+    pub const CREATE: u8 = 4;
+    /// Keeps only the groups in `mask` (they can never come back); returns the mask now in force.
+    pub fn promise(mask: u64) -> i64 {
+        syscall3(SYS_PROMISE, mask, 0, 0)
+    }
+    /// From now on only the listed paths are visible (with these rights). 0 or `E_DENIED`.
+    pub fn unveil(path: &str, rights: u8) -> i64 {
+        syscall3(SYS_UNVEIL, path.as_ptr() as u64, path.len() as u64, rights as u64)
+    }
+    /// Closes the list of visible paths for good.
+    pub fn unveil_close() -> i64 {
+        syscall3(SYS_UNVEIL, 0, 0, 0)
+    }
+    /// Asks for one secret file (`/usb/claude.key`, `/usb/github.token`); other programs do not see it.
+    pub fn ask_secret(path: &str) -> i64 {
+        syscall3(SYS_SECRET, 1, path.as_ptr() as u64, path.len() as u64)
+    }
+    /// Gives up every secret for the rest of the program's life.
+    pub fn drop_secrets() -> i64 {
+        syscall3(SYS_SECRET, 0, 0, 0)
+    }
+}
 
 /// A shell running for this program (see kernel/src/term.rs).
 pub mod term {
@@ -93,6 +133,7 @@ pub fn error_text(e: i64) -> &'static str {
         -21 => "numele nu exista",
         -22 => "memorie insuficienta",
         -23 => "alte fire ale programului ruleaza",
+        -24 => "nepermis (in afara promisiunilor sau drepturilor programului)",
         _ => "eroare",
     }
 }

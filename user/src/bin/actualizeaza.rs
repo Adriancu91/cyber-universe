@@ -213,7 +213,10 @@ fn run(c: &Config, force: bool) -> Result<(), String> {
         ));
     }
     repair(c);
+    // P6-23: the token file is visible only to a program that asks for it; given up right after reading.
+    let _ = cyber_user::rights::ask_secret(&c.token);
     let token = read_file(&c.token, 512).map(|t| String::from_utf8_lossy(&t).trim().to_string()).filter(|t| !t.is_empty());
+    let _ = cyber_user::rights::drop_secrets();
     println!("actualizeaza: intreb GitHub de ultima versiune ({}{})", c.repo, if token.is_some() { ", cu token" } else { "" });
     let json = get_api(c, token.as_deref(), &format!("/repos/{}/releases/latest", c.repo), "application/vnd.github+json")?;
     let release = core::str::from_utf8(&json).ok().and_then(|t| cyber_json::parse(t).ok()).ok_or("raspunsul GitHub nu e JSON")?;

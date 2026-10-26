@@ -105,7 +105,12 @@ fn http_response(raw: &[u8]) -> Option<(u16, Vec<u8>)> {
 
 /// The API key from the key file, or why there is none. The key is never printed.
 pub fn key(c: &Config) -> Result<String, String> {
-    let key = match read_file(&c.key, 512) {
+    // P6-23: the key file is visible only to a program that asks for it; given up right after reading, so nothing
+    // this program does later (its file tools included) can read it again.
+    let _ = cyber_user::rights::ask_secret(&c.key);
+    let read = read_file(&c.key, 512);
+    let _ = cyber_user::rights::drop_secrets();
+    let key = match read {
         Some(k) => String::from_utf8(k).unwrap_or_default().trim().to_string(),
         None => String::new(),
     };

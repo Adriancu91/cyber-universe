@@ -234,6 +234,8 @@ fn run_tests() -> ! {
     test_all_frames();
     test_paging();
     test_gpu_decode();
+    shell::raport_self_test();
+    proc::rights::self_test();
     assert!(acpi::fadt::self_test(), "acpi: FADT RESET_REG decodat gresit");
     info!("test: FADT RESET_REG decodare OK");
     test_heap();
@@ -337,6 +339,9 @@ fn run_tests() -> ! {
 
     #[cfg(feature = "test-kronos-calc")]
     tests::kronos::run();
+
+    #[cfg(feature = "test-rights")]
+    tests::rights::run();
 
     #[cfg(feature = "test-stress")]
     tests::stress::run();
@@ -468,6 +473,8 @@ fn test_gpu_decode() {
     assert!(old.chip == 0x164 && old.revision == 0xa1, "gpu: BOOT_0 decodat gresit: {:?}", old);
     assert!(nv_architecture(0x120) == "necunoscuta", "gpu: arhitectura inventata");
     info!("test: gpu decodare OK (GA104 din BOOT_42, TU104 din BOOT_0)");
+    #[cfg(not(feature = "test-gpu-write"))]
+    drivers::gpu::test_bar0_window();
     #[cfg(feature = "test-gpu-write")]
     drivers::gpu::test_write_faults();
 }
@@ -1376,14 +1383,14 @@ fn add_test_root() {
 fn test_claude() {
     assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
     add_test_root();
-    let conf = b"# test: the imitation of the API\nhost = test.cyber.local\nport = 18444\naddress = 10.0.2.2\nkey = /etc/claude-test.key\n";
+    let conf = b"# test: the imitation of the API\nhost = test.cyber.local\nport = 18444\naddress = 10.0.2.2\nkey = /etc/claude.key\n";
     let _ = fs::create("/etc/claude.conf", fs::Kind::File);
     fs::write("/etc/claude.conf", 0, conf).expect("test: /etc/claude.conf");
     let run = |key: Option<&[u8]>, what: &str| {
-        let _ = fs::remove("/etc/claude-test.key");
+        let _ = fs::remove("/etc/claude.key");
         if let Some(k) = key {
-            fs::create("/etc/claude-test.key", fs::Kind::File).expect("test: cheia");
-            fs::write("/etc/claude-test.key", 0, k).expect("test: cheia");
+            fs::create("/etc/claude.key", fs::Kind::File).expect("test: cheia");
+            fs::write("/etc/claude.key", 0, k).expect("test: cheia");
         }
         let start = arch::x86_64::apic::ticks();
         let id = proc::spawn_path("/bin/claude", &["claude", "Ce", "faci,", "Claude?"]).expect("test: /bin/claude");
@@ -1403,11 +1410,11 @@ fn test_claude_app() {
     use drivers::keyboard::{Key, push_key};
     assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
     add_test_root();
-    let conf = b"host = test.cyber.local\nport = 18444\naddress = 10.0.2.2\nkey = /etc/claude-test.key\n";
+    let conf = b"host = test.cyber.local\nport = 18444\naddress = 10.0.2.2\nkey = /etc/claude.key\n";
     let _ = fs::create("/etc/claude.conf", fs::Kind::File);
     fs::write("/etc/claude.conf", 0, conf).expect("test: /etc/claude.conf");
-    let _ = fs::create("/etc/claude-test.key", fs::Kind::File);
-    fs::write("/etc/claude-test.key", 0, b"sk-test-cyber\n").expect("test: cheia");
+    let _ = fs::create("/etc/claude.key", fs::Kind::File);
+    fs::write("/etc/claude.key", 0, b"sk-test-cyber\n").expect("test: cheia");
     let app = proc::spawn_path("/bin/claude-app", &["claude-app"]).expect("test: /bin/claude-app");
     let deadline = arch::x86_64::apic::ticks() + 10 * arch::x86_64::apic::HZ;
     while !ui::top_window().is_some_and(|(o, _)| o == app) {
@@ -1441,11 +1448,11 @@ fn test_claude_tools() {
     use drivers::keyboard::{Key, push_key};
     assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
     add_test_root();
-    let conf = b"host = test.cyber.local\nport = 18444\naddress = 10.0.2.2\nkey = /etc/claude-test.key\n";
+    let conf = b"host = test.cyber.local\nport = 18444\naddress = 10.0.2.2\nkey = /etc/claude.key\n";
     let _ = fs::create("/etc/claude.conf", fs::Kind::File);
     fs::write("/etc/claude.conf", 0, conf).expect("test: /etc/claude.conf");
-    let _ = fs::create("/etc/claude-test.key", fs::Kind::File);
-    fs::write("/etc/claude-test.key", 0, b"sk-test-cyber\n").expect("test: cheia");
+    let _ = fs::create("/etc/claude.key", fs::Kind::File);
+    fs::write("/etc/claude.key", 0, b"sk-test-cyber\n").expect("test: cheia");
     let app = proc::spawn_path("/bin/claude-app", &["claude-app"]).expect("test: /bin/claude-app");
     let deadline = arch::x86_64::apic::ticks() + 10 * arch::x86_64::apic::HZ;
     while !ui::top_window().is_some_and(|(o, _)| o == app) {
@@ -1525,14 +1532,14 @@ fn test_ghpush() {
         fs::create(path, fs::Kind::File).expect("test: fisier");
         fs::write(path, 0, data).expect("test: fisier");
     };
-    put("/etc/github.conf", b"host = test.cyber.local\nport = 18447\naddress = 10.0.2.2\ntoken = /etc/gh-test.token\n");
+    put("/etc/github.conf", b"host = test.cyber.local\nport = 18447\naddress = 10.0.2.2\ntoken = /etc/github.token\n");
     put("/etc/nota.txt", "nota din Cyber Universe, cu diacritice: \u{103}\u{ee}\u{219}\u{21b}\n".as_bytes());
     let big: alloc::vec::Vec<u8> = (0..300_000u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
     put("/etc/mare.bin", &big);
     let run = |token: Option<&[u8]>, args: &[&str], what: &str| {
-        let _ = fs::remove("/etc/gh-test.token");
+        let _ = fs::remove("/etc/github.token");
         if let Some(t) = token {
-            put("/etc/gh-test.token", t);
+            put("/etc/github.token", t);
         }
         let mut all = alloc::vec!["gh-trimite"];
         all.extend_from_slice(args);

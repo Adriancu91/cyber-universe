@@ -6,6 +6,7 @@
 //! arguments, all on the program's stack (argument 0 = the program's path).
 
 pub mod elf;
+pub mod rights;
 
 use crate::arch::x86_64::syscall::enter_user;
 use crate::mem::{address_space::AddressSpace, map::{PAGE_SIZE, phys_to_virt}, paging};
@@ -83,6 +84,8 @@ struct Process {
     argc: u64,
     argv: u64,
     files: Vec<Option<OpenFile>>,
+    /// Promises, visible paths and secrets asked for (P6-23).
+    rights: rights::Rights,
     _space: AddressSpace,
 }
 
@@ -198,6 +201,8 @@ fn start(mut space: AddressSpace, entry: u64, args: &[&str]) -> Result<u64, Spaw
     let name = String::from(args.first().map_or("(cod)", |a| a.rsplit('/').next().unwrap_or(a)));
     let terminal = crate::term::of_shell(sched::current_id())
         .or_else(|| current(&mut procs).and_then(|p| p.terminal));
+    // A program started by another keeps its limits (it cannot escape them by spawning), without its secrets.
+    let rights = current(&mut procs).map(|p| p.rights.inherit()).unwrap_or_default();
     procs.push(Process {
         thread,
         threads: Vec::new(),
@@ -211,6 +216,7 @@ fn start(mut space: AddressSpace, entry: u64, args: &[&str]) -> Result<u64, Spaw
         argc: args.len() as u64,
         argv,
         files: Vec::new(),
+        rights,
         _space: space,
     });
     Ok(thread)
@@ -234,6 +240,18 @@ fn start_user() {
 pub fn with_files<R>(f: impl FnOnce(&mut Vec<Option<OpenFile>>) -> R) -> Option<R> {
     let mut procs = PROCS.lock();
     current(&mut procs).map(|p| f(&mut p.files))
+}
+
+/// Runs `f` on the current program's permissions (P6-23); `None` when the caller is not a program.
+pub fn with_rights<R>(f: impl FnOnce(&mut rights::Rights) -> R) -> Option<R> {
+    let mut procs = PROCS.lock();
+    current(&mut procs).map(|p| f(&mut p.rights))
+}
+
+/// The current program's name, for log lines ("(nucleu)" outside a program).
+pub fn current_name() -> String {
+    let mut procs = PROCS.lock();
+    current(&mut procs).map_or_else(|| String::from("(nucleu)"), |p| p.name.clone())
 }
 
 /// Adds `file` to the current process's table; returns its descriptor, or `None` if the table is full.

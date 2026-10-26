@@ -123,7 +123,10 @@ fn run(c: &Config, file: &str, repo: &str, path: &str, message: &str) -> Result<
         return Err(format!("{} are {} KiB; trimit cel mult {} KiB", file, size >> 10, MAX_FILE >> 10));
     }
     let data = read_file(file, MAX_FILE).ok_or_else(|| format!("nu pot citi {}", file))?;
+    // P6-23: the token file is visible only to a program that asks for it; given up right after reading.
+    let _ = cyber_user::rights::ask_secret(&c.token);
     let token = read_file(&c.token, 512).map(|t| String::from_utf8_lossy(&t).trim().to_string()).filter(|t| !t.is_empty());
+    let _ = cyber_user::rights::drop_secrets();
     let Some(token) = token else {
         return Err(format!("lipseste tokenul GitHub (un rand in {})", c.token));
     };

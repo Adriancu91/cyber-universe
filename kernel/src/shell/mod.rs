@@ -5,6 +5,10 @@ use crate::drivers::keyboard::{Key, wait_key};
 use crate::fs::{self, Kind};
 use alloc::{format, string::String, vec::Vec};
 
+mod raport;
+#[cfg(feature = "qemu-test")]
+pub use raport::self_test as raport_self_test;
+
 const PROMPT: &str = "cyber> ";
 const MAX_LINE: usize = 256;
 
@@ -16,7 +20,27 @@ macro_rules! out {
     }};
 }
 
+/// While `raport` runs a command, that shell's output goes into the report instead: (shell thread, text so far).
+static CAPTURE: crate::sched::Mutex<Option<(u64, String)>> = crate::sched::Mutex::new(None);
+
+fn emit_capture_begin() {
+    *CAPTURE.lock() = Some((crate::sched::current_id(), String::new()));
+}
+
+fn emit_capture_end() -> String {
+    CAPTURE.lock().take().map(|(_, t)| t).unwrap_or_default()
+}
+
 fn emit(text: &str) {
+    {
+        let mut c = CAPTURE.lock();
+        if let Some((id, buf)) = c.as_mut()
+            && *id == crate::sched::current_id()
+        {
+            buf.push_str(text);
+            return;
+        }
+    }
     match crate::term::of_shell(crate::sched::current_id()) {
         Some(t) => crate::term::write(t, text.as_bytes()),
         None => {
@@ -38,6 +62,7 @@ fn next_key() -> Option<Key> {
 pub fn run() {
     out!("\nScrie `help` pentru lista de comenzi.\n");
     loop {
+        raport::auto_if_errors();
         out!("{}", PROMPT);
         let Some(line) = read_line() else { return }; // the terminal window closed
         let words: Vec<&str> = line.split_whitespace().collect();
@@ -60,6 +85,7 @@ pub fn run() {
             "net" => net(),
             "rtl" => rtl(args),
             "hw" => hw(),
+            "raport" => raport::manual(),
             "gpu" => gpu(args),
             "cpu" => cpu(args),
             "log" => show_log(args),
@@ -74,6 +100,9 @@ pub fn run() {
             },
             #[cfg(feature = "qemu-test")]
             "test-gata" => return,
+            // Test builds: put a line in the log (scenario `raport`: a token must not reach the report).
+            #[cfg(feature = "qemu-test")]
+            "test-jurnal" => crate::info!("test-jurnal: {}", args.join(" ")),
             _ => out!("comanda necunoscuta: {} (scrie help)\n", cmd),
         }
     }
@@ -122,6 +151,7 @@ fn help() {
     out!("  rtl porneste [variante]  reporneste placa Realtek cu variantele date (fara: ca la pornire; `rtl` le arata)\n");
     out!("  gpu [identifica|plan]  placile video (nivel 0: doar citire; NVIDIA: registrele de identitate)\n");
     out!("  hw               raport hardware pe o pagina (pentru o singura poza)\n");
+    out!("  raport           scrie pe stick /usb/raport/<data>-<nr>.txt: hw, lspci, net, jurnalele (fara chei)\n");
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
     out!("  uptime           de cat timp merge sistemul\n");
     out!("  cpu [porneste]   nucleele procesorului (porneste = porneste-le pe celelalte, parcate)\n");
@@ -153,6 +183,11 @@ fn cat(args: &[&str]) {
         out!("folosire: cat <fisier>...\n");
     }
     for path in args {
+        // P6-23: the key and the token never go on the screen (a terminal window may belong to the Claude app).
+        if crate::proc::rights::canonical(path).is_some_and(|c| crate::proc::rights::is_secret(&c)) {
+            out!("cat: {}: fisier secret (il citesc doar programele care il cer)\n", path);
+            continue;
+        }
         match fs::read_all(path) {
             Ok(data) => out!("{}", String::from_utf8_lossy(&data)),
             Err(e) => out!("cat: {}: {}\n", path, e.message()),
@@ -344,12 +379,32 @@ fn gpu(args: &[&str]) {
                 out!("{}\n", l);
             }
         }
+        Some(w @ ("gfw" | "vbios")) => {
+            let step = if w == "gfw" { crate::drivers::gpu::InitStep::Gfw } else { crate::drivers::gpu::InitStep::Vbios };
+            if args.get(1) == Some(&"--sim") {
+                #[cfg(feature = "test-gpu-sim")]
+                {
+                    for l in crate::drivers::gpu::init_step_sim(step) {
+                        out!("{}\n", l);
+                    }
+                }
+                #[cfg(not(feature = "test-gpu-sim"))]
+                {
+                    let _ = step;
+                    out!("gpu: --sim exista doar in build-ul de test (modelul gpu-sim nu intra in sistemul pornit de pe stick)\n");
+                }
+            } else {
+                for l in crate::drivers::gpu::init_step(step) {
+                    out!("{}\n", l);
+                }
+            }
+        }
         Some("plan") => {
             for l in crate::drivers::gpu::PLAN {
                 out!("{}\n", l);
             }
         }
-        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu plan)\n", other),
+        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios | gpu plan)\n", other),
     }
 }
 

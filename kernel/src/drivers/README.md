@@ -73,3 +73,13 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   **SIMULARE**, iar dimensionarea BAR-urilor (care scrie) se face doar în model.
   Test: scenariile `gpu` (calea reală în QEMU → „nicio placa NVIDIA”, `--sim` refuzat în build-ul obișnuit) și `gpu-sim`;
   `tools/after-gpu.sh` verifică în sursă că adaptoarele doar refuză (și că dimensionarea apare doar în blocul de simulare).
+- **`gpu gfw` și `gpu vbios` (P6-21, comanda C-19):** pașii I2 și I3 din Cyber-GPU (fixat acum pe `dac2e32`, ramura lor
+  `g0-g2-fundatie`), **doar citire**. `gpu gfw` așteaptă (max 4 s) ca firmware-ul plăcii să termine pornirea: rundele, timpul,
+  `PRIV_LEVEL_MASK`, progresul (gata = `0xff`). `gpu vbios` citește VBIOS-ul prin fereastra PROM (BAR0 `0x300000`, 1 MiB): imaginile
+  (offset, tip PCI-AT/EFI/FWSEC, mărime), tabela BIT și jetonul 0x70, numărul de citiri (max 300 000, 2 s). Ambele au nevoie de primii
+  4 MiB din BAR0: adaptorul `ReadOnlyBar0Window` îi mapează **pagină cu pagină**, la aceeași adresă privată, fără drept de scriere și
+  fără cache; orice scriere cerută de bibliotecă e refuzată și numărată (rândul final „0 scrieri in placa”). Ceasul = TSC.
+  Placa trebuie recunoscută de `nvidia-ga104::probe` și să aibă Memory Space pornit de firmware (nu-l pornim noi).
+  Test: `gpu-sim` (`gpu gfw --sim`, `gpu vbios --sim` pe modelul `gpu-sim`, marcate SIMULARE), `gpu` (QEMU → „nicio placa NVIDIA”),
+  testul de pornire `test_bar0_window` (fereastra de 4 MiB pe framebuffer-ul QEMU: aceleași valori ca o citire directă, 5 pagini
+  mapate pe rând, demapată la sfârșit), `tools/after-gpu.sh` (verifică **toate** adaptoarele). Nimic nu e testat pe RTX 3070 Ti.

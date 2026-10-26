@@ -283,7 +283,7 @@ pub fn identify() -> Vec<String> {
 // ---------------------------------------------------------------------------------------------------------------
 
 /// Pinned Cyber-GPU revision (kernel/Cargo.toml), shown in the report.
-pub const CYBER_GPU_REV: &str = "41e44ba";
+pub const CYBER_GPU_REV: &str = "dac2e32";
 
 /// Configuration space of one function for the Cyber-GPU libraries: reads only.
 struct ReadOnlyConfig<'a> {
@@ -420,15 +420,247 @@ pub fn identify_sim() -> Vec<String> {
     lines
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// P6-21 (C-19): steps I2 (`gpu gfw`) and I3 (`gpu vbios`) of Cyber-GPU, read only. Both need the first 4 MiB of BAR0
+// (the PROM window ends at 0x400000); they are reached one page at a time through the same read-only, uncached
+// window as above, so the libraries still cannot write: every write they ask for is refused and counted.
+// ---------------------------------------------------------------------------------------------------------------
+
+/// The first `INIT_WINDOW` bytes of BAR0, mapped page by page on demand at `WINDOW`, without write permission.
+/// The caller holds `WINDOW_LOCK` for the whole lifetime of this value.
+struct ReadOnlyBar0Window {
+    phys: u64,
+    mapped: Option<u64>,
+    remaps: usize,
+    map_failed: bool,
+    refused: usize,
+}
+
+impl ReadOnlyBar0Window {
+    fn new(phys: u64) -> Self {
+        ReadOnlyBar0Window { phys, mapped: None, remaps: 0, map_failed: false, refused: 0 }
+    }
+}
+
+impl gpu_core::hal::Mmio for ReadOnlyBar0Window {
+    fn len(&self) -> u64 {
+        nvidia_ga104::regs::INIT_WINDOW
+    }
+    fn read32_raw(&mut self, offset: u64) -> u32 {
+        // `checked_read32` in gpu-core already bounds and aligns the offset; keep the window safe regardless.
+        let offset = offset.min(nvidia_ga104::regs::INIT_WINDOW - 4) & !3;
+        let page = offset & !0xFFF;
+        if self.mapped != Some(page) {
+            if self.mapped.take().is_some() {
+                paging::unmap(WINDOW);
+            }
+            // Deliberately no WRITABLE flag (as in `with_readonly_window`).
+            if paging::map(WINDOW, self.phys + page, paging::NO_EXECUTE | UNCACHED).is_err() {
+                self.map_failed = true;
+                return u32::MAX;
+            }
+            self.mapped = Some(page);
+            self.remaps += 1;
+        }
+        read_reg(WINDOW, offset & 0xFFF)
+    }
+    fn write32_raw(&mut self, offset: u64, value: u32) {
+        self.refused += 1;
+        crate::warn!("gpu: scriere refuzata in registre: {:#x} <- {:#010x}", offset, value);
+    }
+}
+
+impl Drop for ReadOnlyBar0Window {
+    fn drop(&mut self) {
+        if self.mapped.take().is_some() {
+            paging::unmap(WINDOW);
+        }
+    }
+}
+
+/// Time for the Cyber-GPU polling loops: the TSC (rate measured at boot). Waits spin; they are bounded by the library.
+struct TscClock;
+
+impl gpu_core::hal::Clock for TscClock {
+    fn now_us(&mut self) -> u64 {
+        crate::time::since_boot_us().unwrap_or(0)
+    }
+    fn delay_us(&mut self, us: u32) {
+        let end = self.now_us() + us as u64;
+        while self.now_us() < end {
+            core::hint::spin_loop();
+        }
+    }
+}
+
+/// The lines of `gpu gfw` for one result (real card or model).
+fn gfw_lines(p: &str, r: &gpu_core::error::GpuResult<nvidia_ga104::gfw::GfwStatus>) -> Vec<String> {
+    match r {
+        Ok(s) => alloc::vec![format!(
+            "{}: GFW gata (progres {:#04x}) dupa {} runde, {} us; PRIV_LEVEL_MASK {:#010x}",
+            p, s.progress, s.polls, s.waited_us, s.priv_level_mask
+        )],
+        Err(e) => alloc::vec![format!("{}: GFW: {}", p, e)],
+    }
+}
+
+/// The lines of `gpu vbios` for one result (real card or model).
+fn vbios_lines(p: &str, r: &gpu_core::error::GpuResult<nvidia_ga104::vbios::VbiosLayout>) -> Vec<String> {
+    use nvidia_ga104::vbios;
+    let l = match r {
+        Ok(l) => l,
+        Err(e) => return alloc::vec![format!("{}: VBIOS: {}", p, e)],
+    };
+    let mut v = Vec::new();
+    v.push(format!(
+        "{}: VBIOS: antet {}, prima imagine la {:#x}, {} imagini",
+        p,
+        l.ifr_version.map(|x| format!("IFR v{}", x)).unwrap_or_else(|| String::from("fara IFR")),
+        l.rom_start,
+        l.images.len()
+    ));
+    for (k, i) in l.images.iter().enumerate() {
+        v.push(format!(
+            "{}:   imaginea {}: offset {:#07x}, tip {:#04x} {}, {} octeti, {:04x}:{:04x}{}{}",
+            p, k, i.offset, i.code_type, vbios::code_name(i.code_type), i.size, i.vendor, i.device,
+            if i.has_npde { ", NPDE" } else { "" },
+            if i.last { ", ultima" } else { "" }
+        ));
+    }
+    match &l.bit {
+        Some((at, tokens)) => v.push(format!(
+            "{}: BIT la {:#x}: {} jetoane, jetonul 0x70 (date Falcon): {}",
+            p, at, tokens.len(), if l.has_falcon_data() { "da" } else { "nu" }
+        )),
+        None => v.push(format!("{}: BIT: negasita", p)),
+    }
+    v.push(format!(
+        "{}: FWSEC: {} imagini; complet (PCI-AT + BIT 0x70 + FWSEC): {}; {} citiri PROM",
+        p, l.fwsec_images(), if l.complete() { "da" } else { "nu" }, l.prom_reads
+    ));
+    v
+}
+
+/// Which read-only step `gpu gfw` / `gpu vbios` runs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum InitStep {
+    Gfw,
+    Vbios,
+}
+
+/// `gpu gfw` / `gpu vbios` on every NVIDIA board the Cyber-GPU probe accepts. Every line also goes to the log.
+pub fn init_step(step: InitStep) -> Vec<String> {
+    use nvidia_ga104::{gfw, probe, vbios};
+    let mut lines = Vec::new();
+    let mut refused = 0usize;
+    let nv: Vec<Device> = display_devices().into_iter().filter(|d| d.vendor == NVIDIA).collect();
+    if nv.is_empty() {
+        lines.push(String::from("nicio placa NVIDIA"));
+    }
+    for (n, d) in nv.iter().enumerate() {
+        let p = format!("gpu{}", n);
+        let mut cfg = ReadOnlyConfig { dev: d, refused: 0 };
+        let addr = gpu_core::PciAddress { segment: 0, bus: d.bus, dev: d.dev, func: d.func };
+        let candidate = probe::probe_config(&mut cfg, Some(addr));
+        refused += cfg.refused;
+        let c = match candidate {
+            Ok(c) => c,
+            Err(e) => {
+                lines.push(format!("{}: {} cyber-gpu {}: {}", p, d.address(), CYBER_GPU_REV, e));
+                continue;
+            }
+        };
+        lines.push(format!("{}: {} {} (BAR0 {:#x}), cyber-gpu {}", p, d.address(), c.model, c.bar0, CYBER_GPU_REV));
+        if d.command() & 0b10 == 0 {
+            lines.push(format!("{}: registrele nu s-au citit: Memory Space oprit de firmware (nu il pornim)", p));
+            continue;
+        }
+        if crate::time::since_boot_us().is_none() {
+            lines.push(format!("{}: ceasul (TSC) nu e calibrat: limita de timp nu se poate tine, nu citesc", p));
+            continue;
+        }
+        let _guard = WINDOW_LOCK.lock();
+        let mut win = ReadOnlyBar0Window::new(c.bar0 & !0xFFF);
+        let mut journal = gpu_core::diag::Journal::new(64);
+        let mut clock = TscClock;
+        let out = match step {
+            InitStep::Gfw => gfw_lines(&p, &gfw::wait_gfw_boot(&mut win, &mut journal, &mut clock, gfw::GFW_TIMEOUT_US)),
+            InitStep::Vbios => {
+                vbios_lines(&p, &vbios::read_layout(&mut win, &mut journal, &mut clock, vbios::VBIOS_TIMEOUT_US))
+            }
+        };
+        lines.extend(out);
+        for e in journal.events() {
+            crate::info!("gpu: {}: jurnal cyber-gpu: {}", p, e);
+        }
+        if win.map_failed {
+            lines.push(format!("{}: maparea ferestrei a esuat (citirile au dat FFFFFFFF)", p));
+        }
+        lines.push(format!("{}: {} pagini mapate pe rand (doar citire)", p, win.remaps));
+        refused += win.refused + journal.writes();
+    }
+    lines.push(writes_line(refused));
+    for l in &lines {
+        crate::info!("gpu: {}", l);
+    }
+    lines
+}
+
+fn writes_line(refused: usize) -> String {
+    if refused == 0 {
+        String::from("0 scrieri in placa (doar citire; adaptorul cyber-gpu a refuzat 0 scrieri)")
+    } else {
+        format!("0 scrieri in placa: biblioteca cyber-gpu a cerut {} scrieri, toate REFUZATE de adaptor", refused)
+    }
+}
+
+/// `gpu gfw --sim` / `gpu vbios --sim` (test builds only): the same library calls on the gpu-sim model (16 MiB BAR0;
+/// GFW finishes after a few rounds; a synthetic GA10x-like ROM chain). Every line says SIMULARE.
+#[cfg(feature = "test-gpu-sim")]
+pub fn init_step_sim(step: InitStep) -> Vec<String> {
+    use gpu_sim::{clock::SimClock, mmio::SimMmio, rom};
+    use nvidia_ga104::{gfw, regs, vbios};
+    let mut bar0 = SimMmio::ga104_bar0();
+    let mut journal = gpu_core::diag::Journal::new(64);
+    let mut clock = SimClock::default();
+    let mut lines = match step {
+        InitStep::Gfw => {
+            let (mask, prog) = (regs::NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_PRIV_LEVEL_MASK.offset,
+                regs::NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_0_GFW_BOOT.offset);
+            // SIM: protection lowered after 5 rounds, progress 0x40 then 0xff.
+            bar0.set(mask, 0);
+            bar0.set_after(mask, 5, 1);
+            bar0.set(prog, 0x40);
+            bar0.set_after(prog, 3, 0xff);
+            gfw_lines("model", &gfw::wait_gfw_boot(&mut bar0, &mut journal, &mut clock, gfw::GFW_TIMEOUT_US))
+        }
+        InitStep::Vbios => {
+            bar0.load_bytes(regs::PROM_BASE, &rom::ga10x_like_chain());
+            vbios_lines("model", &vbios::read_layout(&mut bar0, &mut journal, &mut clock, vbios::VBIOS_TIMEOUT_US))
+        }
+    };
+    lines.push(format!("model: {} citiri BAR0, timp simulat {} us", bar0.reads.len(), clock.now));
+    lines.push(writes_line(bar0.writes.len() + journal.writes()));
+    let mut out: Vec<String> = lines.into_iter().map(|l| format!("SIMULARE: {}", l)).collect();
+    out.insert(0, format!("SIMULARE: modelul gpu-sim al placii de pe workstation (cyber-gpu {}), nu placa reala", CYBER_GPU_REV));
+    out.push(String::from("SIMULARE: nicio placa reala atinsa; rezultatul nu dovedeste nimic despre hardware"));
+    for l in &out {
+        crate::info!("gpu: {}", l);
+    }
+    out
+}
+
 /// The steps of the level-0 window on the workstation (`gpu plan`).
 pub const PLAN: &[&str] = &[
     "Fereastra nivel 0 pe workstation (doar citire, ~30 min, Kronos oprit):",
     " 1. pornire de pe stick, Esc -> cyber>",
     " 2. lspci                -> poza (placa NVIDIA 10de:xxxx si placa de retea)",
     " 3. gpu identifica       -> poza (BAR-uri, Resizable BAR, BOOT_0/BOOT_42, cipul)",
-    " 4. log gpu 40           -> poza",
-    " 5. hw                   -> poza",
-    " 6. net                  -> poza (placa de retea a workstation-ului e necunoscuta: notam ce apare)",
+    " 4. gpu gfw              -> poza (I2: firmware-ul placii a terminat pornirea? asteptat: progres 0xff, < 4 s)",
+    " 5. gpu vbios            -> poza (I3: imaginile PCI-AT, EFI, FWSEC; BIT cu jetonul 0x70)",
+    " 6. log gpu 40           -> poza",
+    " 7. hw                   -> poza",
+    " 8. net                  -> poza (placa de retea a workstation-ului e necunoscuta: notam ce apare)",
     "Nu se scrie nimic in placa video; dupa poze: oprire si inapoi in Windows pentru Kronos.",
 ];
 
@@ -444,4 +676,34 @@ pub fn test_write_faults() {
         unsafe { (w as *mut u32).write_volatile(0) };
     });
     panic!("test: scrierea in fereastra gpu NU a dat page fault");
+}
+
+/// P6-21: the 4 MiB read-only window of `gpu gfw` / `gpu vbios`, on QEMU's display controller (its BAR0 is the
+/// framebuffer, 16 MiB): reads at offsets in different pages must equal a direct uncached read of the same bytes,
+/// each new page is mapped once, and the window is gone afterwards. Nothing is written to the device.
+#[cfg(all(feature = "qemu-test", not(feature = "test-gpu-write")))]
+pub fn test_bar0_window() {
+    use gpu_core::hal::Mmio;
+    let Some(d) = display_devices().into_iter().next() else {
+        crate::info!("test: fereastra gpu de 4 MiB sarita (nicio placa video)");
+        return;
+    };
+    let Some(bar) = bars(&d).into_iter().find(|b| b.index == 0 && !b.io) else {
+        crate::info!("test: fereastra gpu de 4 MiB sarita (fara BAR0 de memorie)");
+        return;
+    };
+    let direct = paging::map_mmio(bar.phys, nvidia_ga104::regs::INIT_WINDOW).expect("test: map_mmio");
+    let offsets = [0u64, 4, 0x1000, 0x11_8128, 0x30_0000, 0x3F_FFFC];
+    let _guard = WINDOW_LOCK.lock();
+    let mut win = ReadOnlyBar0Window::new(bar.phys);
+    for &o in &offsets {
+        // SAFETY: `direct` maps [bar.phys, bar.phys + 4 MiB) uncached (map_mmio above); o < 4 MiB, aligned.
+        let want = unsafe { ((direct + o) as *const u32).read_volatile() };
+        let got = win.read32_raw(o);
+        assert!(got == want, "test: fereastra gpu la {:#x}: {:#x}, direct {:#x}", o, got, want);
+    }
+    assert!(win.remaps == 5 && !win.map_failed && win.refused == 0, "test: fereastra gpu: {} remapari", win.remaps);
+    drop(win);
+    assert!(paging::translate(WINDOW).is_none(), "test: fereastra gpu a ramas mapata");
+    crate::info!("test: fereastra gpu de 4 MiB OK (6 citiri, 5 pagini mapate pe rand, doar citire)");
 }

@@ -13,13 +13,13 @@ cyber_crypto = { path = "../crypto" }
 cyber_rtl8168 = { path = "../rtl8168" }
 # P6-16: Intel e1000/82574/I219 driver logic (tested on the host against a model).
 cyber_e1000e = { path = "../e1000e" }
-# P6-19 (C-16): the Cyber-GPU libraries (MIT, same author), pinned to one commit (tag `stabil-2026-10-23` of cyber-gpu).
+# P6-19 (C-16): the Cyber-GPU libraries (MIT, same author), pinned to one commit (P6-21: dac2e32 on their branch g0-g2-fundatie; was 41e44ba = tag `stabil-2026-10-23`).
 # Read-only use: PCI decoding, the GA104 level-0 probe. The kernel's ConfigSpace adapter refuses every write (drivers/gpu.rs).
-gpu-core = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "41e44ba" }
-gpu-pci = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "41e44ba" }
-nvidia-ga104 = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "41e44ba" }
+gpu-core = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "dac2e32" }
+gpu-pci = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "dac2e32" }
+nvidia-ga104 = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "dac2e32" }
 # SIMULATION only (`gpu identifica --sim` in test builds); never compiled into the kernel people boot.
-gpu-sim = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "41e44ba", optional = true }
+gpu-sim = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "dac2e32", optional = true }
 
 [features]
 # Test build: the kernel waits for a byte on COM1, then exits QEMU through isa-debug-exit.
@@ -95,6 +95,10 @@ test-terminal = ["qemu-test"]
 test-gpu-write = ["qemu-test"]
 # P6-19: `gpu identifica --sim` on the gpu-sim model of the workstation board (output marked SIMULARE).
 test-gpu-sim = ["test-shell", "dep:gpu-sim"]
+# P6-22: `raport` may also write on the test disk (/disk), since QEMU has no writable stick in the scenario.
+test-raport = ["test-shell"]
+# P6-23: program permissions (secret files, visible paths, promises) checked by /bin/cat and `hello drepturi`.
+test-rights = ["qemu-test"]
 # P6-19: /bin/kronos-calcul (gpu-compute on every processor) started by the kernel test.
 test-kronos-calc = ["qemu-test"]
 # P1-13: a write to .rodata must fault (the kernel image keeps its per-segment rights).

@@ -56,7 +56,15 @@
   `39 thread_exit(cod)` oprește firul (pe firul principal: tot programul). `exit` dintr-un fir oprește tot programul.
   `mem_unmap` cu alte fire în viață → `-23`. Biblioteca: `cyber_user::thread::{spawn, spawn_with_stack, join, exit}`.
   Detalii: `kernel/src/proc/README.md`. Test: scenariile `fire`, `fire-1`.
-- **Erori:** `-1` argument invalid, `-2` adresă invalidă, `-3` nu există, `-4` e director, `-5` descriptor închis, `-6` prea multe fișiere, `-22` memorie insuficientă.
+- **Permisiuni (P6-23, `proc/rights.rs`):** `40 promise(mască)` păstrează doar grupurile de apeluri din mască (1 stdio,
+  2 rpath: open/stat/list, 4 wpath: create/remove/rename/sync și scrierea în fișiere, 8 inet, 16 proc: spawn/wait/kill, 32 ui,
+  64 module) → masca rămasă; nu se mai poate lărgi. `41 unveil(cale, lungime, drepturi)` (1 citire, 2 scriere, 4 creare/ștergere):
+  după primul apel programul vede doar căile listate (și ce e sub ele; decide cea mai lungă potrivire); lungime 0 închide lista.
+  `42 secret(op, cale, lungime)`: op 1 = programul cere un fișier secret (`claude.key`, `github.token` din `/usb`, `/disk`, `/etc`),
+  op 0 = renunță la toate, definitiv. Un secret necerut sau o cale ascunsă = `-3` (nu există, nici în `list`); un apel nepromis sau
+  o cale fără dreptul cerut = `-24`. Căile se compară canonic (litere mici, fără `.`, `..` aplicat). Un program pornit de altul
+  moștenește promisiunile și căile vizibile, nu și secretele. Test: scenariul `drepturi` + testul de la pornire `rights::self_test`.
+- **Erori:** `-1` argument invalid, `-2` adresă invalidă, `-3` nu există, `-4` e director, `-5` descriptor închis, `-6` prea multe fișiere, `-22` memorie insuficientă, `-24` nepermis (P6-23).
 - **Siguranță:** orice pointer primit e verificat pagină cu pagină (`paging::user_accessible`): în jumătatea de jos,
   mapat cu drept USER la toate nivelurile. O excepție în ring 3 oprește doar programul (cod de ieșire `-1`).
 - **Depinde de:** `sched`, `mem::paging`, `proc`, `ui` (ferestre).

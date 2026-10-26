@@ -62,6 +62,13 @@ impl LineBuf {
     }
 }
 
+/// ERR lines logged since boot (the shell writes an automatic report when this grows, P6-22).
+static ERRORS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+pub fn error_count() -> usize {
+    ERRORS.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 #[doc(hidden)]
 pub fn _log(level: Level, args: fmt::Arguments) {
     if level < MIN_LEVEL {
@@ -78,6 +85,9 @@ pub fn _log(level: Level, args: fmt::Arguments) {
     }
     let _ = write!(line, "{:<5} {}\n", level.label(), args);
     let text = line.as_str();
+    if level == Level::Error {
+        ERRORS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
 
     crate::drivers::serial::write_str(text);
     remember(text);
