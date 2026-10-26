@@ -3,6 +3,27 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-26 15:41–16:45 UTC (17:41–18:45 ora României), în cloud, fără Adrian — C-19 și C-22 gata: P6-21, P6-22, P6-23
+- **Hub:** comenzi noi **C-19** (`gpu gfw`/`gpu vbios`) și **C-22** („cutia neagră” + permisiuni, aprobată prin delegarea din DECIZII 17:45)
+  → preluate → P6-21, P6-22, P6-23. Remote-ul hub-ului actualizat la `Adriancu91/Cyber-hub`.
+- **P6-21:** Cyber-GPU fixat pe **`dac2e32`** (ramura lor `g0-g2-fundatie` — nu au `main`; ultimul commit „Stare: sesiunea 5”; CI-ul lor
+  nu l-am putut vedea: repo-ul nu e în lista sesiunii). `gpu gfw` (I2) și `gpu vbios` (I3) prin `nvidia-ga104`, peste `ReadOnlyBar0Window`
+  (primii 4 MiB din BAR0, mapați pagină cu pagină fără scriere, fără cache); ceas = TSC. `--sim` doar în build-ul de test. `gpu plan` are pașii noi.
+  Testul de pornire `test_bar0_window` (fereastra pe framebuffer-ul QEMU) rulează în toate build-urile de test. `after-gpu.sh` verifică toate adaptoarele.
+- **P6-22:** comanda `raport` → `/usb/raport/AAAALLZZ-<nr>.txt` (în build-ul `test-raport` și `/disk`); automat înainte de prompt la ERR nou
+  (max 3/pornire); la panică nu. Filtrul de chei: fișierele secrete + prefixe (`sk-ant-`, `ghp_`, `Bearer`, `Authorization:`…). `log.rs` numără erorile.
+- **P6-23:** `proc/rights.rs` + apeluri 40 `promise`, 41 `unveil`, 42 `secret`, eroarea -24. Secrete: `claude.key`, `github.token` din
+  `/usb`, `/disk`, `/etc` (testele folosesc acum `/etc/claude.key` și `/etc/github.token` în loc de `claude-test.key`/`gh-test.token`).
+  `claude`, `claude-app`, `gh-trimite`, `actualizeaza` cer secretul, îl citesc și renunță imediat. `cat` din shell refuză fișierele secrete.
+  `hello drepturi` = verificările din interior (scenariul `drepturi`).
+- **Teste local:** scenariile atinse + vecinii lor: boot, log, fatwrite, modules, terminal, gpu, gpu-ro, gpu-sim, raport, drepturi, claude-cli,
+  claude-app, claude-tools, update, ghpush → toate trecute (gpu, drepturi, ghpush au picat întâi la testul vechi al temporizatorului — 25–87
+  întreruperi/s în mașina cloud — și au trecut la reluare). Suita completă: în CI.
+- **CI:** run 191 verde → **Release `os-191`**. os-187 rămâne punctul de revenire.
+- **Coada:** fără sarcini libere (P6-10, P6-12 p.2 așteaptă hardware; P3-10 cere Adrian; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian).
+- **Pentru sesiunea următoare:** dacă nu e comandă nouă: oprire scurtă. Atenție: testul temporizatorului pică des local (QEMU fără KVM,
+  mașina cloud) — reia scenariul, nu e o regresie. Meniul desktopului rămâne plin (20); n-am adăugat programe (testul P6-23 e în `hello`).
+
 ### Sesiunea programată 2026-10-23 23:41 UTC (02:41 ora României, 24 oct.), în cloud, fără Adrian — oprire scurtă, nimic nou
 - Hub: nicio comandă nouă pentru `cyber-universe` (C-7, C-11 rămân pentru întoarcerea lui Adrian), niciun rezultat nou în `rezultate/`.
   Clona hub-ului avea iar alt istoric → `main` mutat pe `origin/main` (nimic șters pe GitHub).
