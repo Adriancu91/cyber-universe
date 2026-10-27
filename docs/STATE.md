@@ -3,6 +3,22 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-27 21:40–23:45 UTC (23:40–01:45 ora României), în cloud, fără Adrian — C-23 și C-26 gata: P6-24, P6-25, P6-26
+- **Oprirea de siguranță ridicată:** comenzi noi de la Adrian (C-23, C-25, C-26, C-27) și rezultate noi în hub (`rezultate/2026-10-27-thinkpad-os191/`).
+- **P6-24 (C-23, laptopul AMD):** RIP-ul din os-191 (`a0834b7`) = `iretq` de la sfârșitul `apic::timer_handler`. Cauza: STAR[63:48] era 0x10;
+  pe AMD `sysret` pune SS = 0x10+8 = 0x18 **fără** RPL 3 (Intel pune RPL 3 singur), deci după orice apel de sistem programul rula cu SS=0x18,
+  iar prima întoarcere în program după o întrerupere de ceas cădea cu #GP(0x18). Reparat: baza = 0x13. Test: rândul „test: sysret: SS=0x1b CS=0x23
+  pe Intel si pe AMD” în `log` (verificat că pică cu valoarea veche: „SS AMD 0x18”) + scenariul `kronos-calcul-amd` (`-cpu EPYC-Rome`).
+  QEMU fără KVM se poartă ca Intel la `sysret`, deci confirmarea reală = Adrian pe laptopul AMD.
+- **P6-25 (C-23, laptopul Intel):** toate controlerele xHCI pornesc (Tiger Lake: `00:0d.0` Thunderbolt + `00:14.0` USB-A); dispozitivele de pe al
+  doilea apar ca „c2/<port>”. Scenariu nou `usb-2xhci`.
+- **P6-26 (C-26):** `hw` (și `raport`) are rândul „ecran: framebuffer la adresa fizica 0x…, … octeti, LxI, pitch, bpp”, păstrat la pornire
+  (prima variantă citea răspunsul Limine la cerere → #GP, fiindcă memoria aceea e recuperată; prins de scenariul `raport`).
+- **Teste local:** suita completă 76/77 + `net` trecut la reluare (picase din cauza încărcării). **CI:** run 192 — `appwindow` și `phase4`
+  (teste cu mouse, cunoscute ca instabile sub încărcare; trec local) au picat; reluat o dată → **verde** (încercarea 2) → **Release `os-192`**.
+- **Coada:** P6-27 (C-25) așteaptă C-24 de la Kronos (specificația KGR1 + vectorii de test în hub, `integrare/kronos/` încă nu există);
+  P6-28 (C-27) după P6-27. P6-10, P6-12 p.2 așteaptă hardware; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian.
+- **Pentru sesiunea următoare:** dacă `integrare/kronos/` a apărut în hub → P6-27. Altfel oprire scurtă. Lista pentru Adrian e în `stare/cyber-universe.md` din hub.
 ### Sesiunea programată 2026-10-27 18:42 UTC (20:42 ora României), în cloud, fără Adrian — OPRIT în continuare: necesită analiza lui Adrian
 - **OPRIT: necesită analiza lui Adrian.** Nicio comandă nouă pentru `cyber-universe` în `COMENZI.md` (C-7, C-11 rămân pentru întoarcerea lui
   Adrian), niciun rezultat nou în `rezultate/`. Nou în hub doar stările Kronos, Cyber-GPU (sesiunea 10, doar SIMULARE) și suita office — context.
