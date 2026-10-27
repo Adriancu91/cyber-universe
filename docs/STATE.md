@@ -3,7 +3,7 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
-### Sesiunea programată 2026-10-27 21:40–23:45 UTC (23:40–01:45 ora României), în cloud, fără Adrian — C-23 și C-26 gata: P6-24, P6-25, P6-26
+### Sesiunea programată 2026-10-27 21:40–23:25 UTC (23:40–01:25 ora României), în cloud, fără Adrian — C-23 și C-26 gata: P6-24, P6-25, P6-26
 - **Oprirea de siguranță ridicată:** comenzi noi de la Adrian (C-23, C-25, C-26, C-27) și rezultate noi în hub (`rezultate/2026-10-27-thinkpad-os191/`).
 - **P6-24 (C-23, laptopul AMD):** RIP-ul din os-191 (`a0834b7`) = `iretq` de la sfârșitul `apic::timer_handler`. Cauza: STAR[63:48] era 0x10;
   pe AMD `sysret` pune SS = 0x10+8 = 0x18 **fără** RPL 3 (Intel pune RPL 3 singur), deci după orice apel de sistem programul rula cu SS=0x18,
