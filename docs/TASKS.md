@@ -265,6 +265,21 @@ Comanda C-22 („cutia neagră” pe stick + permisiuni pe program), după C-19:
   Test: în QEMU un program fără permisiune primește eroare la citirea cheii și la un apel nepromis; unul cu permisiune o citește.
   Rezultat: apeluri noi 40 `promise`, 41 `unveil`, 42 `secret`; eroarea nouă -24. Scenariul `drepturi`: `/bin/cat` nu vede cheia, `hello drepturi` trece toate cele 15 verificări (secret cerut/renunțat, ocolire prin `..`, căi vizibile, promisiuni care nu se mai lărgesc). `claude`, `claude-app`, `gh-trimite`, `actualizeaza` cer secretul lor și renunță imediat după citire; `cat` din shell refuză fișierele secrete. Secretele = `claude.key`, `github.token` din `/usb`, `/disk`, `/etc`.
 
+Comenzile C-23 (laptopul AMD: #GP la `kronos-calcul`; laptopul Intel: stick negăsit) și C-26 (adresa ecranului în `hw`), din 27 oct:
+- [x] **P6-24** Căderea #GP (cod 0x18) pe AMD la `run kronos-calcul`: cauza = `sysret` pe AMD ia SS din STAR fără RPL 3; STAR are acum baza 0x13. Dep: P6-23.
+  Test: rândul „test: sysret: SS=0x1b CS=0x23 pe Intel si pe AMD” în `log` (pică cu valoarea veche: „SS AMD 0x18”) + scenariul `kronos-calcul-amd` (`-cpu EPYC-Rome`).
+  Rezultat: RIP-ul din os-191 = `iretq` de la sfârșitul întreruperii de ceas; programul rula cu SS=0x18 după orice apel de sistem, iar prima întoarcere în program după o întrerupere de ceas cădea. Pe Intel procesorul pune singur RPL 3, de aceea acolo mergea.
+- [x] **P6-25** Toate controlerele USB (xHCI) pornite, stick-ul căutat pe fiecare (`00:14.0` pe Tiger Lake). Dep: P6-24.
+  Test: scenariul `usb-2xhci` (două `qemu-xhci`, stick-ul pe al doilea) + scenariile USB vechi.
+  Rezultat: „usb: 2 controlere XHCI pornite”, stick-ul găsit la „c2/1” și montat la `/usb`; un controler care nu pornește nu le mai oprește pe celelalte.
+- [x] **P6-26** O linie în `hw` (și în `raport`) cu adresa fizică și mărimea framebuffer-ului de la Limine, doar citire. Dep: P6-25.
+  Test: scenariile `shell` și `raport` (`after-raport.sh` caută rândul în fișier).
+  Rezultat: în QEMU „ecran: framebuffer la adresa fizica 0x80000000, 4096000 octeti (4 MiB), 1280x800, pitch 5120 B, 32 bpp”; valorile sunt păstrate la pornire (răspunsul Limine e în memorie recuperată mai târziu).
+
+Comenzile C-25 (Kronos adevărat în OS) și C-27 (căutarea automată a variantei de calcul), din 27 oct:
+- [ ] **P6-27** Motorul KGR1 în Rust + comanda `kronos` (C-25). Așteaptă C-24: specificația KGR1 și vectorii de test în hub (`integrare/kronos/`). Dep: P6-26.
+- [ ] **P6-28** `kronos-calcul --cauta`: căutare automată verificată a celei mai bune variante de calcul, reglaj pe stick (C-27). Dep: P6-27.
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)

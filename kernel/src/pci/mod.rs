@@ -287,6 +287,11 @@ pub fn devices() -> Vec<Device> {
     DEVICES.lock().clone()
 }
 
+/// Every device of the given class, subclass and programming interface, in bus order.
+pub fn find_all(class: u8, subclass: u8, prog_if: u8) -> Vec<Device> {
+    DEVICES.lock().iter().copied().filter(|d| (d.class, d.subclass, d.prog_if) == (class, subclass, prog_if)).collect()
+}
+
 /// The first device of the given class, subclass and programming interface.
 #[allow(dead_code)] // used by the disk, USB and network drivers (P3-02 and later)
 pub fn find(class: u8, subclass: u8, prog_if: u8) -> Option<Device> {

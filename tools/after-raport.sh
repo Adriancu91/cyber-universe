@@ -22,7 +22,7 @@ done
 [[ -n "$manual" ]] || fail "lipsește raportul manual"
 [[ "$auto" =~ -1\.txt$ && "$manual" =~ -2\.txt$ ]] || fail "numerotare: automat $auto, manual $manual"
 grep -q 'jurnal: test eroare' "$TMP/auto.txt" || fail "raportul automat nu conține eroarea"
-for s in '== raport Cyber Universe OS ==' '== hw ==' '== raport hardware ==' '== lspci ==' '== net ==' \
+for s in '== raport Cyber Universe OS ==' '== hw ==' '== raport hardware ==' 'ecran: framebuffer la adresa fizica 0x' '== lspci ==' '== net ==' \
          '== jurnal net' '== jurnal usb ==' '== jurnal pci ==' '== jurnal gpu ==' '== erori si avertismente ==' \
          '== jurnal complet' '== sfarsit ==' 'test-jurnal: \[ascuns\] \[ascuns\]'; do
     grep -q -- "$s" "$TMP/manual.txt" || fail "raportul manual nu conține: $s"

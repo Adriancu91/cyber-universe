@@ -186,6 +186,8 @@ pub struct UsbDevice {
     pub endpoints: [Option<(u8, u8, u16, u8)>; 4],
     /// For each endpoint, bMaxBurst from its SuperSpeed companion descriptor (0 below SuperSpeed).
     pub bursts: [u8; 4],
+    /// Index of the XHCI controller the device is on (0 = the first one started; P6-25).
+    pub ctrl: u8,
     /// Route String (xHCI 1.2 §8.9): one 4-bit hub port number per hub tier below the root port; 0 on a root port.
     pub route: u32,
     /// Number of hubs between the root port and the device (0 = on a root port).
@@ -210,8 +212,10 @@ impl UsbDevice {
 
 impl UsbDevice {
     /// Where the device is: the root port, then the hub port on each tier ("26.3" = port 3 of the hub on root port 26).
+    /// On a second or later controller the location starts with it ("c2/4" = port 4 of controller 2).
     pub fn location(&self) -> alloc::string::String {
-        let mut s = alloc::format!("{}", self.port);
+        let mut s = if self.ctrl == 0 { alloc::string::String::new() } else { alloc::format!("c{}/", self.ctrl + 1) };
+        s += &alloc::format!("{}", self.port);
         for t in 0..self.tier {
             s += &alloc::format!(".{}", self.route >> (4 * t as u32) & 0xF);
         }
@@ -234,6 +238,8 @@ impl UsbDevice {
 }
 
 pub struct Xhci {
+    /// Position in the list of started controllers (P6-25).
+    pub index: u8,
     op: u64,
     runtime: u64,
     doorbells: u64,
@@ -600,7 +606,7 @@ impl Xhci {
         );
         Some(UsbDevice {
             slot, port, speed, vendor, product, class, interface, config, endpoints, bursts,
-            route, tier, tt, hub_ports: 0, hub_ttt: 0,
+            ctrl: self.index, route, tier, tt, hub_ports: 0, hub_ttt: 0,
         })
     }
 
@@ -718,9 +724,26 @@ impl Xhci {
     }
 }
 
-/// Starts the first XHCI controller and finds the devices connected to its ports.
-pub fn init() -> Option<Xhci> {
-    let dev = crate::pci::find(0x0C, 0x03, 0x30)?;
+/// Starts every XHCI controller on PCI and finds the devices on their ports. A laptop can have several
+/// (Tiger Lake: one for Thunderbolt, one for the USB-A ports, C-23); one that fails does not stop the others.
+pub fn init_all() -> Vec<Xhci> {
+    let mut out = Vec::new();
+    for dev in crate::pci::find_all(0x0C, 0x03, 0x30) {
+        let index = out.len() as u8;
+        match start(dev, index) {
+            Some(x) => out.push(x),
+            None => crate::warn!("usb: controlerul XHCI {} nu porneste", dev.address()),
+        }
+    }
+    if out.len() > 1 {
+        let total: usize = out.iter().map(|x| x.devices.len()).sum();
+        crate::info!("usb: {} controlere XHCI pornite, {} dispozitive in total", out.len(), total);
+    }
+    out
+}
+
+/// Starts one XHCI controller and finds the devices connected to its ports.
+fn start(dev: crate::pci::Device, index: u8) -> Option<Xhci> {
     dev.enable();
     let base = paging::map_mmio(dev.bar(0)?, 0x10000).ok()?;
     let caplen = rd(base) & 0xFF;
@@ -798,6 +821,7 @@ pub fn init() -> Option<Xhci> {
         return None;
     }
     let mut x = Xhci {
+        index,
         op,
         runtime,
         doorbells,
@@ -819,7 +843,7 @@ pub fn init() -> Option<Xhci> {
         if let Some(d) = x.attach(port) {
             crate::info!(
                 "usb: port {}: {:04x}:{:04x} {} (clasa {:02x}:{:02x}:{:02x}, viteza {})",
-                d.port, d.vendor, d.product, d.kind(), d.class.0, d.class.1, d.class.2, d.speed
+                d.location(), d.vendor, d.product, d.kind(), d.class.0, d.class.1, d.class.2, d.speed
             );
             x.devices.push(d);
         }
@@ -841,6 +865,6 @@ pub fn init() -> Option<Xhci> {
         }
         i += 1;
     }
-    crate::info!("usb: controler XHCI pornit, {} porturi, {} dispozitive", x.ports, x.devices.len());
+    crate::info!("usb: controler XHCI pornit, {} porturi, {} dispozitive ({})", x.ports, x.devices.len(), dev.address());
     Some(x)
 }

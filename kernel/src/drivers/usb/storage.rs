@@ -11,6 +11,8 @@ const CSW_SIGNATURE: u32 = 0x5342_5355; // "USBS"
 const MAX_SECTORS: u32 = (PAGE_SIZE / SECTOR as u64) as u32;
 
 struct Bot {
+    /// Index of the controller the stick is on (P6-25).
+    ctrl: u8,
     slot: u8,
     port: u8,
     /// Endpoint addresses (for CLEAR_FEATURE after a stall) and their DCIs.
@@ -149,7 +151,7 @@ impl UsbDisk {
         let (dci_out, ring_out) = rings.pop()?;
         let (dci_in, ring_in) = rings.pop()?;
         let mut bot = Bot {
-            slot: dev.slot, port, ep_in: ep_in.0, ep_out: ep_out.0, dci_in, dci_out, ring_in, ring_out,
+            ctrl: dev.ctrl, slot: dev.slot, port, ep_in: ep_in.0, ep_out: ep_out.0, dci_in, dci_out, ring_in, ring_out,
             cmd: frame::alloc_frame()?, data: frame::alloc_frame()?, tag: 0, last_csw: None,
         };
         // INQUIRY; right after power-up a real stick may answer "command failed" (CSW 1, unit attention) until a
@@ -238,7 +240,7 @@ impl BlockDevice for UsbDisk {
             let start = (lba + done) as u32;
             let s = start.to_be_bytes();
             let cmd = [0x28, 0, s[0], s[1], s[2], s[3], 0, (n >> 8) as u8, n as u8, 0]; // READ(10)
-            super::with_controller(|x| bot.scsi(x, &cmd, n * SECTOR as u32, false)).ok_or(BlockError::OutOfRange)??;
+            super::with_controller(bot.ctrl, |x| bot.scsi(x, &cmd, n * SECTOR as u32, false)).ok_or(BlockError::OutOfRange)??;
             let bytes = n as usize * SECTOR;
             buf[done as usize * SECTOR..done as usize * SECTOR + bytes].copy_from_slice(bot.data(bytes));
             done += n as u64;
@@ -262,7 +264,7 @@ impl BlockDevice for UsbDisk {
             bot.data_mut(bytes).copy_from_slice(&buf[done as usize * SECTOR..done as usize * SECTOR + bytes]);
             let s = ((lba + done) as u32).to_be_bytes();
             let cmd = [0x2A, 0, s[0], s[1], s[2], s[3], 0, (n >> 8) as u8, n as u8, 0]; // WRITE(10)
-            super::with_controller(|x| bot.scsi(x, &cmd, n * SECTOR as u32, true)).ok_or(BlockError::OutOfRange)??;
+            super::with_controller(bot.ctrl, |x| bot.scsi(x, &cmd, n * SECTOR as u32, true)).ok_or(BlockError::OutOfRange)??;
             done += n as u64;
         }
         Ok(())
@@ -272,6 +274,6 @@ impl BlockDevice for UsbDisk {
     fn flush(&self) -> Result<(), BlockError> {
         let mut bot = self.bot.lock();
         let cmd = [0x35, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        super::with_controller(|x| bot.scsi(x, &cmd, 0, false)).ok_or(BlockError::OutOfRange)?
+        super::with_controller(bot.ctrl, |x| bot.scsi(x, &cmd, 0, false)).ok_or(BlockError::OutOfRange)?
     }
 }

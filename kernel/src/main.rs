@@ -791,6 +791,18 @@ fn test_user_mode() {
     let fault = blob(core::ptr::addr_of!(user_fault_start), core::ptr::addr_of!(user_fault_end));
     let free_before = mem::frame::free_frames();
 
+    // `sysret` must give ring 3 the user selectors on both Intel and AMD (C-23): QEMU always behaves like Intel,
+    // so the AMD rule is checked from the STAR value itself.
+    let (ss_intel, ss_amd, cs) = arch::x86_64::syscall::sysret_selectors();
+    assert!(
+        ss_intel == arch::x86_64::gdt::USER_DATA && ss_amd == arch::x86_64::gdt::USER_DATA && cs == arch::x86_64::gdt::USER_CODE,
+        "sysret: SS Intel {:#x}, SS AMD {:#x}, CS {:#x}",
+        ss_intel,
+        ss_amd,
+        cs
+    );
+    info!("test: sysret: SS={:#x} CS={:#x} pe Intel si pe AMD", ss_amd, cs);
+
     let id = proc::spawn_flat(hello).expect("test: nu pot porni programul");
     let code = proc::wait(id);
     assert!(code == 7, "programul a iesit cu {} in loc de 7", code);

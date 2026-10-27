@@ -1,5 +1,7 @@
 //! Linear framebuffer provided by Limine (32 bits per pixel, 0x00RRGGBB).
 
+use core::sync::atomic::{AtomicU64, Ordering};
+
 /// A drawable view of the boot framebuffer.
 pub struct Framebuffer {
     addr: *mut u8,
@@ -11,11 +13,34 @@ pub struct Framebuffer {
 // SAFETY: the framebuffer is only accessed through the console lock (single owner).
 unsafe impl Send for Framebuffer {}
 
+/// Where Limine's first framebuffer is in physical memory, saved at boot by `from_limine` (Limine's answer lives in
+/// memory the kernel reclaims later): address, width, height, pitch, bpp. Address 0 = not known.
+static INFO: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
+
+/// (physical address, size in bytes, width, height, pitch, bpp) of the boot framebuffer, as saved at boot.
+/// Read only (C-26: the GPU driver must not hand out the video memory that holds the screen).
+#[cfg_attr(all(feature = "qemu-test", not(feature = "test-shell")), allow(dead_code))] // `hw`
+pub fn boot_info() -> Option<(u64, u64, u64, u64, u64, u16)> {
+    let [phys, w, h, pitch, bpp] = [0, 1, 2, 3, 4].map(|i| INFO[i].load(Ordering::Relaxed));
+    if phys == 0 {
+        return None;
+    }
+    Some((phys, pitch * h, w, h, pitch, bpp as u16))
+}
+
 impl Framebuffer {
     /// Takes the first framebuffer from Limine. Returns `None` if there is none or it is not 32 bpp.
     pub fn from_limine() -> Option<Self> {
         let response = crate::boot::FRAMEBUFFER.get_response()?;
         let fb = response.framebuffers().next()?;
+        // Limine hands the framebuffer as a higher-half direct-map address: physical = virtual - HHDM offset.
+        if let Some(hhdm) = crate::boot::HHDM.get_response() {
+            if let Some(phys) = (fb.addr() as u64).checked_sub(hhdm.offset()) {
+                for (i, v) in [phys, fb.width(), fb.height(), fb.pitch(), fb.bpp() as u64].into_iter().enumerate() {
+                    INFO[i].store(v, Ordering::Relaxed);
+                }
+            }
+        }
         if fb.bpp() != 32 {
             crate::serial_println!("AVERTISMENT: framebuffer cu {} bpp, doar 32 bpp e suportat", fb.bpp());
             return None;

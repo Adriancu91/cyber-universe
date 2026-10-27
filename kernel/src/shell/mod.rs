@@ -510,6 +510,13 @@ fn show_log(args: &[&str]) {
 fn hw() {
     out!("== raport hardware ==\n");
     out!("procesor: {}\n", cpu_name());
+    match crate::gfx::framebuffer::boot_info() {
+        Some((phys, size, w, h, pitch, bpp)) => out!(
+            "ecran: framebuffer la adresa fizica {:#x}, {} octeti ({} MiB), {}x{}, pitch {} B, {} bpp\n",
+            phys, size, size.div_ceil(1 << 20), w, h, pitch, bpp
+        ),
+        None => out!("ecran: fara framebuffer de la Limine\n"),
+    }
     mem();
     uptime();
     out!("PCI ([driver] = il folosim, [-] = fara driver):\n");

@@ -12,6 +12,8 @@
   eliberează memoria (`mem_unmap`) doar când îi mai rulează un singur fir (altfel `-23`), iar la ieșire întâi se termină toate
   firele lui; un fir terminat trece pe tabelele nucleului (CR3 reîncărcat = TLB golit pentru paginile programului).
 - **Depinde de:** `mem` (pagini, heap), `acpi::madt` (lista de procesoare), `sched` (firele).
-- **Cum se testează:** scenariile `log`, `fpu`, `fpu-fx`, `smp-start`, `smp-2`, `cpu`, `log-smp`, `fpu-smp`, `stress-smp`.
+- **Intel și AMD:** `sysret` pe AMD ia SS = STAR[63:48]+8 fără să-i pună RPL 3, deci baza din STAR are deja RPL 3 (0x13);
+  altfel programele rulează cu SS=0x18 și prima întoarcere după o întrerupere cade cu #GP(0x18) (C-23, P6-24).
+- **Cum se testează:** scenariile `log` (rândul „sysret”), `kronos-calcul-amd` (`-cpu EPYC-Rome`), `fpu`, `fpu-fx`, `smp-start`, `smp-2`, `cpu`, `log-smp`, `fpu-smp`, `stress-smp`.
 - **Surse:** Intel SDM vol. 2 (SYSCALL, SWAPGS, RDMSR), vol. 3 cap. 2–10 (segmente, întreruperi, procesoare multiple, APIC);
-  ACPI 6.5 (MADT). Cod propriu.
+  ACPI 6.5 (MADT); AMD APM vol. 3 (SYSRET). Cod propriu.

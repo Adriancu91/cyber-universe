@@ -23,3 +23,5 @@
   then Address Device with Route String / TT (USB 2.0 ch. 11, USB 3.2 ch. 10, xHCI 1.2 §4.6.6, §8.9). Test: `usb-hub`.
 - `storage`: "Medium Not Present" (sense 2/3A) five times in a row = card reader without a card, skipped.
   `fs::mount_best` mounts at `/usb` the stick with `cyber.rw` and `VERSIUNE`. Test: `usb-pick`.
+- **Mai multe controlere (P6-25):** toate controlerele xHCI de pe PCI pornesc (Tiger Lake are două: Thunderbolt și USB-A);
+  dispozitivele de pe al doilea apar ca „c2/<port>”. Test: `usb-2xhci`.

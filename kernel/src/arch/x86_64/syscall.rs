@@ -25,11 +25,25 @@ fn rdmsr(msr: u32) -> u64 {
     ((hi as u64) << 32) | lo as u64
 }
 
+/// Selector base for `sysret` in STAR[63:48]: kernel data with RPL 3 (see `init`).
+const SYSRET_BASE: u16 = gdt::KERNEL_DATA | 3;
+
+/// The selectors `sysret` loads with the STAR value of this processor, as (SS on Intel, SS on AMD, CS).
+/// Intel: SS = (base + 8) | 3; AMD: SS = base + 8; both: CS = (base + 16) | 3.
+#[allow(dead_code)] // used by the self-tests
+pub fn sysret_selectors() -> (u16, u16, u16) {
+    let base = (rdmsr(IA32_STAR) >> 48) as u16;
+    ((base + 8) | 3, base + 8, (base + 16) | 3)
+}
+
 /// Enables `syscall`: entry point, segments (see the GDT layout in gdt.rs) and the flags cleared on entry.
 pub fn init() {
     wrmsr(IA32_EFER, rdmsr(IA32_EFER) | 1); // SCE
-    // syscall: CS = 0x08, SS = 0x10. sysret: SS = 0x10 + 8 = user data, CS = 0x10 + 16 = user code (RPL 3).
-    wrmsr(IA32_STAR, ((gdt::KERNEL_DATA as u64) << 48) | ((gdt::KERNEL_CODE as u64) << 32));
+    // syscall: CS = 0x08, SS = 0x10. sysret: SS = base + 8 = user data, CS = base + 16 = user code.
+    // The sysret base carries RPL 3 (0x13, not 0x10): Intel forces RPL 3 on SS, but AMD copies SS = base + 8
+    // as is (AMD APM vol. 3, SYSRET). With base 0x10, AMD CPUs ran programs with SS = 0x18 and the first
+    // `iretq` back to ring 3 after an interrupt failed with #GP(0x18) (C-23, Ryzen 5 4500U).
+    wrmsr(IA32_STAR, (SYSRET_BASE as u64) << 48 | (gdt::KERNEL_CODE as u64) << 32);
     wrmsr(IA32_LSTAR, syscall_entry as *const () as u64);
     wrmsr(IA32_FMASK, 0x4_0700); // clear AC, DF, IF, TF on entry
 }
