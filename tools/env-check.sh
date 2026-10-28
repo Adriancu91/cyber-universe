@@ -5,6 +5,7 @@ set -uo pipefail
 
 INSTALL=0
 [[ "${1:-}" == "--install" ]] && INSTALL=1
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 SUDO=""
 if [[ $EUID -ne 0 ]] && command -v sudo >/dev/null 2>&1; then SUDO="sudo"; fi
@@ -57,6 +58,15 @@ if f=$(ovmf_code); then
     printf '  %-22s %s\n' "OVMF" "$f"
 else
     printf '  %-22s LIPSEȘTE\n' "OVMF"; missing=1
+fi
+
+# B-005: cyber-gpu is private; when this session cannot read it, use the copy the hub keeps (tools/cyber-gpu-local.sh).
+if [[ "$INSTALL" == "1" ]] && ! GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 git ls-remote -q https://github.com/Adriancu91/cyber-gpu HEAD >/dev/null 2>&1; then
+    if [[ -f "$ROOT/../cyber-hub/integrare/cyber-gpu/snapshot/cyber-gpu.bundle" ]]; then
+        "$ROOT/tools/cyber-gpu-local.sh" || missing=1
+    else
+        printf '  %-22s fara acces si fara copia din hub (B-005)\n' "cyber-gpu"; missing=1
+    fi
 fi
 
 if (( missing )); then

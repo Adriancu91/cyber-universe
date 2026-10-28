@@ -283,7 +283,7 @@ pub fn identify() -> Vec<String> {
 // ---------------------------------------------------------------------------------------------------------------
 
 /// Pinned Cyber-GPU revision (kernel/Cargo.toml), shown in the report.
-pub const CYBER_GPU_REV: &str = "dac2e32";
+pub const CYBER_GPU_REV: &str = "8313973";
 
 /// Configuration space of one function for the Cyber-GPU libraries: reads only.
 struct ReadOnlyConfig<'a> {
@@ -541,16 +541,30 @@ fn vbios_lines(p: &str, r: &gpu_core::error::GpuResult<nvidia_ga104::vbios::Vbio
     v
 }
 
-/// Which read-only step `gpu gfw` / `gpu vbios` runs.
+/// P6-31 (C-31): the lines of `gpu vbios --detalii` — the Cyber-GPU read-only diagnostic listing (every image, PCIR,
+/// NPDE, breaks with their first 16 bytes, signatures after the last image, BIT, summary with the I3 criterion).
+fn vbios_diag_lines(p: &str, r: &gpu_core::error::GpuResult<nvidia_ga104::vbios_diag::VbiosDiag>) -> Vec<String> {
+    match r {
+        Ok(d) => {
+            let mut v: Vec<String> = d.lines().into_iter().map(|l| format!("{}: {}", p, l)).collect();
+            v.push(format!("{}: VBIOS detalii: {} scrieri cerute de diagnostic", p, d.writes));
+            v
+        }
+        Err(e) => alloc::vec![format!("{}: VBIOS diagnostic: {}", p, e)],
+    }
+}
+
+/// Which read-only step `gpu gfw` / `gpu vbios` / `gpu vbios --detalii` runs.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum InitStep {
     Gfw,
     Vbios,
+    VbiosDetails,
 }
 
 /// `gpu gfw` / `gpu vbios` on every NVIDIA board the Cyber-GPU probe accepts. Every line also goes to the log.
 pub fn init_step(step: InitStep) -> Vec<String> {
-    use nvidia_ga104::{gfw, probe, vbios};
+    use nvidia_ga104::{gfw, probe, vbios, vbios_diag};
     let mut lines = Vec::new();
     let mut refused = 0usize;
     let nv: Vec<Device> = display_devices().into_iter().filter(|d| d.vendor == NVIDIA).collect();
@@ -588,6 +602,10 @@ pub fn init_step(step: InitStep) -> Vec<String> {
             InitStep::Vbios => {
                 vbios_lines(&p, &vbios::read_layout(&mut win, &mut journal, &mut clock, vbios::VBIOS_TIMEOUT_US))
             }
+            InitStep::VbiosDetails => vbios_diag_lines(
+                &p,
+                &vbios_diag::diagnose(&mut win, &mut journal, &mut clock, vbios::VBIOS_TIMEOUT_US),
+            ),
         };
         lines.extend(out);
         for e in journal.events() {
@@ -614,12 +632,13 @@ fn writes_line(refused: usize) -> String {
     }
 }
 
-/// `gpu gfw --sim` / `gpu vbios --sim` (test builds only): the same library calls on the gpu-sim model (16 MiB BAR0;
-/// GFW finishes after a few rounds; a synthetic GA10x-like ROM chain). Every line says SIMULARE.
+/// `gpu gfw --sim` / `gpu vbios --sim` / `gpu vbios --detalii --sim` (test builds only): the same library calls on the
+/// gpu-sim model (16 MiB BAR0; GFW finishes after a few rounds; a synthetic GA10x-like ROM chain, or for `--detalii`
+/// the ASUS-like chain with the "NV" images at 0x24600, as on the workstation card). Every line says SIMULARE.
 #[cfg(feature = "test-gpu-sim")]
 pub fn init_step_sim(step: InitStep) -> Vec<String> {
     use gpu_sim::{clock::SimClock, mmio::SimMmio, rom};
-    use nvidia_ga104::{gfw, regs, vbios};
+    use nvidia_ga104::{gfw, regs, vbios, vbios_diag};
     let mut bar0 = SimMmio::ga104_bar0();
     let mut journal = gpu_core::diag::Journal::new(64);
     let mut clock = SimClock::default();
@@ -637,6 +656,10 @@ pub fn init_step_sim(step: InitStep) -> Vec<String> {
         InitStep::Vbios => {
             bar0.load_bytes(regs::PROM_BASE, &rom::ga10x_like_chain());
             vbios_lines("model", &vbios::read_layout(&mut bar0, &mut journal, &mut clock, vbios::VBIOS_TIMEOUT_US))
+        }
+        InitStep::VbiosDetails => {
+            bar0.load_bytes(regs::PROM_BASE, &rom::asus_like_chain());
+            vbios_diag_lines("model", &vbios_diag::diagnose(&mut bar0, &mut journal, &mut clock, vbios::VBIOS_TIMEOUT_US))
         }
     };
     lines.push(format!("model: {} citiri BAR0, timp simulat {} us", bar0.reads.len(), clock.now));
@@ -658,6 +681,7 @@ pub const PLAN: &[&str] = &[
     " 3. gpu identifica       -> poza (BAR-uri, Resizable BAR, BOOT_0/BOOT_42, cipul)",
     " 4. gpu gfw              -> poza (I2: firmware-ul placii a terminat pornirea? asteptat: progres 0xff, < 4 s)",
     " 5. gpu vbios            -> poza (I3: imaginile PCI-AT, EFI, FWSEC; BIT cu jetonul 0x70)",
+    " 5b. gpu vbios --detalii -> poze cu toate randurile (structura VBIOS: imagini, PCIR, rupturi; 0 scrieri)",
     " 6. log gpu 40           -> poza",
     " 7. hw                   -> poza",
     " 8. net                  -> poza (placa de retea a workstation-ului e necunoscuta: notam ce apare)",

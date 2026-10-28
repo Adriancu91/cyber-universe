@@ -5,7 +5,7 @@
 
 ## Active
 
-### B-005 · P6-31 (C-31) și orice build al OS-ului · 2026-10-28
+### B-005 · CI și Release (construirea în sesiune: rezolvată) · 2026-10-28
 - **Problema:** din 28 oct 14:33 repo-ul `Adriancu91/cyber-gpu` e privat. OS-ul îl folosește ca dependență (`kernel/Cargo.toml`,
   `user/Cargo.toml`, fixat pe `dac2e32`), iar sesiunea programată a OS-ului are acces doar la `cyber-universe`, `cyber-hub`, `cyberspace`.
   Fără el **nu se poate construi nimic** (nici nucleul, nici programele), deci nici testele QEMU, nici C-31.
@@ -17,7 +17,13 @@
   sesiunii) — rezolvă sesiunile; pentru CI mai trebuie un token doar-citire pentru `cyber-gpu` pus ca secret în `cyber-universe`;
   (b) copiem bibliotecile Cyber-GPU (același autor, aceeași licență proprietară) direct în repo-ul OS-ului, actualizate de sesiunea OS
   din ce publică Cyber-GPU în hub — cere „da”-ul lui Adrian (schimbă regula „nu modifici codul altui proiect”); (c) `cyber-gpu` din nou public.
-- **Nevoie de Adrian:** da — alege a, b sau c.
+- **Rezolvat pentru sesiuni (28 oct 19:00, centrul de comandă):** copia Git a `cyber-gpu` în hub (`integrare/cyber-gpu/snapshot/`,
+  actualizată de Cyber-GPU, C-34). `tools/cyber-gpu-local.sh` (chemat și de `tools/env-check.sh --install`) o face oglindă locală;
+  verificat 28 oct 17:20 UTC: build + teste QEMU merg. P6-31 făcut așa.
+- **Rămâne (CI / Release):** CI-ul nu pornește (fără minute) și nici n-ar putea descărca `cyber-gpu`; fără CI nu apar Release-uri pentru stick.
+- **Nevoie de Adrian:** da — cum vrea să ajungă stick-ul nou la el: (1) repo public din nou → CI + Release gratuite (dar CI-ul ar mai avea
+  nevoie de acces la `cyber-gpu`: și acela public, sau un token doar-citire ca secret); (2) minute plătite (doar cu „da”-ul lui) + același token;
+  (3) imaginea construită în sesiune pusă undeva privat de unde o descarcă (de stabilit unde).
 - **CI (28 oct 12:51 UTC, run 198):** GitHub Actions nu mai pornește („recent account payments have failed or your spending limit
   needs to be increased”) — repo privat, minute terminate. Nu se plătește nimic fără acordul lui Adrian (DECIZII 14:33); fără CI nu apar
   Release-uri noi pentru stick (ultimul `os-197`). Ce ar debloca: repo public din nou, minute plătite (doar cu „da”-ul lui), sau

@@ -10,7 +10,7 @@ cyber_crypto = { path = "../crypto" }
 cyber_tls = { path = "../tls" }
 cyber_json = { path = "../json" }
 # P6-19 (C-16): Kronos operators and the CPU reference backend from Cyber-GPU (MIT, same author), pinned to one commit.
-gpu-compute = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "dac2e32" }
+gpu-compute = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "8313973" }
 
 [lib]
 path = "src/lib.rs"

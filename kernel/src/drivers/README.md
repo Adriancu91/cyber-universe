@@ -73,7 +73,7 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   **SIMULARE**, iar dimensionarea BAR-urilor (care scrie) se face doar în model.
   Test: scenariile `gpu` (calea reală în QEMU → „nicio placa NVIDIA”, `--sim` refuzat în build-ul obișnuit) și `gpu-sim`;
   `tools/after-gpu.sh` verifică în sursă că adaptoarele doar refuză (și că dimensionarea apare doar în blocul de simulare).
-- **`gpu gfw` și `gpu vbios` (P6-21, comanda C-19):** pașii I2 și I3 din Cyber-GPU (fixat acum pe `dac2e32`, ramura lor
+- **`gpu gfw` și `gpu vbios` (P6-21, comanda C-19):** pașii I2 și I3 din Cyber-GPU (fixat acum pe `8313973`, P6-31; înainte `dac2e32`; ramura lor
   `g0-g2-fundatie`), **doar citire**. `gpu gfw` așteaptă (max 4 s) ca firmware-ul plăcii să termine pornirea: rundele, timpul,
   `PRIV_LEVEL_MASK`, progresul (gata = `0xff`). `gpu vbios` citește VBIOS-ul prin fereastra PROM (BAR0 `0x300000`, 1 MiB): imaginile
   (offset, tip PCI-AT/EFI/FWSEC, mărime), tabela BIT și jetonul 0x70, numărul de citiri (max 300 000, 2 s). Ambele au nevoie de primii
@@ -83,3 +83,11 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   Test: `gpu-sim` (`gpu gfw --sim`, `gpu vbios --sim` pe modelul `gpu-sim`, marcate SIMULARE), `gpu` (QEMU → „nicio placa NVIDIA”),
   testul de pornire `test_bar0_window` (fereastra de 4 MiB pe framebuffer-ul QEMU: aceleași valori ca o citire directă, 5 pagini
   mapate pe rând, demapată la sfârșit), `tools/after-gpu.sh` (verifică **toate** adaptoarele). Nimic nu e testat pe RTX 3070 Ti.
+- **`gpu vbios --detalii` (P6-31, comanda C-31):** diagnosticul VBIOS doar citire din Cyber-GPU (`nvidia_ga104::vbios_diag::diagnose`,
+  C-30), prin același adaptor `ReadOnlyBar0Window` și același buget ca `gpu vbios`: pentru fiecare imagine offsetul, semnătura
+  (`aa55` / `4e56` „NV” / `bb77`), PCIR (vendor, device, clasă, tip cod, lungime, blocuri, „ultima”), NPDE; la o ruptură primii 16 octeți
+  și unde s-a reluat; semnăturile de după ultima imagine; tabela BIT; rezumatul cu „criteriul I3” și numărul de scrieri (mereu 0), apoi
+  rândul obișnuit „0 scrieri in placa”. Toate rândurile merg și în jurnal (deci și în `raport`, la „jurnal gpu”).
+  Test: `gpu-sim` (`gpu vbios --detalii --sim` pe lanțul sintetic de tip ASUS, cu imaginile „NV” la `0x24600`, ca pe placa din
+  workstation) și `gpu` (calea reală în QEMU → „nicio placa NVIDIA”, opțiune greșită refuzată). În sesiunile programate `cyber-gpu`
+  vine din copia din hub: `tools/cyber-gpu-local.sh` (B-005).

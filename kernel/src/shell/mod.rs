@@ -382,8 +382,20 @@ fn gpu(args: &[&str]) {
             }
         }
         Some(w @ ("gfw" | "vbios")) => {
-            let step = if w == "gfw" { crate::drivers::gpu::InitStep::Gfw } else { crate::drivers::gpu::InitStep::Vbios };
-            if args.get(1) == Some(&"--sim") {
+            use crate::drivers::gpu::InitStep;
+            let rest = &args[1..];
+            let details = w == "vbios" && rest.contains(&"--detalii");
+            let sim = rest.contains(&"--sim");
+            if let Some(bad) = rest.iter().find(|a| **a != "--sim" && !(w == "vbios" && **a == "--detalii")) {
+                out!("gpu {}: optiune necunoscuta: {} (folosire: gpu {} [--sim]{})\n", w, bad, w, if w == "vbios" { " [--detalii]" } else { "" });
+                return;
+            }
+            let step = match (w, details) {
+                ("gfw", _) => InitStep::Gfw,
+                (_, false) => InitStep::Vbios,
+                (_, true) => InitStep::VbiosDetails,
+            };
+            if sim {
                 #[cfg(feature = "test-gpu-sim")]
                 {
                     for l in crate::drivers::gpu::init_step_sim(step) {
@@ -406,7 +418,7 @@ fn gpu(args: &[&str]) {
                 out!("{}\n", l);
             }
         }
-        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios | gpu plan)\n", other),
+        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios [--detalii] | gpu plan)\n", other),
     }
 }
 
