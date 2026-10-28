@@ -3,6 +3,23 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-28 00:40–02:10 UTC (02:40–04:10 ora României), în cloud, fără Adrian — P6-27 (C-25, partea 1) și P6-28 (C-27) gata
+- **Hub:** a apărut `integrare/kronos/format_greutati.md` (specificația KGR1, Kronos `190bd38`); vectorii oficiali (`vectori/`) și `MODEL.md` încă nu.
+- **P6-27 (C-25, partea 1):** motorul KGR1 scris de noi din specificație (`user/src/kgr.rs`): cititor F32 + Q8_0, pasul înainte cu memoria
+  cheilor/valorilor, pe toate nucleele, AVX2+FMA (assembler) sau scalar; `kronos --simboluri … / --verifica <model> <ref>`, SHA-256 (`--suma` sau
+  `<model>.kgr.sha256`; greșit = cod 3). Test propriu: `tools/kgr-mini.py` (model minuscul aleator + referință float64 scrisă de noi) →
+  `tests/kronos/`, pus pe discul de test doar în build-urile `test-kronos-*`. Scenarii `kronos-kgr` (2 nuclee, AVX2) și `kronos-kgr-1`: 0 din 1632
+  logit-uri în afara `1e-4·(1+|ref|)`, continuarea greedy identică; o greșeală introdusă intenționat pică testul. Meniul desktopului: max 28 programe.
+- **P6-27b nou** (tokenizer + `kronos "<text>"` + vectorii oficiali): așteaptă C-24 (vectorii) și o descriere a tokenizerului în specificație.
+- **P6-28 (C-27):** `kronos-calcul --cauta`: 12 variante în QEMU (scalar/AVX2 × fire × ordinea t-j/j-t + una stricată intenționat), fiecare verificată
+  față de control float64, timp cu TSC calibrat; cea mai bună în `reglaj-<procesor>.txt`, citit de `kronos` (`--reglaj`). Scenariul `kronos-reglaj`
+  + `after-kronos-reglaj.sh`. Observație: la matrice mici 1 fir bate 2 (firele se pornesc la fiecare produs) → de văzut pe workstation; un „bazin” de
+  fire ar fi pasul următor dacă se confirmă.
+- **Teste local:** suita completă 74/79 la prima trecere (5 picate: 3 din schimbarea mea — meniul cu 21 programe, `docs/` cu un folder în plus —
+  reparate; 2 din încărcare: temporizatorul la `-smp 4` pe gazda cu 2 nuclee); toate reluate → trec. **CI:** run 194 verde → **Release `os-194`**
+  (run 193 anulat de 194).
+- **Coada:** P6-27b așteaptă C-24; P6-10, P6-12 p.2 așteaptă hardware; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian.
+- **Pentru sesiunea următoare:** dacă `integrare/kronos/vectori/` a apărut → P6-27b. Altfel oprire scurtă.
 ### Sesiunea programată 2026-10-27 21:40–23:25 UTC (23:40–01:25 ora României), în cloud, fără Adrian — C-23 și C-26 gata: P6-24, P6-25, P6-26
 - **Oprirea de siguranță ridicată:** comenzi noi de la Adrian (C-23, C-25, C-26, C-27) și rezultate noi în hub (`rezultate/2026-10-27-thinkpad-os191/`).
 - **P6-24 (C-23, laptopul AMD):** RIP-ul din os-191 (`a0834b7`) = `iretq` de la sfârșitul `apic::timer_handler`. Cauza: STAR[63:48] era 0x10;
