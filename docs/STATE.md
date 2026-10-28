@@ -3,6 +3,13 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-28 15:42 UTC (17:42 ora României), în cloud, fără Adrian — oprire scurtă: B-005 tot activ
+- Hub: nicio comandă nouă pentru `cyber-universe` (C-31 rămâne blocat, C-7/C-11 după întoarcerea lui Adrian); nicio decizie nouă după 14:33;
+  niciun rezultat nou în `rezultate/`. (Clona locală a hub-ului era iar divergentă → păstrată în ramura locală `vechi-local-2026-10-28-1542`, `main` = `origin/main`.)
+- B-005 verificat din nou: `git ls-remote https://github.com/Adriancu91/cyber-gpu` → „could not read Username” (fără acces, fără copie în cache-ul cargo)
+  → nicio construire posibilă. `tools/env-check.sh --install` nerulat (nu era cod de scris). CI oprit (fără minute), ultimul Release `os-197`.
+- Oprirea de siguranță nu se aplică (sesiunea 12:46 a terminat P6-30).
+- **Pentru sesiunea următoare:** dacă Adrian a ales a/b/c la B-005 → P6-31 (C-31). Altfel oprire scurtă.
 ### Sesiunea programată 2026-10-28 12:46–13:30 UTC (14:46–15:30 ora României), în cloud, fără Adrian — P6-30 (C-32) gata; C-31 BLOCAT (B-005)
 - **Hub:** comenzi noi C-32 (licența) și C-31 (deblocată de Cyber-GPU: C-30 gata, commit-uri `d03ce39`, `0e14990`, `4538f90`). Decizia
   din 14:33: `cyber-universe` și `cyber-gpu` sunt din nou **private**. (Clona locală a hub-ului avea un istoric vechi divergent — păstrat în
