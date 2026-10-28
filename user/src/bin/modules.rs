@@ -65,6 +65,24 @@ impl Rows {
             self.count += 1;
         }
     }
+    /// Inserts in byte order, so the list does not depend on the order of the directory entries on the disk
+    /// (which is whatever order the tool that wrote the disk listed the files in). Past `ROWS`, the last is dropped.
+    fn insert_sorted(&mut self, s: &[u8]) {
+        let s = &s[..s.len().min(80)];
+        let at = (0..self.count).find(|&i| s < &self.text[i][..self.len[i]]).unwrap_or(self.count);
+        if at >= ROWS {
+            return;
+        }
+        let last = self.count.min(ROWS - 1);
+        for i in (at..last).rev() {
+            self.text[i + 1] = self.text[i];
+            self.len[i + 1] = self.len[i];
+        }
+        self.text[at] = [0; 80];
+        self.text[at][..s.len()].copy_from_slice(s);
+        self.len[at] = s.len();
+        self.count = (self.count + 1).min(ROWS);
+    }
     fn get(&self, i: usize) -> &str {
         core::str::from_utf8(&self.text[i][..self.len[i]]).unwrap_or("?")
     }
@@ -95,7 +113,7 @@ impl App {
         let n = cyber_user::list(PACKAGES, &mut buf);
         if n > 0 {
             for line in buf[..n as usize].split(|&b| b == b'\n').filter(|l| l.ends_with(b".cum")) {
-                self.packages.push(line);
+                self.packages.insert_sorted(line);
             }
         }
     }
