@@ -3,6 +3,21 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-28 17:00–17:55 UTC (19:00–19:55 ora României), în cloud, fără Adrian — P6-31 (C-31) gata, fără Release
+- **Hub:** B-005 ocolit de centrul de comandă (19:00): copia Git a `cyber-gpu` în `integrare/cyber-gpu/snapshot/cyber-gpu.bundle`
+  (vârf `8313973`), actualizată de Cyber-GPU după fiecare push (C-34); C-31 redevenit `nou`. (Clona hub-ului era iar divergentă → ramura
+  locală `local-vechi-backup`, lucrul pe `lucru` = `origin/main`; nimic forțat.)
+- **Nou: `tools/cyber-gpu-local.sh`** — face din copia din hub o oglindă locală (`~/.cache/cyber-gpu-mirror.git`, git `insteadOf`,
+  `net.git-fetch-with-cli`); `tools/env-check.sh --install` o pornește singur când GitHub refuză `cyber-gpu`. `Cargo.toml` nu se schimbă.
+- **P6-31 (C-31):** fixarea Cyber-GPU `dac2e32` → `8313973` (doar adăugări în bibliotecile folosite); `gpu vbios --detalii` = `vbios_diag::diagnose`
+  prin `ReadOnlyBar0Window` (doar citire), toate rândurile pe ecran și în jurnal (deci în `raport`), „0 scrieri”; `--sim` pe lanțul de tip ASUS
+  (imaginile „NV” la `0x24600`); opțiunile greșite refuzate; `gpu plan` are pasul 5b.
+- **Teste local:** suita completă 79/80 + 1 sărit (internet); `kronos-calcul` a picat cu „temporizator: 70 intreruperi” (instabilul cunoscut la
+  `-smp 4` pe gazda cu 2 nuclee) și a trecut la reluare. `gpu`, `gpu-sim`, `gpu-ro` trec.
+- **CI:** run 199 (`ba572c6`) nu a pornit (facturare, ca la 198) → **niciun Release** (ultimul `os-197`, fără `--detalii`). B-005 rămâne activ doar
+  pentru CI/Release; întrebarea pentru Adrian e în BLOCKERS.
+- **Pentru sesiunea următoare:** coada nu are sarcini libere (P6-10, P6-12 p.2 hardware; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian).
+  Dacă nu e comandă nouă → oprire scurtă. Pornire: `tools/env-check.sh --install` (pregătește și `cyber-gpu` din hub).
 ### Sesiunea programată 2026-10-28 15:42 UTC (17:42 ora României), în cloud, fără Adrian — oprire scurtă: B-005 tot activ
 - Hub: nicio comandă nouă pentru `cyber-universe` (C-31 rămâne blocat, C-7/C-11 după întoarcerea lui Adrian); nicio decizie nouă după 14:33;
   niciun rezultat nou în `rezultate/`. (Clona locală a hub-ului era iar divergentă → păstrată în ramura locală `vechi-local-2026-10-28-1542`, `main` = `origin/main`.)
