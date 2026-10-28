@@ -15,6 +15,11 @@ varianta B (`BOOTX64.EFI`, `kernel`, `initrd.tar`, `limine.conf`, `limine-uefi-c
 control) și `VERSIUNE` (din ce commit e). CI publică o versiune nouă după fiecare test verde pe `main` și le păstrează pe
 ultimele 5. Depozitul e privat, deci trebuie să fii logat pe GitHub.
 
+**Cât timp CI-ul e oprit (de la 28 oct, P6-32 / C-35):** sesiunea construiește și testează stick-ul ea însăși și pune arhiva
+`stick-cyber-universe-os-<număr>.zip` (numere de la 1001, ca să nu se confunde cu Release-urile CI) în hub-ul privat, la
+`integrare/cyber-universe/stick/`, cu `VERSIUNE.txt` (commit, ora, suma SHA-256). În arhivă sunt aceleași fișiere ca în Release.
+Centrul de comandă ți-o trimite. (`actualizeaza` de pe stick caută tot Release-urile GitHub, deci nu vede aceste arhive.)
+
 **Altfel (artefactul CI):**
 1. Pe GitHub, în depozitul `cyber-universe`, apasă **Actions**.
 2. Alege ultima rulare **CI** cu bifă verde.
