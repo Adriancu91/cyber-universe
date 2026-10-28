@@ -24,6 +24,11 @@ jobs:
       - name: Verificare mediu
         run: tools/env-check.sh
 
+      - name: Acces la cyber-gpu (repo privat, B-005)
+        env:
+          CYBER_GPU_TOKEN: ${{ secrets.CYBER_GPU_TOKEN }}
+        run: tools/ci-cyber-gpu-acces.sh
+
       - name: Test de stabilitate (5 minute în QEMU)
         run: tools/test.sh --stress
 
