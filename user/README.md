@@ -43,6 +43,17 @@
   cu un fișier de referință (logit-uri în toleranța `1e-4·(1+|ref|)`, continuarea greedy identică).
   Textul direct (tokenizerul din fișier) vine în P6-27b. Test: scenariile `kronos-kgr` (2 nuclee, AVX2) și `kronos-kgr-1`
   (1 nucleu, scalar), pe modelul minuscul cu greutăți aleatoare din `tests/kronos/` (`tools/kgr-mini.py`; `tools/build.sh` îl pune pe discul de test la `/kronos` doar în build-urile `test-kronos-*`).
+- `kronos-calcul --cauta [--emb E] [--iesire <dir>]` (P6-28, comanda C-27, `src/cauta.rs`) — primul pas spre „OS-ul care se
+  reglează singur”: încearcă variante ale produsului din motorul KGR1 (vectori AVX2+FMA sau scalar; 1, 2, 4, … fire și toate
+  nucleele; ordinea buclelor t-j sau j-t) pe o matrice Q8_0 [4E, E], pe 1 rând (generare) și pe 16 rânduri (citirea textului).
+  **Fiecare variantă e verificată față de un calcul de control în float64** (toleranța `1e-5·(1+Σ|w·x|)`); una greșită e
+  aruncată oricât de rapidă ar fi. Timpul se măsoară cu numărătorul de cicluri al procesorului (TSC), calibrat pe ceasul de
+  10 ms. Cea mai bună variantă (scor = 16 × un rând + 16 rânduri) se scrie în `<dir>/reglaj-<procesor>.txt` (implicit
+  `/usb/kronos`, stick-ul trebuie să aibă `cyber.rw`); `kronos` îl citește la pornire (`--reglaj <cale>` pentru alt fișier;
+  `--fire`/`--fara-vector` au întâietate). Singura scriere e acel fișier. Idee: „autotuning” (tinygrad BEAM, ATLAS), cod scris
+  de noi. AVX-512 nu e încă printre variante (QEMU nu-l are, deci n-ar avea test). Test: scenariul `kronos-reglaj`
+  (`--test-stricat` adaugă o variantă stricată intenționat, care trebuie respinsă; `after-kronos-reglaj.sh` citește fișierul
+  de pe imagine).
 - `fetch <nume> [port] [cale]` (P5-05) — descarcă o pagină web prin HTTP (TCP) și o scrie (fără antet); cod 0 dacă serverul a răspuns 200.
   `fetch https://<nume>[:port][/cale] [adresă]` (P5-16) — la fel prin HTTPS (TLS 1.3, biblioteca `tls/`): certificatul
   serverului se verifică față de certificatele din `/etc/certs/` (DER), ora din ceasul RTC (luată ca UTC), cheile din

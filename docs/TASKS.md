@@ -281,7 +281,9 @@ Comenzile C-25 (Kronos adevărat în OS) și C-27 (căutarea automată a variant
   Test: scenariile `kronos-kgr` (`-smp 2 -cpu max`) și `kronos-kgr-1` (1 nucleu, fără AVX): modelul minuscul F32 și Q8_0 din `tools/kgr-mini.py` (referință float64 scrisă de noi din specificație) — logit-uri în `1e-4·(1+|ref|)`, continuarea greedy identică, suma greșită refuzată, nicio pagină pierdută; o greșeală introdusă intenționat (scara atenției ×1,01) pică testul.
   Rezultat: 0 din 1632 logit-uri în afara toleranței (abaterea maximă ~5e-6–1e-5), continuările identice pe F32 și Q8_0, scalar și AVX2 pe 2 și 4 fire. Specificația din hub a sosit (28 oct 02:15); vectorii oficiali Kronos și descrierea tokenizerului încă nu → P6-27b.
 - [ ] **P6-27b** Partea 2 din C-25: tokenizerul din fișier (`tokenizer.bpe`) + `kronos "<text>"`; testul pe vectorii oficiali din hub (`integrare/kronos/vectori/`). Așteaptă C-24 (S39 partea A: vectorii; descrierea tokenizerului în specificație). Dep: P6-27.
-- [ ] **P6-28** `kronos-calcul --cauta`: căutare automată verificată a celei mai bune variante de calcul, reglaj pe stick (C-27). Dep: P6-27 (motorul; nu așteaptă P6-27b).
+- [x] **P6-28** `kronos-calcul --cauta`: căutare automată verificată a celei mai bune variante de calcul, reglaj pe stick (C-27). Dep: P6-27.
+  Test: scenariul `kronos-reglaj` (`-smp 2 -cpu max`, disc de test cu scriere): 12 variante (scalar/AVX2+FMA × 1/2 fire × ordinea t-j/j-t/stricată), fiecare verificată față de controlul float64; cele 4 stricate intenționat respinse; fișierul `/disk/kronos/reglaj-<procesor>.txt` scris (fsck curat, citit de `after-kronos-reglaj.sh`) și folosit de `kronos`, care rămâne egal cu referința.
+  Rezultat: în QEMU câștigă „AVX2+FMA, 1 fir, j-t” (22× față de scalar pe 1 fir; 2 fire pierd la matricea mică din cauza pornirii firelor la fiecare produs — de urmărit pe workstation). Ceasul fin: TSC calibrat pe ceasul de 10 ms. AVX-512 încă nu e variantă (QEMU nu-l are, deci n-ar avea test).
 
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 

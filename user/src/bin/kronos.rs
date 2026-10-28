@@ -4,7 +4,9 @@
 //!   kronos --verifica <model.kgr> <ref>    compares the engine with a reference file (logits + greedy continuation)
 //! Options: `--model <cale>` (default: the first *.kgr in /usb/kronos), `--n <simboluri>` (default 32), `--fire <n>`
 //! (default: every processor), `--fara-vector` (scalar arithmetic even when AVX2 + FMA exist), `--suma <hex>` (the
-//! SHA-256 the file must have; otherwise `<model>.sha256` next to it, if present).
+//! SHA-256 the file must have; otherwise `<model>.sha256` next to it, if present), `--reglaj <cale>` (the tuning file;
+//! default `/usb/kronos/reglaj-<procesor>.txt` when it exists, written by `kronos-calcul --cauta`, P6-28). `--fire` and
+//! `--fara-vector` win over the tuning file.
 //! Text instead of ids comes with the tokenizer (P6-27b: its description is not in the KGR1 specification yet).
 //!
 //! Exit codes: 0 ok, 1 reference mismatch, 2 bad arguments, 3 wrong SHA-256, 4 cannot read or parse the model.
@@ -16,6 +18,7 @@ extern crate alloc;
 use alloc::{string::String, vec::Vec};
 use cyber_crypto::sha2::Sha256;
 #[path = "../kgr.rs"]
+#[allow(dead_code)] // the search part (Tuning::to_text, Mat::from_q8) is used by kronos-calcul
 mod kgr;
 
 use kgr::{File, Model};
@@ -87,9 +90,10 @@ struct Opts {
     reference: Option<String>,
     ids: Vec<u32>,
     n: usize,
-    threads: usize,
-    simd: bool,
+    threads: Option<usize>,
+    scalar: bool,
     sum: Option<String>,
+    tuning: Option<String>,
 }
 
 fn parse_args() -> Result<Opts, String> {
@@ -98,9 +102,10 @@ fn parse_args() -> Result<Opts, String> {
         reference: None,
         ids: Vec::new(),
         n: 32,
-        threads: cyber_user::cpus().max(1) as usize,
-        simd: kgr::has_avx2_fma(),
+        threads: None,
+        scalar: false,
         sum: None,
+        tuning: None,
     };
     let mut args = cyber_user::args().skip(1);
     while let Some(a) = args.next() {
@@ -117,15 +122,15 @@ fn parse_args() -> Result<Opts, String> {
                 }
             }
             "--n" => o.n = val()?.parse().map_err(|_| String::from("--n cere un numar"))?,
-            "--fire" => o.threads = val()?.parse().map_err(|_| String::from("--fire cere un numar"))?,
-            "--fara-vector" => o.simd = false,
+            "--fire" => o.threads = Some(val()?.parse().map_err(|_| String::from("--fire cere un numar"))?),
+            "--fara-vector" => o.scalar = true,
             "--suma" => o.sum = Some(val()?.into()),
+            "--reglaj" => o.tuning = Some(val()?.into()),
             _ => return Err(alloc::format!(
                 "argument necunoscut `{}` (textul direct vine cu tokenizerul; acum: --simboluri 1,2,3)", a
             )),
         }
     }
-    o.threads = o.threads.clamp(1, kgr::MAX_THREADS);
     Ok(o)
 }
 
@@ -194,6 +199,32 @@ fn verify(m: &mut Model, path: &str) -> Result<bool, String> {
     Ok(ok && bad == 0)
 }
 
+/// Defaults, then the tuning file (if any), then `--fire` / `--fara-vector`.
+fn tuning(o: &Opts) -> kgr::Tuning {
+    let mut t = kgr::Tuning::default_for(cyber_user::cpus().max(1) as usize);
+    let cpu = kgr::processor_name();
+    let path = o.tuning.clone().unwrap_or_else(|| alloc::format!("/usb/kronos/reglaj-{}.txt", cpu));
+    match read_all(&path).ok().and_then(|b| core::str::from_utf8(b).ok()) {
+        Some(text) => {
+            let (got, notes) = kgr::Tuning::parse(text, t, &cpu);
+            for n in notes {
+                println!("kronos: reglaj: {}", n);
+            }
+            println!("kronos: reglaj din {}: {}", path, got.describe());
+            t = got;
+        }
+        None if o.tuning.is_some() => println!("kronos: reglaj: nu pot citi {}; valorile implicite", path),
+        None => println!("kronos: reglaj: niciun fisier pentru `{}` (kronos-calcul --cauta il scrie); valorile implicite", cpu),
+    }
+    if let Some(n) = o.threads {
+        t.threads = n.clamp(1, kgr::MAX_THREADS);
+    }
+    if o.scalar {
+        t.simd = false;
+    }
+    t
+}
+
 fn main() -> i64 {
     let o = match parse_args() {
         Ok(o) => o,
@@ -241,8 +272,7 @@ fn main() -> i64 {
             return 4;
         }
     };
-    m.threads = o.threads;
-    m.simd = o.simd;
+    m.tune = tuning(&o);
     let c = m.cfg;
     println!(
         "kronos: {} ({}, {} MiB, citit in {} ms): {} straturi, {} capete, n_emb {}, context {}, vocabular {}, {} parametri",
@@ -257,14 +287,7 @@ fn main() -> i64 {
         c.vocab,
         m.parameters()
     );
-    println!(
-        "kronos: sursa `{}`, tokenizer {} octeti; {} {}, {}",
-        m.source,
-        m.tokenizer.len(),
-        m.threads,
-        if m.threads == 1 { "fir" } else { "fire" },
-        if m.simd { "vectori AVX2+FMA" } else { "fara vectori (scalar)" }
-    );
+    println!("kronos: sursa `{}`, tokenizer {} octeti; {}", m.source, m.tokenizer.len(), m.tune.describe());
     if let Some(r) = &o.reference {
         return match verify(&mut m, r) {
             Ok(true) => {

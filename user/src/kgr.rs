@@ -194,6 +194,12 @@ impl<'a> Mat<'a> {
         })
     }
 
+    /// A matrix over Q8_0 bytes (each row = cols / 32 blocks of 36 bytes).
+    pub fn from_q8(q: &'a [u8], rows: usize, cols: usize) -> Mat<'a> {
+        assert!(cols % 32 == 0 && q.len() == rows * (cols / 32) * 36);
+        Mat { rows, cols, kind: Kind::Q8, f: &[], q }
+    }
+
     /// Row `r` as f32 values in `out` (Q8_0: scale * number).
     pub fn row(&self, r: usize, out: &mut [f32]) {
         match self.kind {
@@ -206,6 +212,22 @@ impl<'a> Mat<'a> {
                         *v = s * (q as i8) as f32;
                     }
                 }
+            }
+        }
+    }
+
+    /// x[..n] · row r[..n] (n a multiple of 32): only for the deliberately broken variant of the search.
+    fn dot_prefix(&self, simd: bool, r: usize, x: &[f32], n: usize) -> f32 {
+        let n = n & !31;
+        match self.kind {
+            Kind::F32 => {
+                let w = &self.f[r * self.cols..r * self.cols + n];
+                if simd { dot_f32_avx2(w, &x[..n]) } else { w.iter().zip(x).fold(0.0, |a, (w, x)| a + w * x) }
+            }
+            Kind::Q8 => {
+                let row = &self.q[r * (self.cols / 32) * 36..r * (self.cols / 32) * 36 + (n / 32) * 36];
+                let m = Mat { rows: 1, cols: n, kind: Kind::Q8, f: &[], q: row };
+                m.dot(simd, 0, x)
             }
         }
     }
@@ -397,6 +419,168 @@ pub fn par(n: usize, parts: usize, f: &(dyn Fn(usize, usize) + Sync)) {
     }
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Tuning (P6-28, command C-27): how `linear` runs on this computer, chosen by `kronos-calcul --cauta`, which checks
+// every variant against a float64 control and keeps the fastest correct one in /usb/kronos/reglaj-<processor>.txt.
+// ---------------------------------------------------------------------------------------------------------------
+
+/// Loop order of `linear` for several input rows: `TJ` = for each row, every output feature (the default); `JT` = for
+/// each output feature, every row (the weight row is read once for all rows). Both give the same values bit for bit.
+/// `Broken` drops the last 8 columns of every dot product: a deliberately wrong variant the search must reject.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Order {
+    TJ,
+    JT,
+    Broken,
+}
+
+impl Order {
+    pub fn name(self) -> &'static str {
+        match self {
+            Order::TJ => "t-j",
+            Order::JT => "j-t",
+            Order::Broken => "stricata",
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Tuning {
+    /// Threads per product (1 ..= MAX_THREADS).
+    pub threads: usize,
+    /// AVX2 + FMA (only when `has_avx2_fma()`), otherwise scalar.
+    pub simd: bool,
+    pub order: Order,
+}
+
+impl Tuning {
+    /// What the engine uses without a tuning file: every processor, vectors when present, order t-j.
+    pub fn default_for(cpus: usize) -> Tuning {
+        Tuning { threads: cpus.clamp(1, MAX_THREADS), simd: has_avx2_fma(), order: Order::TJ }
+    }
+
+    pub fn describe(&self) -> String {
+        alloc::format!(
+            "{}, {} {}, ordine {}",
+            if self.simd { "vectori AVX2+FMA" } else { "fara vectori (scalar)" },
+            self.threads,
+            if self.threads == 1 { "fir" } else { "fire" },
+            self.order.name()
+        )
+    }
+
+    /// The tuning file: `nume = valoare` lines, `#` comments.
+    pub fn to_text(&self, processor: &str, note: &str) -> String {
+        alloc::format!(
+            "# Reglajul motorului KGR1 pentru acest procesor (kronos-calcul --cauta, P6-28).\n\
+             # Il citeste `kronos` la pornire. Se poate sterge: atunci se folosesc valorile implicite.\n\
+             procesor = {}\nvectori = {}\nfire = {}\nordine = {}\n{}",
+            processor,
+            if self.simd { "avx2" } else { "scalar" },
+            self.threads,
+            self.order.name(),
+            note
+        )
+    }
+
+    /// Reads a tuning file over `base`. Values this computer cannot use are refused with a reason (vectors without
+    /// AVX2 + FMA, another processor's file, a broken order); the other keys still apply.
+    pub fn parse(text: &str, base: Tuning, processor: &str) -> (Tuning, Vec<String>) {
+        let mut t = base;
+        let mut notes = Vec::new();
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let Some((k, v)) = line.split_once('=') else { continue };
+            let (k, v) = (k.trim(), v.trim());
+            match k {
+                "procesor" if v != processor => notes.push(alloc::format!("fisierul e pentru `{}`, nu pentru `{}`", v, processor)),
+                "vectori" => match v {
+                    "avx2" if has_avx2_fma() => t.simd = true,
+                    "avx2" => notes.push("vectori = avx2, dar procesorul n-are AVX2+FMA: scalar".into()),
+                    "scalar" => t.simd = false,
+                    _ => notes.push(alloc::format!("vectori = `{}` necunoscut", v)),
+                },
+                "fire" => match v.parse::<usize>() {
+                    Ok(n) if n >= 1 => t.threads = n.min(MAX_THREADS),
+                    _ => notes.push(alloc::format!("fire = `{}` nu e un numar", v)),
+                },
+                "ordine" => match v {
+                    "t-j" => t.order = Order::TJ,
+                    "j-t" => t.order = Order::JT,
+                    _ => notes.push(alloc::format!("ordine = `{}` refuzata", v)),
+                },
+                _ => {}
+            }
+        }
+        (t, notes)
+    }
+}
+
+/// The processor's name from CPUID (brand string), with only letters, digits and '-' (for the tuning file name).
+pub fn processor_name() -> String {
+    use core::arch::x86_64::__cpuid;
+    let mut raw = Vec::new();
+    if __cpuid(0x8000_0000).eax >= 0x8000_0004 {
+        for leaf in 0x8000_0002u32..=0x8000_0004 {
+            let r = __cpuid(leaf);
+            for w in [r.eax, r.ebx, r.ecx, r.edx] {
+                raw.extend_from_slice(&w.to_le_bytes());
+            }
+        }
+    }
+    let mut out = String::new();
+    for c in raw.iter().map(|&b| b as char) {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    if out.is_empty() { "necunoscut".into() } else { out }
+}
+
+/// y[t, :] = x[t, :] · Wᵀ (+ b), for t < rows; split over the output features as `tune` says.
+pub fn linear(w: &Mat, b: Option<&[f32]>, x: &[f32], rows: usize, y: &mut [f32], tune: Tuning) {
+    let (inp, outp) = (w.cols, w.rows);
+    assert!(x.len() >= rows * inp && y.len() >= rows * outp);
+    let o = Out(y.as_mut_ptr());
+    let simd = tune.simd;
+    let one = |t: usize, j: usize| {
+        let xr = &x[t * inp..(t + 1) * inp];
+        let mut v = if tune.order == Order::Broken { w.dot_prefix(simd, j, xr, inp - 8) } else { w.dot(simd, j, xr) };
+        if let Some(b) = b {
+            v += b[j];
+        }
+        v
+    };
+    par(outp, tune.threads, &|j0, j1| {
+        let o = o;
+        let put = |t: usize, j: usize, v: f32| {
+            // SAFETY: element (t, j) is inside y (asserted above) and only this part writes columns j0..j1.
+            unsafe { *o.0.add(t * outp + j) = v };
+        };
+        if tune.order == Order::JT {
+            for j in j0..j1 {
+                for t in 0..rows {
+                    put(t, j, one(t, j));
+                }
+            }
+        } else {
+            for t in 0..rows {
+                for j in j0..j1 {
+                    put(t, j, one(t, j));
+                }
+            }
+        }
+    });
+}
+
 /// A raw pointer that may cross threads (each thread writes its own elements).
 #[derive(Clone, Copy)]
 struct Out(*mut f32);
@@ -445,9 +629,8 @@ pub struct Model<'a> {
     kcache: Vec<Vec<f32>>,
     vcache: Vec<Vec<f32>>,
     pub len: usize,
-    /// Threads per forward pass and whether to use AVX2 + FMA.
-    pub threads: usize,
-    pub simd: bool,
+    /// Threads, vectors and loop order of the products (P6-28: from the tuning file when there is one).
+    pub tune: Tuning,
 }
 
 fn vector<'a>(f: &File<'a>, name: &str, n: usize) -> Result<&'a [f32], String> {
@@ -516,8 +699,7 @@ impl<'a> Model<'a> {
             kcache: (0..cfg.layers).map(|_| vec![0.0; cfg.context * e]).collect(),
             vcache: (0..cfg.layers).map(|_| vec![0.0; cfg.context * e]).collect(),
             len: 0,
-            threads: 1,
-            simd: false,
+            tune: Tuning { threads: 1, simd: false, order: Order::TJ },
         })
     }
 
@@ -534,26 +716,8 @@ impl<'a> Model<'a> {
             + self.layers.iter().map(|l| m(&l.qkv) + m(&l.proj) + m(&l.fc) + m(&l.out) + 3 * e + 3 * e + 4 * e + e + e).sum::<usize>()
     }
 
-    /// y[t, :] = x[t, :] · Wᵀ (+ b), for t < rows; split over the output features.
     fn linear(&self, w: &Mat, b: Option<&[f32]>, x: &[f32], rows: usize, y: &mut [f32]) {
-        let (inp, outp) = (w.cols, w.rows);
-        assert!(x.len() >= rows * inp && y.len() >= rows * outp);
-        let o = Out(y.as_mut_ptr());
-        let simd = self.simd;
-        par(outp, self.threads, &|j0, j1| {
-            let o = o;
-            for t in 0..rows {
-                let xr = &x[t * inp..(t + 1) * inp];
-                for j in j0..j1 {
-                    let mut v = w.dot(simd, j, xr);
-                    if let Some(b) = b {
-                        v += b[j];
-                    }
-                    // SAFETY: element (t, j) is inside y (asserted above) and only this part writes columns j0..j1.
-                    unsafe { *o.0.add(t * outp + j) = v };
-                }
-            }
-        });
+        linear(w, b, x, rows, y, self.tune);
     }
 
     /// Runs `ids` from position `len` on; returns the logits of every new position ([ids.len(), vocab]) when `all`,

@@ -14,5 +14,7 @@ pub mod threads;
 pub mod kronos;
 #[cfg(feature = "test-kronos-kgr")]
 pub mod kgr;
+#[cfg(feature = "test-kronos-reglaj")]
+pub mod reglaj;
 #[cfg(feature = "test-rights")]
 pub mod rights;

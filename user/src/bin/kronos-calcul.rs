@@ -11,6 +11,10 @@
 //!    n threads. With FMA the rounding differs from the oracle, so the declared tolerance is
 //!    |vector - reference| <= 1e-5 * (1 + |reference|); without FMA it is 0 (same operations, same order).
 //! Exits with 0 when every comparison is within its tolerance.
+//!
+//! `kronos-calcul --cauta [--emb E] [--iesire <dir>]` (P6-28, command C-27) instead searches the fastest correct
+//! variant of the KGR1 engine's product for this processor and writes it to `<dir>/reglaj-<processor>.txt`
+//! (src/cauta.rs).
 #![no_std]
 #![no_main]
 
@@ -22,8 +26,14 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use cyber_user::{println, thread};
 use gpu_compute::{kernels, reference, tensor::f32_to_bf16};
 
+#[path = "../kgr.rs"]
+#[allow(dead_code)]
+mod kgr;
+#[path = "../cauta.rs"]
+mod cauta;
+
 cyber_user::entry!(main);
-cyber_user::heap!(8 * 1024 * 1024);
+cyber_user::heap!(16 * 1024 * 1024);
 
 const MAX_THREADS: usize = 16;
 
@@ -431,6 +441,10 @@ fn block_parallel(w: &Weights, n: usize) -> (Vec<f32>, f32) {
 const M: usize = 128;
 
 fn main() -> i64 {
+    let args: Vec<&str> = cyber_user::args().skip(1).collect();
+    if args.first() == Some(&"--cauta") {
+        return cauta::run(&args[1..]);
+    }
     let n = cyber_user::args()
         .nth(1)
         .and_then(|a| a.parse::<usize>().ok())

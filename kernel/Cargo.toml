@@ -101,6 +101,8 @@ test-raport = ["test-shell"]
 test-rights = ["qemu-test"]
 # P6-19: /bin/kronos-calcul (gpu-compute on every processor) started by the kernel test.
 test-kronos-calc = ["qemu-test"]
+# P6-28: kronos-calcul --cauta writes the tuning file on the writable test disk (scenario disk=...), kronos reads it.
+test-kronos-reglaj = ["qemu-test"]
 # P6-27: /bin/kronos (our KGR1 engine) on the tiny model of tools/kgr-mini.py, from the test disk (/disk/kronos, scenario disk=...).
 test-kronos-kgr = ["qemu-test"]
 # P1-13: a write to .rodata must fault (the kernel image keeps its per-segment rights).
