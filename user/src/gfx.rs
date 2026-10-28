@@ -3,7 +3,7 @@
 
 use crate::{SYS_EVENT_WAIT, SYS_WINDOW_CLOSE, SYS_WINDOW_CREATE, SYS_WINDOW_PRESENT, syscall3, syscall4};
 
-// The same font as the kernel's console (drawn for this project, MIT).
+// The same font as the kernel's console (drawn for this project; see LICENSE).
 #[path = "../../kernel/src/gfx/font.rs"]
 mod font;
 pub use font::{GLYPH_H, GLYPH_W};

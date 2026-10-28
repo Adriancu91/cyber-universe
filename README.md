@@ -43,4 +43,6 @@ docs/      planul, starea și deciziile proiectului
 
 ## Licență
 
-Codul propriu: MIT (vezi `docs/DECISIONS.md`, D-005).
+Codul propriu: **proprietar, toate drepturile rezervate** (vezi `LICENSE` și `docs/DECISIONS.md`, D-015).
+Versiunile până la commit-ul `0bf1303` inclusiv au fost publicate sub licența MIT. Componentele străine își păstrează licențele lor.
+Firmware-ul NVIDIA nu e distribuit de acest proiect.

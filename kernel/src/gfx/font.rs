@@ -1,4 +1,4 @@
-//! Cyber Universe bitmap font, drawn for this project (MIT): 5x7 glyphs for printable ASCII (32..=126)
+//! Cyber Universe bitmap font, drawn for this project (see LICENSE): 5x7 glyphs for printable ASCII (32..=126)
 //! and the Romanian letters ă â î ș ț (and capitals). A glyph has 10 rows: row 0 for accents on
 //! capitals, rows 1-7 for the letter, rows 8-9 for the comma below ș and ț. In each row bit 4 is
 //! the leftmost pixel. The console and `Canvas` draw glyphs scaled.

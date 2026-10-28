@@ -2,7 +2,7 @@
 name = "cyber_crypto"
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+license-file = "../LICENSE"
 description = "Cyber Universe's own cryptography (no_std, no dependencies): SHA-2, HMAC, HKDF, X25519, ChaCha20-Poly1305 (more in P5-13)."
 
 [dependencies]

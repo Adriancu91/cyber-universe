@@ -63,7 +63,7 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   (open-gpu-doc) și antetele MIT `dev_boot.h` din open-gpu-kernel-modules, citite doar pentru adresele și câmpurile celor două
   registre. Niciun cod copiat. Patch-ul proiectului Cyber-GPU nu a putut fi citit (repo privat) — comanda e scrisă de la zero.
 - **Cyber-GPU (P6-19, comanda C-16):** `gpu identifica` trece acum fiecare placă video și prin bibliotecile proiectului Cyber-GPU
-  (MIT, același autor; fixate pe commit-ul `41e44ba` = tag-ul lor `stabil-2026-10-23`, în `kernel/Cargo.toml`): `nvidia-ga104::probe`
+  (același autor; MIT până la commit-ul lor `8313973`, apoi proprietar ca OS-ul — C-33; fixate pe commit-ul `41e44ba` = tag-ul lor `stabil-2026-10-23`, în `kernel/Cargo.toml`): `nvidia-ga104::probe`
   (configurația PCI, modelul, BAR0) și, la o placă cunoscută (RTX 3070 Ti `10de:2482`), citirea BOOT_0/BOOT_42 prin aceeași fereastră
   fără drept de scriere. Biblioteca vede placa doar prin două adaptoare din `gpu.rs` (`ReadOnlyConfig`, `ReadOnlyWindow`):
   **orice scriere cerută de bibliotecă e refuzată și numărată** (rândul final: „adaptorul cyber-gpu a refuzat 0 scrieri”).

@@ -2,7 +2,7 @@
 name = "cyber_e1000e"
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+license-file = "../LICENSE"
 description = "Cyber Universe's driver logic for Intel gigabit network cards (8254x, 82574, and the I217/I218/I219 PCH family), no_std, no dependencies, with a software model for host tests."
 
 [dependencies]

@@ -67,7 +67,9 @@ Apoi commit + push. Sesiunea următoare pornește DOAR din ce e scris în repo.
   dezasamblat sau decompilat.
 - **Proiecte open source** (Linux, ReactOS, Haiku, SerenityOS etc.): poți citi codul ca să înțelegi ideile,
   dar NU copia cod în proiect. Scrie implementarea ta. Notează sursa de inspirație în README-ul modulului.
-- Codul nostru e MIT; cod GPL copiat ar obliga tot proiectul la GPL.
+- Codul nostru e **proprietar** de la commit-ul de după `0bf1303` („toate drepturile rezervate”, `LICENSE`, D-015); versiunile până
+  la `0bf1303` rămân MIT. Cod GPL copiat ar obliga proiectul la GPL — interzis. Cod MIT străin doar cu notificarea lui păstrată.
+- Firmware-ul NVIDIA nu se pune niciodată în repo sau în arhivele de stick; Adrian îl descarcă singur.
 
 ## 7. Cyber Hub (centrul comun al proiectelor)
 

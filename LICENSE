@@ -1,21 +1,16 @@
-MIT License
+Cyber Universe OS — licență proprietară / Proprietary License
 
-Copyright (c) 2026 Adrian (Adriancu91)
+Copyright (c) 2026 Adrian (Adriancu91). Toate drepturile rezervate.
+Nicio utilizare, copiere, modificare sau distribuire fără acordul scris al autorului.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Copyright (c) 2026 Adrian (Adriancu91). All rights reserved.
+No use, copying, modification or distribution without the author's written consent.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Notă istorică: Versiunile până la commit-ul 0bf1303 (inclusiv) au fost publicate sub licența MIT.
+Acele versiuni rămân disponibile sub licența MIT pentru cine le-a primit; licența de mai sus se aplică
+de la commit-ul următor.
+Historical note: versions up to and including commit 0bf1303 were published under the MIT License.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Componentele străine își păstrează licențele lor (de exemplu Limine — BSD-2-Clause, OVMF —
+BSD-2-Clause-Patent, codul generat din antetele NVIDIA — MIT, cu notificarea NVIDIA păstrată).
+Firmware-ul NVIDIA nu face parte din acest proiect și nu este distribuit de el.

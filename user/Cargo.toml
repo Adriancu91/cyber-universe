@@ -2,7 +2,7 @@
 name = "cyber_user"
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+license-file = "../LICENSE"
 description = "Cyber Universe OS user programs and their small runtime library"
 
 [dependencies]

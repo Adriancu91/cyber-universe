@@ -15,7 +15,8 @@ fără să încălcăm drepturi de autor sau licențe.
 ## Ce NU avem voie
 - Cod sursă Windows scurs, dezasamblat sau decompilat. Niciodată, sub nicio formă.
 - Copierea de cod din proiecte GPL/LGPL (ar obliga tot Cyber Universe la acea licență).
-- Copierea de cod din orice proiect fără să respectăm licența lui.
+- Copierea de cod din orice proiect fără să respectăm licența lui (cod MIT străin: doar cu notificarea lui păstrată).
+- Punerea firmware-ului NVIDIA în repo sau în arhivele de stick (îl descarcă Adrian singur; D-015).
 
 ## Procedura pentru o funcție nouă
 1. **Studiu:** se scrie în `docs/specs/<nume>.md` CE face funcția (intrări, ieșiri, erori, cazuri limită),
@@ -29,5 +30,8 @@ fără să încălcăm drepturi de autor sau licențe.
 |---|---|---|
 | Limine | BSD-2-Clause | bootloader |
 | OVMF | BSD-2-Clause-Patent | firmware UEFI pentru teste în QEMU |
+| Crate-ul generat din antetele NVIDIA (prin Cyber-GPU) | MIT, notificarea NVIDIA păstrată | adrese și câmpuri de registre |
+
+Codul nostru: proprietar de la commit-ul de după `0bf1303` (D-015); versiunile anterioare au fost MIT.
 
 _Nu sunt sfaturi juridice; regulile de mai sus sunt prudente intenționat._

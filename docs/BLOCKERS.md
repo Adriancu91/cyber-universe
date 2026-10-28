@@ -5,6 +5,20 @@
 
 ## Active
 
+### B-005 · P6-31 (C-31) și orice build al OS-ului · 2026-10-28
+- **Problema:** din 28 oct 14:33 repo-ul `Adriancu91/cyber-gpu` e privat. OS-ul îl folosește ca dependență (`kernel/Cargo.toml`,
+  `user/Cargo.toml`, fixat pe `dac2e32`), iar sesiunea programată a OS-ului are acces doar la `cyber-universe`, `cyber-hub`, `cyberspace`.
+  Fără el **nu se poate construi nimic** (nici nucleul, nici programele), deci nici testele QEMU, nici C-31.
+  Și CI-ul va pica la următorul commit cu cod: `github.token` din Actions vede doar `cyber-universe`.
+- **Am încercat:** 1) `git ls-remote https://github.com/Adriancu91/cyber-gpu` → „could not read Username”; 2) API-ul GitHub →
+  „GitHub access to this repository is not enabled for this session” (403); 3) `tools/build.sh` → cargo: „revision dac2e32… not found”.
+- **Eroarea exactă:** ```failed to clone into: /root/.cargo/git/db/cyber-gpu-…  revision dac2e32c33c7a5f88a3f5ef18dde45375bae5fb9 not found```
+- **Ce ar debloca (una din):** (a) Adrian adaugă repo-ul `cyber-gpu` la sarcina programată a OS-ului (în aplicația Claude, la depozitele
+  sesiunii) — rezolvă sesiunile; pentru CI mai trebuie un token doar-citire pentru `cyber-gpu` pus ca secret în `cyber-universe`;
+  (b) copiem bibliotecile Cyber-GPU (același autor, aceeași licență proprietară) direct în repo-ul OS-ului, actualizate de sesiunea OS
+  din ce publică Cyber-GPU în hub — cere „da”-ul lui Adrian (schimbă regula „nu modifici codul altui proiect”); (c) `cyber-gpu` din nou public.
+- **Nevoie de Adrian:** da — alege a, b sau c.
+
 ### B-003 · P5-07 · 2026-10-20
 - **Problema:** suita office ca modul în Cyber Universe cere codul suitei, care e doar pe laptop (decizia din hub
   2026-10-20: suita se termină și se testează de oameni întâi; codul rămâne pe laptop până decide Adrian).

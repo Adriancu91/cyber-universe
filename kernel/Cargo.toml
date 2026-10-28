@@ -2,7 +2,7 @@
 name = "cyber_kernel"
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+license-file = "../LICENSE"
 description = "Cyber Universe OS kernel"
 
 [dependencies]

@@ -2,7 +2,7 @@
 name = "cyber_json"
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+license-file = "../LICENSE"
 description = "Cyber Universe's own JSON reader and writer (RFC 8259), no_std + alloc, no dependencies."
 
 [dependencies]

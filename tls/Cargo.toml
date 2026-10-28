@@ -2,7 +2,7 @@
 name = "cyber_tls"
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+license-file = "../LICENSE"
 description = "Cyber Universe's own TLS 1.3 client (no_std, no heap), on top of crypto/."
 
 [dependencies]

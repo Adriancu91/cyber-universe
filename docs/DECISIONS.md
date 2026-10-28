@@ -23,7 +23,7 @@ Limine **v12.9.4**, arhiva `limine-binary.tar.gz` din GitHub Releases,
 SHA-256 `847334bc4bc142de996fbd132806b89ed73ac9ab34dbc1e90cfebf1fcc68c2b1` (verificată de `tools/build.sh`).
 Crate Rust `limine = "=0.5.0"`. Confirmă D-009.
 
-### D-005 — Licență: MIT (2026-10-20)
+### D-005 — Licență: MIT (2026-10-20) — **înlocuită de D-015**
 Codul propriu e MIT. Nu se copiază cod GPL în proiect (vezi `CLEAN_ROOM.md`).
 
 ### D-006 — Mediu de dezvoltare: WSL2 Ubuntu pe Windows 11 (2026-10-20)
@@ -80,3 +80,12 @@ pentru ținta noastră `user/x86_64-cyber-user.json` (aceeași, plus SSE/SSE2 ș
 le salvează pe ale firelor din K6-01). `_start` aliniază stiva la 16 octeți. Rezultatele operațiilor de bază sunt aceleași
 (IEEE 754); compilatorul nu reordonează sume fără „fast-math”. Completează D-001 (Rust `no_std`), nu o înlocuiește.
 
+### D-015 — Licență proprietară pentru codul nou; înlocuiește D-005 (2026-10-28)
+Comanda C-32 (Adrian, 28 oct 14:30): de la commit-ul de după `0bf1303`, codul propriu e **proprietar** — „Copyright (c) 2026 Adrian.
+Toate drepturile rezervate. Nicio utilizare, copiere, modificare sau distribuire fără acordul scris al autorului.” (`LICENSE`).
+Versiunile publicate până la `0bf1303` inclusiv rămân MIT (nu se poate retrage); nota istorică e în `LICENSE`.
+Componentele străine își păstrează licențele (Limine, OVMF, crate-ul generat din antetele NVIDIA — MIT, cu notificarea NVIDIA).
+Regula clean-room rămâne: nimic GPL copiat; nimic MIT străin fără notificarea lui păstrată.
+**Firmware-ul NVIDIA nu îl distribuim niciodată** (nici în repo, nici în arhivele de stick); Adrian îl descarcă singur. Argumentul de
+redistribuire din `cyber-gpu/docs/RESEARCH_I4_I8.md` §5.1 presupunea un OS cu licență OSI, deci nu mai e valabil pentru noi.
+În `Cargo.toml`: `license-file = "../LICENSE"` în loc de `license = "MIT"`. De verificat cu un avocat înainte de investitori (DECIZII.md din hub).
