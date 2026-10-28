@@ -29,6 +29,17 @@
   Release-uri noi pentru stick (ultimul `os-197`). Ce ar debloca: repo public din nou, minute plătite (doar cu „da”-ul lui), sau
   Release-uri făcute din sesiune (de discutat, după B-005).
 
+- **Actualizare 28 oct 21:45 UTC (după decizia hub 23:35 „Adrian a plătit GitHub, Actions repornite”):** CI pornește din nou, dar rularea 201
+  a picat în 25 s: `revision 83139736… not found` / `git fetch failed for https://github.com/Adriancu91/cyber-gpu` (0/81 teste, niciun Release).
+  P6-33: CI-ul folosește acum secretul `CYBER_GPU_TOKEN` (`tools/ci-cyber-gpu-acces.sh`); fără el se oprește cu un singur mesaj clar.
+- **Pașii pentru Adrian (5 minute, merge și de pe telefon, în browser):**
+  1. github.com → poza ta → **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained tokens** → **Generate new token**.
+  2. Nume: `cyber-universe-ci`; expirare: 1 an; **Repository access: Only select repositories → `cyber-gpu`**;
+     **Permissions → Repository → Contents: Read-only** (nimic altceva). **Generate token** și copiază-l.
+  3. github.com/Adriancu91/cyber-universe → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**:
+     nume `CYBER_GPU_TOKEN`, valoarea = token-ul copiat → **Add secret**.
+  4. Gata: sesiunea următoare repornește CI-ul; dacă e verde, apare Release-ul nou (cu `gpu vbios --detalii`).
+
 ### B-003 · P5-07 · 2026-10-20
 - **Problema:** suita office ca modul în Cyber Universe cere codul suitei, care e doar pe laptop (decizia din hub
   2026-10-20: suita se termină și se testează de oameni întâi; codul rămâne pe laptop până decide Adrian).

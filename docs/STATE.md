@@ -3,6 +3,17 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-10-28 21:40–22:00 UTC (23:40–00:00 ora României) — sesiune programată, fără Adrian — **P6-33: CI pregătit pentru `cyber-gpu` privat.**
+  - Hub: decizie nouă 23:35 — Adrian a plătit GitHub, **Actions repornite** (înlocuiește 23:10); regula veche revine: după push, `gh run list`,
+    CI roșu = prioritate. Nicio comandă nouă pentru `cyber-universe`. (Clona hub-ului iar fără istoric comun cu `origin/main` → lucrul pe ramura
+    locală `hub-sync` = `origin/main`; nimic șters, nimic forțat.)
+  - CI run 201 (a doua încercare, după repornire) a picat: cargo nu poate descărca `cyber-gpu` privat (B-005). Nu e eroare de cod.
+  - P6-33: `tools/ci-cyber-gpu-acces.sh` + pas în `ci.yml` (după testele de pe gazdă, înainte de QEMU) și `stress.yml` cu secretul `CYBER_GPU_TOKEN`; fără secret → un singur mesaj clar.
+    Testat local (fără token / token greșit → mesajele corecte), YAML valid. Codul OS-ului neschimbat → suita QEMU nererulată.
+  - **Nevoie de Adrian:** token doar-citire pe `cyber-gpu` pus ca secret `CYBER_GPU_TOKEN` (pașii în BLOCKERS, B-005). Până atunci CI rămâne roșu
+    (cu mesajul clar), iar stick-urile vin tot prin hub (C-35, `os-1001`).
+  - **Pentru sesiunea următoare:** dacă secretul există → re-rulează CI (`workflow_dispatch` pe `main`), repară ce pică, verifică Release-ul.
+    Altfel: coada fără sarcini libere (P6-10, P6-12 p.2 hardware; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian) → oprire scurtă.
 - 2026-10-28 ~21:30 UTC — trecere extra cerută de centrul de comandă („C-35”): C-35 era deja făcut în sesiunea de mai jos (`os-1001` în hub); nimic de făcut.
 - 2026-10-28 20:18–21:20 UTC (22:18–23:20 ora României) — sesiune programată, fără Adrian — **P6-32 (C-35) gata: stick `os-1001` în hub.**
   - Hub: comandă nouă C-35 (decizia 22:20, varianta 3): stick-ul se construiește în sesiune și ajunge prin hub-ul privat, fără plată.

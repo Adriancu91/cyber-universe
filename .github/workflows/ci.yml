@@ -49,11 +49,6 @@ jobs:
       - name: Verificare mediu
         run: tools/env-check.sh
 
-      - name: Acces la cyber-gpu (repo privat, B-005)
-        env:
-          CYBER_GPU_TOKEN: ${{ secrets.CYBER_GPU_TOKEN }}
-        run: tools/ci-cyber-gpu-acces.sh
-
       - name: Criptografie — vectorii oficiali pe gazdă (crypto/)
         run: cd crypto && cargo test --release
 
@@ -67,6 +62,11 @@ jobs:
         run: cd rtl8168 && cargo test --release
       - name: Driver Intel e1000/82574/I219 — față de modelul plăcii, pe gazdă (e1000e/)
         run: cd e1000e && cargo test --release
+
+      - name: Acces la cyber-gpu (repo privat, B-005)
+        env:
+          CYBER_GPU_TOKEN: ${{ secrets.CYBER_GPU_TOKEN }}
+        run: tools/ci-cyber-gpu-acces.sh
 
       - name: Build + test în QEMU (cu scenariile care au nevoie de internet)
         run: CYBER_NET=1 tools/test.sh
