@@ -2,6 +2,11 @@
 
 **Ce face:** desenează pe framebuffer-ul primit de la Limine și oferă o consolă text (`print!`, `println!`).
 
+**Copia ecranului în RAM (P6-29, C-29):** imediat după ce există heap-ul, `Framebuffer` ține o copie a ecranului în memorie:
+orice scriere merge în ambele, iar citirea și derularea consolei folosesc copia. Pe workstation ecranul e în BAR1 al plăcii
+RTX (PCIe, fără cache) și derularea prin copierea ecranului peste el însuși (citiri din memoria plăcii) dura ~1 s pe rând,
+socotită în viteza lui Kronos. Fără memorie pentru copie, se lucrează ca înainte.
+
 **Desen în memorie (P4-02):** `canvas.rs` — `Canvas` = imaginea în memorie (buffer de spate): dreptunghiuri, contururi,
 linii, imagini cu transparență, text; ține minte zona schimbată și `present()` copiază pe ecran doar acea zonă, rând cu rând.
 Zonă de decupare (`set_clip`) și copiere rapidă de imagini opace (`copy`), folosite de serverul grafic (`ui/`).

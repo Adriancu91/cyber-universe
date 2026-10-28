@@ -156,14 +156,18 @@ impl Framebuffer {
         }
         let bytes = (self.height - rows) * self.pitch;
         if let Some(sh) = &mut self.shadow {
-            // In RAM, then written to the screen (only writes to video memory, never reads).
-            sh.copy_within(rows * self.pitch..rows * self.pitch + bytes, 0);
+            // Only writes to video memory, never reads: for every line, the pixels that differ between the line that
+            // moves up and the one it replaces (found in RAM) are written to the screen; then the copy moves too.
             for y in 0..self.height - rows {
-                // SAFETY: line y (width * 4 bytes) is inside both the copy and the framebuffer.
-                unsafe {
-                    core::ptr::copy_nonoverlapping(sh.as_ptr().add(y * self.pitch), self.addr.add(y * self.pitch), self.width * 4)
-                }
+                let (old, new) = (y * self.pitch, (y + rows) * self.pitch);
+                let differs = |i: usize| sh[old + i * 4..old + i * 4 + 4] != sh[new + i * 4..new + i * 4 + 4];
+                let Some(first) = (0..self.width).find(|&i| differs(i)) else { continue };
+                let last = (first..self.width).rev().find(|&i| differs(i)).unwrap_or(first);
+                let (a, b) = (first * 4, (last + 1) * 4);
+                // SAFETY: [a, b) of line y + rows is inside the copy, [a, b) of line y inside the framebuffer.
+                unsafe { core::ptr::copy_nonoverlapping(sh.as_ptr().add(new + a), self.addr.add(old + a), b - a) }
             }
+            sh.copy_within(rows * self.pitch..rows * self.pitch + bytes, 0);
         } else {
             // SAFETY: both ranges lie inside the framebuffer; `copy` handles the overlap.
             unsafe { core::ptr::copy(self.addr.add(rows * self.pitch), self.addr, bytes) }

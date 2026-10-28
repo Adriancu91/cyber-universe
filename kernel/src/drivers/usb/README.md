@@ -10,6 +10,9 @@
   Un fir de sistem verifică la fiecare 8 ms transferurile terminate (fără întreruperi încă).
 - `storage.rs` — stick-uri USB (P3-07): clasa Mass Storage, Bulk-Only Transport, comenzi SCSI `INQUIRY`,
   `READ CAPACITY(10)`, `READ(10)`; implementează `block::BlockDevice`, montat la `/usb` (prima partiție FAT32).
+  **Citire de 64 KiB (P6-29, C-29), variantă din shell:** `usb citire mare` = o comandă `READ(10)` aduce până la 64 KiB
+  (un singur TRB Normal, buffer de 64 KiB aliniat la 64 KiB, xHCI 1.2 §4.11.7.1), `usb citire mica` = 4 KiB, ca înainte
+  (implicit, D-013: devine implicită doar după ce merge pe hardware). Test: scenariul `usb-disk` verifică discul cu ambele.
 - Evenimentele de transfer sunt păstrate de `Xhci` până le cere driverul lor (`take_transfer`/`wait_transfer`),
   așa că tastatura și stick-ul pot lucra în același timp.
 - **Depinde de:** `pci`, `mem` (cadre pentru DMA, `map_mmio`), `sched::sleep_ms`.

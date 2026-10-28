@@ -10,6 +10,11 @@
     **Scriere (P4-07):** fișiere și directoare noi (nume scurte sau lungi, cu alias `NUME~1.EXT` unic), scriere oriunde în
     fișier (cu mărire; golurile se citesc ca zerouri), ștergere (directoarele doar goale), directoare care cresc peste un
     cluster; ambele copii ale FAT și FSInfo (număr de clustere libere) ținute la zi; data și ora din ceasul calculatorului.
+    **Citire mai rapidă (P6-29, C-29):** `read` ține minte unde s-a oprit (fișierul, clusterul și locul lui) și continuă de
+    acolo, în loc să parcurgă lanțul de la început la fiecare bucată (înainte: un fișier de 105 MiB citit în bucăți de 64 KiB
+    parcurgea lanțul de ~1700 de ori); clusterele consecutive se cer împreună (până la 64 KiB pe cerere). Orice schimbare în
+    FAT șterge poziția ținută minte. Apelul de sistem `read` dă până la 1 MiB odată (era 64 KiB).
+    Test: `test_disk_files` citește și în bucăți de 7000 de octeți, apoi înapoi (de la 90.000, 3, 40.960, 0).
     **Siguranță:** se scrie DOAR pe partițiile care au în rădăcină un fișier numit `cyber.rw` (pe celelalte: „doar citire”);
     ordinea e mereu date → FAT → intrarea din director (la ștergere: întâi intrarea), deci o oprire bruscă poate lăsa cel mult
     clustere pierdute, pe care `fsck`/`chkdsk` le eliberează.
