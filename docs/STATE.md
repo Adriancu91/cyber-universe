@@ -3,6 +3,18 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-10-28 20:18–21:20 UTC (22:18–23:20 ora României) — sesiune programată, fără Adrian — **P6-32 (C-35) gata: stick `os-1001` în hub.**
+  - Hub: comandă nouă C-35 (decizia 22:20, varianta 3): stick-ul se construiește în sesiune și ajunge prin hub-ul privat, fără plată.
+    (Clona hub-ului era iar divergentă de `origin/main` → mutată pe `origin/main`, nimic forțat.)
+  - Nou: `tools/stick-hub.sh <hub>` — după `tools/build.sh --usb` + `tools/release-files.sh`: refuză un model Kronos (antet `KGR1`) sau
+    firmware NVIDIA (în fișiere, `initrd.tar` și imaginea stick-ului), face `stick-cyber-universe-os-<nr>.zip` (nr de la 1001), șterge arhiva
+    veche, scrie `VERSIUNE.txt`. `docs/USB.md` are o notă. README-ul din hub = ce e nou față de `os-197` (C-31 + C-32).
+  - `os-1001` = commit `02f2043`, 6.922.613 octeți, SHA-256 `ca0bbc5a629ecd7be51e9214c365e3de9e0d7a4657dd7ec7f3fde158cd7d1650`.
+  - Teste: suita 78/80 + 1 sărit; `fpu-smp` și `kronos-calcul` = „temporizator: 72–88 intreruperi” (`-smp 4`, gazda cu 2 nuclee),
+    trec la reluare (`fpu-smp` abia la a treia). Arhiva verificată (unzip + `sha256sum -c`) și pornită în QEMU de pe USB până la desktop.
+  - **Pentru sesiunea următoare:** coada fără sarcini libere (P6-10, P6-12 p.2 hardware; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian).
+    La fiecare schimbare care ajunge pe stick: `tools/build.sh --usb && tools/release-files.sh && tools/stick-hub.sh ../cyber-hub` (după suita QEMU),
+    apoi README + commit în hub. Altfel oprire scurtă.
 - 2026-10-28 18:42 UTC (20:42 ora României) — sesiune programată, oprire scurtă: nicio comandă nouă pentru `cyber-universe` în hub (ultima schimbare
   în COMENZI = starea lui Kronos), nicio decizie nouă; coada fără sarcini libere (P6-10, P6-12, P3-10 hardware/Adrian; P5-07 BLOCAT; C-7, C-11 după
   întoarcerea lui Adrian). Nimic construit. CI/Release tot oprite (ultimul `os-197`), se așteaptă alegerea lui Adrian (1/2/3 din hub).
