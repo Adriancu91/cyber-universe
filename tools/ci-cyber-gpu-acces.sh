@@ -20,7 +20,11 @@ if ! grep -q 'git-fetch-with-cli' "$HOME/.cargo/config.toml" 2>/dev/null; then
     printf '\n[net]\ngit-fetch-with-cli = true\n' >> "$HOME/.cargo/config.toml"
 fi
 
-if git ls-remote -q "$URL" HEAD >/dev/null 2>&1; then
+# C-37: actions/checkout may leave an `http.https://github.com/.extraheader` with github.token in the repository's
+# local config; git would send that header instead of the token from the URL. Check from $HOME (outside the
+# repository) and with the extra headers reset (an empty value clears the list).
+if (cd "$HOME" && GIT_TERMINAL_PROMPT=0 git -c http.extraheader= -c "http.https://github.com/.extraheader=" \
+        ls-remote -q "$URL" HEAD >/dev/null 2>&1); then
     echo "cyber-gpu: acces cu CYBER_GPU_TOKEN (doar citire) - ok"
 else
     echo "::error::CYBER_GPU_TOKEN exista, dar GitHub refuza cyber-gpu (token expirat sau fara drept de citire pe cyber-gpu)."

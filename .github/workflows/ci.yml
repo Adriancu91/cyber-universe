@@ -19,7 +19,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
+      # C-37: no stored github.token header, otherwise git sends it instead of CYBER_GPU_TOKEN for cyber-gpu.
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Unelte sistem (QEMU, OVMF, xorriso, unelte FAT)
         run: |
