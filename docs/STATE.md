@@ -3,6 +3,25 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-28 06:40–07:45 UTC (08:40–09:45 ora României), în cloud, fără Adrian — P6-27b gata (C-25 complet)
+- **Hub:** C-24 gata (Kronos, 08:20): în `integrare/kronos/` au apărut `vectori/` (modelul minuscul F32 + Q8_0 cu tokenizerul adevărat w2,
+  `vectori.json`), `MODEL.md` (#459, KGR1 Q8_0, 110.859.040 octeți, SHA-256 `e80618b4…382e`) și descrierea completă a tokenizerului.
+  Release-ul privat cu modelul (`kronos-kgr1-459` în `cyberspace`) **nu e făcut** — îl rulează Adrian. Nicio comandă nouă pentru noi.
+- **P6-27b:** `user/src/bpe.rs` = tokenizerul scris de noi din specificație (speciale, pre-tokenizarea în 6 variante cu clasele Python,
+  grupele fixe de cifre `ws`, BPE, decodare U+FFFD); `user/src/unicode.rs` generat de `tools/gen-unicode.py` (Unicode 15.1);
+  `user/src/jscan.rs` = cititor JSON fără arbore. `kronos Ana are mere.` (text direct, scris pe măsură ce vine, oprire la `<|endoftext|>`),
+  `kronos --codeaza <text>`, `kronos --vectori <json> f32|q8_0`.
+- **Verificări:** local, tokenizerul = o referință Python (expresia din specificație) pe 23.008 texte (aleatoare + Unicode), 0 diferențe.
+  În QEMU: vectorii oficiali F32 și Q8_0 (vectori și scalar) — simboluri, decodare, argmax pe poziții, greedy cu/fără cache, textul generat
+  identice; abaterea logit-urilor ≤ 5,2e-6 (toleranța 1e-4 / 1e-3). Exemplele din specificație (`<|endoftext|>Ana`, `991 07`) trec.
+  O referință stricată intenționat pică testul.
+- **Problemă găsită și reparată:** memoria cheilor/valorilor a modelului #459 = 36 MiB, iar heap-ul lui `kronos` = 32 MiB → ar fi căzut pe
+  workstation. Mutată într-o zonă `mem_map`; verificat local cu un model aleator de 48 straturi / context 1024 (48 MiB), care nu intră în repo.
+  Primul test a durat >60 s: cititorul JSON obișnuit face 100.000 de alocări în heap-ul first-fit → de aici `jscan.rs`.
+- **Teste local:** kronos-kgr, kronos-kgr-1, kronos-reglaj, kronos-calcul, kronos-calcul-1, kronos-calcul-amd, phase4 → trecute.
+  **CI:** run 195 — 80/81 la prima încercare (a picat doar `phase4`, instalare modul cu mouse-ul, instabil cunoscut; trece local) → reluat o dată → **verde** → **Release `os-195`**.
+- **Coada:** P6-10, P6-12 p.2 așteaptă hardware; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian. Nicio sarcină liberă.
+- **Pentru sesiunea următoare:** dacă nu e comandă nouă / rezultat nou → oprire scurtă. Testul pe hardware cu modelul #459 e în `stare/cyber-universe.md` din hub.
 ### Sesiunea programată 2026-10-28 03:40 UTC (05:40 ora României), în cloud, fără Adrian — oprire scurtă, nimic nou de făcut
 - Hub: nicio comandă nouă pentru `cyber-universe`; niciun rezultat nou în `rezultate/`. `integrare/kronos/` are tot doar specificația KGR1 și
   README (fără `vectori/`, fără `MODEL.md`, fără descrierea tokenizerului). La C-24 Kronos notează (05:15 ora României) că descrierea
