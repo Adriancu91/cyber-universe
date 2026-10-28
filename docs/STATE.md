@@ -3,6 +3,10 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-10-28 18:42 UTC (20:42 ora României) — sesiune programată, oprire scurtă: nicio comandă nouă pentru `cyber-universe` în hub (ultima schimbare
+  în COMENZI = starea lui Kronos), nicio decizie nouă; coada fără sarcini libere (P6-10, P6-12, P3-10 hardware/Adrian; P5-07 BLOCAT; C-7, C-11 după
+  întoarcerea lui Adrian). Nimic construit. CI/Release tot oprite (ultimul `os-197`), se așteaptă alegerea lui Adrian (1/2/3 din hub).
+  Clona hub-ului era iar divergentă → `main` mutat pe `origin/main` (nimic împins forțat). Oprirea de siguranță nu se aplică (P6-31 gata la 17:55).
 - 2026-10-28 ~18:00 UTC — trecere extra cerută de centrul de comandă („reia C-31”): C-31 era deja făcut în sesiunea de mai jos (`ba572c6`); nicio comandă nouă în hub, nimic de făcut.
 ### Sesiunea programată 2026-10-28 17:00–17:55 UTC (19:00–19:55 ora României), în cloud, fără Adrian — P6-31 (C-31) gata, fără Release
 - **Hub:** B-005 ocolit de centrul de comandă (19:00): copia Git a `cyber-gpu` în `integrare/cyber-gpu/snapshot/cyber-gpu.bundle`
