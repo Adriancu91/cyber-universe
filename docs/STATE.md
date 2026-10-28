@@ -3,6 +3,7 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-10-28 ~21:30 UTC — trecere extra cerută de centrul de comandă („C-35”): C-35 era deja făcut în sesiunea de mai jos (`os-1001` în hub); nimic de făcut.
 - 2026-10-28 20:18–21:20 UTC (22:18–23:20 ora României) — sesiune programată, fără Adrian — **P6-32 (C-35) gata: stick `os-1001` în hub.**
   - Hub: comandă nouă C-35 (decizia 22:20, varianta 3): stick-ul se construiește în sesiune și ajunge prin hub-ul privat, fără plată.
     (Clona hub-ului era iar divergentă de `origin/main` → mutată pe `origin/main`, nimic forțat.)
