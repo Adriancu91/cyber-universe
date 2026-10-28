@@ -12,5 +12,7 @@ pub mod memory;
 pub mod threads;
 #[cfg(feature = "test-kronos-calc")]
 pub mod kronos;
+#[cfg(feature = "test-kronos-kgr")]
+pub mod kgr;
 #[cfg(feature = "test-rights")]
 pub mod rights;

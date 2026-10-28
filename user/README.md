@@ -33,6 +33,16 @@
   `|dif| <= 1e-5·(1+|ref|)`, fără FMA 0. Afișează timpii pe 1 și pe n fire; cod 0 dacă totul e în toleranță.
   Timpii din QEMU nu spun nimic despre hardware (AVX e emulat încet). Test: scenariile `kronos-calcul` (`-smp 4 -cpu max`)
   și `kronos-calcul-1` (un nucleu, SSE2).
+- `kronos` (P6-27, comanda C-25) — modelul Kronos adevărat în OS: motorul nostru KGR1 (`src/kgr.rs`, scris după specificația
+  din hub `integrare/kronos/format_greutati.md`, fără codul Kronos) citește un fișier `.kgr` (F32 sau Q8_0) întreg în memorie,
+  verifică SHA-256 (față de `--suma <hex>` sau `<model>.kgr.sha256`; suma greșită = refuz, cod 3), apoi face pasul înainte
+  strat cu strat (LayerNorm, QKV, atenție cauzală cu memoria cheilor/valorilor, MLP cu GELU exact, logit-uri pe `emb_token`)
+  pe toate nucleele, cu vectori AVX2+FMA (în assembler) sau scalar. `exp`/`sqrt`/`erf`/GELU vin din `gpu-compute`.
+  `kronos --simboluri 1,2,3 [--n 32] [--model <cale>] [--fire n] [--fara-vector]` continuă textul (greedy) și arată
+  simbolurile pe secundă; modelul implicit = primul `*.kgr` din `/usb/kronos/`. `kronos --verifica <model> <ref>` compară
+  cu un fișier de referință (logit-uri în toleranța `1e-4·(1+|ref|)`, continuarea greedy identică).
+  Textul direct (tokenizerul din fișier) vine în P6-27b. Test: scenariile `kronos-kgr` (2 nuclee, AVX2) și `kronos-kgr-1`
+  (1 nucleu, scalar), pe modelul minuscul cu greutăți aleatoare din `tests/kronos/` (`tools/kgr-mini.py`; `tools/build.sh` îl pune pe discul de test la `/kronos` doar în build-urile `test-kronos-*`).
 - `fetch <nume> [port] [cale]` (P5-05) — descarcă o pagină web prin HTTP (TCP) și o scrie (fără antet); cod 0 dacă serverul a răspuns 200.
   `fetch https://<nume>[:port][/cale] [adresă]` (P5-16) — la fel prin HTTPS (TLS 1.3, biblioteca `tls/`): certificatul
   serverului se verifică față de certificatele din `/etc/certs/` (DER), ora din ceasul RTC (luată ca UTC), cheile din

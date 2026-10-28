@@ -277,8 +277,11 @@ Comenzile C-23 (laptopul AMD: #GP la `kronos-calcul`; laptopul Intel: stick neg�
   Rezultat: în QEMU „ecran: framebuffer la adresa fizica 0x80000000, 4096000 octeti (4 MiB), 1280x800, pitch 5120 B, 32 bpp”; valorile sunt păstrate la pornire (răspunsul Limine e în memorie recuperată mai târziu).
 
 Comenzile C-25 (Kronos adevărat în OS) și C-27 (căutarea automată a variantei de calcul), din 27 oct:
-- [ ] **P6-27** Motorul KGR1 în Rust + comanda `kronos` (C-25). Așteaptă C-24: specificația KGR1 și vectorii de test în hub (`integrare/kronos/`). Dep: P6-26.
-- [ ] **P6-28** `kronos-calcul --cauta`: căutare automată verificată a celei mai bune variante de calcul, reglaj pe stick (C-27). Dep: P6-27.
+- [x] **P6-27** Motorul KGR1 în Rust + comanda `kronos` (C-25), partea 1: cititorul KGR1 (F32, Q8_0), pasul înainte pe toate nucleele (AVX2+FMA sau scalar), memoria cheilor/valorilor, SHA-256, `kronos --simboluri` / `--verifica`. Dep: P6-26.
+  Test: scenariile `kronos-kgr` (`-smp 2 -cpu max`) și `kronos-kgr-1` (1 nucleu, fără AVX): modelul minuscul F32 și Q8_0 din `tools/kgr-mini.py` (referință float64 scrisă de noi din specificație) — logit-uri în `1e-4·(1+|ref|)`, continuarea greedy identică, suma greșită refuzată, nicio pagină pierdută; o greșeală introdusă intenționat (scara atenției ×1,01) pică testul.
+  Rezultat: 0 din 1632 logit-uri în afara toleranței (abaterea maximă ~5e-6–1e-5), continuările identice pe F32 și Q8_0, scalar și AVX2 pe 2 și 4 fire. Specificația din hub a sosit (28 oct 02:15); vectorii oficiali Kronos și descrierea tokenizerului încă nu → P6-27b.
+- [ ] **P6-27b** Partea 2 din C-25: tokenizerul din fișier (`tokenizer.bpe`) + `kronos "<text>"`; testul pe vectorii oficiali din hub (`integrare/kronos/vectori/`). Așteaptă C-24 (S39 partea A: vectorii; descrierea tokenizerului în specificație). Dep: P6-27.
+- [ ] **P6-28** `kronos-calcul --cauta`: căutare automată verificată a celei mai bune variante de calcul, reglaj pe stick (C-27). Dep: P6-27 (motorul; nu așteaptă P6-27b).
 
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 

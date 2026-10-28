@@ -340,6 +340,9 @@ fn run_tests() -> ! {
     #[cfg(feature = "test-kronos-calc")]
     tests::kronos::run();
 
+    #[cfg(feature = "test-kronos-kgr")]
+    tests::kgr::run();
+
     #[cfg(feature = "test-rights")]
     tests::rights::run();
 

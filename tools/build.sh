@@ -106,6 +106,11 @@ for b in data:
 open(sys.argv[1] + "/mare.bin", "wb").write(data)
 open(sys.argv[1] + "/mare.fnv", "w").write(f"{h:016x}\n")
 PY
+# P6-27/P6-28: the tiny KGR1 model (tools/kgr-mini.py) only on the disks of the Kronos engine scenarios, so the other
+# scenarios keep listing the same files.
+if [[ ",$EXTRA_FEATURES," == *",test-kronos-"* ]]; then
+    mkdir -p "$DISK_ROOT/kronos" && cp "$ROOT"/tests/kronos/* "$DISK_ROOT/kronos/"
+fi
 DISK="$BUILD/disk.img"
 rm -f "$DISK" && truncate -s 40M "$DISK"
 printf 'label: gpt\nstart=2048, size=38M, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7\n' | PATH="$PATH:/usr/sbin:/sbin" sfdisk -q "$DISK"
