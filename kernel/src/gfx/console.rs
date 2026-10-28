@@ -156,14 +156,39 @@ pub fn set_text_on_screen(on: bool) {
     TEXT_ON_SCREEN.store(on, Ordering::Release);
 }
 
+/// True when interrupts are off on this processor (an exception or interrupt handler, or a section under `irq_save`).
+fn interrupts_off() -> bool {
+    let flags: u64;
+    // SAFETY: only reads RFLAGS through the stack.
+    unsafe { core::arch::asm!("pushfq", "pop {}", out(reg) flags, options(nomem, preserves_flags)) };
+    flags & (1 << 9) == 0
+}
+
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
     use fmt::Write;
-    with_console(|c| {
+    output(|c| {
         if let Some(c) = c {
             let _ = c.write_fmt(args);
         }
     });
+}
+
+/// Runs `f` on the console for text output. With interrupts off, a holder of the console that was switched out on
+/// this processor can never run again until we return, so waiting would hang the machine (seen in CI: the #BP
+/// handler logging while the DHCP thread was scrolling the screen): then, if the console is busy, `f` is skipped —
+/// the text still reaches the serial port and the log, only the screen misses it.
+pub fn output(f: impl FnOnce(&mut Option<Console>)) {
+    if interrupts_off() {
+        if LOCK.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+            return;
+        }
+        // SAFETY: LOCK was taken just above and is released below.
+        f(unsafe { &mut *core::ptr::addr_of_mut!(CONSOLE) });
+        LOCK.store(false, Ordering::Release);
+        return;
+    }
+    with_console(f);
 }
 
 /// Sets the text color for subsequent output.

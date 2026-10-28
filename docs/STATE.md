@@ -3,6 +3,26 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-28 09:40–11:00 UTC (11:40–13:00 ora României), în cloud, fără Adrian — P6-29 (C-29) gata
+- **Hub:** comenzi noi C-29 (viteza lui Kronos pe workstation), C-30 (cyber-gpu, VBIOS) și C-31 (`gpu vbios --detalii`, **după C-30** — încă nefăcută
+  de Cyber-GPU, deci rămâne `nou`). Rezultatele workstation: `rezultate/2026-10-28-workstation-kronos-in-os/` — #459 identic cu referința, dar 7,9 simb/s.
+- **Cauzele găsite în cod (P6-29):** (1) programele erau compilate soft-float — toată aritmetica în afara produselor AVX2 (atenția, LayerNorm,
+  GELU, softmax) era emulată; (2) `par()` pornea fire noi la fiecare produs, iar stivele lor nu se eliberau (`mem_unmap` e refuzat cât mai rulează
+  alte fire); (3) FAT32 parcurgea lanțul de clustere de la început la fiecare bucată de 64 KiB; (4) derularea ecranului citea memoria plăcii video
+  (BAR1, ~1 s pe rând pe workstation) și intra în timpul generării.
+- **Făcut:** ținta `user/x86_64-cyber-user.json` (SSE2 în procesor, `-Zbuild-std`, D-014), `_start` aliniază stiva; bazin de fire pornit o dată
+  (barieră cu `pause`/`yield`), atenția pe (poziție, cap); `kronos --profil` (TSC pe operații, GB/s, afișare), `kronos --repetitie <p>` (implicit
+  oprit); `kronos-calcul --cauta` măsoară și pe dimensiunile modelului de pe stick (doar antetul citit), fire 1…N + jumătate; FAT32 ține minte
+  poziția și citește clustere consecutive împreună, `read` până la 1 MiB; `usb citire mare` (64 KiB pe comandă) = **variantă, implicit oprită**
+  (D-013); copie a ecranului în RAM (derularea scrie doar pixelii schimbați); mesajul „parcate” de la `cpu porneste` corectat.
+- **Teste local:** suita completă 77/80 + 1 sărit (internet) la prima trecere; cele 3 picate (`gpu`, `smp-start`, `kronos-calcul`) = testul vechi al
+  temporizatorului la `-smp 4` pe gazda cu 2 nuclee, toate trec la reluare. Vectorii oficiali F32/Q8_0 identici; în QEMU 2,4 MiB citiți în 80 ms (era 360).
+  Pe gazdă (Xeon 2,1 GHz, nativ): produsele unui simbol #459 pe 1 fir ≈ 22 ms (memoria limitează) → ≥ 50 simb/s pe 1 fir e plauzibil pe i9.
+- **CI:** run 196: încercarea 1 = 80/81 (`phase4`, instabil cunoscut), încercarea 2 = 80/81 (`shell`: blocare la pornire). Cauza la `shell`:
+  handler-ul #BP (cu întreruperile oprite) aștepta consola ținută de firul DHCP, oprit la mijlocul derulării pe același nucleu — o cursă
+  veche, mai probabilă acum că derularea face mai mult. Reparat: cu întreruperile oprite, dacă consola e ocupată, textul merge doar pe
+  serial și în jurnal (`console::output`). Run 197 cu reparația.
+- **Pentru sesiunea următoare:** C-31 când Cyber-GPU termină C-30 (funcția de diagnostic VBIOS în `nvidia-ga104`). Testul pe workstation (lista în hub).
 ### Sesiunea programată 2026-10-28 06:40–07:45 UTC (08:40–09:45 ora României), în cloud, fără Adrian — P6-27b gata (C-25 complet)
 - **Hub:** C-24 gata (Kronos, 08:20): în `integrare/kronos/` au apărut `vectori/` (modelul minuscul F32 + Q8_0 cu tokenizerul adevărat w2,
   `vectori.json`), `MODEL.md` (#459, KGR1 Q8_0, 110.859.040 octeți, SHA-256 `e80618b4…382e`) și descrierea completă a tokenizerului.

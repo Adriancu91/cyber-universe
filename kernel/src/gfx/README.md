@@ -6,6 +6,8 @@
 orice scriere merge în ambele, iar citirea și derularea consolei folosesc copia. Pe workstation ecranul e în BAR1 al plăcii
 RTX (PCIe, fără cache) și derularea prin copierea ecranului peste el însuși (citiri din memoria plăcii) dura ~1 s pe rând,
 socotită în viteza lui Kronos. Fără memorie pentru copie, se lucrează ca înainte.
+Cu întreruperile oprite (handler de excepție), dacă altcineva ține consola, textul nu se mai desenează pe ecran (rămâne pe serial și
+în jurnal) — altfel nucleul s-ar bloca așteptând un fir care nu mai poate rula pe acel nucleu (`console::output`).
 
 **Desen în memorie (P4-02):** `canvas.rs` — `Canvas` = imaginea în memorie (buffer de spate): dreptunghiuri, contururi,
 linii, imagini cu transparență, text; ține minte zona schimbată și `present()` copiază pe ecran doar acea zonă, rând cu rând.

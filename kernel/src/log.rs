@@ -91,7 +91,7 @@ pub fn _log(level: Level, args: fmt::Arguments) {
 
     crate::drivers::serial::write_str(text);
     remember(text);
-    crate::gfx::console::with_console(|c| {
+    crate::gfx::console::output(|c| {
         if let Some(c) = c {
             let old = c.color;
             c.color = level.color();
