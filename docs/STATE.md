@@ -12,7 +12,9 @@
   `license-file = "../LICENSE"` în toate `Cargo.toml`. Firmware-ul NVIDIA nu se distribuie (notat în D-015, CLAUDE.md, CLEAN_ROOM.md).
 - **B-005 (nou):** sesiunea nu are acces la `cyber-gpu` (privat) → `tools/build.sh` pică la descărcarea dependenței; nicio construire și niciun
   test QEMU posibil. Teste rulate: doar crate-urile fără Cyber-GPU (`json`, `crypto`, `rtl8168`, `e1000e`, `tls`) — toate trec.
-  CI-ul va pica din același motiv (token-ul Actions vede doar repo-ul nostru) — vezi mai jos.
+  **CI:** run 198 (`a0e2980`) nu a pornit: „recent account payments have failed or your spending limit needs to be increased” —
+  repo-ul e privat, minutele gratuite s-au terminat (ca la B-004). Conform deciziei din 14:33: nu se plătește nimic; testele rămân cele din
+  sesiune. Chiar cu minute, CI-ul n-ar putea descărca `cyber-gpu` (B-005). Fără CI nu se mai fac Release-uri automate (ultimul: `os-197`).
 - `tools/env-check.sh --install`: mediul complet.
 - **Pentru sesiunea următoare:** dacă Adrian a rezolvat B-005 (varianta a/b/c din BLOCKERS) → P6-31 (C-31). Altfel oprire scurtă:
   orice sarcină de cod e imposibilă fără build.

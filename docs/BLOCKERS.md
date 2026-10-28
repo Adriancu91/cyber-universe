@@ -18,6 +18,10 @@
   (b) copiem bibliotecile Cyber-GPU (același autor, aceeași licență proprietară) direct în repo-ul OS-ului, actualizate de sesiunea OS
   din ce publică Cyber-GPU în hub — cere „da”-ul lui Adrian (schimbă regula „nu modifici codul altui proiect”); (c) `cyber-gpu` din nou public.
 - **Nevoie de Adrian:** da — alege a, b sau c.
+- **CI (28 oct 12:51 UTC, run 198):** GitHub Actions nu mai pornește („recent account payments have failed or your spending limit
+  needs to be increased”) — repo privat, minute terminate. Nu se plătește nimic fără acordul lui Adrian (DECIZII 14:33); fără CI nu apar
+  Release-uri noi pentru stick (ultimul `os-197`). Ce ar debloca: repo public din nou, minute plătite (doar cu „da”-ul lui), sau
+  Release-uri făcute din sesiune (de discutat, după B-005).
 
 ### B-003 · P5-07 · 2026-10-20
 - **Problema:** suita office ca modul în Cyber Universe cere codul suitei, care e doar pe laptop (decizia din hub
