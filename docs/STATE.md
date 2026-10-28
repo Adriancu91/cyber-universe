@@ -3,6 +3,19 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-28 12:46–13:30 UTC (14:46–15:30 ora României), în cloud, fără Adrian — P6-30 (C-32) gata; C-31 BLOCAT (B-005)
+- **Hub:** comenzi noi C-32 (licența) și C-31 (deblocată de Cyber-GPU: C-30 gata, commit-uri `d03ce39`, `0e14990`, `4538f90`). Decizia
+  din 14:33: `cyber-universe` și `cyber-gpu` sunt din nou **private**. (Clona locală a hub-ului avea un istoric vechi divergent — păstrat în
+  ramura locală `vechi-local-2026-10-28`, `main` mutat pe `origin/main`; nimic pierdut, nimic împins forțat.)
+- **P6-30 (C-32):** `LICENSE` proprietar („toate drepturile rezervate”, română + engleză) cu nota că versiunile până la `0bf1303` au fost MIT;
+  D-015 înlocuiește D-005; `CLAUDE.md` §6, `README.md`, `CLEAN_ROOM.md`, README-urile gfx/drivers, comentariile despre font;
+  `license-file = "../LICENSE"` în toate `Cargo.toml`. Firmware-ul NVIDIA nu se distribuie (notat în D-015, CLAUDE.md, CLEAN_ROOM.md).
+- **B-005 (nou):** sesiunea nu are acces la `cyber-gpu` (privat) → `tools/build.sh` pică la descărcarea dependenței; nicio construire și niciun
+  test QEMU posibil. Teste rulate: doar crate-urile fără Cyber-GPU (`json`, `crypto`, `rtl8168`, `e1000e`, `tls`) — toate trec.
+  CI-ul va pica din același motiv (token-ul Actions vede doar repo-ul nostru) — vezi mai jos.
+- `tools/env-check.sh --install`: mediul complet.
+- **Pentru sesiunea următoare:** dacă Adrian a rezolvat B-005 (varianta a/b/c din BLOCKERS) → P6-31 (C-31). Altfel oprire scurtă:
+  orice sarcină de cod e imposibilă fără build.
 ### Sesiunea programată 2026-10-28 09:40–12:35 UTC (11:40–14:35 ora României), în cloud, fără Adrian — P6-29 (C-29) gata
 - **Hub:** comenzi noi C-29 (viteza lui Kronos pe workstation), C-30 (cyber-gpu, VBIOS) și C-31 (`gpu vbios --detalii`, **după C-30** — încă nefăcută
   de Cyber-GPU, deci rămâne `nou`). Rezultatele workstation: `rezultate/2026-10-28-workstation-kronos-in-os/` — #459 identic cu referința, dar 7,9 simb/s.
