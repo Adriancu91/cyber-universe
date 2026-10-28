@@ -15,6 +15,8 @@
   - **Pentru sesiunea următoare:** coada fără sarcini libere (P6-10, P6-12 p.2 hardware; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian).
     La fiecare schimbare care ajunge pe stick: `tools/build.sh --usb && tools/release-files.sh && tools/stick-hub.sh ../cyber-hub` (după suita QEMU),
     apoi README + commit în hub. Altfel oprire scurtă.
+  - Hub, după 23:10: GitHub Actions **oprit** de centrul de comandă (decizie) — nu-l reporni, nu e eroare de reparat; `gh run list` nu mai e obligatoriu.
+    Propunere nouă de la `cyber-gpu` (`idei/2026-10-28_cyber-universe_gpu-firmware-fwsec.md`: `gpu fwsec`, `gpu firmware`, doar citire) — **neaprobată**; se face doar cu o comandă în COMENZI.
 - 2026-10-28 18:42 UTC (20:42 ora României) — sesiune programată, oprire scurtă: nicio comandă nouă pentru `cyber-universe` în hub (ultima schimbare
   în COMENZI = starea lui Kronos), nicio decizie nouă; coada fără sarcini libere (P6-10, P6-12, P3-10 hardware/Adrian; P5-07 BLOCAT; C-7, C-11 după
   întoarcerea lui Adrian). Nimic construit. CI/Release tot oprite (ultimul `os-197`), se așteaptă alegerea lui Adrian (1/2/3 din hub).
