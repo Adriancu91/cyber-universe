@@ -3,6 +3,7 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-10-28 ~18:00 UTC — trecere extra cerută de centrul de comandă („reia C-31”): C-31 era deja făcut în sesiunea de mai jos (`ba572c6`); nicio comandă nouă în hub, nimic de făcut.
 ### Sesiunea programată 2026-10-28 17:00–17:55 UTC (19:00–19:55 ora României), în cloud, fără Adrian — P6-31 (C-31) gata, fără Release
 - **Hub:** B-005 ocolit de centrul de comandă (19:00): copia Git a `cyber-gpu` în `integrare/cyber-gpu/snapshot/cyber-gpu.bundle`
   (vârf `8313973`), actualizată de Cyber-GPU după fiecare push (C-34); C-31 redevenit `nou`. (Clona hub-ului era iar divergentă → ramura
