@@ -109,6 +109,17 @@ pub fn init() -> bool {
     true
 }
 
+/// Starts the RAM copy of the screen (P6-29), right after the heap exists. The console wrote rows 0..=row so far.
+pub fn enable_shadow() -> bool {
+    with_console(|slot| match slot.as_mut() {
+        Some(c) => {
+            let used = MARGIN + (c.row + 1) * CELL_H;
+            c.fb.enable_shadow(used, BACKGROUND)
+        }
+        None => false,
+    })
+}
+
 /// Runs `f` with exclusive access to the console slot.
 pub fn with_console<R>(f: impl FnOnce(&mut Option<Console>) -> R) -> R {
     // Interrupts stay on: drawing can take long (the window server copies whole frames, tests wait for ticks).

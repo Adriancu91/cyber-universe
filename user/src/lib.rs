@@ -410,8 +410,18 @@ macro_rules! println {
 #[macro_export]
 macro_rules! entry {
     ($main:path) => {
-        #[unsafe(no_mangle)]
-        pub extern "C" fn _start(argc: usize, argv: *const (u64, u64)) -> ! {
+        // The kernel enters with a 16-byte aligned stack pointer; a function expects it 8 bytes below a 16-byte
+        // boundary (System V ABI). With hardware SSE (P6-29) a misaligned stack faults on aligned vector moves, so
+        // `_start` aligns it and calls the Rust entry (argc in rdi and argv in rsi are left untouched).
+        core::arch::global_asm!(
+            ".globl _start",
+            "_start:",
+            "and rsp, -16",
+            "call {entry}",
+            "ud2",
+            entry = sym __cyber_start,
+        );
+        extern "C" fn __cyber_start(argc: usize, argv: *const (u64, u64)) -> ! {
             $crate::set_args(argc, argv);
             let f: fn() -> i64 = $main;
             $crate::exit(f())

@@ -10,6 +10,38 @@ const CBW_SIGNATURE: u32 = 0x4342_5355; // "USBC"
 const CSW_SIGNATURE: u32 = 0x5342_5355; // "USBS"
 const MAX_SECTORS: u32 = (PAGE_SIZE / SECTOR as u64) as u32;
 
+/// P6-29 (C-29): reads of up to 64 KiB per READ(10) instead of 4 KiB (one Normal TRB moves up to 64 KiB when the
+/// buffer does not cross a 64 KiB boundary: xHCI 1.2 §4.11.7.1, §6.4.1.1). A **variant chosen from the shell**
+/// (`usb citire mare`), off by default (D-013: one behaviour change per Release on hardware-tested drivers);
+/// it becomes the default only after the stick reads correctly on real hardware.
+const BIG_BYTES: u64 = 64 * 1024;
+const BIG_SECTORS: u32 = (BIG_BYTES / SECTOR as u64) as u32;
+static BIG_READS: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// `usb citire mare|mica`: switches the 64 KiB reads on or off (for every stick, from the next read).
+pub fn set_big_reads(on: bool) {
+    BIG_READS.store(on, core::sync::atomic::Ordering::Relaxed);
+    crate::info!("usb: citire de pe stick: {}", if on { "64 KiB pe comanda (varianta noua)" } else { "4 KiB pe comanda (ca pana acum)" });
+}
+
+pub fn big_reads() -> bool {
+    BIG_READS.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// 16 frames starting on a 64 KiB boundary (allocated as 31 contiguous frames, the unused ones given back).
+fn alloc_big() -> Option<u64> {
+    let frames = BIG_BYTES / PAGE_SIZE;
+    let first = frame::alloc_contiguous_between(2 * frames - 1, 16 << 20, 1 << 32)?;
+    let start = first.next_multiple_of(BIG_BYTES);
+    for i in 0..2 * frames - 1 {
+        let f = first + i * PAGE_SIZE;
+        if f < start || f >= start + BIG_BYTES {
+            frame::free_frame(f);
+        }
+    }
+    Some(start)
+}
+
 struct Bot {
     /// Index of the controller the stick is on (P6-25).
     ctrl: u8,
@@ -28,6 +60,8 @@ struct Bot {
     tag: u32,
     /// Status byte of the last command's CSW (0 passed, 1 failed, 2 phase error); None if no valid CSW came.
     last_csw: Option<u8>,
+    /// 64 KiB data buffer for `usb citire mare` (physical, 64 KiB aligned), allocated at the first big read; 0 = none.
+    big: u64,
 }
 
 pub struct UsbDisk {
@@ -66,6 +100,12 @@ impl Bot {
     /// Runs one SCSI command with an optional data stage of `len` bytes: into `self.data`, or from it
     /// to the device if `out`.
     fn scsi(&mut self, x: &mut Xhci, cb: &[u8], len: u32, out: bool) -> Result<(), BlockError> {
+        let data = self.data;
+        self.scsi_with(x, cb, len, out, data)
+    }
+
+    /// As `scsi`, with the data stage in the physical buffer `data` (`self.data` or the 64 KiB one).
+    fn scsi_with(&mut self, x: &mut Xhci, cb: &[u8], len: u32, out: bool, data: u64) -> Result<(), BlockError> {
         self.tag = self.tag.wrapping_add(1);
         let mut cbw = [0u8; 31];
         cbw[0..4].copy_from_slice(&CBW_SIGNATURE.to_le_bytes());
@@ -80,7 +120,7 @@ impl Bot {
         self.bulk(x, false, self.cmd, 31, op, "comanda (CBW)").map_err(|_| BlockError::OutOfRange)?;
         if len > 0 {
             // A stalled data stage still ends with a status block (BOT 1.0 §6.7.2, §6.7.3).
-            let _ = self.bulk(x, !out, self.data, len, op, if out { "date spre stick" } else { "date de la stick" });
+            let _ = self.bulk(x, !out, data, len, op, if out { "date spre stick" } else { "date de la stick" });
         }
         let mut status = self.bulk(x, true, self.cmd + 64, 13, op, "stare (CSW)");
         if status == Err(CC_STALL) {
@@ -152,7 +192,7 @@ impl UsbDisk {
         let (dci_in, ring_in) = rings.pop()?;
         let mut bot = Bot {
             ctrl: dev.ctrl, slot: dev.slot, port, ep_in: ep_in.0, ep_out: ep_out.0, dci_in, dci_out, ring_in, ring_out,
-            cmd: frame::alloc_frame()?, data: frame::alloc_frame()?, tag: 0, last_csw: None,
+            cmd: frame::alloc_frame()?, data: frame::alloc_frame()?, tag: 0, last_csw: None, big: 0,
         };
         // INQUIRY; right after power-up a real stick may answer "command failed" (CSW 1, unit attention) until a
         // REQUEST SENSE clears it (SPC): up to 10 tries, 100 ms apart.
@@ -234,15 +274,31 @@ impl BlockDevice for UsbDisk {
             return Err(BlockError::OutOfRange);
         }
         let mut bot = self.bot.lock();
+        if big_reads() && bot.big == 0 && total > MAX_SECTORS as u64 {
+            match alloc_big() {
+                Some(b) => {
+                    bot.big = b;
+                    crate::info!("usb: port {}: buffer de 64 KiB pentru citire la 0x{:x}", bot.port, b);
+                }
+                None => {
+                    crate::warn!("usb: port {}: nu am 64 KiB contigui: raman la 4 KiB pe comanda", bot.port);
+                    BIG_READS.store(false, core::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        }
+        let (max, data) = if big_reads() && bot.big != 0 { (BIG_SECTORS, bot.big) } else { (MAX_SECTORS, bot.data) };
         let mut done = 0u64;
         while done < total {
-            let n = ((total - done) as u32).min(MAX_SECTORS);
+            let n = ((total - done) as u32).min(max);
             let start = (lba + done) as u32;
             let s = start.to_be_bytes();
             let cmd = [0x28, 0, s[0], s[1], s[2], s[3], 0, (n >> 8) as u8, n as u8, 0]; // READ(10)
-            super::with_controller(bot.ctrl, |x| bot.scsi(x, &cmd, n * SECTOR as u32, false)).ok_or(BlockError::OutOfRange)??;
+            super::with_controller(bot.ctrl, |x| bot.scsi_with(x, &cmd, n * SECTOR as u32, false, data))
+                .ok_or(BlockError::OutOfRange)??;
             let bytes = n as usize * SECTOR;
-            buf[done as usize * SECTOR..done as usize * SECTOR + bytes].copy_from_slice(bot.data(bytes));
+            // SAFETY: `data` is this driver's buffer (one frame, or the 64 KiB block) and the transfer finished.
+            let got = unsafe { core::slice::from_raw_parts(phys_to_virt(data), bytes) };
+            buf[done as usize * SECTOR..done as usize * SECTOR + bytes].copy_from_slice(got);
             done += n as u64;
         }
         Ok(())

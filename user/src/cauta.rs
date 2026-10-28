@@ -10,8 +10,16 @@
 //! on 16 rows (reading the text); score = 16 x time(1 row) + time(16 rows).
 //! Options: `--emb E` (default 512, a multiple of 32), `--iesire <dir>`, `--test-stricat` (adds the deliberately wrong
 //! variant, which must be rejected: used by the QEMU test).
+//!
+//! P6-29 (C-29): the small problem above is too small for a real model (on the workstation it picked "1 thread", the
+//! wrong choice for model #459). When a KGR1 model is on the stick (`--model <cale>`, default: the first *.kgr in the
+//! output dir), only its first megabytes are read (the keys: layers, E, vocabulary, F32 or Q8_0) and every correct
+//! variant is also timed on **the products of one generated token of that model** (every layer's qkv, projection,
+//! fc and MLP output, then the output head), on pseudo-random weights of the same sizes (the real ones would take the
+//! whole file). The output head is checked against the float64 control too. With a model, the choice is the fastest
+//! variant on the model; the thread counts tried are 1, 2, 4, ..., half the processors and all of them.
 
-use crate::kgr::{self, Mat, Order, Tuning};
+use crate::kgr::{self, File, Mat, Order, Tuning};
 use alloc::{string::String, vec, vec::Vec};
 use cyber_user::println;
 
@@ -19,32 +27,7 @@ use cyber_user::println;
 const TOL: f64 = 1e-5;
 const ROWS: usize = 16;
 
-fn rdtsc() -> u64 {
-    let (lo, hi): (u32, u32);
-    // SAFETY: RDTSC only reads the time-stamp counter (allowed in ring 3: the kernel leaves CR4.TSD clear).
-    unsafe { core::arch::asm!("rdtsc", out("eax") lo, out("edx") hi, options(nomem, nostack)) };
-    (hi as u64) << 32 | lo as u64
-}
-
-fn uptime_ms() -> u64 {
-    cyber_user::mem_info().map(|m| m.uptime_ms).unwrap_or(0)
-}
-
-/// TSC cycles per millisecond, measured over ~200 ms of the kernel clock (from one clock edge to another).
-fn calibrate() -> u64 {
-    let edge = |after: u64| loop {
-        let t = uptime_ms();
-        if t > after {
-            return t;
-        }
-        core::hint::spin_loop();
-    };
-    let a = edge(uptime_ms());
-    let c0 = rdtsc();
-    let b = edge(a + 199);
-    let c1 = rdtsc();
-    ((c1 - c0) / (b - a).max(1)).max(1)
-}
+use kgr::prof::{calibrate, now as rdtsc};
 
 /// Deterministic pseudo-random numbers in [-1, 1).
 fn fill(v: &mut [f32], mut seed: u64) {
@@ -129,8 +112,127 @@ fn write_file(path: &str, text: &str) -> i64 {
     if n < 0 { n } else if n as usize != text.len() { -5 } else { 0 }
 }
 
+/// Bytes read from the start of a model file for its keys (the tokenizer text is among them).
+const HEAD_BYTES: usize = 4 << 20;
+
+/// The sizes of a model: (layers, E, vocabulary, Q8_0?), from the keys at the start of its file.
+fn model_sizes(path: &str) -> Result<(usize, usize, usize, bool), String> {
+    let fd = cyber_user::open(path);
+    if fd < 0 {
+        return Err(alloc::format!("{}: {}", path, cyber_user::error_text(fd)));
+    }
+    let buf = cyber_user::mem_map(HEAD_BYTES).map_err(|e| alloc::format!("memorie: {}", cyber_user::error_text(e)))?;
+    // SAFETY: a fresh region of HEAD_BYTES bytes owned by this program (kept until it exits).
+    let buf = unsafe { core::slice::from_raw_parts_mut(buf, HEAD_BYTES) };
+    let mut at = 0;
+    while at < buf.len() {
+        let n = cyber_user::read(fd, &mut buf[at..]);
+        if n <= 0 {
+            break;
+        }
+        at += n as usize;
+    }
+    cyber_user::close(fd);
+    let f = File::parse_keys(&buf[..at]).map_err(|e| alloc::format!("{}: {}", path, e))?;
+    let (l, e, v) = (f.int("n_straturi")?, f.int("n_emb")?, f.int("vocabular")?);
+    if e % 32 != 0 || e > 16384 || l > 256 || v > 1 << 20 {
+        return Err(alloc::format!("{}: dimensiuni nerezonabile (E {}, {} straturi, vocabular {})", path, e, l, v));
+    }
+    Ok((l, e, v, f.text("fel") == Some("q8_0")))
+}
+
+/// First *.kgr in `dir`.
+fn first_model(dir: &str) -> Option<String> {
+    let mut buf = [0u8; 4096];
+    let n = cyber_user::list(dir, &mut buf);
+    if n <= 0 {
+        return None;
+    }
+    core::str::from_utf8(&buf[..n as usize])
+        .ok()?
+        .split(['\n', '\0'])
+        .find(|l| l.to_ascii_lowercase().ends_with(".kgr"))
+        .map(|l| alloc::format!("{}/{}", dir, l))
+}
+
+/// The products of one generated token of a model (rows, cols): per layer qkv, projection, fc, MLP output; then the
+/// head. Pseudo-random weights in one region (Q8_0 blocks with scale 1/127, or f32 in [-1, 1)).
+struct Workload {
+    mats: Vec<Mat<'static>>,
+    bytes: usize,
+}
+
+fn workload(layers: usize, e: usize, vocab: usize, q8: bool) -> Result<Workload, String> {
+    let mut shapes = Vec::new();
+    for _ in 0..layers {
+        shapes.extend_from_slice(&[(3 * e, e), (e, e), (4 * e, e), (e, 4 * e)]);
+    }
+    shapes.push((vocab, e));
+    let size = |(r, c): (usize, usize)| if q8 { r * (c / 32) * 36 } else { r * c * 4 };
+    let bytes: usize = shapes.iter().map(|&s| size(s)).sum();
+    let region = cyber_user::mem_map(bytes).map_err(|err| alloc::format!("memorie pentru {} MiB: {}", bytes >> 20, cyber_user::error_text(err)))?;
+    // SAFETY: a fresh region of `bytes` bytes, page aligned, owned by this program until it exits; split below into
+    // disjoint matrices that are only read.
+    let all: &'static mut [u8] = unsafe { core::slice::from_raw_parts_mut(region, bytes) };
+    let mut seed = 0x9e3779b97f4a7c15u64;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    if q8 {
+        let scale = (1.0f32 / 127.0).to_le_bytes();
+        for blk in all.chunks_exact_mut(36) {
+            blk[..4].copy_from_slice(&scale);
+            for q in blk[4..].chunks_exact_mut(8) {
+                let r = next().to_le_bytes();
+                for (o, b) in q.iter_mut().zip(r) {
+                    *o = (b as i8).max(-127) as u8;
+                }
+            }
+        }
+    } else {
+        for w in all.chunks_exact_mut(4) {
+            let v = ((next() >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0;
+            w.copy_from_slice(&v.to_le_bytes());
+        }
+    }
+    let mut mats = Vec::new();
+    let mut rest: &'static [u8] = all;
+    for &(r, c) in &shapes {
+        let (m, tail) = rest.split_at(size((r, c)));
+        rest = tail;
+        mats.push(if q8 {
+            Mat::from_q8(m, r, c)
+        } else {
+            // SAFETY: the region is page aligned and every matrix size is a multiple of 4 bytes, so `m` is f32-aligned.
+            Mat::from_f32(unsafe { core::slice::from_raw_parts(m.as_ptr() as *const f32, m.len() / 4) }, r, c)
+        });
+    }
+    Ok(Workload { mats, bytes })
+}
+
+/// Cycles of one token's products (fewest of 3 runs after a warm-up); `y` ends with the head's output.
+fn time_model(w: &Workload, x: &[f32], y: &mut [f32], t: Tuning) -> u64 {
+    let pass = |y: &mut [f32]| {
+        for m in &w.mats {
+            kgr::linear(m, None, &x[..m.cols], 1, &mut y[..m.rows], t);
+        }
+    };
+    pass(y);
+    (0..3)
+        .map(|_| {
+            let c0 = rdtsc();
+            pass(y);
+            rdtsc() - c0
+        })
+        .min()
+        .unwrap()
+}
+
 pub fn run(args: &[&str]) -> i64 {
-    let (mut emb, mut dir, mut broken) = (512usize, String::from("/usb/kronos"), false);
+    let (mut emb, mut dir, mut broken, mut model) = (512usize, String::from("/usb/kronos"), false, None::<String>);
     let mut i = 0;
     while i < args.len() {
         match args[i] {
@@ -143,6 +245,10 @@ pub fn run(args: &[&str]) -> i64 {
                 i += 1;
             }
             "--test-stricat" => broken = true,
+            "--model" if i + 1 < args.len() => {
+                model = Some(args[i + 1].into());
+                i += 1;
+            }
             a => {
                 println!("kronos-calcul --cauta: argument necunoscut `{}`", a);
                 return 2;
@@ -186,6 +292,43 @@ pub fn run(args: &[&str]) -> i64 {
     if cpus > 1 {
         threads.push(cpus.min(kgr::MAX_THREADS));
     }
+    // Half the processors: with Hyper-Threading, one thread per physical core may beat two (P6-29).
+    let half = (cpus / 2).min(kgr::MAX_THREADS);
+    if half > 2 && !threads.contains(&half) {
+        threads.push(half);
+        threads.sort_unstable();
+    }
+    // The model on the stick, if any (P6-29).
+    let model = model.or_else(|| first_model(&dir));
+    let mut work = None;
+    if let Some(path) = &model {
+        match model_sizes(path).and_then(|(l, e, v, q8)| workload(l, e, v, q8).map(|w| (w, l, e, v, q8))) {
+            Ok((w, l, e, v, q8)) => {
+                println!(
+                    "cauta: pe dimensiunile modelului {}: {} straturi, E {}, vocabular {}, {}; {} produse pe simbol, {:.1} MiB de greutati (aleatoare, aceleasi marimi)",
+                    path,
+                    l,
+                    e,
+                    v,
+                    if q8 { "Q8_0" } else { "F32" },
+                    w.mats.len(),
+                    w.bytes as f64 / 1048576.0
+                );
+                work = Some(w);
+            }
+            Err(err) => println!("cauta: modelul nu se poate folosi ({}); doar problema mica", err),
+        }
+    } else {
+        println!("cauta: niciun model .kgr in {} (sau --model): doar problema mica", dir);
+    }
+    let (mut xm, mut ym, mut head_control) = (Vec::new(), Vec::new(), None);
+    if let Some(w) = &work {
+        let head = w.mats.last().unwrap();
+        xm = vec![0.0f32; 4 * head.cols];
+        fill(&mut xm, 29);
+        ym = vec![0.0f32; w.mats.iter().map(|m| m.rows).max().unwrap()];
+        head_control = Some(control(head, &xm[..head.cols], 1));
+    }
     let simds: &[bool] = if kgr::has_avx2_fma() { &[false, true] } else { &[false] };
     let mut orders = vec![Order::TJ, Order::JT];
     if broken {
@@ -207,8 +350,26 @@ pub fn run(args: &[&str]) -> i64 {
                     println!("cauta: {}: RESPINSA ({} rezultate in afara tolerantei)", t.describe(), wrong);
                     continue;
                 }
-                let score = 16 * a + b;
-                println!("cauta: {}: 1 rand {} us, {} randuri {} us: corecta", t.describe(), us(a, per_ms), ROWS, us(b, per_ms));
+                let mut score = 16 * a + b;
+                let mut on_model = String::new();
+                if let (Some(w), Some(hc)) = (&work, &head_control) {
+                    let c = time_model(w, &xm, &mut ym, t);
+                    let head = w.mats.last().unwrap();
+                    let wrong = bad(&ym[..head.rows], hc);
+                    if wrong > 0 {
+                        rejected += 1;
+                        println!("cauta: {}: RESPINSA pe model ({} rezultate ale capului in afara tolerantei)", t.describe(), wrong);
+                        continue;
+                    }
+                    score = c;
+                    on_model = alloc::format!(
+                        "; model: {} us/simbol ({:.1} GB/s, ~{} simboluri/s doar produsele)",
+                        us(c, per_ms),
+                        w.bytes as f64 / (c as f64 / per_ms as f64 * 1e6),
+                        per_ms * 1000 / c.max(1)
+                    );
+                }
+                println!("cauta: {}: 1 rand {} us, {} randuri {} us: corecta{}", t.describe(), us(a, per_ms), ROWS, us(b, per_ms), on_model);
                 if score < best_score {
                     best_score = score;
                     best = Some((t, a, b));
@@ -222,14 +383,19 @@ pub fn run(args: &[&str]) -> i64 {
     };
     let base = Tuning { threads: 1, simd: false, order: Order::TJ };
     let (a0, b0) = (time(&m, &x[..inp], 1, &mut y1, base), time(&m, &x, ROWS, &mut y16, base));
+    let base_score = match &work {
+        Some(w) => time_model(w, &xm, &mut ym, base),
+        None => 16 * a0 + b0,
+    };
     println!(
-        "cauta: {} variante incercate, {} respinse; cea mai buna: {} ({}x fata de scalar pe 1 fir)",
+        "cauta: {} variante incercate, {} respinse; cea mai buna{}: {} ({}x fata de scalar pe 1 fir)",
         tried,
         rejected,
+        if work.is_some() { " pe model" } else { "" },
         t.describe(),
-        (16 * a0 + b0) / best_score.max(1)
+        base_score / best_score.max(1)
     );
-    let note = alloc::format!(
+    let mut note = alloc::format!(
         "# masurat: 1 rand {} us, {} randuri {} us (scalar pe 1 fir: {} us, {} us), E = {}, TSC {} cicluri/ms\n",
         us(a, per_ms),
         ROWS,
@@ -239,6 +405,16 @@ pub fn run(args: &[&str]) -> i64 {
         emb,
         per_ms
     );
+    if let (Some(w), Some(path)) = (&work, &model) {
+        note += &alloc::format!(
+            "# pe model ({}, {:.1} MiB pe simbol): {} us/simbol (scalar pe 1 fir: {} us)\n",
+            path,
+            w.bytes as f64 / 1048576.0,
+            us(best_score, per_ms),
+            us(base_score, per_ms)
+        );
+    }
+    kgr::stop_pool();
     let mut probe = [0u8; 16];
     if cyber_user::list(&dir, &mut probe) < 0 && cyber_user::create(&dir, true) < 0 {
         println!("cauta: nu pot crea {} (stick-ul are cyber.rw?)", dir);

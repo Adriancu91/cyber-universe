@@ -40,7 +40,14 @@ pub struct Fat32 {
     /// The FAT sector read last (its number and bytes): walking a chain reads 128 entries per sector, so a
     /// multi-megabyte file is walked with one disk read per 128 clusters instead of one per cluster.
     fat_cache: crate::sched::Mutex<(u64, [u8; SECTOR])>,
+    /// Where the last read stopped (P6-29): (first cluster of the file, file offset of a cluster, that cluster).
+    /// The next read of the same file at or after that offset walks the chain from there instead of from the start,
+    /// so reading a file in pieces costs one walk in total, not one per piece. Cleared by every FAT change.
+    read_at: crate::sched::Mutex<(u32, u64, u32)>,
 }
+
+/// Most bytes one disk request of `read` asks for (consecutive clusters are read together).
+const READ_RUN: usize = 64 * 1024;
 
 #[derive(Clone)]
 struct DirEntry {
@@ -129,6 +136,7 @@ impl Fat32 {
             writable: false,
             next_free: AtomicU32::new(hint),
             fat_cache: crate::sched::Mutex::new((u64::MAX, [0; SECTOR])),
+            read_at: crate::sched::Mutex::new((0, 0, 0)),
         };
         fat.writable = fat.lookup(&[WRITE_MARKER]).is_ok_and(|e| !e.is_dir);
         Ok(fat)
@@ -422,6 +430,7 @@ impl Fat32 {
 
     /// Sets the FAT entry of `cluster` in every copy of the FAT (the top 4 bits are kept, as required).
     fn set_fat(&self, cluster: u32, value: u32) -> Result<(), FsError> {
+        *self.read_at.lock() = (0, 0, 0); // a chain changed: the saved read position may be wrong now
         let offset = cluster as u64 * 4;
         let mut sector = [0u8; SECTOR];
         for copy in 0..self.fats {
@@ -605,21 +614,72 @@ impl FileSystem for Fat32 {
             return Ok(0);
         }
         let cb = self.cluster_bytes() as u64;
-        let mut buf = vec![0u8; cb as usize];
-        let mut pos = 0u64; // file offset of the current cluster
-        let mut written = 0usize;
-        self.walk(e.cluster, |c| {
-            if pos + cb > offset {
-                self.read_cluster(c, &mut buf)?;
-                let from = offset.max(pos);
-                let to = end.min(pos + cb);
-                let n = (to - from) as usize;
-                out[written..written + n].copy_from_slice(&buf[(from - pos) as usize..(to - pos) as usize]);
-                written += n;
+        // Start at the saved position when it is in this file and not after `offset` (P6-29).
+        let (mut c, mut pos) = (e.cluster, 0u64);
+        {
+            let saved = self.read_at.lock();
+            if saved.0 == e.cluster && e.cluster != 0 && saved.1 <= offset - offset % cb && self.valid(saved.2) {
+                (pos, c) = (saved.1, saved.2);
             }
+        }
+        // Clusters before `offset`: only followed in the FAT.
+        let mut steps = 0u32;
+        while pos + cb <= offset {
+            c = self.next(c).ok_or(FsError::NotFound)?;
             pos += cb;
-            Ok(pos < end)
-        })?;
+            steps += 1;
+            if steps > self.clusters {
+                return Err(FsError::NotFound); // a looped chain
+            }
+        }
+        // The rest: runs of consecutive clusters, each read with one request of at most READ_RUN bytes.
+        let per_run = (READ_RUN as u64 / cb).max(1);
+        let mut buf = vec![0u8; (per_run * cb) as usize];
+        let mut written = 0usize;
+        loop {
+            if !self.valid(c) {
+                break;
+            }
+            let (first, first_pos) = (c, pos);
+            let mut n = 1u64;
+            let mut after = None;
+            while n < per_run && first_pos + n * cb < end {
+                match self.next(c) {
+                    Some(nc) if nc == c + 1 => {
+                        c = nc;
+                        n += 1;
+                    }
+                    other => {
+                        after = Some(other);
+                        break;
+                    }
+                }
+            }
+            let bytes = (n * cb) as usize;
+            self.dev.read(self.cluster_lba(first), &mut buf[..bytes]).map_err(|_| FsError::NotFound)?;
+            let from = offset.max(first_pos);
+            let to = end.min(first_pos + n * cb);
+            let k = (to - from) as usize;
+            out[written..written + k].copy_from_slice(&buf[(from - first_pos) as usize..(to - first_pos) as usize]);
+            written += k;
+            pos = first_pos + n * cb;
+            *self.read_at.lock() = (e.cluster, first_pos + (n - 1) * cb, c);
+            if pos >= end {
+                break;
+            }
+            c = match after {
+                Some(Some(nc)) => nc,
+                Some(None) => break,
+                None => match self.next(c) {
+                    Some(nc) => nc,
+                    None => break,
+                },
+            };
+            steps += n as u32;
+            if steps > self.clusters {
+                break;
+            }
+        }
         Ok(written)
     }
 

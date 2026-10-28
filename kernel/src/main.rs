@@ -99,6 +99,10 @@ extern "C" fn kernel_main() -> ! {
         panic!("initializarea memoriei a esuat");
     }
     arch::x86_64::smp::reserve_trampoline(); // before low memory is handed out (K6-02)
+    // P6-29: a RAM copy of the screen, so scrolling never reads video memory (slow on real graphics cards).
+    if gfx::console::enable_shadow() {
+        info!("ecran: copie in memorie a ecranului pornita (derularea nu mai citeste memoria placii video)");
+    }
     #[cfg(feature = "test-high-dma")]
     test_high_dma();
     sched::init();
@@ -276,7 +280,14 @@ fn run_tests() -> ! {
     #[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
     test_disk_files("/disk");
     #[cfg(feature = "test-usbdisk")]
-    test_disk_files("/usb");
+    {
+        test_disk_files("/usb");
+        // P6-29: the same checks with 64 KiB per READ(10) (`usb citire mare`), then back to 4 KiB.
+        crate::drivers::usb::storage::set_big_reads(true);
+        test_disk_files("/usb");
+        crate::drivers::usb::storage::set_big_reads(false);
+        info!("test: usb: citire 64 KiB pe comanda OK, inapoi la 4 KiB");
+    }
     #[cfg(feature = "test-disk")]
     test_fat32_mbr();
     test_elf();
@@ -884,6 +895,20 @@ fn test_disk_files(at: &str) {
     let mut part = [0u8; 1000];
     assert!(fs::read(&alloc::format!("{}/docs/mare.bin", at), 50_000, &mut part) == Ok(1000), "citire de la mijloc");
     assert!(part.iter().enumerate().all(|(i, &b)| b == (((50_000 + i) * 7) ^ ((50_000 + i) >> 8)) as u8), "continut gresit la mijloc");
+    // P6-29: in pieces of 7000 bytes (FAT32 continues from where the last read stopped), then pieces from before it.
+    let want = |at: usize| ((at * 7) ^ (at >> 8)) as u8;
+    let mut piece = alloc::vec![0u8; 7000];
+    let mut off = 0;
+    while off < 100 * 1024 {
+        let n = fs::read(&alloc::format!("{}/docs/mare.bin", at), off as u64, &mut piece).expect("test: citire pe bucati");
+        assert!(n == piece.len().min(100 * 1024 - off), "bucata la {}: {} octeti", off, n);
+        assert!(piece[..n].iter().enumerate().all(|(i, &b)| b == want(off + i)), "bucata gresita la {}", off);
+        off += n;
+    }
+    for off in [90_000usize, 3, 40_960, 0] {
+        let n = fs::read(&alloc::format!("{}/docs/mare.bin", at), off as u64, &mut piece).unwrap();
+        assert!(piece[..n].iter().enumerate().all(|(i, &b)| b == want(off + i)), "bucata inapoi gresita la {}", off);
+    }
     assert!(fs::write(&alloc::format!("{}/salut.txt", at), 0, b"x") == Err(FsError::ReadOnly), "scriere acceptata pe FAT32");
 
     info!("test: disc OK (nume lungi, 100 KiB cu suma {}, doar citire)", hex.trim());

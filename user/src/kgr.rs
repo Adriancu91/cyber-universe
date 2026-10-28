@@ -1,7 +1,9 @@
 //! P6-27 (command C-25): the KGR1 engine — reads a Kronos model file (F32 or Q8_0) and runs its forward pass on every
 //! processor. Written by us from the specification in the hub (`integrare/kronos/format_greutati.md`, Kronos commit
 //! 190bd38), without the Kronos code. The elementary functions (exp, sqrt, erf) and GELU come from Cyber-GPU's
-//! `gpu-compute` (pinned in Cargo.toml); the matrix-vector products are ours: scalar (soft-float) or AVX2 + FMA.
+//! `gpu-compute` (pinned in Cargo.toml); the matrix-vector products are ours: scalar or AVX2 + FMA. Since P6-29 the
+//! programs are built for our own target (`user/x86_64-cyber-user.json`, SSE2 in hardware), so the scalar code runs on
+//! the processor's floating point unit instead of being emulated in software (same IEEE results, many times faster).
 //!
 //! Layout of the computation (spec, "Tensorii și calculul"): x = tok[id] + pos[p]; per layer: pre-LayerNorm, fused
 //! QKV, causal attention (head j = columns j*D .. j*D+D-1), output projection, residual; pre-LayerNorm, MLP 4E with
@@ -9,7 +11,7 @@
 //! positions are kept (a cache), so generating one more token costs one row, not the whole text again.
 
 use alloc::{string::String, vec, vec::Vec};
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use gpu_compute::{math, reference};
 
 /// Most threads one forward pass uses (the workstation has 36; the kernel allows 64 per program).
@@ -140,6 +142,34 @@ impl<'a> File<'a> {
         Ok(File { keys, tensors })
     }
 
+    /// Only the keys at the start of a file (P6-29: `kronos-calcul --cauta` reads the model's sizes from the first
+    /// megabytes of the file, without its tensors). `tensors` stays empty.
+    pub fn parse_keys(b: &'a [u8]) -> Result<File<'a>, &'static str> {
+        let mut r = Reader { b, at: 0 };
+        if r.take(4)? != b"KGR1" {
+            return Err("nu e un fisier KGR1 (lipseste \"KGR1\" la inceput)");
+        }
+        if r.u32()? != 1 {
+            return Err("versiune KGR1 necunoscuta (stiu doar 1)");
+        }
+        let (nkeys, _) = (r.u64()?, r.u64()?);
+        if nkeys > 10_000 {
+            return Err("antet nerezonabil (prea multe chei)");
+        }
+        let mut keys = Vec::new();
+        for _ in 0..nkeys {
+            let k = r.text()?;
+            let v = match r.u32()? {
+                1 => Value::Int(r.u64()? as i64),
+                2 => Value::Float(f64::from_bits(r.u64()?)),
+                3 => Value::Text(r.text()?),
+                _ => return Err("felul unei chei necunoscut"),
+            };
+            keys.push((k, v));
+        }
+        Ok(File { keys, tensors: Vec::new() })
+    }
+
     pub fn key(&self, k: &str) -> Option<&Value<'a>> {
         self.keys.iter().find(|(n, _)| *n == k).map(|(_, v)| v)
     }
@@ -194,10 +224,24 @@ impl<'a> Mat<'a> {
         })
     }
 
+    /// A matrix over f32 values (row-major).
+    pub fn from_f32(f: &'a [f32], rows: usize, cols: usize) -> Mat<'a> {
+        assert!(f.len() == rows * cols);
+        Mat { rows, cols, kind: Kind::F32, f, q: &[] }
+    }
+
     /// A matrix over Q8_0 bytes (each row = cols / 32 blocks of 36 bytes).
     pub fn from_q8(q: &'a [u8], rows: usize, cols: usize) -> Mat<'a> {
         assert!(cols % 32 == 0 && q.len() == rows * (cols / 32) * 36);
         Mat { rows, cols, kind: Kind::Q8, f: &[], q }
+    }
+
+    /// Bytes of weights one product reads.
+    pub fn bytes(&self) -> usize {
+        match self.kind {
+            Kind::F32 => self.rows * self.cols * 4,
+            Kind::Q8 => self.rows * (self.cols / 32) * 36,
+        }
     }
 
     /// Row `r` as f32 values in `out` (Q8_0: scale * number).
@@ -257,8 +301,8 @@ impl<'a> Mat<'a> {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Vector kernels (AVX2 + FMA). This target is soft-float and refuses `target_feature`, so they are written in assembly
-// (as in kronos-calcul). The kernel saves the AVX registers of every thread (K6-01).
+// Vector kernels (AVX2 + FMA), written in assembly (as in kronos-calcul; from before P6-29, when the target was
+// soft-float and refused `target_feature`). The kernel saves the AVX registers of every thread (K6-01).
 // ---------------------------------------------------------------------------------------------------------------
 
 /// True when the processor has AVX2 and FMA and the kernel enabled the AVX state (OSXSAVE, XCR0).
@@ -365,57 +409,210 @@ fn dot_q8_avx2(row: &[u8], x: &[f32]) -> f32 {
 // Work split over threads.
 // ---------------------------------------------------------------------------------------------------------------
 
+// P6-29 (C-29): a pool of threads started once (the first `par` that needs them) and kept for the whole program.
+// Before, every product started and joined fresh threads (stacks mapped and unmapped, TLB flushes on every core):
+// 49 products per token x 35 threads on the workstation, so more threads were slower. Now `par` publishes the job
+// with a generation counter; the workers spin on it (`pause`, a `yield` now and then, never a 10 ms sleep), run their
+// part and count themselves done; `par` waits the same way. Each output element is still computed by exactly one
+// thread with the same code, so the results are the same bit for bit whatever the number of threads.
+
 struct Job<'a> {
     n: usize,
     parts: usize,
-    f: &'a (dyn Fn(usize, usize) + Sync),
+    f: &'a (dyn Fn(usize, usize, usize) + Sync),
 }
 
-/// Address of the `Job` the workers run (one at a time; `par` joins every worker before it returns).
+/// Address of the `Job` being run (valid until every worker counted itself in DONE).
 static JOB: AtomicUsize = AtomicUsize::new(0);
+/// Bumped by `par` for every job (and once more to stop the pool).
+static GEN: AtomicUsize = AtomicUsize::new(0);
+/// Workers done with the current generation.
+static DONE: AtomicUsize = AtomicUsize::new(0);
+/// Workers started (they are parts 1..=WORKERS); only the main thread starts or stops them.
+static WORKERS: AtomicUsize = AtomicUsize::new(0);
+static QUIT: AtomicBool = AtomicBool::new(false);
+/// Thread id and stack of every worker (index = part - 1).
+static HANDLES: [(AtomicI64, AtomicUsize); MAX_THREADS] = [const { (AtomicI64::new(0), AtomicUsize::new(0)) }; MAX_THREADS];
+
+/// Spins of a waiting thread between two `yield`s (gives the processor away when threads outnumber processors, as in
+/// QEMU; costs ~1 us on a free core).
+const SPINS: u32 = 4000;
 
 fn split(n: usize, parts: usize, part: usize) -> (usize, usize) {
     (n * part / parts, n * (part + 1) / parts)
 }
 
-extern "C" fn worker(part: u64) -> i64 {
-    // SAFETY: JOB holds the address of the Job on `par`'s stack, which waits (join) for this thread.
-    let job = unsafe { &*(JOB.load(Ordering::Acquire) as *const Job<'static>) };
-    let (a, b) = split(job.n, job.parts, part as usize);
-    (job.f)(a, b);
-    0
+fn spin_until(done: impl Fn() -> bool) {
+    let mut spins = 0;
+    while !done() {
+        core::hint::spin_loop();
+        spins += 1;
+        if spins == SPINS {
+            spins = 0;
+            cyber_user::yield_now();
+        }
+    }
+}
+
+/// `arg` = part (low 8 bits) | the generation current when the worker was started (so it cannot miss the first job).
+extern "C" fn worker(arg: u64) -> i64 {
+    let part = (arg & 0xff) as usize;
+    let mut seen = (arg >> 8) as usize;
+    loop {
+        spin_until(|| GEN.load(Ordering::Acquire) != seen);
+        seen = GEN.load(Ordering::Acquire);
+        if QUIT.load(Ordering::Acquire) {
+            DONE.fetch_add(1, Ordering::AcqRel);
+            return 0;
+        }
+        // SAFETY: JOB holds the address of the Job on `par`'s stack, published before GEN was bumped; `par` does not
+        // return (so the Job lives) until every worker, this one included, has counted itself in DONE below.
+        let job = unsafe { &*(JOB.load(Ordering::Acquire) as *const Job<'static>) };
+        if part < job.parts {
+            let (a, b) = split(job.n, job.parts, part);
+            (job.f)(part, a, b);
+        }
+        DONE.fetch_add(1, Ordering::AcqRel);
+    }
+}
+
+/// Starts workers until there are `want` (fewer if the kernel refuses); returns how many there are.
+fn grow_pool(want: usize) -> usize {
+    let mut have = WORKERS.load(Ordering::Relaxed);
+    while have < want.min(MAX_THREADS - 1) {
+        let part = have + 1;
+        let (id, stack) = cyber_user::thread::spawn_with_stack(worker, part as u64 | (GEN.load(Ordering::Acquire) as u64) << 8);
+        if id < 0 {
+            break;
+        }
+        HANDLES[have].0.store(id, Ordering::Relaxed);
+        HANDLES[have].1.store(stack as usize, Ordering::Relaxed);
+        have += 1;
+        WORKERS.store(have, Ordering::Release);
+    }
+    have
+}
+
+/// Stops the pool's threads (the next `par` that needs threads starts them again).
+pub fn stop_pool() {
+    let w = WORKERS.load(Ordering::Relaxed);
+    if w == 0 {
+        return;
+    }
+    DONE.store(0, Ordering::Relaxed);
+    QUIT.store(true, Ordering::Release);
+    GEN.fetch_add(1, Ordering::AcqRel);
+    for h in HANDLES.iter().take(w) {
+        cyber_user::thread::join(h.0.load(Ordering::Relaxed));
+    }
+    // The kernel unmaps only while the program has a single thread (K6-04), so after every join.
+    for h in HANDLES.iter().take(w) {
+        cyber_user::mem_unmap(h.1.load(Ordering::Relaxed) as *mut u8, cyber_user::thread::STACK);
+    }
+    WORKERS.store(0, Ordering::Release);
+    QUIT.store(false, Ordering::Release);
 }
 
 /// Calls `f(start, end)` on `parts` disjoint ranges of `0..n`, one per thread (part 0 on this thread).
 pub fn par(n: usize, parts: usize, f: &(dyn Fn(usize, usize) + Sync)) {
+    par_parts(n, parts, &|_, a, b| f(a, b));
+}
+
+/// As `par`, but `f` also gets the part number (0..parts), e.g. to pick its own scratch buffer.
+pub fn par_parts(n: usize, parts: usize, f: &(dyn Fn(usize, usize, usize) + Sync)) {
     let parts = parts.clamp(1, MAX_THREADS).min(n.max(1));
     if parts == 1 {
-        f(0, n);
+        f(0, 0, n);
         return;
     }
+    let workers = grow_pool(parts - 1);
     let job = Job { n, parts, f };
     JOB.store(&job as *const Job as usize, Ordering::Release);
-    let mut threads = [(0i64, core::ptr::null_mut::<u8>()); MAX_THREADS];
-    let mut started = 1;
-    for (p, t) in threads.iter_mut().enumerate().take(parts).skip(1) {
-        *t = cyber_user::thread::spawn_with_stack(worker, p as u64);
-        if t.0 < 0 {
-            break;
-        }
-        started += 1;
-    }
-    if started < parts {
-        // Not enough threads: the parts nobody took run here.
-        for p in started..parts {
-            let (a, b) = split(n, parts, p);
-            f(a, b);
-        }
+    DONE.store(0, Ordering::Release);
+    GEN.fetch_add(1, Ordering::AcqRel);
+    // Parts without a worker (the kernel refused a thread) run here.
+    for p in workers + 1..parts {
+        let (a, b) = split(n, parts, p);
+        f(p, a, b);
     }
     let (a, b) = split(n, parts, 0);
-    f(a, b);
-    for t in threads.iter().take(started).skip(1) {
-        cyber_user::thread::join(t.0);
-        cyber_user::mem_unmap(t.1, cyber_user::thread::STACK);
+    f(0, a, b);
+    let t0 = prof::now();
+    spin_until(|| DONE.load(Ordering::Acquire) == workers);
+    prof::add(prof::SYNC, prof::now() - t0, 0);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Profile (P6-29, `kronos --profil`): processor cycles (TSC) per kind of work, summed over the run.
+// ---------------------------------------------------------------------------------------------------------------
+
+pub mod prof {
+    use core::sync::atomic::{AtomicU64, Ordering};
+
+    pub const QKV: usize = 0;
+    pub const PROJ: usize = 1;
+    pub const FC: usize = 2;
+    pub const OUT: usize = 3;
+    pub const HEAD: usize = 4;
+    pub const ATTN: usize = 5;
+    pub const REST: usize = 6;
+    /// Main thread waiting for the other threads at the end of a product (inside the times above).
+    pub const SYNC: usize = 7;
+    pub const N: usize = 8;
+    pub const NAMES: [&str; N] = [
+        "produs qkv (straturi)",
+        "produs proiectie (straturi)",
+        "produs fc 4E (straturi)",
+        "produs iesire MLP (straturi)",
+        "capul de iesire (vocabular)",
+        "atentia",
+        "restul (LayerNorm, GELU, adunari)",
+        "din care asteptarea firelor",
+    ];
+
+    static CYCLES: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
+    static BYTES: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
+
+    pub fn now() -> u64 {
+        let (lo, hi): (u32, u32);
+        // SAFETY: RDTSC only reads the time-stamp counter (allowed in ring 3: the kernel leaves CR4.TSD clear).
+        unsafe { core::arch::asm!("rdtsc", out("eax") lo, out("edx") hi, options(nomem, nostack)) };
+        (hi as u64) << 32 | lo as u64
+    }
+
+    /// Adds `cycles` (and `bytes` of weights read) to `kind`.
+    pub fn add(kind: usize, cycles: u64, bytes: u64) {
+        CYCLES[kind].fetch_add(cycles, Ordering::Relaxed);
+        BYTES[kind].fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    pub fn reset() {
+        for i in 0..N {
+            CYCLES[i].store(0, Ordering::Relaxed);
+            BYTES[i].store(0, Ordering::Relaxed);
+        }
+    }
+
+    /// TSC cycles per millisecond, measured over ~200 ms of the kernel clock (from one clock edge to another).
+    pub fn calibrate() -> u64 {
+        let ms = || cyber_user::mem_info().map(|m| m.uptime_ms).unwrap_or(0);
+        let edge = |after: u64| loop {
+            let t = ms();
+            if t > after {
+                return t;
+            }
+            core::hint::spin_loop();
+        };
+        let a = edge(ms());
+        let c0 = now();
+        let b = edge(a + 199);
+        let c1 = now();
+        ((c1 - c0) / (b - a).max(1)).max(1)
+    }
+
+    /// (cycles, bytes) of `kind`.
+    pub fn get(kind: usize) -> (u64, u64) {
+        (CYCLES[kind].load(Ordering::Relaxed), BYTES[kind].load(Ordering::Relaxed))
     }
 }
 
@@ -729,8 +926,10 @@ impl<'a> Model<'a> {
             + self.layers.iter().map(|l| m(&l.qkv) + m(&l.proj) + m(&l.fc) + m(&l.out) + 3 * e + 3 * e + 4 * e + e + e).sum::<usize>()
     }
 
-    fn linear(&self, w: &Mat, b: Option<&[f32]>, x: &[f32], rows: usize, y: &mut [f32]) {
+    fn linear(&self, kind: usize, w: &Mat, b: Option<&[f32]>, x: &[f32], rows: usize, y: &mut [f32]) {
+        let t0 = prof::now();
         linear(w, b, x, rows, y, self.tune);
+        prof::add(kind, prof::now() - t0, w.bytes() as u64);
     }
 
     /// Runs `ids` from position `len` on; returns the logits of every new position ([ids.len(), vocab]) when `all`,
@@ -765,36 +964,50 @@ impl<'a> Model<'a> {
         let mut tmp = vec![0.0f32; t * e];
         let mut big = vec![0.0f32; t * 4 * e];
         let scale = 1.0 / math::sqrt(d as f32);
-        let mut scores = vec![0.0f32; p0 + t];
+        // Attention is split over (position, head) pairs on the thread pool (P6-29); each part has its own scores row.
+        let parts = self.tune.threads.clamp(1, MAX_THREADS).min(t * h);
+        let mut scores = vec![0.0f32; parts * (p0 + t)];
+        let mut rest = 0u64;
         for li in 0..self.layers.len() {
             let l = &self.layers[li];
+            let c0 = prof::now();
             layernorm(&x, l.ln1, &mut hbuf, t, e, self.cfg.eps);
-            self.linear(&l.qkv, Some(l.qkv_b), &hbuf, t, &mut qkv);
+            rest += prof::now() - c0;
+            self.linear(prof::QKV, &l.qkv, Some(l.qkv_b), &hbuf, t, &mut qkv);
+            let c0 = prof::now();
             let (kc, vc) = (&mut self.kcache[li], &mut self.vcache[li]);
             for i in 0..t {
                 let r = &qkv[i * 3 * e..(i + 1) * 3 * e];
                 kc[(p0 + i) * e..(p0 + i + 1) * e].copy_from_slice(&r[e..2 * e]);
                 vc[(p0 + i) * e..(p0 + i + 1) * e].copy_from_slice(&r[2 * e..]);
             }
-            for i in 0..t {
-                let pos = p0 + i; // sees positions 0..=pos
-                let q = &qkv[i * 3 * e..i * 3 * e + e];
-                for j in 0..h {
-                    let qh = &q[j * d..(j + 1) * d];
+            let (kc, vc) = (&*kc, &*vc);
+            let (ao, so) = (Out(att.as_mut_ptr()), Out(scores.as_mut_ptr()));
+            let qkv = &qkv;
+            par_parts(t * h, parts, &|part, a, b| {
+                let (ao, so) = (ao, so);
+                // SAFETY: part `part` alone uses scores row `part` (parts rows of p0 + t floats were allocated).
+                let sc_all = unsafe { core::slice::from_raw_parts_mut(so.0.add(part * (p0 + t)), p0 + t) };
+                for item in a..b {
+                    let (i, j) = (item / h, item % h);
+                    let pos = p0 + i; // sees positions 0..=pos
+                    let qh = &qkv[i * 3 * e + j * d..i * 3 * e + (j + 1) * d];
+                    let sc = &mut sc_all[..=pos];
                     let mut max = f32::NEG_INFINITY;
-                    for (s, sc) in scores[..=pos].iter_mut().enumerate() {
+                    for (s, v) in sc.iter_mut().enumerate() {
                         let kh = &kc[s * e + j * d..s * e + (j + 1) * d];
-                        *sc = qh.iter().zip(kh).fold(0.0f32, |a, (q, k)| a + q * k) * scale;
-                        max = max.max(*sc);
+                        *v = qh.iter().zip(kh).fold(0.0f32, |a, (q, k)| a + q * k) * scale;
+                        max = max.max(*v);
                     }
                     let mut sum = 0.0f32;
-                    for sc in scores[..=pos].iter_mut() {
-                        *sc = math::exp(*sc - max);
-                        sum += *sc;
+                    for v in sc.iter_mut() {
+                        *v = math::exp(*v - max);
+                        sum += *v;
                     }
-                    let out = &mut att[i * e + j * d..i * e + (j + 1) * d];
+                    // SAFETY: (position i, head j) = att[i*e + j*d .. +d], written only by the part that has this item.
+                    let out = unsafe { core::slice::from_raw_parts_mut(ao.0.add(i * e + j * d), d) };
                     out.fill(0.0);
-                    for (s, &p) in scores[..=pos].iter().enumerate() {
+                    for (s, &p) in sc.iter().enumerate() {
                         let vh = &vc[s * e + j * d..s * e + (j + 1) * d];
                         for (o, v) in out.iter_mut().zip(vh) {
                             *o += p * v;
@@ -804,25 +1017,34 @@ impl<'a> Model<'a> {
                         *o /= sum;
                     }
                 }
-            }
+            });
+            prof::add(prof::ATTN, prof::now() - c0, 0);
             let l = &self.layers[li];
-            self.linear(&l.proj, Some(l.proj_b), &att, t, &mut tmp);
+            self.linear(prof::PROJ, &l.proj, Some(l.proj_b), &att, t, &mut tmp);
+            let c0 = prof::now();
             for (a, b) in x.iter_mut().zip(&tmp) {
                 *a += b;
             }
             layernorm(&x, l.ln2, &mut hbuf, t, e, self.cfg.eps);
-            self.linear(&l.fc, Some(l.fc_b), &hbuf, t, &mut big);
+            rest += prof::now() - c0;
+            self.linear(prof::FC, &l.fc, Some(l.fc_b), &hbuf, t, &mut big);
+            let c0 = prof::now();
             reference::gelu_erf(&mut big);
-            self.linear(&l.out, Some(l.out_b), &big, t, &mut tmp);
+            rest += prof::now() - c0;
+            self.linear(prof::OUT, &l.out, Some(l.out_b), &big, t, &mut tmp);
+            let c0 = prof::now();
             for (a, b) in x.iter_mut().zip(&tmp) {
                 *a += b;
             }
+            rest += prof::now() - c0;
         }
         self.len = p0 + t;
         let (first, rows) = if all { (0, t) } else { (t - 1, 1) };
+        let c0 = prof::now();
         layernorm(&x[first * e..], self.lnf, &mut hbuf, rows, e, self.cfg.eps);
+        prof::add(prof::REST, rest + prof::now() - c0, 0);
         let mut logits = vec![0.0f32; rows * self.cfg.vocab];
-        self.linear(&self.tok, None, &hbuf, rows, &mut logits);
+        self.linear(prof::HEAD, &self.tok, None, &hbuf, rows, &mut logits);
         Ok(logits)
     }
 }

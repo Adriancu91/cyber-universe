@@ -152,7 +152,8 @@ fn detect() -> Simd {
 }
 
 /// One step of a vector matmul: `orow[0..n] += a * brow[0..n]` (n a multiple of 8, or of 4 for SSE2). Written in
-/// assembly because this target (`x86_64-unknown-none`, soft-float) refuses `#[target_feature(enable = "sse")]`.
+/// assembly (written when the target was `x86_64-unknown-none`, soft-float, which refused `#[target_feature]`; P6-29
+/// moved the programs to `x86_64-cyber-user.json` with SSE2 in hardware, the assembly stays).
 /// With FMA each lane rounds once (a * b + o); otherwise it multiplies, rounds, adds, rounds — exactly what
 /// `reference::matmul` does for that element, so the result is bit-identical.
 fn axpy(simd: Simd, a: &f32, brow: &[f32], orow: &mut [f32]) {

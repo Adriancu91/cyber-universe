@@ -42,8 +42,13 @@ pub fn run() {
         a.extend_from_slice(text);
         assert!(run_one(&a) == 0, "kronos: codarea {:?} nu se decodeaza inapoi", text);
     }
-    let words = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--n", "5", "Ana", "are", "mere."];
+    let words = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--n", "5", "--profil", "Ana", "are", "mere."];
     assert!(run_one(&words) == 0, "kronos: kronos <text> a esuat");
+    // P6-29: the thread pool with more threads than processors (workers yield) must still match the reference.
+    let pool = ["kronos", "--verifica", "/disk/kronos/mini-q8.kgr", "/disk/kronos/mini-q8.ref", "--fire", "4"];
+    assert!(run_one(&pool) == 0, "kronos: Q8_0 pe 4 fire diferit de referinta");
+    let penalty = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--n", "5", "--repetitie", "1.5", "Ana", "are", "mere."];
+    assert!(run_one(&penalty) == 0, "kronos: --repetitie a esuat");
     let ms = (crate::arch::x86_64::apic::ticks() - t0) * 1000 / crate::arch::x86_64::apic::HZ;
     while sched::alive() > 1 {
         sched::sleep_ms(10);

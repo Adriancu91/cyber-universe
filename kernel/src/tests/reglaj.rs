@@ -13,7 +13,7 @@ fn run_one(args: &[&str]) -> i64 {
 
 pub fn run() {
     let before = frame::free_frames();
-    let code = run_one(&["/bin/kronos-calcul", "kronos-calcul", "--cauta", "--emb", "128", "--iesire", "/disk/kronos", "--test-stricat"]);
+    let code = run_one(&["/bin/kronos-calcul", "kronos-calcul", "--cauta", "--emb", "128", "--iesire", "/disk/kronos", "--test-stricat", "--model", "/disk/kronos/mic_q8_0.kgr"]);
     assert!(code == 0, "kronos-calcul --cauta a iesit cu {}", code);
     let list = fs::list("/disk/kronos").expect("test: /disk/kronos lipseste");
     let name = list.iter().map(|(n, _)| n.clone()).find(|n| n.starts_with("reglaj-")).expect("test: niciun reglaj-*.txt");

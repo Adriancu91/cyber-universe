@@ -5,6 +5,10 @@
   punctul de intrare (`entry!(main)`) și tratarea panicii. Fiecare fișier din `src/bin/` e un program.
 - **Cum se construiește:** `tools/build.sh` le compilează (executabile ELF statice la `0x400000`, vezi `user.ld`)
   și le pune în ISO la `/boot/bin/`, încărcate de Limine ca module.
+  **Ținta (P6-29, D-014):** `x86_64-cyber-user.json` = `x86_64-unknown-none` cu SSE/SSE2 în procesor (ABI-ul x86-64 obișnuit),
+  construită cu `-Zbuild-std=core,alloc` (`.cargo/config.toml`). Înainte, virgula mobilă a programelor era emulată în software
+  (soft-float, zeci de cicluri pe operație); rezultatele sunt aceleași (IEEE 754), doar mult mai repede. `_start` (din `entry!`)
+  aliniază stiva la 16 octeți, cum cere SSE. Nucleul rămâne soft-float.
 - **Programe:** `hello` — scrie „hello din ELF” și iese cu 0; `cat <fișier>...` — afișează fișiere (cod 1 dacă unul lipsește).
 - `demo` — deschide o fereastră 320×200 cu un dreptunghi roșu, marchează clicurile, iese la tasta `q` (scenariul `appwindow`).
 - `desktop` — desktopul „Cyber Universe”: fundal cu numele, bară jos cu butonul Start (meniu cu programele din `/bin`,
@@ -56,6 +60,14 @@
   Test: scenariile `kronos-kgr` (2 nuclee, AVX2) și `kronos-kgr-1` (1 nucleu, scalar), pe modelul minuscul cu greutăți
   aleatoare din `tests/kronos/` (`tools/kgr-mini.py`) și pe vectorii oficiali (`mic_f32.kgr`, `mic_q8_0.kgr`, `vectori.json`);
   `tools/build.sh` le pune pe discul de test la `/kronos` doar în build-urile `test-kronos-*`.
+  **Viteza (P6-29, comanda C-29):** firele lucrează într-un **bazin pornit o dată** (înainte: fire noi la fiecare produs,
+  49 de produse pe simbol); lucrul se dă printr-un contor de generație, firele așteaptă cu `pause` (și `yield` din când în
+  când, niciodată somn de 10 ms); fiecare rând al rezultatului e calculat de un singur fir, deci rezultatul e același bit cu bit
+  pe orice număr de fire. Atenția se împarte pe (poziție, cap) în același bazin. `kronos --profil <text>` arată, după
+  generare, unde s-a dus timpul simbolurilor noi (cicluri TSC): produsele qkv / proiecție / fc / ieșire pe straturi, capul de
+  ieșire, atenția, restul, așteptarea firelor, afișarea pe ecran, argmax — în ms, ms/simbol, procente și GB/s de greutăți.
+  `kronos --repetitie <p>` (opțional, implicit oprit): logit-ul fiecărui simbol deja apărut se împarte la `p` (dacă e pozitiv)
+  sau se înmulțește (dacă e negativ) înainte de alegere; fără opțiune, alegerea e greedy simplă, ca înainte.
 - `kronos-calcul --cauta [--emb E] [--iesire <dir>]` (P6-28, comanda C-27, `src/cauta.rs`) — primul pas spre „OS-ul care se
   reglează singur”: încearcă variante ale produsului din motorul KGR1 (vectori AVX2+FMA sau scalar; 1, 2, 4, … fire și toate
   nucleele; ordinea buclelor t-j sau j-t) pe o matrice Q8_0 [4E, E], pe 1 rând (generare) și pe 16 rânduri (citirea textului).
@@ -67,6 +79,11 @@
   de noi. AVX-512 nu e încă printre variante (QEMU nu-l are, deci n-ar avea test). Test: scenariul `kronos-reglaj`
   (`--test-stricat` adaugă o variantă stricată intenționat, care trebuie respinsă; `after-kronos-reglaj.sh` citește fișierul
   de pe imagine).
+  **Pe dimensiunile modelului (P6-29, C-29):** dacă e un `.kgr` pe stick (`--model <cale>`, implicit primul din `<dir>`), se
+  citesc doar primii 4 MiB (cheile: straturi, E, vocabular, F32/Q8_0) și fiecare variantă corectă se mai măsoară pe toate
+  produsele unui simbol generat de acel model (qkv, proiecție, fc, ieșire pe fiecare strat + capul), cu greutăți aleatoare de
+  aceleași mărimi (în memorie cât modelul); capul se verifică și el față de control. Alegerea se face atunci pe model.
+  Numărul de fire încercat: 1, 2, 4, …, jumătate din procesoare (un fir pe nucleu fizic, cu Hyper-Threading) și toate.
 - `fetch <nume> [port] [cale]` (P5-05) — descarcă o pagină web prin HTTP (TCP) și o scrie (fără antet); cod 0 dacă serverul a răspuns 200.
   `fetch https://<nume>[:port][/cale] [adresă]` (P5-16) — la fel prin HTTPS (TLS 1.3, biblioteca `tls/`): certificatul
   serverului se verifică față de certificatele din `/etc/certs/` (DER), ora din ceasul RTC (luată ca UTC), cheile din

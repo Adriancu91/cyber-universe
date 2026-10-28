@@ -59,7 +59,7 @@ KERNEL="$BUILD/target-$MODE/x86_64-unknown-none/release/cyber_kernel"
 # 2b. User programs (user/src/bin/*.rs), put in the initrd
 echo "[build] Construiesc programele utilizator..."
 ( cd "$ROOT/user" && cargo build --release --target-dir "$BUILD/target-user" )
-USER_BIN="$BUILD/target-user/x86_64-unknown-none/release"
+USER_BIN="$BUILD/target-user/x86_64-cyber-user/release"
 PROGRAMS=()
 # Programs named mod_* belong to modules (modules/*/module.toml), not to /bin.
 for src in "$ROOT"/user/src/bin/*.rs; do

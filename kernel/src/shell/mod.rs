@@ -82,6 +82,7 @@ pub fn run() {
             "mem" => mem(),
             "lspci" => lspci(),
             "lsusb" => lsusb(),
+            "usb" => usb(args),
             "net" => net(),
             "rtl" => rtl(args),
             "hw" => hw(),
@@ -154,7 +155,8 @@ fn help() {
     out!("  raport           scrie pe stick /usb/raport/<data>-<nr>.txt: hw, lspci, net, jurnalele (fara chei)\n");
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
     out!("  uptime           de cat timp merge sistemul\n");
-    out!("  cpu [porneste]   nucleele procesorului (porneste = porneste-le pe celelalte, parcate)\n");
+    out!("  cpu [porneste]   nucleele procesorului (porneste = porneste-le pe celelalte)\n");
+    out!("  usb citire [mare|mica]  citirea de pe stick: 64 KiB pe comanda (varianta noua) sau 4 KiB (implicit)\n");
     out!("  reboot [acpi|cf9|8042|triplu]  reporneste (implicit: toate metodele, pe rand)\n");
     out!("  exit             inchide terminalul (doar in fereastra Terminal)\n");
 }
@@ -579,7 +581,7 @@ fn uptime() {
     }
 }
 
-/// `cpu`: how many processors the MADT lists and how many run; `cpu porneste` starts the others (K6-02, parked).
+/// `cpu`: how many processors the MADT lists and how many run; `cpu porneste` starts the others (K6-02; since K6-02b threads run on all of them).
 fn cpu(args: &[&str]) {
     let listed = crate::acpi::madt::get().cpu_count;
     match args.first().copied() {
@@ -587,9 +589,28 @@ fn cpu(args: &[&str]) {
         Some("porneste") => {
             out!("cpu: pornesc celelalte nuclee (detalii: log smp)...\n");
             let n = crate::arch::x86_64::smp::start_all();
-            out!("cpu: {} nuclee pornite din {} (parcate: firele raman pe primul nucleu)\n", n, listed);
+            out!("cpu: {} nuclee pornite din {} (firele programelor ruleaza pe toate)\n", n, listed);
         }
         Some(other) => out!("cpu: necunoscut: {} (cpu, cpu porneste)\n", other),
+    }
+}
+
+/// `usb citire [mare|mica]` (P6-29): the size of one stick read; without an argument, the current one.
+fn usb(args: &[&str]) {
+    match args {
+        ["citire"] => out!(
+            "usb: citire {} pe comanda (`usb citire mare` = 64 KiB, `usb citire mica` = 4 KiB)\n",
+            if crate::drivers::usb::storage::big_reads() { "64 KiB" } else { "4 KiB" }
+        ),
+        ["citire", "mare"] => {
+            crate::drivers::usb::storage::set_big_reads(true);
+            out!("usb: citire 64 KiB pe comanda (varianta noua; `usb citire mica` revine)\n");
+        }
+        ["citire", "mica"] => {
+            crate::drivers::usb::storage::set_big_reads(false);
+            out!("usb: citire 4 KiB pe comanda (ca pana acum)\n");
+        }
+        _ => out!("usb: folosire: usb citire [mare|mica]\n"),
     }
 }
 

@@ -10,7 +10,11 @@
 //! (default: every processor), `--fara-vector` (scalar arithmetic even when AVX2 + FMA exist), `--suma <hex>` (the
 //! SHA-256 the file must have; otherwise `<model>.sha256` next to it, if present), `--reglaj <cale>` (the tuning file;
 //! default `/usb/kronos/reglaj-<procesor>.txt` when it exists, written by `kronos-calcul --cauta`, P6-28). `--fire` and
-//! `--fara-vector` win over the tuning file.
+//! `--fara-vector` win over the tuning file. `--profil` (P6-29, C-29): after the text, where the time of the generated
+//! tokens went (TSC cycles per kind of work: the products per layer kind, the output head, attention, the rest, the
+//! wait for threads, writing the text on the screen), with ms per token and GB/s of weights for the products.
+//! `--repetitie <p>` (P6-29, optional, off by default): divides (or multiplies, when negative) the logit of every token
+//! already in the text by p > 1 before the greedy choice; without it the result is the plain greedy one.
 //! The shell splits on spaces, so the words of the text are joined back with one space (surrounding `"` removed).
 //! The tokenizer is the one inside the model file (`tokenizer.bpe`, `src/bpe.rs`, P6-27b). Generation stops at a
 //! special token (`<|endoftext|>`), at `--n` tokens or at the end of the context.
@@ -110,6 +114,9 @@ struct Opts {
     tuning: Option<String>,
     words: Vec<String>,
     encode_only: bool,
+    profile: bool,
+    /// Repetition penalty (> 1), None = off.
+    penalty: Option<f32>,
     /// (vectori.json, fel)
     vectors: Option<(String, String)>,
 }
@@ -126,6 +133,8 @@ fn parse_args() -> Result<Opts, String> {
         tuning: None,
         words: Vec::new(),
         encode_only: false,
+        profile: false,
+        penalty: None,
         vectors: None,
     };
     let mut args = cyber_user::args().skip(1);
@@ -148,6 +157,14 @@ fn parse_args() -> Result<Opts, String> {
             "--suma" => o.sum = Some(val()?.into()),
             "--reglaj" => o.tuning = Some(val()?.into()),
             "--codeaza" => o.encode_only = true,
+            "--profil" => o.profile = true,
+            "--repetitie" => {
+                let p: f32 = val()?.parse().map_err(|_| String::from("--repetitie cere un numar (de ex. 1.3)"))?;
+                if !(p >= 1.0 && p <= 10.0) {
+                    return Err("--repetitie cere un numar intre 1 si 10".into());
+                }
+                o.penalty = (p > 1.0).then_some(p);
+            }
             "--vectori" => {
                 let j = val()?;
                 o.vectors = Some((j.into(), val()?.into()));
@@ -426,6 +443,69 @@ fn tuning(o: &Opts) -> kgr::Tuning {
     t
 }
 
+/// Repetition penalty (as in the CTRL paper's rule): for every distinct token already in the text, a positive logit is
+/// divided by `p` and a negative one multiplied by it.
+fn penalize(logits: &mut [f32], seen: &[u32], p: f32) {
+    let mut done = Vec::with_capacity(seen.len());
+    for &id in seen {
+        if done.contains(&id) {
+            continue;
+        }
+        done.push(id);
+        if let Some(l) = logits.get_mut(id as usize) {
+            *l = if *l > 0.0 { *l / p } else { *l * p };
+        }
+    }
+}
+
+/// `--profil`: where the cycles of the generated tokens went.
+fn profile_report(m: &Model, passes: usize, total: u64, screen: u64, pick: u64, per_ms: u64) {
+    use kgr::prof;
+    let ms = |c: u64| c as f64 / per_ms.max(1) as f64;
+    let pct = |c: u64| c as f64 * 100.0 / total.max(1) as f64;
+    let per = passes.max(1) as f64;
+    println!(
+        "kronos: profil: {} treceri prin model (un simbol nou fiecare), {}, TSC {} cicluri/ms; total {:.1} ms = {:.2} ms/simbol",
+        passes,
+        m.tune.describe(),
+        per_ms,
+        ms(total),
+        ms(total) / per
+    );
+    let mut known = 0u64;
+    for k in 0..prof::N {
+        let (c, b) = prof::get(k);
+        if k != prof::SYNC {
+            known += c;
+        }
+        let rate = if b > 0 && c > 0 {
+            alloc::format!(", {:.2} GB/s ({:.2} MiB/simbol)", b as f64 / (ms(c) * 1e6), b as f64 / per / 1048576.0)
+        } else {
+            String::new()
+        };
+        println!("kronos: profil: {:<34} {:>9.1} ms {:>7.3} ms/simbol {:>5.1} %{}", prof::NAMES[k], ms(c), ms(c) / per, pct(c), rate);
+    }
+    for (name, c) in [("afisarea textului pe ecran", screen), ("alegerea simbolului (argmax)", pick)] {
+        known += c;
+        println!("kronos: profil: {:<34} {:>9.1} ms {:>7.3} ms/simbol {:>5.1} %", name, ms(c), ms(c) / per, pct(c));
+    }
+    let other = total.saturating_sub(known);
+    println!("kronos: profil: {:<34} {:>9.1} ms {:>7.3} ms/simbol {:>5.1} %", "nemasurat (alocari, intreruperi)", ms(other), ms(other) / per, pct(other));
+    let (mut wc, mut wb) = (0u64, 0u64);
+    for k in [prof::QKV, prof::PROJ, prof::FC, prof::OUT, prof::HEAD] {
+        let (c, b) = prof::get(k);
+        wc += c;
+        wb += b;
+    }
+    if wc > 0 {
+        println!(
+            "kronos: profil: toate produsele: {:.2} GB/s de greutati; fara ecran ar fi {:.1} simboluri/s",
+            wb as f64 / (ms(wc) * 1e6),
+            per * 1000.0 / ms(total.saturating_sub(screen)).max(1e-3)
+        );
+    }
+}
+
 fn main() -> i64 {
     let mut o = match parse_args() {
         Ok(o) => o,
@@ -575,6 +655,7 @@ fn main() -> i64 {
         return 2;
     }
     let n = o.n.min(c.context.saturating_sub(o.ids.len()));
+    let per_ms = if o.profile { kgr::prof::calibrate() } else { 0 };
     let t1 = now_ms();
     let mut logits = match m.forward(&o.ids, false) {
         Ok(l) => l,
@@ -584,14 +665,24 @@ fn main() -> i64 {
         }
     };
     let t2 = now_ms();
+    // The profile counts only the generated tokens (the given text runs as one batch, timed above).
+    kgr::prof::reset();
+    let (mut c_screen, mut c_pick, c_start) = (0u64, 0u64, kgr::prof::now());
     let mut out = Vec::new();
     let mut stream = bpe::TextStream::default();
     let mut ended = false;
     if tok.is_some() {
         cyber_user::print!("kronos: continuare: ");
     }
+    let mut seen = o.ids.clone();
     for _ in 0..n {
+        let c0 = kgr::prof::now();
+        if let Some(p) = o.penalty {
+            penalize(&mut logits, &seen, p);
+        }
         let next = kgr::argmax(&logits);
+        let c1 = kgr::prof::now();
+        c_pick += c1 - c0;
         if let Some(t) = &tok {
             if t.is_special(next) {
                 ended = true;
@@ -599,7 +690,9 @@ fn main() -> i64 {
             }
             cyber_user::print!("{}", stream.push(t.token_bytes(next)));
         }
+        c_screen += kgr::prof::now() - c1;
         out.push(next);
+        seen.push(next);
         if out.len() == n {
             break;
         }
@@ -611,6 +704,7 @@ fn main() -> i64 {
             }
         };
     }
+    let c_total = kgr::prof::now() - c_start;
     let t3 = now_ms();
     if let Some(t) = &tok {
         println!("{}", stream.finish());
@@ -623,6 +717,9 @@ fn main() -> i64 {
     } else {
         println!("kronos: continuare: {:?}", out);
     }
+    if let Some(p) = o.penalty {
+        println!("kronos: penalizarea repetitiilor {} (fara --repetitie: alegerea greedy simpla)", p);
+    }
     let gen_ms = (t3 - t2).max(1);
     println!(
         "kronos: textul dat ({} simboluri) in {} ms; {} simboluri noi in {} ms = {}.{} simboluri/s",
@@ -633,5 +730,10 @@ fn main() -> i64 {
         out.len() as u64 * 1000 / gen_ms,
         out.len() as u64 * 10000 / gen_ms % 10
     );
+    if o.profile {
+        // `out.len() - 1` forward passes ran after the given text (the first new token comes from the text's pass).
+        profile_report(&m, out.len().saturating_sub(1), c_total, c_screen, c_pick, per_ms);
+    }
+    kgr::stop_pool();
     0
 }

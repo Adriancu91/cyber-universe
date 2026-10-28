@@ -1,6 +1,13 @@
 [build]
-target = "x86_64-unknown-none"
+# P6-29 (D-014): our own target = x86_64-unknown-none with SSE/SSE2 in the processor (the usual x86-64 float ABI),
+# so the programs' floating point runs in hardware instead of being emulated (soft-float). The kernel stays soft-float.
+target = "x86_64-cyber-user.json"
 
-[target.x86_64-unknown-none]
+[unstable]
+build-std = ["core", "alloc"]
+build-std-features = ["compiler-builtins-mem"]
+json-target-spec = true
+
+[target.x86_64-cyber-user]
 # Static executables at a fixed address (user.ld, passed by build.rs): ELF type EXEC, no relocations.
 rustflags = ["-C", "relocation-model=static"]

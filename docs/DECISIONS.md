@@ -71,3 +71,12 @@ dinainte și de după în jurnal; la fiecare Release, `log rtl` (și echivalentu
 să ajungă pentru comparația cu versiunea anterioară. O ipoteză e „confirmată” doar după testul pe hardware, nu după cod sau QEMU.
 Aplicare (P6-10d): pornirea implicită rămâne cea verificată; schimbările noi intră ca variante alese explicit din shell
 (`rtl porneste ...`), încercate pe laptop una câte una; abia una confirmată devine implicită în Release-ul următor.
+
+### D-014 — Programele folosesc virgula mobilă a procesorului (SSE2), nu emulată (2026-10-28)
+Comanda C-29 (Kronos în OS lent pe workstation): ținta `x86_64-unknown-none` e **soft-float** — fiecare operație cu numere
+reale din programe (atenția, LayerNorm, GELU, softmax) era emulată în software. Programele (`user/`) se construiesc de acum
+pentru ținta noastră `user/x86_64-cyber-user.json` (aceeași, plus SSE/SSE2 și ABI-ul x86-64 obișnuit), cu
+`-Zbuild-std=core,alloc` (rust-src era deja în toolchain). Nucleul **rămâne** soft-float (nu atinge registrele vectoriale;
+le salvează pe ale firelor din K6-01). `_start` aliniază stiva la 16 octeți. Rezultatele operațiilor de bază sunt aceleași
+(IEEE 754); compilatorul nu reordonează sume fără „fast-math”. Completează D-001 (Rust `no_std`), nu o înlocuiește.
+

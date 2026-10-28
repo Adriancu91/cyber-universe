@@ -9,6 +9,7 @@ use cyber_user::println;
 cyber_user::entry!(main);
 
 /// AVX2 needs: the CPU (CPUID 7 EBX bit 5, CPUID 1 AVX + OSXSAVE) and the kernel (XCR0 saves SSE and AVX state).
+#[allow(unused_unsafe)] // CPUID is a safe intrinsic on the SSE target (P6-29)
 fn avx2() -> bool {
     // SAFETY: CPUID is available on every x86-64 CPU.
     let l1 = unsafe { __cpuid(1) };

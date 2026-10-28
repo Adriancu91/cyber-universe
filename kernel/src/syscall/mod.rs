@@ -394,7 +394,8 @@ fn open(ptr: u64, len: u64) -> i64 {
 
 /// read(fd, buf, len): reads from the current position; returns the bytes read (0 = end of file).
 fn read(fd: u64, buf: u64, len: u64) -> i64 {
-    let len = len.min(64 * 1024);
+    // P6-29: up to 1 MiB per call (was 64 KiB): a 105 MiB model is read in ~100 calls instead of ~1700.
+    let len = len.min(1024 * 1024);
     if !user_range_ok(buf, len, true) {
         return E_FAULT;
     }
