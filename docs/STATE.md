@@ -3,7 +3,7 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
-### Sesiunea programată 2026-10-28 09:40–11:00 UTC (11:40–13:00 ora României), în cloud, fără Adrian — P6-29 (C-29) gata
+### Sesiunea programată 2026-10-28 09:40–12:35 UTC (11:40–14:35 ora României), în cloud, fără Adrian — P6-29 (C-29) gata
 - **Hub:** comenzi noi C-29 (viteza lui Kronos pe workstation), C-30 (cyber-gpu, VBIOS) și C-31 (`gpu vbios --detalii`, **după C-30** — încă nefăcută
   de Cyber-GPU, deci rămâne `nou`). Rezultatele workstation: `rezultate/2026-10-28-workstation-kronos-in-os/` — #459 identic cu referința, dar 7,9 simb/s.
 - **Cauzele găsite în cod (P6-29):** (1) programele erau compilate soft-float — toată aritmetica în afara produselor AVX2 (atenția, LayerNorm,
@@ -21,7 +21,10 @@
 - **CI:** run 196: încercarea 1 = 80/81 (`phase4`, instabil cunoscut), încercarea 2 = 80/81 (`shell`: blocare la pornire). Cauza la `shell`:
   handler-ul #BP (cu întreruperile oprite) aștepta consola ținută de firul DHCP, oprit la mijlocul derulării pe același nucleu — o cursă
   veche, mai probabilă acum că derularea face mai mult. Reparat: cu întreruperile oprite, dacă consola e ocupată, textul merge doar pe
-  serial și în jurnal (`console::output`). Run 197 cu reparația.
+  serial și în jurnal (`console::output`). Run 197: prima încercare 80/81 (`phase4`, același instabil cunoscut — clicurile din modulul
+  „Module”, picat și la run 195 înainte de schimbările mele), reluat o dată → **verde** → **Release `os-197`**.
+- **Avertisment:** `phase4` pică des în CI (3 din ultimele 5 încercări, „lipseste un modul necesar” = clicul a nimerit alt pachet). De
+  cercetat într-o sesiune viitoare (sincronizarea clicurilor din test cu lista aplicației), nu e legat de P6-29.
 - **Pentru sesiunea următoare:** C-31 când Cyber-GPU termină C-30 (funcția de diagnostic VBIOS în `nvidia-ga104`). Testul pe workstation (lista în hub).
 ### Sesiunea programată 2026-10-28 06:40–07:45 UTC (08:40–09:45 ora României), în cloud, fără Adrian — P6-27b gata (C-25 complet)
 - **Hub:** C-24 gata (Kronos, 08:20): în `integrare/kronos/` au apărut `vectori/` (modelul minuscul F32 + Q8_0 cu tokenizerul adevărat w2,
