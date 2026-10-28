@@ -3,6 +3,14 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+### Sesiunea programată 2026-10-28 03:40 UTC (05:40 ora României), în cloud, fără Adrian — oprire scurtă, nimic nou de făcut
+- Hub: nicio comandă nouă pentru `cyber-universe`; niciun rezultat nou în `rezultate/`. `integrare/kronos/` are tot doar specificația KGR1 și
+  README (fără `vectori/`, fără `MODEL.md`, fără descrierea tokenizerului). La C-24 Kronos notează (05:15 ora României) că descrierea
+  tokenizerului a fost adăugată la S39 în repo-ul lor, dar nu e încă copiată în hub; S39 întârzie (workstation-ul Kronos nu raportează din 27 oct 19:34).
+- CI: run 194 verde (Release `os-194`), niciun commit de cod de atunci. `tools/env-check.sh --install` nerulat (nu era cod de scris).
+- Coada: P6-27b așteaptă C-24; P6-10, P6-12 p.2 așteaptă hardware; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian.
+- Pentru sesiunea următoare: dacă `integrare/kronos/vectori/` și descrierea tokenizerului au apărut în hub → P6-27b. Altfel oprire scurtă.
+  (Ultima sesiune cu sarcini terminate: 2026-10-28 00:40 → oprirea de siguranță nu se aplică încă.)
 ### Sesiunea programată 2026-10-28 00:40–02:10 UTC (02:40–04:10 ora României), în cloud, fără Adrian — P6-27 (C-25, partea 1) și P6-28 (C-27) gata
 - **Hub:** a apărut `integrare/kronos/format_greutati.md` (specificația KGR1, Kronos `190bd38`); vectorii oficiali (`vectori/`) și `MODEL.md` încă nu.
 - **P6-27 (C-25, partea 1):** motorul KGR1 scris de noi din specificație (`user/src/kgr.rs`): cititor F32 + Q8_0, pasul înainte cu memoria
