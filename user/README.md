@@ -41,8 +41,21 @@
   `kronos --simboluri 1,2,3 [--n 32] [--model <cale>] [--fire n] [--fara-vector]` continuă textul (greedy) și arată
   simbolurile pe secundă; modelul implicit = primul `*.kgr` din `/usb/kronos/`. `kronos --verifica <model> <ref>` compară
   cu un fișier de referință (logit-uri în toleranța `1e-4·(1+|ref|)`, continuarea greedy identică).
-  Textul direct (tokenizerul din fișier) vine în P6-27b. Test: scenariile `kronos-kgr` (2 nuclee, AVX2) și `kronos-kgr-1`
-  (1 nucleu, scalar), pe modelul minuscul cu greutăți aleatoare din `tests/kronos/` (`tools/kgr-mini.py`; `tools/build.sh` îl pune pe discul de test la `/kronos` doar în build-urile `test-kronos-*`).
+  Memoria cheilor/valorilor stă într-o zonă `mem_map` separată de heap (modelul #459 cere 36 MiB).
+  **Textul direct (P6-27b):** `kronos [--n 32] Ana are mere.` codează textul cu tokenizerul din fișier (`src/bpe.rs`, cheia
+  `tokenizer.bpe`: octeți + îmbinări BPE + simboluri speciale, pre-tokenizarea în 6 variante cu clasele de litere din Python,
+  grupele fixe de cifre ale regulilor `ws`), continuă greedy, scrie textul pe măsură ce vine (ține octeții unei litere
+  neterminate) și se oprește la `<|endoftext|>`. Shell-ul taie la spații, deci cuvintele se lipesc la loc cu un spațiu.
+  `kronos --codeaza <text>` arată doar simbolurile și decodarea înapoi. Clasele de caractere (`src/unicode.rs`) sunt generate
+  de `tools/gen-unicode.py` (Python 3.13, Unicode 15.1); JSON-ul mare se citește fără arbore (`src/jscan.rs`), fiindcă heap-ul
+  programelor e first-fit și 100.000 de alocări mici ar dura zeci de secunde în QEMU.
+  `kronos --vectori <vectori.json> f32|q8_0` = vectorii oficiali Kronos (hub `integrare/kronos/vectori/`, copiați în
+  `tests/kronos/`): suma SHA-256, codarea și decodarea celor 3 texte, argmax pe fiecare poziție, logit-urile ultimei poziții
+  (abatere absolută ≤ 1e-4 la F32, ≤ 1e-3 la Q8_0, toleranța declarată de Kronos), 5 simboluri greedy cu și fără memoria
+  cheilor/valorilor și textul lor. Inspirație: descrierea tokenizerului din specificația Kronos; niciun cod străin.
+  Test: scenariile `kronos-kgr` (2 nuclee, AVX2) și `kronos-kgr-1` (1 nucleu, scalar), pe modelul minuscul cu greutăți
+  aleatoare din `tests/kronos/` (`tools/kgr-mini.py`) și pe vectorii oficiali (`mic_f32.kgr`, `mic_q8_0.kgr`, `vectori.json`);
+  `tools/build.sh` le pune pe discul de test la `/kronos` doar în build-urile `test-kronos-*`.
 - `kronos-calcul --cauta [--emb E] [--iesire <dir>]` (P6-28, comanda C-27, `src/cauta.rs`) — primul pas spre „OS-ul care se
   reglează singur”: încearcă variante ale produsului din motorul KGR1 (vectori AVX2+FMA sau scalar; 1, 2, 4, … fire și toate
   nucleele; ordinea buclelor t-j sau j-t) pe o matrice Q8_0 [4E, E], pe 1 rând (generare) și pe 16 rânduri (citirea textului).

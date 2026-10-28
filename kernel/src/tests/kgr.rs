@@ -1,7 +1,9 @@
 //! P6-27 (C-25): `/bin/kronos` — our KGR1 engine on the tiny random model of `tools/kgr-mini.py` (on the test disk,
 //! /disk/kronos): F32 and Q8_0 against their float64 references (logits within the declared tolerance, the greedy
 //! continuation identical), once with vectors (when the processor has AVX2 + FMA) and once scalar; a wrong SHA-256
-//! must be refused (exit code 3). Every frame must come back.
+//! must be refused (exit code 3). P6-27b: the official Kronos vectors (hub `integrare/kronos/vectori/`, copied to
+//! tests/kronos): tokenizer, logits, argmax and greedy for F32 and Q8_0 (vectors and scalar), the tokenizer examples of
+//! the specification, and `kronos <text>`. Every frame must come back.
 
 use crate::mem::frame;
 use crate::sched;
@@ -28,13 +30,27 @@ pub fn run() {
     assert!(code == 3, "kronos: suma gresita acceptata (cod {})", code);
     let generate = ["kronos", "--model", "/disk/kronos/mini-q8.kgr", "--simboluri", "1,2,3,4,5", "--n", "8"];
     assert!(run_one(&generate) == 0, "kronos: generarea a esuat");
+    // P6-27b: the official vectors, with the real w2 tokenizer inside the tiny random model.
+    let vf32 = ["kronos", "--vectori", "/disk/kronos/vectori.json", "f32"];
+    assert!(run_one(&vf32) == 0, "kronos: vectorii oficiali F32 nu se potrivesc");
+    let vq8 = ["kronos", "--vectori", "/disk/kronos/vectori.json", "q8_0"];
+    assert!(run_one(&vq8) == 0, "kronos: vectorii oficiali Q8_0 nu se potrivesc");
+    let vq8s = ["kronos", "--vectori", "/disk/kronos/vectori.json", "q8_0", "--fara-vector"];
+    assert!(run_one(&vq8s) == 0, "kronos: vectorii oficiali Q8_0 scalar nu se potrivesc");
+    for text in [&["<|endoftext|>Ana"][..], &["991", "07"], &["x", "=", "1234;"]] {
+        let mut a = alloc::vec!["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--codeaza"];
+        a.extend_from_slice(text);
+        assert!(run_one(&a) == 0, "kronos: codarea {:?} nu se decodeaza inapoi", text);
+    }
+    let words = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--n", "5", "Ana", "are", "mere."];
+    assert!(run_one(&words) == 0, "kronos: kronos <text> a esuat");
     let ms = (crate::arch::x86_64::apic::ticks() - t0) * 1000 / crate::arch::x86_64::apic::HZ;
     while sched::alive() > 1 {
         sched::sleep_ms(10);
     }
     assert!(frame::free_frames() == before, "kronos: {} cadre libere inainte, {} dupa", before, frame::free_frames());
     crate::info!(
-        "test: kronos: motorul KGR1 = referinta (F32, Q8_0, vectori si scalar), suma gresita refuzata, {} ms, pe {} nuclee; cadre libere identice",
+        "test: kronos: motorul KGR1 = referinta (F32, Q8_0, vectori si scalar), suma gresita refuzata, vectorii oficiali Kronos si tokenizerul trec, {} ms, pe {} nuclee; cadre libere identice",
         ms,
         sched::running_cpus()
     );

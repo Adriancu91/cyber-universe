@@ -625,9 +625,10 @@ pub struct Model<'a> {
     pos: Mat<'a>,
     layers: Vec<Layer<'a>>,
     lnf: (&'a [f32], &'a [f32]),
-    /// Keys and values of positions 0..len, per layer: [context, emb] each.
-    kcache: Vec<Vec<f32>>,
-    vcache: Vec<Vec<f32>>,
+    /// Keys and values of positions 0..len, per layer: [context, emb] each. One `mem_map` region outside the program
+    /// heap (P6-27b: model #459 needs 2 x 12 x 512 x 768 floats = 36 MiB, more than the heap); returned at exit.
+    kcache: Vec<&'static mut [f32]>,
+    vcache: Vec<&'static mut [f32]>,
     pub len: usize,
     /// Threads, vectors and loop order of the products (P6-28: from the tuning file when there is one).
     pub tune: Tuning,
@@ -687,6 +688,18 @@ impl<'a> Model<'a> {
                 out_b: vector(f, &p("mlp.2.bias"), e)?,
             });
         }
+        let per = cfg.context * e;
+        let floats_total = 2 * cfg.layers * per;
+        let region = cyber_user::mem_map((floats_total * 4).max(4096))
+            .map_err(|err| alloc::format!("memoria cheilor/valorilor ({} MiB): {}", floats_total * 4 >> 20, cyber_user::error_text(err)))?;
+        // SAFETY: a fresh region of `floats_total * 4` bytes, page aligned (so aligned for f32), owned by this program
+        // and never unmapped while it runs; it is split below into disjoint slices, each used by one layer only.
+        let all: &'static mut [f32] = unsafe { core::slice::from_raw_parts_mut(region as *mut f32, floats_total) };
+        let mut kcache = Vec::with_capacity(cfg.layers);
+        let mut vcache = Vec::with_capacity(cfg.layers);
+        for (n, part) in all.chunks_exact_mut(per).enumerate() {
+            if n % 2 == 0 { kcache.push(part) } else { vcache.push(part) }
+        }
         Ok(Model {
             cfg,
             kind: f.text("fel").unwrap_or("?"),
@@ -696,8 +709,8 @@ impl<'a> Model<'a> {
             pos: matrix(f, "emb_pozitie.weight", cfg.context, e)?,
             layers,
             lnf: (vector(f, "ln.weight", e)?, vector(f, "ln.bias", e)?),
-            kcache: (0..cfg.layers).map(|_| vec![0.0; cfg.context * e]).collect(),
-            vcache: (0..cfg.layers).map(|_| vec![0.0; cfg.context * e]).collect(),
+            kcache,
+            vcache,
             len: 0,
             tune: Tuning { threads: 1, simd: false, order: Order::TJ },
         })

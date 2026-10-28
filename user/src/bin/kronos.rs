@@ -1,13 +1,19 @@
 //! P6-27 (command C-25): `kronos` — the real Kronos model in the OS, through our KGR1 engine (`src/kgr.rs`).
 //!
-//!   kronos [optiuni] --simboluri 1,2,3     continues the text given as token ids (greedy), shows tokens per second
+//!   kronos [optiuni] <text>                continues the text (greedy), writes it as it comes, shows tokens per second
+//!   kronos [optiuni] --simboluri 1,2,3     the same from token ids
+//!   kronos [optiuni] --codeaza <text>      only the tokenizer: the ids of the text and the text decoded back
 //!   kronos --verifica <model.kgr> <ref>    compares the engine with a reference file (logits + greedy continuation)
+//!   kronos --vectori <vectori.json> <fel>  the official Kronos test vectors (hub `integrare/kronos/vectori/`, P6-27b),
+//!                                          `fel` = f32 or q8_0; the model file is next to the JSON
 //! Options: `--model <cale>` (default: the first *.kgr in /usb/kronos), `--n <simboluri>` (default 32), `--fire <n>`
 //! (default: every processor), `--fara-vector` (scalar arithmetic even when AVX2 + FMA exist), `--suma <hex>` (the
 //! SHA-256 the file must have; otherwise `<model>.sha256` next to it, if present), `--reglaj <cale>` (the tuning file;
 //! default `/usb/kronos/reglaj-<procesor>.txt` when it exists, written by `kronos-calcul --cauta`, P6-28). `--fire` and
 //! `--fara-vector` win over the tuning file.
-//! Text instead of ids comes with the tokenizer (P6-27b: its description is not in the KGR1 specification yet).
+//! The shell splits on spaces, so the words of the text are joined back with one space (surrounding `"` removed).
+//! The tokenizer is the one inside the model file (`tokenizer.bpe`, `src/bpe.rs`, P6-27b). Generation stops at a
+//! special token (`<|endoftext|>`), at `--n` tokens or at the end of the context.
 //!
 //! Exit codes: 0 ok, 1 reference mismatch, 2 bad arguments, 3 wrong SHA-256, 4 cannot read or parse the model.
 #![no_std]
@@ -17,10 +23,18 @@ extern crate alloc;
 
 use alloc::{string::String, vec::Vec};
 use cyber_crypto::sha2::Sha256;
+#[path = "../unicode.rs"]
+mod unicode;
+#[path = "../jscan.rs"]
+mod jscan;
+#[path = "../bpe.rs"]
+mod bpe;
 #[path = "../kgr.rs"]
 #[allow(dead_code)] // the search part (Tuning::to_text, Mat::from_q8) is used by kronos-calcul
 mod kgr;
 
+use bpe::Tokenizer;
+use jscan::Scan;
 use kgr::{File, Model};
 use cyber_user::println;
 
@@ -94,6 +108,10 @@ struct Opts {
     scalar: bool,
     sum: Option<String>,
     tuning: Option<String>,
+    words: Vec<String>,
+    encode_only: bool,
+    /// (vectori.json, fel)
+    vectors: Option<(String, String)>,
 }
 
 fn parse_args() -> Result<Opts, String> {
@@ -106,6 +124,9 @@ fn parse_args() -> Result<Opts, String> {
         scalar: false,
         sum: None,
         tuning: None,
+        words: Vec::new(),
+        encode_only: false,
+        vectors: None,
     };
     let mut args = cyber_user::args().skip(1);
     while let Some(a) = args.next() {
@@ -126,9 +147,13 @@ fn parse_args() -> Result<Opts, String> {
             "--fara-vector" => o.scalar = true,
             "--suma" => o.sum = Some(val()?.into()),
             "--reglaj" => o.tuning = Some(val()?.into()),
-            _ => return Err(alloc::format!(
-                "argument necunoscut `{}` (textul direct vine cu tokenizerul; acum: --simboluri 1,2,3)", a
-            )),
+            "--codeaza" => o.encode_only = true,
+            "--vectori" => {
+                let j = val()?;
+                o.vectors = Some((j.into(), val()?.into()));
+            }
+            _ if a.starts_with("--") => return Err(alloc::format!("argument necunoscut `{}`", a)),
+            _ => o.words.push(a.into()),
         }
     }
     Ok(o)
@@ -199,6 +224,182 @@ fn verify(m: &mut Model, path: &str) -> Result<bool, String> {
     Ok(ok && bad == 0)
 }
 
+/// The words of the text joined with one space, without surrounding quotes.
+fn text_of(words: &[String]) -> String {
+    let t = words.join(" ");
+    match t.strip_prefix('"').and_then(|t| t.strip_suffix('"')) {
+        Some(inner) => inner.into(),
+        None => t,
+    }
+}
+
+/// Declared tolerance of the official vectors (hub `integrare/kronos/README.md`): absolute, on the logits of the
+/// last position; F32 1e-4, Q8_0 1e-3 (against the Q8_0 vectors).
+fn vectors_tolerance(kind: &str) -> f32 {
+    if kind == "q8_0" { 1e-3 } else { 1e-4 }
+}
+
+/// One text of the official vectors.
+#[derive(Default)]
+struct Entry {
+    text: String,
+    ids: Vec<u32>,
+    argmax: Vec<u32>,
+    greedy: Vec<u32>,
+    greedy_text: String,
+    logits: Vec<f32>,
+}
+
+fn id_list(sc: &mut Scan) -> jscan::R<Vec<u32>> {
+    let mut v = Vec::new();
+    sc.array(|sc| {
+        let n = sc.int()?;
+        v.push(u32::try_from(n).map_err(|_| String::from("simbol gresit"))?);
+        Ok(())
+    })?;
+    Ok(v)
+}
+
+/// Reads vectori.json (only the texts of `kind`); returns them with the model path (the file named in
+/// `fisiere.<fel>.nume`, next to the JSON) and the SHA-256 it must have.
+fn load_vectors(json_path: &str, kind: &str) -> Result<(Vec<Entry>, String, String), String> {
+    let b = read_all(json_path)?;
+    let text = core::str::from_utf8(b).map_err(|_| alloc::format!("{}: nu e UTF-8", json_path))?;
+    let (mut name, mut sum, mut entries) = (None, None, None);
+    let mut sc = Scan::new(text);
+    sc.object(|sc, key| match key {
+        "fisiere" => sc.object(|sc, k| {
+            if k != kind {
+                return sc.skip();
+            }
+            sc.object(|sc, f| match f {
+                "nume" => sc.string().map(|v| name = Some(v)),
+                "sha256" => sc.string().map(|v| sum = Some(v)),
+                _ => sc.skip(),
+            })
+        }),
+        k if k == kind => {
+            let mut list = Vec::new();
+            sc.array(|sc| {
+                let mut e = Entry::default();
+                sc.object(|sc, f| {
+                    match f {
+                        "text" => e.text = sc.string()?,
+                        "simboluri" => e.ids = id_list(sc)?,
+                        "argmax_pe_pozitii" => e.argmax = id_list(sc)?,
+                        "greedy_5" => e.greedy = id_list(sc)?,
+                        "greedy_5_text" => e.greedy_text = sc.string()?,
+                        "logits_ultima_pozitie" => {
+                            e.logits.reserve(16384);
+                            sc.array(|sc| sc.float().map(|x| e.logits.push(x)))?
+                        }
+                        _ => sc.skip()?,
+                    }
+                    Ok(())
+                })?;
+                list.push(e);
+                Ok(())
+            })?;
+            entries = Some(list);
+            Ok(())
+        }
+        _ => sc.skip(),
+    })
+    .and_then(|_| sc.end())
+    .map_err(|e| alloc::format!("{}: {}", json_path, e))?;
+    let name = name.ok_or_else(|| alloc::format!("vectorii nu au fisierul `{}`", kind))?;
+    let sum = sum.ok_or("vectorii: lipseste `sha256`")?;
+    let entries = entries.ok_or_else(|| alloc::format!("vectorii nu au textele `{}`", kind))?;
+    let dir = json_path.rfind('/').map(|i| &json_path[..i]).unwrap_or(".");
+    let base = name.rsplit('/').next().unwrap_or(&name);
+    Ok((entries, alloc::format!("{}/{}", dir, base), sum))
+}
+
+/// The official vectors of one kind: per text, the tokenizer both ways, argmax on every position, the logits of the
+/// last position within the tolerance, the greedy tokens with and without the key/value cache, and their text.
+fn verify_vectors(m: &mut Model, tok: &Tokenizer, list: &[Entry], kind: &str) -> Result<bool, String> {
+    let tol = vectors_tolerance(kind);
+    let vocab = m.cfg.vocab;
+    let mut all_ok = true;
+    for (n, e) in list.iter().enumerate() {
+        let text = e.text.as_str();
+        if e.logits.len() != vocab || e.ids.is_empty() {
+            return Err(alloc::format!("vectorii au {} logit-uri, modelul are vocabularul {}", e.logits.len(), vocab));
+        }
+        let ids = tok.encode(text);
+        let enc_ok = ids == e.ids;
+        let dec_ok = tok.decode(&e.ids) == text;
+        // Every position at once, without the cache.
+        m.reset();
+        let l = m.forward(&e.ids, true)?;
+        let t = e.ids.len();
+        let argmax: Vec<u32> = (0..t).map(|i| kgr::argmax(&l[i * vocab..(i + 1) * vocab])).collect();
+        let arg_ok = argmax == e.argmax;
+        let last = &l[(t - 1) * vocab..];
+        let worst = last.iter().zip(&e.logits).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
+        let log_ok = worst <= tol;
+        // Greedy with the cache: one new position per step.
+        let mut cached = Vec::new();
+        let mut next = kgr::argmax(last);
+        for k in 0..e.greedy.len() {
+            cached.push(next);
+            if k + 1 < e.greedy.len() {
+                next = kgr::argmax(&m.forward(&[next], false)?);
+            }
+        }
+        // Greedy without the cache: the whole sequence again at every step.
+        let mut seq = e.ids.clone();
+        for _ in 0..e.greedy.len() {
+            m.reset();
+            let l = m.forward(&seq, false)?;
+            seq.push(kgr::argmax(&l));
+        }
+        let uncached = &seq[t..];
+        let greedy_ok = cached == e.greedy && uncached == e.greedy.as_slice();
+        let gen_text = tok.decode(&cached);
+        let text_ok = gen_text == e.greedy_text;
+        let ok = enc_ok && dec_ok && arg_ok && log_ok && greedy_ok && text_ok;
+        all_ok &= ok;
+        let yes = |b: bool| if b { "= referinta" } else { "DIFERIT" };
+        println!(
+            "kronos: vectori {} text {} `{}`: simboluri {:?} {}, decodare {}; argmax pe {} pozitii {}; logit-uri abatere maxima {:e} (toleranta {:e}) {}",
+            kind,
+            n + 1,
+            text,
+            ids,
+            yes(enc_ok),
+            yes(dec_ok),
+            t,
+            yes(arg_ok),
+            worst,
+            tol,
+            if log_ok { "OK" } else { "PESTE TOLERANTA" }
+        );
+        println!(
+            "kronos: vectori {} text {}: greedy {:?} {} (cu si fara cache), textul `{}` {}",
+            kind,
+            n + 1,
+            cached,
+            yes(greedy_ok),
+            gen_text.replace('\n', "\\n"),
+            yes(text_ok)
+        );
+        if !enc_ok {
+            println!("kronos: referinta simboluri: {:?}", e.ids);
+        }
+        if !arg_ok {
+            println!("kronos: argmax {:?}, referinta {:?}", argmax, e.argmax);
+        }
+        if !greedy_ok {
+            println!("kronos: greedy cu cache {:?}, fara cache {:?}, referinta {:?}", cached, uncached, e.greedy);
+        }
+        if !text_ok {
+            println!("kronos: referinta text `{}`", e.greedy_text.replace('\n', "\\n"));
+        }
+    }
+    Ok(all_ok)
+}
+
 /// Defaults, then the tuning file (if any), then `--fire` / `--fara-vector`.
 fn tuning(o: &Opts) -> kgr::Tuning {
     let mut t = kgr::Tuning::default_for(cyber_user::cpus().max(1) as usize);
@@ -226,12 +427,26 @@ fn tuning(o: &Opts) -> kgr::Tuning {
 }
 
 fn main() -> i64 {
-    let o = match parse_args() {
+    let mut o = match parse_args() {
         Ok(o) => o,
         Err(e) => {
             println!("kronos: {}", e);
             return 2;
         }
+    };
+    let vectors = match &o.vectors {
+        Some((json, kind)) => match load_vectors(json, kind) {
+            Ok((j, model, sum)) => {
+                o.model = Some(model);
+                o.sum = Some(sum);
+                Some((j, kind.clone()))
+            }
+            Err(e) => {
+                println!("kronos: {}", e);
+                return 4;
+            }
+        },
+        None => None,
     };
     let Some(path) = o.model.clone().or_else(default_model) else {
         println!("kronos: niciun model: pune fisierul .kgr pe stick in /usb/kronos/ (sau --model <cale>)");
@@ -288,6 +503,57 @@ fn main() -> i64 {
         m.parameters()
     );
     println!("kronos: sursa `{}`, tokenizer {} octeti; {}", m.source, m.tokenizer.len(), m.tune.describe());
+    let tok = if vectors.is_some() || !o.words.is_empty() {
+        match Tokenizer::from_json(m.tokenizer, c.vocab) {
+            Ok(t) => {
+                println!(
+                    "kronos: tokenizer {:?}: {} imbinari, {} simboluri (Unicode {})",
+                    t.rules,
+                    t.merges,
+                    t.vocab(),
+                    unicode::UNICODE_VERSION
+                );
+                Some(t)
+            }
+            Err(e) => {
+                println!("kronos: {}: {}", path, e);
+                return 4;
+            }
+        }
+    } else {
+        None
+    };
+    if let (Some((j, kind)), Some(tok)) = (&vectors, &tok) {
+        return match verify_vectors(&mut m, tok, j, kind) {
+            Ok(true) => {
+                println!("kronos: vectorii oficiali Kronos ({}): tokenizer, logit-uri, argmax si greedy = referinta (OK)", kind);
+                0
+            }
+            Ok(false) => {
+                println!("kronos: vectorii oficiali Kronos ({}): NU se potrivesc", kind);
+                1
+            }
+            Err(e) => {
+                println!("kronos: {}", e);
+                1
+            }
+        };
+    }
+    if let Some(tok) = &tok {
+        let text = text_of(&o.words);
+        o.ids = tok.encode(&text);
+        let back = tok.decode(&o.ids);
+        println!(
+            "kronos: textul `{}` = {} simboluri {:?}; decodat inapoi {}",
+            text,
+            o.ids.len(),
+            o.ids,
+            if back == text { "identic" } else { "DIFERIT" }
+        );
+        if o.encode_only {
+            return if back == text { 0 } else { 1 };
+        }
+    }
     if let Some(r) = &o.reference {
         return match verify(&mut m, r) {
             Ok(true) => {
@@ -305,7 +571,7 @@ fn main() -> i64 {
         };
     }
     if o.ids.is_empty() {
-        println!("kronos: dati textul ca simboluri: kronos --simboluri 1,2,3 (textul direct vine cu tokenizerul)");
+        println!("kronos: dati un text (kronos Ana are) sau simboluri (kronos --simboluri 1,2,3)");
         return 2;
     }
     let n = o.n.min(c.context.saturating_sub(o.ids.len()));
@@ -319,8 +585,20 @@ fn main() -> i64 {
     };
     let t2 = now_ms();
     let mut out = Vec::new();
+    let mut stream = bpe::TextStream::default();
+    let mut ended = false;
+    if tok.is_some() {
+        cyber_user::print!("kronos: continuare: ");
+    }
     for _ in 0..n {
         let next = kgr::argmax(&logits);
+        if let Some(t) = &tok {
+            if t.is_special(next) {
+                ended = true;
+                break;
+            }
+            cyber_user::print!("{}", stream.push(t.token_bytes(next)));
+        }
         out.push(next);
         if out.len() == n {
             break;
@@ -334,7 +612,17 @@ fn main() -> i64 {
         };
     }
     let t3 = now_ms();
-    println!("kronos: continuare: {:?}", out);
+    if let Some(t) = &tok {
+        println!("{}", stream.finish());
+        println!(
+            "kronos: textul generat `{}`{}",
+            t.decode(&out).replace('\n', "\\n"),
+            if ended { " (oprit la simbolul de sfarsit)" } else { "" }
+        );
+        println!("kronos: simboluri generate: {:?}", out);
+    } else {
+        println!("kronos: continuare: {:?}", out);
+    }
     let gen_ms = (t3 - t2).max(1);
     println!(
         "kronos: textul dat ({} simboluri) in {} ms; {} simboluri noi in {} ms = {}.{} simboluri/s",
