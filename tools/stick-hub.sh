@@ -20,10 +20,9 @@ grep -qx "commit $(git -C "$ROOT" rev-parse HEAD)" "$REL/VERSIUNE" || { echo "bu
 # No Kronos model, no NVIDIA firmware: neither as separate files nor inside the initrd or the stick image.
 check_blob() {
     local f="$1"
-    if LC_ALL=C grep -qa "KGR1" "$f"; then
-        # The kernel/initrd may contain the string "KGR1" as the format magic in code; a real model is > 1 MiB of weights.
-        # So only a file that STARTS with the magic is a model.
-        [ "$(head -c 4 "$f")" = "KGR1" ] && { echo "model Kronos in $f" >&2; exit 1; }
+    # The programs contain the string "KGR1" as the format magic in code; only a file that STARTS with it is a model.
+    if [ "$(head -c 4 "$f" | od -An -c | tr -d ' ')" = "KGR1" ]; then
+        echo "model Kronos in $f" >&2; exit 1
     fi
 }
 for f in "$REL"/*; do check_blob "$f"; done
