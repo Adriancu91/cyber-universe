@@ -286,6 +286,10 @@ Comenzile C-25 (Kronos adevărat în OS) și C-27 (căutarea automată a variant
   Test: scenariul `kronos-reglaj` (`-smp 2 -cpu max`, disc de test cu scriere): 12 variante (scalar/AVX2+FMA × 1/2 fire × ordinea t-j/j-t/stricată), fiecare verificată față de controlul float64; cele 4 stricate intenționat respinse; fișierul `/disk/kronos/reglaj-<procesor>.txt` scris (fsck curat, citit de `after-kronos-reglaj.sh`) și folosit de `kronos`, care rămâne egal cu referința.
   Rezultat: în QEMU câștigă „AVX2+FMA, 1 fir, j-t” (22× față de scalar pe 1 fir; 2 fire pierd la matricea mică din cauza pornirii firelor la fiecare produs — de urmărit pe workstation). Ceasul fin: TSC calibrat pe ceasul de 10 ms. AVX-512 încă nu e variantă (QEMU nu-l are, deci n-ar avea test).
 
+Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
+- [~] **P6-29** Kronos în OS mai rapid (C-29): calcul cu virgulă mobilă în procesor pentru programe (nu emulat), `kronos --profil` (TSC pe operații), bazin de fire pornit o dată cu barieră fără somn și atenția împărțită pe capete, `kronos-calcul --cauta` pe dimensiunile modelului de pe stick, citire USB cu mai multe sectoare pe cerere, `--repetitie <p>` (opțional, implicit oprit). Dep: P6-27b, P6-28.
+  Test: vectorii oficiali F32/Q8_0 și modelul minuscul rămân identici (scenariile `kronos-kgr*`), `--profil` scrie toate rândurile, bazinul dă aceleași logit-uri pe 1/2/4 fire, `--cauta` pe un model de pe disc; viteza adevărată = workstation (Adrian).
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
