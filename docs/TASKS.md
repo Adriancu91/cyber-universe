@@ -301,7 +301,8 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 - [x] **P6-36** Kronos în OS: frânele de pe workstation (C-40): procesoarele libere trezite imediat (IPI) când un fir devine gata, qkv + atenția într-o singură împărțire la generare, GELU pe fire, textul pe ecran pe rânduri (`--fara-ecran`), `--cauta` cu costul sincronizării. Simbolurile identice. Dep: P6-35
   Rezultat (2026-10-29): suita locală 77/80 + 1 sărit (3 = server de test / temporizatorul la `-smp 4`, trec la reluare); testul SMP nou: fir nou pornit pe un nucleu liber în ~40 µs (era până la 10 ms). Viteza reală = workstation (Adrian).
 
-- [~] **P6-37** Fixarea Cyber-GPU după C-39 (C-42): `2c9c90c` → `aee06c4` (kernel + user, doar adăugări), textul fixării în scenarii, teste QEMU (`gpu firmware --sim` → antete citite 4/4), CI verde → Release nou. Dep: P6-35
+- [x] **P6-37** Fixarea Cyber-GPU după C-39 (C-42): `2c9c90c` → `aee06c4` (kernel + user, doar adăugări), textul fixării în scenarii, teste QEMU (`gpu firmware --sim` → antete citite 4/4), CI verde → Release nou. Dep: P6-35
+  Rezultat (2026-10-29): `gpu firmware --sim` → „HS v2: 2 semnaturi de 384 octeti” la ambele Booter, mărimile reale (61.304 / 41.080 / 24.684 octeți), „criteriul I4: TRECE (fisiere oficiale 4/4, antete citite 4/4)”; suita locală 79/80 + 1 sărit (`keyboard-ro-usb` trece la reluare); CI verde (run 40949687259) → Release `os-209`.
 
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
