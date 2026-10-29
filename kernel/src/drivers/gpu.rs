@@ -283,7 +283,7 @@ pub fn identify() -> Vec<String> {
 // ---------------------------------------------------------------------------------------------------------------
 
 /// Pinned Cyber-GPU revision (kernel/Cargo.toml), shown in the report.
-pub const CYBER_GPU_REV: &str = "2c9c90c";
+pub const CYBER_GPU_REV: &str = "aee06c4";
 
 /// Configuration space of one function for the Cyber-GPU libraries: reads only.
 struct ReadOnlyConfig<'a> {

@@ -15,11 +15,11 @@ cyber_rtl8168 = { path = "../rtl8168" }
 cyber_e1000e = { path = "../e1000e" }
 # P6-19 (C-16): the Cyber-GPU libraries (MIT, same author), pinned to one commit (P6-35: 2c9c90c, with fw_check + FwsecLocation::lines; P6-31: 8313973 on their branch g0-g2-fundatie, with vbios_diag; P6-21: dac2e32; was 41e44ba = tag `stabil-2026-10-23`).
 # Read-only use: PCI decoding, the GA104 level-0 probe. The kernel's ConfigSpace adapter refuses every write (drivers/gpu.rs).
-gpu-core = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "2c9c90c" }
-gpu-pci = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "2c9c90c" }
-nvidia-ga104 = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "2c9c90c" }
+gpu-core = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "aee06c4" }
+gpu-pci = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "aee06c4" }
+nvidia-ga104 = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "aee06c4" }
 # SIMULATION only (`gpu identifica --sim` in test builds); never compiled into the kernel people boot.
-gpu-sim = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "2c9c90c", optional = true }
+gpu-sim = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "aee06c4", optional = true }
 
 [features]
 # Test build: the kernel waits for a byte on COM1, then exits QEMU through isa-debug-exit.

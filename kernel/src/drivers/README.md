@@ -73,7 +73,7 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   **SIMULARE**, iar dimensionarea BAR-urilor (care scrie) se face doar în model.
   Test: scenariile `gpu` (calea reală în QEMU → „nicio placa NVIDIA”, `--sim` refuzat în build-ul obișnuit) și `gpu-sim`;
   `tools/after-gpu.sh` verifică în sursă că adaptoarele doar refuză (și că dimensionarea apare doar în blocul de simulare).
-- **`gpu gfw` și `gpu vbios` (P6-21, comanda C-19):** pașii I2 și I3 din Cyber-GPU (fixat acum pe `2c9c90c`, P6-35; înainte `8313973`, P6-31, și `dac2e32`; ramura lor
+- **`gpu gfw` și `gpu vbios` (P6-21, comanda C-19):** pașii I2 și I3 din Cyber-GPU (fixat acum pe `aee06c4`, P6-37; înainte `2c9c90c`, P6-35, `8313973`, P6-31, și `dac2e32`; ramura lor
   `g0-g2-fundatie`), **doar citire**. `gpu gfw` așteaptă (max 4 s) ca firmware-ul plăcii să termine pornirea: rundele, timpul,
   `PRIV_LEVEL_MASK`, progresul (gata = `0xff`). `gpu vbios` citește VBIOS-ul prin fereastra PROM (BAR0 `0x300000`, 1 MiB): imaginile
   (offset, tip PCI-AT/EFI/FWSEC, mărime), tabela BIT și jetonul 0x70, numărul de citiri (max 300 000, 2 s). Ambele au nevoie de primii
@@ -100,3 +100,5 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   Test: `gpu-sim` (`gpu fwsec --sim` pe lanțul de tip ASUS cu FWSEC → „criteriul I3b: TRECE”; `gpu firmware --sim` pe fișierele de probă
   `gpu_sim::fw_stick` → „criteriul I4: TRECE (fisiere oficiale 4/4, antete citite 4/4)”) și `gpu` (în QEMU: „nicio placa NVIDIA”, 4 × „LIPSESTE”).
   Verificat o dată, de mână, cu un stick de test de 128 MiB cu fișiere false de mărimea oficială (gsp de 63.571.696 octeți): 4 × „ALT CONTINUT”, fără probleme de memorie.
+- **Fixarea `aee06c4` (P6-37, comanda C-42):** Cyber-GPU după C-39 — antetele `booter_load`, `booter_unload` și `bootloader` citite după forma
+  fișierelor oficiale 570.144 (`bin_size` nu e mărimea fișierului). Față de `2c9c90c` doar adăugări; codul `gpu firmware` din OS neschimbat.
