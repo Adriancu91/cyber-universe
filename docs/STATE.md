@@ -3,6 +3,20 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-10-29 06:20–08:30 UTC (08:20–10:30 ora României) — sesiune programată, fără Adrian — **P6-35 (C-38) gata: `gpu fwsec` + `gpu firmware`, CI verde, Release `os-206`.**
+  - Hub: comandă nouă C-38 (aprobată 08:25 prin delegare, cu prioritate: fereastra C-36 pe workstation poate fi azi). (Clona hub-ului iar
+    divergentă → ramura veche păstrată ca `backup-local`, `main` = `origin/main`; nimic forțat.)
+  - Cyber-GPU fixat `8313973` → `2c9c90c` (doar adăugări: `fw_check`, `FwsecLocation::lines()`, `gpu_sim::fw_stick`), în kernel și user.
+  - `gpu fwsec [--sim]` = I3b (după `vbios::read_layout`, `fwsec::locate` pe aceeași fereastră doar-citire; ucode-ul nu e citit);
+    `gpu firmware [--sim]` = I4 (cele 4 fișiere GSP 570.144 din `/usb/firmware/nvidia/ga102/gsp/` + `LICENCE.nvidia`, 0 accese la placă);
+    `gpu plan` are 5c și 5d. Scenariile `gpu` și `gpu-sim` extinse (`--sim` → „criteriul I3b: TRECE”, „criteriul I4: TRECE (4/4, 4/4)”;
+    real în QEMU → „nicio placa NVIDIA”, 4 × „LIPSESTE”).
+  - Verificat o dată de mână: stick de test de 128 MiB cu fișiere false de mărimea oficială (gsp 63.571.696 octeți) → 4 × „ALT CONTINUT”,
+    „LICENCE.nvidia: prezenta”, fără probleme de memorie, câteva secunde în QEMU. (Nu e scenariu permanent: imaginea de 128 MiB ar încetini suita.)
+  - Suita locală 80/80 + 1 sărit (`appnet` a picat o dată la serverul local de test, trecut la reluare).
+  - CI run 40834113159: a picat doar `kronos-calcul` (PANIC „temporizator: 81 intreruperi”, instabilul cunoscut cu `-smp 4`, înainte de orice cod nou) → reluat o dată: **verde** → **Release `os-206`** (commit `62130bb`).
+  - **Pentru sesiunea următoare:** coada fără sarcini libere (P6-10, P6-12 p.2 hardware; P3-10 Adrian; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian).
+    Dacă nu e comandă nouă → oprire scurtă.
 - 2026-10-29 03:42 UTC (05:42 ora României) — sesiune programată, oprire scurtă: nicio comandă nouă pentru `cyber-universe` în hub (după 00:42 doar stările Kronos și suita-office; Kronos a schimbat în COMENZI doar C-28, a lui), nicio decizie nouă; CI verde (run 205), Release `os-205`. Coada fără sarcini libere (P6-10, P6-12 p.2 hardware; P3-10 Adrian; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian). Nimic construit (deci fără `env-check --install`). Clona hub-ului iar fără istoric comun (clonă scurtă) → ramura veche păstrată ca `vechi-local-2026-10-29`, `main` = `origin/main`; nimic forțat. Oprirea de siguranță nu se aplică (P6-34 gata la 00:35).
 - 2026-10-29 00:41 UTC (02:41 ora României) — sesiune programată, oprire scurtă: nicio comandă nouă pentru `cyber-universe` în hub (ultima schimbare = starea noastră de la 00:37), nicio decizie nouă după 23:35; CI verde (run 205), Release `os-205`. Coada fără sarcini libere (P6-10, P6-12 p.2 hardware; P3-10 Adrian; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian). Nimic construit. Oprirea de siguranță nu se aplică (P6-34 gata).
 - 2026-10-29 ~00:40 UTC — trecere extra cerută de centrul de comandă („C-37, apoi confirmă CI și Release”): C-37 era deja gata în sesiunea de mai jos; verificat din nou: run 205 verde, Release `os-205` (C-29 + C-31 + P6-34) publicat. Nimic de făcut.
