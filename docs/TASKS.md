@@ -298,6 +298,8 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
   Test: vectorii oficiali F32/Q8_0 și modelul minuscul rămân identici (scenariile `kronos-kgr*`), `--profil` scrie toate rândurile, bazinul dă aceleași logit-uri pe 1/2/4 fire, `--cauta` pe un model de pe disc; viteza adevărată = workstation (Adrian).
   Rezultat (2026-10-28): cauzele găsite în cod — virgula mobilă a programelor era emulată (soft-float), fire noi la fiecare produs (și stivele lor nu se eliberau: `mem_unmap` e refuzat cât mai rulează alte fire), FAT32 parcurgea lanțul de la început la fiecare 64 KiB, derularea ecranului citea memoria plăcii video. Toate reparate (ținta `x86_64-cyber-user.json`, D-014; bazin de fire; FAT cu poziție ținută minte; copie a ecranului în RAM). `kronos --profil`, `--repetitie`, `--cauta` pe model, `usb citire mare` (variantă, implicit oprită, D-013). Suita locală: 77/80 la prima trecere (3 = testul vechi al temporizatorului la `-smp 4` pe gazda cu 2 nuclee), toate 3 trec la reluare. În QEMU un model de 2,4 MiB se citește în 80 ms (era 360 ms). Viteza pe workstation = testul lui Adrian.
 
+- [~] **P6-36** Kronos în OS: frânele de pe workstation (C-40): procesoarele libere trezite imediat (IPI) când un fir devine gata, qkv + atenția într-o singură împărțire la generare, GELU pe fire, textul pe ecran pe rânduri (`--fara-ecran`), `--cauta` cu costul sincronizării. Simbolurile identice. Dep: P6-35
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
