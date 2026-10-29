@@ -15,6 +15,7 @@
     „LICENCE.nvidia: prezenta”, fără probleme de memorie, câteva secunde în QEMU. (Nu e scenariu permanent: imaginea de 128 MiB ar încetini suita.)
   - Suita locală 80/80 + 1 sărit (`appnet` a picat o dată la serverul local de test, trecut la reluare).
   - CI run 40834113159: a picat doar `kronos-calcul` (PANIC „temporizator: 81 intreruperi”, instabilul cunoscut cu `-smp 4`, înainte de orice cod nou) → reluat o dată: **verde** → **Release `os-206`** (commit `62130bb`).
+  - Rezervă în hub: arhiva `os-1002` (același cod, `tools/stick-hub.sh`), sumele verificate; README-ul din hub actualizat.
   - **Pentru sesiunea următoare:** coada fără sarcini libere (P6-10, P6-12 p.2 hardware; P3-10 Adrian; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian).
     Dacă nu e comandă nouă → oprire scurtă.
 - 2026-10-29 03:42 UTC (05:42 ora României) — sesiune programată, oprire scurtă: nicio comandă nouă pentru `cyber-universe` în hub (după 00:42 doar stările Kronos și suita-office; Kronos a schimbat în COMENZI doar C-28, a lui), nicio decizie nouă; CI verde (run 205), Release `os-205`. Coada fără sarcini libere (P6-10, P6-12 p.2 hardware; P3-10 Adrian; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian). Nimic construit (deci fără `env-check --install`). Clona hub-ului iar fără istoric comun (clonă scurtă) → ramura veche păstrată ca `vechi-local-2026-10-29`, `main` = `origin/main`; nimic forțat. Oprirea de siguranță nu se aplică (P6-34 gata la 00:35).
