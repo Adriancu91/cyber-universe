@@ -30,7 +30,7 @@ dependencies = [
 [[package]]
 name = "gpu-command"
 version = "0.1.0"
-source = "git+https://github.com/Adriancu91/cyber-gpu?rev=8313973#83139736323c8014088fcb5f379725e6e5aa5f61"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=2c9c90c#2c9c90c6951abcb885252ff7f2710073238bb0d6"
 dependencies = [
  "gpu-core",
 ]
@@ -38,7 +38,7 @@ dependencies = [
 [[package]]
 name = "gpu-compute"
 version = "0.1.0"
-source = "git+https://github.com/Adriancu91/cyber-gpu?rev=8313973#83139736323c8014088fcb5f379725e6e5aa5f61"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=2c9c90c#2c9c90c6951abcb885252ff7f2710073238bb0d6"
 dependencies = [
  "gpu-command",
  "gpu-core",
@@ -48,12 +48,12 @@ dependencies = [
 [[package]]
 name = "gpu-core"
 version = "0.1.0"
-source = "git+https://github.com/Adriancu91/cyber-gpu?rev=8313973#83139736323c8014088fcb5f379725e6e5aa5f61"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=2c9c90c#2c9c90c6951abcb885252ff7f2710073238bb0d6"
 
 [[package]]
 name = "gpu-memory"
 version = "0.1.0"
-source = "git+https://github.com/Adriancu91/cyber-gpu?rev=8313973#83139736323c8014088fcb5f379725e6e5aa5f61"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=2c9c90c#2c9c90c6951abcb885252ff7f2710073238bb0d6"
 dependencies = [
  "gpu-core",
 ]

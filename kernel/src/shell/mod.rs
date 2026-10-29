@@ -413,12 +413,53 @@ fn gpu(args: &[&str]) {
                 }
             }
         }
+        Some("fwsec") => {
+            // P6-35 (C-38): step I3b, read only.
+            let rest = &args[1..];
+            if let Some(bad) = rest.iter().find(|a| **a != "--sim") {
+                out!("gpu fwsec: optiune necunoscuta: {} (folosire: gpu fwsec [--sim])\n", bad);
+                return;
+            }
+            if rest.contains(&"--sim") {
+                #[cfg(feature = "test-gpu-sim")]
+                for l in crate::drivers::gpu::init_step_sim(crate::drivers::gpu::InitStep::Fwsec) {
+                    out!("{}\n", l);
+                }
+                #[cfg(not(feature = "test-gpu-sim"))]
+                out!("gpu: --sim exista doar in build-ul de test (modelul gpu-sim nu intra in sistemul pornit de pe stick)\n");
+            } else {
+                for l in crate::drivers::gpu::init_step(crate::drivers::gpu::InitStep::Fwsec) {
+                    out!("{}\n", l);
+                }
+            }
+        }
+        Some("firmware") => {
+            // P6-35 (C-38): step I4 — the GSP files on the stick; no access to the card at all.
+            let rest = &args[1..];
+            if let Some(bad) = rest.iter().find(|a| **a != "--sim") {
+                out!("gpu firmware: optiune necunoscuta: {} (folosire: gpu firmware [--sim])\n", bad);
+                return;
+            }
+            if rest.contains(&"--sim") {
+                #[cfg(feature = "test-gpu-sim")]
+                for l in crate::drivers::gpu::firmware_check_sim() {
+                    out!("{}\n", l);
+                }
+                #[cfg(not(feature = "test-gpu-sim"))]
+                out!("gpu: --sim exista doar in build-ul de test (fisierele de proba gpu-sim nu intra in sistemul pornit de pe stick)\n");
+            } else {
+                out!("gpu firmware: citesc fisierele de pe stick (cel mai mare ~64 MB, poate dura cateva secunde)...\n");
+                for l in crate::drivers::gpu::firmware_check() {
+                    out!("{}\n", l);
+                }
+            }
+        }
         Some("plan") => {
             for l in crate::drivers::gpu::PLAN {
                 out!("{}\n", l);
             }
         }
-        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios [--detalii] | gpu plan)\n", other),
+        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios [--detalii] | gpu fwsec | gpu firmware | gpu plan)\n", other),
     }
 }
 

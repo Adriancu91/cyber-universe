@@ -283,7 +283,7 @@ pub fn identify() -> Vec<String> {
 // ---------------------------------------------------------------------------------------------------------------
 
 /// Pinned Cyber-GPU revision (kernel/Cargo.toml), shown in the report.
-pub const CYBER_GPU_REV: &str = "8313973";
+pub const CYBER_GPU_REV: &str = "2c9c90c";
 
 /// Configuration space of one function for the Cyber-GPU libraries: reads only.
 struct ReadOnlyConfig<'a> {
@@ -554,12 +554,33 @@ fn vbios_diag_lines(p: &str, r: &gpu_core::error::GpuResult<nvidia_ga104::vbios_
     }
 }
 
-/// Which read-only step `gpu gfw` / `gpu vbios` / `gpu vbios --detalii` runs.
+/// Which read-only step `gpu gfw` / `gpu vbios` / `gpu vbios --detalii` / `gpu fwsec` runs.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum InitStep {
     Gfw,
     Vbios,
     VbiosDetails,
+    /// P6-35 (C-38): step I3b — where FWSEC sits in the VBIOS (tables of the PROM window only; the ucode is never read).
+    Fwsec,
+}
+
+/// P6-35: the lines of `gpu fwsec` for one result — the VBIOS layout first, then `fwsec::locate` on the same window.
+fn fwsec_lines(p: &str, r: &gpu_core::error::GpuResult<nvidia_ga104::fwsec::FwsecLocation>) -> Vec<String> {
+    match r {
+        Ok(f) => f.lines().into_iter().map(|l| format!("{}: {}", p, l)).collect(),
+        Err(e) => alloc::vec![format!("{}: FWSEC (I3b): {}", p, e)],
+    }
+}
+
+/// `read_layout` then `locate`, both on the same read-only window.
+fn locate_fwsec<M: gpu_core::hal::Mmio + ?Sized, K: gpu_core::hal::Clock + ?Sized>(
+    win: &mut M,
+    journal: &mut gpu_core::diag::Journal,
+    clock: &mut K,
+) -> gpu_core::error::GpuResult<nvidia_ga104::fwsec::FwsecLocation> {
+    use nvidia_ga104::{fwsec, vbios};
+    let layout = vbios::read_layout(win, journal, clock, vbios::VBIOS_TIMEOUT_US)?;
+    fwsec::locate(win, journal, clock, vbios::VBIOS_TIMEOUT_US, &layout)
 }
 
 /// `gpu gfw` / `gpu vbios` on every NVIDIA board the Cyber-GPU probe accepts. Every line also goes to the log.
@@ -606,6 +627,7 @@ pub fn init_step(step: InitStep) -> Vec<String> {
                 &p,
                 &vbios_diag::diagnose(&mut win, &mut journal, &mut clock, vbios::VBIOS_TIMEOUT_US),
             ),
+            InitStep::Fwsec => fwsec_lines(&p, &locate_fwsec(&mut win, &mut journal, &mut clock)),
         };
         lines.extend(out);
         for e in journal.events() {
@@ -661,12 +683,67 @@ pub fn init_step_sim(step: InitStep) -> Vec<String> {
             bar0.load_bytes(regs::PROM_BASE, &rom::asus_like_chain());
             vbios_diag_lines("model", &vbios_diag::diagnose(&mut bar0, &mut journal, &mut clock, vbios::VBIOS_TIMEOUT_US))
         }
+        InitStep::Fwsec => {
+            // SIM: the ASUS-like chain ("NV" images at 0x24600, as on the workstation card) with a GA10x-like FWSEC.
+            bar0.load_bytes(regs::PROM_BASE, &rom::asus_like_chain_with_fwsec(&rom::SimFwsec::ga10x_like()));
+            fwsec_lines("model", &locate_fwsec(&mut bar0, &mut journal, &mut clock))
+        }
     };
     lines.push(format!("model: {} citiri BAR0, timp simulat {} us", bar0.reads.len(), clock.now));
     lines.push(writes_line(bar0.writes.len() + journal.writes()));
     let mut out: Vec<String> = lines.into_iter().map(|l| format!("SIMULARE: {}", l)).collect();
     out.insert(0, format!("SIMULARE: modelul gpu-sim al placii de pe workstation (cyber-gpu {}), nu placa reala", CYBER_GPU_REV));
     out.push(String::from("SIMULARE: nicio placa reala atinsa; rezultatul nu dovedeste nimic despre hardware"));
+    for l in &out {
+        crate::info!("gpu: {}", l);
+    }
+    out
+}
+
+// P6-35 (C-38): step I4 of Cyber-GPU — are the 4 GSP 570.144 files on the stick the official ones, and does our parser read
+// their headers? Pure file check: no PCI configuration access, no BAR0 access. One file in memory at a time (the largest
+// is ~64 MB, dropped as soon as it is checked). The NVIDIA files are never in the repo, the tests or the stick archive.
+
+/// `FirmwareSource` over the kernel VFS (`/usb/firmware/...`).
+struct StickFirmware;
+
+impl nvidia_ga104::firmware::FirmwareSource for StickFirmware {
+    fn read_file(&mut self, path: &str) -> gpu_core::error::GpuResult<Vec<u8>> {
+        use crate::fs::FsError;
+        crate::fs::read_all(path).map_err(|e| match e {
+            // No stick mounted at /usb is the same, for the user, as the file not being there.
+            FsError::NotFound | FsError::NotADirectory | FsError::InvalidPath => gpu_core::error::GpuError::NotPresent,
+            _ => gpu_core::error::GpuError::InvalidArgument("citirea de pe stick a esuat"),
+        })
+    }
+}
+
+/// `gpu firmware`: read-only check of the GSP 570.144 files on the stick. Every line also goes to the log.
+pub fn firmware_check() -> Vec<String> {
+    use nvidia_ga104::{firmware, fw_check};
+    let lines = fw_check::check_stick(&mut StickFirmware, &firmware::GSP_570_144).lines();
+    for l in &lines {
+        crate::info!("gpu: {}", l);
+    }
+    lines
+}
+
+/// `gpu firmware --sim` (test builds only): the same check on the gpu-sim stand-in files (NOT NVIDIA files), with a
+/// manifest pinned to those stand-ins. Every line says SIMULARE.
+#[cfg(feature = "test-gpu-sim")]
+pub fn firmware_check_sim() -> Vec<String> {
+    use gpu_sim::fw_stick;
+    use nvidia_ga104::{firmware::STICK_DIR, fw_check};
+    let files = fw_stick::files();
+    let man = core::array::from_fn(|i| fw_check::pin_of(fw_check::ROLE_ORDER[i], fw_stick::SIM_PATHS[i], &files[i]));
+    let mut src = fw_check::MemSource::new();
+    for (p, b) in fw_stick::SIM_PATHS.iter().zip(files) {
+        src.insert(format!("{}{}", STICK_DIR, p), b);
+    }
+    src.insert(format!("{}{}", STICK_DIR, fw_check::LICENCE), fw_stick::licence());
+    let mut out: Vec<String> =
+        fw_check::check_stick(&mut src, &man).lines().into_iter().map(|l| format!("SIMULARE: {}", l)).collect();
+    out.insert(0, format!("SIMULARE: fisierele de proba gpu-sim (cyber-gpu {}), NU fisierele NVIDIA", CYBER_GPU_REV));
     for l in &out {
         crate::info!("gpu: {}", l);
     }
@@ -682,6 +759,8 @@ pub const PLAN: &[&str] = &[
     " 4. gpu gfw              -> poza (I2: firmware-ul placii a terminat pornirea? asteptat: progres 0xff, < 4 s)",
     " 5. gpu vbios            -> poza (I3: imaginile PCI-AT, EFI, FWSEC; BIT cu jetonul 0x70)",
     " 5b. gpu vbios --detalii -> poze cu toate randurile (structura VBIOS: imagini, PCIR, rupturi; 0 scrieri)",
+    " 5c. gpu fwsec           -> poza (I3b: unde e FWSEC; 0 scrieri)",
+    " 5d. gpu firmware        -> poza (I4: cele 4 fisiere 570.144 de pe stick; 0 accese la placa)",
     " 6. log gpu 40           -> poza",
     " 7. hw                   -> poza",
     " 8. net                  -> poza (placa de retea a workstation-ului e necunoscuta: notam ce apare)",

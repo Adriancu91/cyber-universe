@@ -73,7 +73,7 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   **SIMULARE**, iar dimensionarea BAR-urilor (care scrie) se face doar în model.
   Test: scenariile `gpu` (calea reală în QEMU → „nicio placa NVIDIA”, `--sim` refuzat în build-ul obișnuit) și `gpu-sim`;
   `tools/after-gpu.sh` verifică în sursă că adaptoarele doar refuză (și că dimensionarea apare doar în blocul de simulare).
-- **`gpu gfw` și `gpu vbios` (P6-21, comanda C-19):** pașii I2 și I3 din Cyber-GPU (fixat acum pe `8313973`, P6-31; înainte `dac2e32`; ramura lor
+- **`gpu gfw` și `gpu vbios` (P6-21, comanda C-19):** pașii I2 și I3 din Cyber-GPU (fixat acum pe `2c9c90c`, P6-35; înainte `8313973`, P6-31, și `dac2e32`; ramura lor
   `g0-g2-fundatie`), **doar citire**. `gpu gfw` așteaptă (max 4 s) ca firmware-ul plăcii să termine pornirea: rundele, timpul,
   `PRIV_LEVEL_MASK`, progresul (gata = `0xff`). `gpu vbios` citește VBIOS-ul prin fereastra PROM (BAR0 `0x300000`, 1 MiB): imaginile
   (offset, tip PCI-AT/EFI/FWSEC, mărime), tabela BIT și jetonul 0x70, numărul de citiri (max 300 000, 2 s). Ambele au nevoie de primii
@@ -91,3 +91,12 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   Test: `gpu-sim` (`gpu vbios --detalii --sim` pe lanțul sintetic de tip ASUS, cu imaginile „NV” la `0x24600`, ca pe placa din
   workstation) și `gpu` (calea reală în QEMU → „nicio placa NVIDIA”, opțiune greșită refuzată). În sesiunile programate `cyber-gpu`
   vine din copia din hub: `tools/cyber-gpu-local.sh` (B-005).
+- **`gpu fwsec` și `gpu firmware` (P6-35, comanda C-38):** Cyber-GPU fixat pe `2c9c90c` (față de `8313973` doar adăugări).
+  `gpu fwsec` = pasul I3b: după `vbios::read_layout`, `fwsec::locate` pe aceeași fereastră doar-citire; rândurile vin din
+  `FwsecLocation::lines()` (imaginile FWSEC, tabela PMU, descriptorul v3, semnăturile, „criteriul I3b”); ucode-ul nu e citit.
+  `gpu firmware` = pasul I4: citește pe rând cele 4 fișiere GSP 570.144 din `/usb/firmware/nvidia/ga102/gsp/` (+ `LICENCE.nvidia`) și spune
+  pentru fiecare: lipsă / altă mărime / altă sumă SHA-256 / oficial + antetul citit de parserul nostru; **niciun acces la placă**; un singur
+  fișier în memorie odată (cel mai mare ~64 MB). Fișierele NVIDIA nu intră niciodată în repo, în teste sau în arhiva stick-ului.
+  Test: `gpu-sim` (`gpu fwsec --sim` pe lanțul de tip ASUS cu FWSEC → „criteriul I3b: TRECE”; `gpu firmware --sim` pe fișierele de probă
+  `gpu_sim::fw_stick` → „criteriul I4: TRECE (fisiere oficiale 4/4, antete citite 4/4)”) și `gpu` (în QEMU: „nicio placa NVIDIA”, 4 × „LIPSESTE”).
+  Verificat o dată, de mână, cu un stick de test de 128 MiB cu fișiere false de mărimea oficială (gsp de 63.571.696 octeți): 4 × „ALT CONTINUT”, fără probleme de memorie.
