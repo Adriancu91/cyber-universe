@@ -18,6 +18,8 @@
 //! fc and MLP output, then the output head), on pseudo-random weights of the same sizes (the real ones would take the
 //! whole file). The output head is checked against the float64 control too. With a model, the choice is the fastest
 //! variant on the model; the thread counts tried are 1, 2, 4, ..., half the processors and all of them.
+//! P6-36 (C-40): the time on the model is the average of 5 passes (it was the fastest of 3), so the cost of waiting for
+//! more threads counts in the choice.
 
 use crate::kgr::{self, File, Mat, Order, Tuning};
 use alloc::{string::String, vec, vec::Vec};
@@ -213,7 +215,13 @@ fn workload(layers: usize, e: usize, vocab: usize, q8: bool) -> Result<Workload,
     Ok(Workload { mats, bytes })
 }
 
-/// Cycles of one token's products (fewest of 3 runs after a warm-up); `y` ends with the head's output.
+/// Passes averaged by `time_model`.
+const PASSES: u64 = 5;
+
+/// Cycles of one token's products, **the average of 5 runs** after a warm-up; `y` ends with the head's output.
+/// P6-36 (C-40): one run = the products of one generated token one after another, each followed by the wait for every
+/// thread, as in `kronos` (4 per layer since qkv and attention share one split, + the head). The average, not the
+/// fastest run: a thread that comes late (the cost of synchronizing more threads) must count in the choice.
 fn time_model(w: &Workload, x: &[f32], y: &mut [f32], t: Tuning) -> u64 {
     let pass = |y: &mut [f32]| {
         for m in &w.mats {
@@ -221,14 +229,11 @@ fn time_model(w: &Workload, x: &[f32], y: &mut [f32], t: Tuning) -> u64 {
         }
     };
     pass(y);
-    (0..3)
-        .map(|_| {
-            let c0 = rdtsc();
-            pass(y);
-            rdtsc() - c0
-        })
-        .min()
-        .unwrap()
+    let c0 = rdtsc();
+    for _ in 0..PASSES {
+        pass(y);
+    }
+    (rdtsc() - c0) / PASSES
 }
 
 pub fn run(args: &[&str]) -> i64 {

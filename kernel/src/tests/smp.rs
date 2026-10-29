@@ -3,7 +3,8 @@
 //! - `sched::Mutex` stays exact when 4 threads on different processors take it 10000 times each;
 //! - wait queues lose no wake-up between processors (two threads hand a token back and forth 2000 times);
 //! - user programs run at the same time on several processors (system calls use each processor's own kernel stack);
-//! - removing a kernel page reaches the other processors' TLBs (shootdown, answered by every processor).
+//! - removing a kernel page reaches the other processors' TLBs (shootdown, answered by every processor);
+//! - a new ready thread wakes an idle processor at once (P6-36: an interrupt, not the next 10 ms tick).
 
 use crate::arch::x86_64::{apic, smp};
 use crate::sched;
@@ -32,6 +33,12 @@ fn busy() {
         core::hint::black_box(x);
     }
     DONE.fetch_add(1, Ordering::AcqRel);
+}
+
+static STARTED: AtomicU64 = AtomicU64::new(0);
+
+fn mark_started() {
+    STARTED.store(1, Ordering::Release);
 }
 
 static COUNTER: sched::Mutex<u64> = sched::Mutex::new(0);
@@ -140,6 +147,41 @@ pub fn run() {
     let done = apic::shootdowns() - before;
     assert!(done == 50, "smp: {} shootdown-uri in loc de 50", done);
     crate::info!("test: smp: 50 pagini demapate, TLB golit pe toate nucleele");
+
+    // 6. Idle processors woken at once (P6-36). The other processors are idle now; this thread does not yield while
+    // it waits, so each new thread can only start on an idle processor: woken by a kick, or by its tick (<= 10 ms).
+    while sched::alive() > 1 {
+        sched::sleep_ms(10);
+    }
+    let kicks0 = apic::kicks();
+    let mut lat = alloc::vec::Vec::new();
+    for _ in 0..20 {
+        STARTED.store(0, Ordering::Release);
+        let t0 = crate::time::since_boot_us().unwrap_or(0);
+        sched::spawn(mark_started);
+        let limit = t0 + 1_000_000;
+        loop {
+            let t = crate::time::since_boot_us().unwrap_or(0);
+            if STARTED.load(Ordering::Acquire) != 0 {
+                lat.push(t - t0);
+                break;
+            }
+            assert!(t < limit, "smp: firul nou nu a pornit in 1 s");
+            core::hint::spin_loop();
+        }
+        while sched::alive() > 1 {
+            sched::yield_now();
+        }
+    }
+    let kicks = apic::kicks() - kicks0;
+    assert!(kicks >= 20, "smp: {} treziri ale nucleelor libere in loc de >= 20", kicks);
+    lat.sort_unstable();
+    crate::info!(
+        "test: smp: nucleele libere trezite imediat ({} treziri; pornirea unui fir nou: mediana {} us, maxim {} us)",
+        kicks,
+        lat[lat.len() / 2],
+        lat[lat.len() - 1]
+    );
 
     while sched::alive() > 1 {
         sched::sleep_ms(10);

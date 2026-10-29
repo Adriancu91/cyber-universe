@@ -146,6 +146,21 @@ pub fn shootdown(virt: u64) {
     }
 }
 
+/// Wakes processor `index` from `hlt` (P6-36, C-40): an IPI on the shootdown vector, whose handler does nothing when
+/// no shootdown is pending; the idle loop then looks at the ready queue at once instead of at its next tick (10 ms).
+pub fn kick(index: usize) {
+    send_ipi(super::percpu::get(index).apic_id.load(Ordering::Relaxed) as u8, SHOOTDOWN_VECTOR as u32);
+    KICKS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Wake-up kicks sent since boot (for the tests and `kronos --profil`).
+static KICKS: AtomicU64 = AtomicU64::new(0);
+
+#[allow(dead_code)] // used by the SMP test
+pub fn kicks() -> u64 {
+    KICKS.load(Ordering::Relaxed)
+}
+
 /// TLB shootdowns since boot.
 #[allow(dead_code)] // used by the SMP test
 pub fn shootdowns() -> u64 {

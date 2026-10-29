@@ -560,7 +560,7 @@ pub mod prof {
     pub const SYNC: usize = 7;
     pub const N: usize = 8;
     pub const NAMES: [&str; N] = [
-        "produs qkv (straturi)",
+        "produs qkv (+ atentia, la generare)",
         "produs proiectie (straturi)",
         "produs fc 4E (straturi)",
         "produs iesire MLP (straturi)",
@@ -742,19 +742,37 @@ pub fn processor_name() -> String {
     if out.is_empty() { "necunoscut".into() } else { out }
 }
 
+/// One output of `linear`: x_row · W[j] (+ b[j]), as `tune` says (the broken order drops the last 8 columns).
+#[inline]
+fn output(w: &Mat, b: Option<&[f32]>, xr: &[f32], j: usize, tune: Tuning) -> f32 {
+    let mut v = if tune.order == Order::Broken { w.dot_prefix(tune.simd, j, xr, w.cols - 8) } else { w.dot(tune.simd, j, xr) };
+    if let Some(b) = b {
+        v += b[j];
+    }
+    v
+}
+
+/// GELU (exact erf form) of one value: the same arithmetic as `reference::gelu_erf` on a slice.
+#[inline]
+fn gelu1(v: f32) -> f32 {
+    let mut a = [v];
+    reference::gelu_erf(&mut a);
+    a[0]
+}
+
 /// y[t, :] = x[t, :] · Wᵀ (+ b), for t < rows; split over the output features as `tune` says.
 pub fn linear(w: &Mat, b: Option<&[f32]>, x: &[f32], rows: usize, y: &mut [f32], tune: Tuning) {
+    linear_act(w, b, x, rows, y, tune, false);
+}
+
+/// `linear`, then (when `gelu`) GELU on every output, by the thread that computed it (P6-36: no serial pass after).
+pub fn linear_act(w: &Mat, b: Option<&[f32]>, x: &[f32], rows: usize, y: &mut [f32], tune: Tuning, gelu: bool) {
     let (inp, outp) = (w.cols, w.rows);
     assert!(x.len() >= rows * inp && y.len() >= rows * outp);
     let o = Out(y.as_mut_ptr());
-    let simd = tune.simd;
     let one = |t: usize, j: usize| {
-        let xr = &x[t * inp..(t + 1) * inp];
-        let mut v = if tune.order == Order::Broken { w.dot_prefix(simd, j, xr, inp - 8) } else { w.dot(simd, j, xr) };
-        if let Some(b) = b {
-            v += b[j];
-        }
-        v
+        let v = output(w, b, &x[t * inp..(t + 1) * inp], j, tune);
+        if gelu { gelu1(v) } else { v }
     };
     par(outp, tune.threads, &|j0, j1| {
         let o = o;
@@ -927,8 +945,12 @@ impl<'a> Model<'a> {
     }
 
     fn linear(&self, kind: usize, w: &Mat, b: Option<&[f32]>, x: &[f32], rows: usize, y: &mut [f32]) {
+        self.linear_act(kind, w, b, x, rows, y, false);
+    }
+
+    fn linear_act(&self, kind: usize, w: &Mat, b: Option<&[f32]>, x: &[f32], rows: usize, y: &mut [f32], gelu: bool) {
         let t0 = prof::now();
-        linear(w, b, x, rows, y, self.tune);
+        linear_act(w, b, x, rows, y, self.tune, gelu);
         prof::add(kind, prof::now() - t0, w.bytes() as u64);
     }
 
@@ -973,6 +995,46 @@ impl<'a> Model<'a> {
             let c0 = prof::now();
             layernorm(&x, l.ln1, &mut hbuf, t, e, self.cfg.eps);
             rest += prof::now() - c0;
+            if t == 1 {
+                // P6-36 (C-40): generating one token, the qkv product and the attention run in ONE split over the heads:
+                // each part computes the q, k and v columns of its heads, stores k and v in the cache, then the
+                // attention of those heads (it needs no other head's columns). One wait for the threads per layer
+                // fewer (49 per token instead of 61). Every value comes from the same code as below: same bits.
+                let c0 = prof::now();
+                let parts = self.tune.threads.clamp(1, MAX_THREADS).min(h);
+                let (kc, vc) = (Out(self.kcache[li].as_mut_ptr()), Out(self.vcache[li].as_mut_ptr()));
+                let (qo, ao, so) = (Out(qkv.as_mut_ptr()), Out(att.as_mut_ptr()), Out(scores.as_mut_ptr()));
+                let (hb, tune) = (&hbuf[..e], self.tune);
+                par_parts(h, parts, &|part, h0, h1| {
+                    let (kc, vc, qo, ao, so) = (kc, vc, qo, ao, so);
+                    for j in h0..h1 {
+                        for c in [j * d, e + j * d, 2 * e + j * d] {
+                            for col in c..c + d {
+                                // SAFETY: column `col` of qkv row 0 belongs to head j, which only this part has.
+                                unsafe { *qo.0.add(col) = output(&l.qkv, Some(l.qkv_b), hb, col, tune) };
+                            }
+                        }
+                        // SAFETY: as above; the cache rows have `e` floats per position, columns j*d..j*d+d are head j's.
+                        unsafe {
+                            core::ptr::copy_nonoverlapping(qo.0.add(e + j * d), kc.0.add(p0 * e + j * d), d);
+                            core::ptr::copy_nonoverlapping(qo.0.add(2 * e + j * d), vc.0.add(p0 * e + j * d), d);
+                        }
+                    }
+                    // SAFETY: `scores` row `part` belongs to this part.
+                    let sc = unsafe { core::slice::from_raw_parts_mut(so.0.add(part * (p0 + 1)), p0 + 1) };
+                    for j in h0..h1 {
+                        // SAFETY: q and the output of head j (row 0, columns j*d..j*d+d) are this part's alone; rows
+                        // 0..=p0 of the cache hold head j's keys and values (earlier positions from before this call,
+                        // position p0 written just above by this part), and only head j's columns are read.
+                        unsafe {
+                            let q = core::slice::from_raw_parts(qo.0.add(j * d), d);
+                            let out = core::slice::from_raw_parts_mut(ao.0.add(j * d), d);
+                            attend(q, kc.0, vc.0, e, j * d, p0, scale, sc, out);
+                        }
+                    }
+                });
+                prof::add(prof::QKV, prof::now() - c0, l.qkv.bytes() as u64);
+            } else {
             self.linear(prof::QKV, &l.qkv, Some(l.qkv_b), &hbuf, t, &mut qkv);
             let c0 = prof::now();
             let (kc, vc) = (&mut self.kcache[li], &mut self.vcache[li]);
@@ -992,33 +1054,14 @@ impl<'a> Model<'a> {
                     let (i, j) = (item / h, item % h);
                     let pos = p0 + i; // sees positions 0..=pos
                     let qh = &qkv[i * 3 * e + j * d..i * 3 * e + (j + 1) * d];
-                    let sc = &mut sc_all[..=pos];
-                    let mut max = f32::NEG_INFINITY;
-                    for (s, v) in sc.iter_mut().enumerate() {
-                        let kh = &kc[s * e + j * d..s * e + (j + 1) * d];
-                        *v = qh.iter().zip(kh).fold(0.0f32, |a, (q, k)| a + q * k) * scale;
-                        max = max.max(*v);
-                    }
-                    let mut sum = 0.0f32;
-                    for v in sc.iter_mut() {
-                        *v = math::exp(*v - max);
-                        sum += *v;
-                    }
                     // SAFETY: (position i, head j) = att[i*e + j*d .. +d], written only by the part that has this item.
                     let out = unsafe { core::slice::from_raw_parts_mut(ao.0.add(i * e + j * d), d) };
-                    out.fill(0.0);
-                    for (s, &p) in sc.iter().enumerate() {
-                        let vh = &vc[s * e + j * d..s * e + (j + 1) * d];
-                        for (o, v) in out.iter_mut().zip(vh) {
-                            *o += p * v;
-                        }
-                    }
-                    for o in out.iter_mut() {
-                        *o /= sum;
-                    }
+                    // SAFETY: the cache is only read here (filled before the split), rows 0..=pos exist.
+                    unsafe { attend(qh, kc.as_ptr(), vc.as_ptr(), e, j * d, pos, scale, sc_all, out) };
                 }
             });
             prof::add(prof::ATTN, prof::now() - c0, 0);
+            }
             let l = &self.layers[li];
             self.linear(prof::PROJ, &l.proj, Some(l.proj_b), &att, t, &mut tmp);
             let c0 = prof::now();
@@ -1027,10 +1070,7 @@ impl<'a> Model<'a> {
             }
             layernorm(&x, l.ln2, &mut hbuf, t, e, self.cfg.eps);
             rest += prof::now() - c0;
-            self.linear(prof::FC, &l.fc, Some(l.fc_b), &hbuf, t, &mut big);
-            let c0 = prof::now();
-            reference::gelu_erf(&mut big);
-            rest += prof::now() - c0;
+            self.linear_act(prof::FC, &l.fc, Some(l.fc_b), &hbuf, t, &mut big, true);
             self.linear(prof::OUT, &l.out, Some(l.out_b), &big, t, &mut tmp);
             let c0 = prof::now();
             for (a, b) in x.iter_mut().zip(&tmp) {
@@ -1046,6 +1086,41 @@ impl<'a> Model<'a> {
         let mut logits = vec![0.0f32; rows * self.cfg.vocab];
         self.linear(prof::HEAD, &self.tok, None, &hbuf, rows, &mut logits);
         Ok(logits)
+    }
+}
+
+/// Causal attention of one (position, head): `q` (d floats) against the keys of positions 0..=pos (head columns
+/// `col..col+d` of the `e`-wide cache rows at `kc` / `vc`), softmax, weighted sum of the values into `out`.
+/// `sc` = at least pos + 1 scratch floats.
+///
+/// # Safety
+/// `kc` and `vc` must point at `(pos + 1) * e` floats whose columns `col..col+d` nobody writes during the call (other
+/// threads may write other columns: only these columns are ever read, through slices of `d` floats).
+#[allow(clippy::too_many_arguments)]
+unsafe fn attend(q: &[f32], kc: *const f32, vc: *const f32, e: usize, col: usize, pos: usize, scale: f32, sc: &mut [f32], out: &mut [f32]) {
+    let d = q.len();
+    // SAFETY: inside the cache rows and columns the caller vouches for.
+    let key = |s: usize| unsafe { core::slice::from_raw_parts(kc.add(s * e + col), d) };
+    let val = |s: usize| unsafe { core::slice::from_raw_parts(vc.add(s * e + col), d) };
+    let sc = &mut sc[..=pos];
+    let mut max = f32::NEG_INFINITY;
+    for (s, v) in sc.iter_mut().enumerate() {
+        *v = q.iter().zip(key(s)).fold(0.0f32, |a, (q, k)| a + q * k) * scale;
+        max = max.max(*v);
+    }
+    let mut sum = 0.0f32;
+    for v in sc.iter_mut() {
+        *v = math::exp(*v - max);
+        sum += *v;
+    }
+    out.fill(0.0);
+    for (s, &p) in sc.iter().enumerate() {
+        for (o, v) in out.iter_mut().zip(val(s)) {
+            *o += p * v;
+        }
+    }
+    for o in out.iter_mut() {
+        *o /= sum;
     }
 }
 

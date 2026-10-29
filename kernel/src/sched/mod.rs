@@ -210,7 +210,10 @@ pub fn spawn_system(f: fn()) -> u64 {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let mut t = new_thread(id, f);
     t.system = true;
-    with_sched(|s| s.ready.push_back(t));
+    with_sched(|s| {
+        s.ready.push_back(t);
+        kick_idle(s);
+    });
     id
 }
 
@@ -220,7 +223,10 @@ pub fn spawn_in(root: u64, f: fn()) -> u64 {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let mut t = new_thread(id, f);
     t.root = root;
-    with_sched(|s| s.ready.push_back(t));
+    with_sched(|s| {
+        s.ready.push_back(t);
+        kick_idle(s);
+    });
     id
 }
 
@@ -260,11 +266,46 @@ pub fn current_cpu() -> usize {
     i
 }
 
-/// The idle thread: sleeps until an interrupt, then lets whoever was woken run.
+/// The idle thread: sleeps until an interrupt, then lets whoever was woken run. The ready queue is checked with
+/// interrupts off and the sleep is `sti; hlt` (no interrupt can come between the two instructions), so a wake-up kick
+/// sent after the check is never lost (P6-36).
 fn idle_loop() {
     loop {
-        crate::arch::x86_64::hlt();
+        let flags = irq_save();
+        let empty = with_sched(|s| s.ready.is_empty());
+        if empty {
+            // SAFETY: re-enables interrupts and halts in one step (`sti` takes effect after the next instruction);
+            // the next interrupt (tick, device, kick) resumes here.
+            unsafe { core::arch::asm!("sti", "hlt", options(nomem, nostack)) }
+        } else {
+            irq_restore(flags);
+        }
         yield_now();
+    }
+}
+
+/// P6-36 (C-40): threads wait in one queue shared by every processor, and an idle processor sleeps in `hlt` until its
+/// next tick (10 ms). So a thread that became ready (woken, created, or put back by a yield or the timer) used to wait
+/// for a tick or for a busy processor to yield, while other processors sat idle: on the workstation the threads of
+/// Kronos waited for each other 63 % of the time. Now each thread that enters the queue wakes one idle processor (an
+/// interrupt, `apic::kick`). Called with the scheduler lock held; the woken processor takes the lock after it is freed.
+fn kick_idle(s: &Scheduler) {
+    let waiting = s.ready.len();
+    if waiting == 0 || RUNNING_CPUS.load(Ordering::Relaxed) < 2 {
+        return;
+    }
+    let me = percpu::index();
+    let is_idle = |c: &Cpu| c.current.as_ref().is_some_and(|t| t.id == IDLE_ID);
+    // This processor, if idle, takes one of them itself when the caller returns (e.g. a device interrupt woke a thread).
+    let mut served = usize::from(is_idle(&s.cpus[me]));
+    for (i, c) in s.cpus.iter().enumerate() {
+        if served >= waiting {
+            break;
+        }
+        if i != me && is_idle(c) {
+            crate::arch::x86_64::apic::kick(i);
+            served += 1;
+        }
     }
 }
 
@@ -360,6 +401,9 @@ fn wake_where(s: &mut Scheduler, max: usize, matches: impl Fn(&Thread) -> bool) 
             i += 1;
         }
     }
+    if woken > 0 {
+        kick_idle(s);
+    }
     for t in s.cpus.iter_mut().filter_map(|c| c.current.as_deref_mut()) {
         if woken < max && t.waiting() && t.id != IDLE_ID && matches(t) {
             t.make_ready();
@@ -437,7 +481,10 @@ pub fn yield_now() {
         State::Exited => s.zombies.push(prev),
         State::Blocked => s.blocked.push(prev),
         State::Ready if prev.id == IDLE_ID => s.cpus[cpu].idle = Some(prev),
-        State::Ready => s.ready.push_back(prev),
+        State::Ready => {
+            s.ready.push_back(prev);
+            kick_idle(s);
+        }
     }
     let next = s.cpus[cpu].current.as_ref().unwrap();
     let (new_rsp, root, kstack_top) = (next.rsp, next.root, next.kstack_top);

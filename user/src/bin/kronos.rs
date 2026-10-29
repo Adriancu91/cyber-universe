@@ -13,6 +13,7 @@
 //! `--fara-vector` win over the tuning file. `--profil` (P6-29, C-29): after the text, where the time of the generated
 //! tokens went (TSC cycles per kind of work: the products per layer kind, the output head, attention, the rest, the
 //! wait for threads, writing the text on the screen), with ms per token and GB/s of weights for the products.
+//! `--fara-ecran` (P6-36): the generated text is written only at the end (otherwise one line at a time).
 //! `--repetitie <p>` (P6-29, optional, off by default): divides (or multiplies, when negative) the logit of every token
 //! already in the text by p > 1 before the greedy choice; without it the result is the plain greedy one.
 //! The shell splits on spaces, so the words of the text are joined back with one space (surrounding `"` removed).
@@ -115,6 +116,8 @@ struct Opts {
     words: Vec<String>,
     encode_only: bool,
     profile: bool,
+    /// `--fara-ecran` (P6-36): the generated text is written only at the end (nothing on the screen while generating).
+    no_screen: bool,
     /// Repetition penalty (> 1), None = off.
     penalty: Option<f32>,
     /// (vectori.json, fel)
@@ -134,6 +137,7 @@ fn parse_args() -> Result<Opts, String> {
         words: Vec::new(),
         encode_only: false,
         profile: false,
+        no_screen: false,
         penalty: None,
         vectors: None,
     };
@@ -158,6 +162,7 @@ fn parse_args() -> Result<Opts, String> {
             "--reglaj" => o.tuning = Some(val()?.into()),
             "--codeaza" => o.encode_only = true,
             "--profil" => o.profile = true,
+            "--fara-ecran" => o.no_screen = true,
             "--repetitie" => {
                 let p: f32 = val()?.parse().map_err(|_| String::from("--repetitie cere un numar (de ex. 1.3)"))?;
                 if !(p >= 1.0 && p <= 10.0) {
@@ -670,6 +675,7 @@ fn main() -> i64 {
     let (mut c_screen, mut c_pick, c_start) = (0u64, 0u64, kgr::prof::now());
     let mut out = Vec::new();
     let mut stream = bpe::TextStream::default();
+    let mut pending = String::new();
     let mut ended = false;
     if tok.is_some() {
         cyber_user::print!("kronos: continuare: ");
@@ -688,7 +694,14 @@ fn main() -> i64 {
                 ended = true;
                 break;
             }
-            cyber_user::print!("{}", stream.push(t.token_bytes(next)));
+            // P6-36 (C-40): the text goes to the screen one line at a time (each write costs a system call and a
+            // redraw; on the workstation writing token by token took 14-38 % of the time), or only at the end.
+            pending.push_str(&stream.push(t.token_bytes(next)));
+            if !o.no_screen && pending.contains('\n') {
+                let cut = pending.rfind('\n').unwrap() + 1;
+                cyber_user::print!("{}", &pending[..cut]);
+                pending.drain(..cut);
+            }
         }
         c_screen += kgr::prof::now() - c1;
         out.push(next);
@@ -707,13 +720,16 @@ fn main() -> i64 {
     let c_total = kgr::prof::now() - c_start;
     let t3 = now_ms();
     if let Some(t) = &tok {
-        println!("{}", stream.finish());
+        println!("{}{}", pending, stream.finish());
         println!(
             "kronos: textul generat `{}`{}",
             t.decode(&out).replace('\n', "\\n"),
             if ended { " (oprit la simbolul de sfarsit)" } else { "" }
         );
         println!("kronos: simboluri generate: {:?}", out);
+        if o.no_screen {
+            println!("kronos: textul a fost scris doar la sfarsit (--fara-ecran)");
+        }
     } else {
         println!("kronos: continuare: {:?}", out);
     }
