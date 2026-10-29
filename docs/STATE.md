@@ -3,6 +3,22 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-10-29 10:43–12:50 UTC (12:43–14:50 ora României) — sesiune programată, fără Adrian — **P6-36 (C-40) gata: frânele Kronos de pe workstation.**
+  - Hub: comandă nouă C-40 (rezultatele workstation 29 oct: 69,5 simb/s pe 18 fire, **așteptarea firelor 62,6 %**, ecranul 14–38 %). Preluată ca P6-36.
+    (Clona hub-ului iar fără istoric comun → ramura veche păstrată ca `vechi-local-1500`, `main` = `origin/main`; nimic forțat.)
+  - Cauza găsită: coada de fire e comună, iar un nucleu liber dormea (`hlt`) până la bătaia de 10 ms; un fir de lucru dat la o parte (de
+    terminal/desktop la fiecare simbol afișat, sau de ceas) aștepta la coadă deși 18 nuclee stăteau degeaba.
+  - Nucleu: `kick_idle` (planificatorul trezește un nucleu liber cu IPI pe vectorul 0xF0 când un fir intră în coadă) + bucla nucleului liber
+    cu `sti; hlt` (nicio trezire pierdută). Test SMP nou: fir nou pornit pe nucleu liber în ~36–49 µs (mediană) în QEMU.
+  - Motor: qkv + atenția într-o împărțire pe capete la generare (49 de sincronizări pe simbol, nu 61), GELU pe fire. Simboluri identice (vectorii oficiali, 1–4 fire).
+  - `kronos`: textul pe ecran pe rânduri, `--fara-ecran`; `kronos-calcul --cauta`: media a 5 treceri pe model (nu cea mai bună din 3).
+  - Suita locală 77/80 + 1 sărit (ghpush = server de test, fpu-smp / kronos-calcul = temporizatorul la `-smp 4`), toate 3 trec la reluare.
+  - CI run 40866540301 (`aa59e93`): picat doar `smp-2` la testul meu nou (19 treziri din 20 cerute) → prag ≥ 10 din 20 (`ba942b2`), reluat local de 2 ori: trece.
+  - Rezervă în hub: arhiva `os-1003` (commit `aa59e93`, același cod de stick), sumele verificate.
+  - CI run 40871248931 (`ba942b2`): **verde la prima încercare** → **Release `os-208`**.
+  - **Pentru sesiunea următoare:** Coada fără sarcini libere
+    (P6-10, P6-12 p.2 hardware; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian) → oprire scurtă dacă nu e comandă nouă.
+    Viteza reală abia la fereastra de pe workstation (`run kronos --profil --n 64 Buna ziua`; opțional `--fara-ecran`).
 - 2026-10-29 09:42 UTC (11:42 ora României) — sesiune programată, oprire scurtă: nicio comandă nouă pentru `cyber-universe` în hub (după 08:27 doar stările Kronos și suita-office), nicio decizie nouă; CI verde (run 206), Release `os-206`. Coada fără sarcini libere (P6-10, P6-12 p.2 hardware; P3-10 Adrian; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian). Nimic construit (deci fără `env-check --install`). Clona hub-ului iar fără istoric comun → ramura veche păstrată ca `vechi-local`, `main` = `origin/main`; nimic forțat. Oprirea de siguranță nu se aplică (P6-35 gata la 08:30); **atenție:** dacă și următoarea sesiune nu termină nicio sarcină, ultimele 3 vor fi fără sarcină terminată → „OPRIT: necesită analiza lui Adrian”.
 - 2026-10-29 06:58–08:40 UTC — sesiune programată paralelă (a pornit cât cea de la 06:20 încă lucra la P6-35): a scris independent aceeași schimbare, suita locală 80/80 + 1 sărit, dar la push `main` avea deja `62130bb` → varianta proprie aruncată (nimic forțat), a așteptat CI-ul celeilalte sesiuni: run 206 verde (la a doua încercare), Release `os-206`. Nicio comandă nouă pentru `cyber-universe`. **Pentru sesiunea următoare:** coada fără sarcini libere (P6-10, P6-12 p.2 hardware; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian) → oprire scurtă dacă nu e comandă nouă.
 - 2026-10-29 ~08:35 UTC — trecere extra cerută de centrul de comandă („C-38, apoi Release”): C-38 era deja gata în sesiunea de mai jos; reconfirmat: CI verde (run 40834113159), Release `os-206` publicat; nicio comandă nouă în hub. Nimic de făcut.
