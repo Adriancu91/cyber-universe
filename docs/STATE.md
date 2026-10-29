@@ -3,6 +3,7 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-10-29 06:58–08:40 UTC — sesiune programată paralelă (a pornit cât cea de la 06:20 încă lucra la P6-35): a scris independent aceeași schimbare, suita locală 80/80 + 1 sărit, dar la push `main` avea deja `62130bb` → varianta proprie aruncată (nimic forțat), a așteptat CI-ul celeilalte sesiuni: run 206 verde (la a doua încercare), Release `os-206`. Nicio comandă nouă pentru `cyber-universe`. **Pentru sesiunea următoare:** coada fără sarcini libere (P6-10, P6-12 p.2 hardware; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian) → oprire scurtă dacă nu e comandă nouă.
 - 2026-10-29 ~08:35 UTC — trecere extra cerută de centrul de comandă („C-38, apoi Release”): C-38 era deja gata în sesiunea de mai jos; reconfirmat: CI verde (run 40834113159), Release `os-206` publicat; nicio comandă nouă în hub. Nimic de făcut.
 - 2026-10-29 06:20–08:30 UTC (08:20–10:30 ora României) — sesiune programată, fără Adrian — **P6-35 (C-38) gata: `gpu fwsec` + `gpu firmware`, CI verde, Release `os-206`.**
   - Hub: comandă nouă C-38 (aprobată 08:25 prin delegare, cu prioritate: fereastra C-36 pe workstation poate fi azi). (Clona hub-ului iar
