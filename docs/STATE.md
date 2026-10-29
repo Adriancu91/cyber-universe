@@ -3,6 +3,17 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-10-28 22:10 – 2026-10-29 00:35 UTC (00:10–02:35 ora României) — sesiune programată, fără Adrian — **P6-34 (C-37) gata: CI verde, Release `os-205`.**
+  - Hub: comandă nouă C-37 (Adrian a pus `CYBER_GPU_TOKEN`, dar pasul de acces tot pica). (Clona hub-ului iar fără istoric comun → ramura
+    veche păstrată ca `vechi-local-*`, `main` = `origin/main`; nimic forțat.)
+  - Cauza (confirmată local cu `GIT_TRACE_CURL`): `actions/checkout` lasă antetul `github.token`, pe care git îl trimite în locul cheii.
+    Reparat: `persist-credentials: false` în `CI` și `Stress` + verificarea din `$HOME`, fără `extraheader`. Run 204: accesul **verde**.
+  - Run 204 a picat apoi la `phase4` (de 2 ori). Cauza reală a „instabilului” `phase4`: ordinea pachetelor pe discul de test = ordinea
+    ext4 de pe mașina CI (diferă de la mașină la mașină); aplicația Module le arăta în ordinea de pe disc. Acum le sortează. Reprodus local
+    (ordine inversă → pică; cu sortarea → trece). Suita locală 80/80 + 1 sărit (3 picate la temporizator, `-smp 4` pe 2 nuclee, trec la reluare).
+  - Run 205: **verde la prima încercare** → **Release `os-205`** (primul după `os-197`: are `gpu vbios --detalii`, P6-29…P6-34). B-005 rezolvat.
+  - **Pentru sesiunea următoare:** coada fără sarcini libere (P6-10, P6-12 p.2 hardware; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian).
+    Dacă nu e comandă nouă → oprire scurtă. Stick-ul prin hub (C-35) rămâne doar rezervă: Release-urile merg din nou.
 - 2026-10-28 21:40–22:00 UTC (23:40–00:00 ora României) — sesiune programată, fără Adrian — **P6-33: CI pregătit pentru `cyber-gpu` privat.**
   - Hub: decizie nouă 23:35 — Adrian a plătit GitHub, **Actions repornite** (înlocuiește 23:10); regula veche revine: după push, `gh run list`,
     CI roșu = prioritate. Nicio comandă nouă pentru `cyber-universe`. (Clona hub-ului iar fără istoric comun cu `origin/main` → lucrul pe ramura

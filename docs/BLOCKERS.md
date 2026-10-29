@@ -5,6 +5,26 @@
 
 ## Active
 
+### B-003 · P5-07 · 2026-10-20
+- **Problema:** suita office ca modul în Cyber Universe cere codul suitei, care e doar pe laptop (decizia din hub
+  2026-10-20: suita se termină și se testează de oameni întâi; codul rămâne pe laptop până decide Adrian).
+- **Am încercat:** am citit în hub `stare/suita-office.md` (Electron + React + TypeScript, ținta în 1–2 săptămâni).
+  Portarea ar însemna rescrierea în Rust pentru biblioteca grafică proprie — de planificat după ce suita e gata.
+- **Eroarea exactă:** —
+- **Ce ar debloca:** suita își atinge ținta, iar Adrian decide cum ajunge codul (sau doar formatul fișierelor) la OS.
+- **Nevoie de Adrian:** mai târziu, nu acum.
+
+<!-- Șablon:
+### B-001 · P0-01 · 2026-10-27
+- **Problema:** ...
+- **Am încercat:** 1) ... 2) ... 3) ...
+- **Eroarea exactă:** ```...```
+- **Ce ar debloca:** ...
+- **Nevoie de Adrian:** da/nu — ce anume, în cuvinte simple
+-->
+
+## Rezolvate
+
 ### B-005 · CI și Release (construirea în sesiune: rezolvată) · 2026-10-28
 - **Problema:** din 28 oct 14:33 repo-ul `Adriancu91/cyber-gpu` e privat. OS-ul îl folosește ca dependență (`kernel/Cargo.toml`,
   `user/Cargo.toml`, fixat pe `dac2e32`), iar sesiunea programată a OS-ului are acces doar la `cyber-universe`, `cyber-hub`, `cyberspace`.
@@ -39,26 +59,8 @@
   3. github.com/Adriancu91/cyber-universe → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**:
      nume `CYBER_GPU_TOKEN`, valoarea = token-ul copiat → **Add secret**.
   4. Gata: sesiunea următoare repornește CI-ul; dacă e verde, apare Release-ul nou (cu `gpu vbios --detalii`).
-
-### B-003 · P5-07 · 2026-10-20
-- **Problema:** suita office ca modul în Cyber Universe cere codul suitei, care e doar pe laptop (decizia din hub
-  2026-10-20: suita se termină și se testează de oameni întâi; codul rămâne pe laptop până decide Adrian).
-- **Am încercat:** am citit în hub `stare/suita-office.md` (Electron + React + TypeScript, ținta în 1–2 săptămâni).
-  Portarea ar însemna rescrierea în Rust pentru biblioteca grafică proprie — de planificat după ce suita e gata.
-- **Eroarea exactă:** —
-- **Ce ar debloca:** suita își atinge ținta, iar Adrian decide cum ajunge codul (sau doar formatul fișierelor) la OS.
-- **Nevoie de Adrian:** mai târziu, nu acum.
-
-<!-- Șablon:
-### B-001 · P0-01 · 2026-10-27
-- **Problema:** ...
-- **Am încercat:** 1) ... 2) ... 3) ...
-- **Eroarea exactă:** ```...```
-- **Ce ar debloca:** ...
-- **Nevoie de Adrian:** da/nu — ce anume, în cuvinte simple
--->
-
-## Rezolvate
+- **REZOLVAT 29 oct 00:30 UTC (P6-34, C-37):** Adrian a pus secretul `CYBER_GPU_TOKEN`; antetul `github.token` lăsat de `actions/checkout`
+  îl ascundea → `persist-credentials: false` + verificare fără `extraheader`. CI verde (run 205), Release `os-205`.
 
 ### B-004 · CI / Release · 2026-10-23
 - **Problema:** GitHub Actions nu mai pornește joburile din 2026-10-23 11:03 UTC (runs 178–184, ultima verificare 15:17 UTC): „failure” în 2–4 s, fără log
