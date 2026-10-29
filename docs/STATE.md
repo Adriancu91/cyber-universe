@@ -3,6 +3,7 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-10-29 00:41 UTC (02:41 ora României) — sesiune programată, oprire scurtă: nicio comandă nouă pentru `cyber-universe` în hub (ultima schimbare = starea noastră de la 00:37), nicio decizie nouă după 23:35; CI verde (run 205), Release `os-205`. Coada fără sarcini libere (P6-10, P6-12 p.2 hardware; P3-10 Adrian; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian). Nimic construit. Oprirea de siguranță nu se aplică (P6-34 gata).
 - 2026-10-29 ~00:40 UTC — trecere extra cerută de centrul de comandă („C-37, apoi confirmă CI și Release”): C-37 era deja gata în sesiunea de mai jos; verificat din nou: run 205 verde, Release `os-205` (C-29 + C-31 + P6-34) publicat. Nimic de făcut.
 - 2026-10-28 22:10 – 2026-10-29 00:35 UTC (00:10–02:35 ora României) — sesiune programată, fără Adrian — **P6-34 (C-37) gata: CI verde, Release `os-205`.**
   - Hub: comandă nouă C-37 (Adrian a pus `CYBER_GPU_TOKEN`, dar pasul de acces tot pica). (Clona hub-ului iar fără istoric comun → ramura
