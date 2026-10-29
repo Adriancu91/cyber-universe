@@ -3,6 +3,7 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-10-29 ~13:00 UTC — trecere extra cerută de centrul de comandă („fă C-40”): C-40 era deja gata în sesiunea de mai jos (P6-36); reconfirmat: CI verde (run 40871248931), Release `os-208`; nicio comandă nouă în hub. Nimic de făcut.
 - 2026-10-29 10:43–12:50 UTC (12:43–14:50 ora României) — sesiune programată, fără Adrian — **P6-36 (C-40) gata: frânele Kronos de pe workstation.**
   - Hub: comandă nouă C-40 (rezultatele workstation 29 oct: 69,5 simb/s pe 18 fire, **așteptarea firelor 62,6 %**, ecranul 14–38 %). Preluată ca P6-36.
     (Clona hub-ului iar fără istoric comun → ramura veche păstrată ca `vechi-local-1500`, `main` = `origin/main`; nimic forțat.)
