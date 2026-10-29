@@ -3,6 +3,7 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-10-29 ~08:35 UTC — trecere extra cerută de centrul de comandă („C-38, apoi Release”): C-38 era deja gata în sesiunea de mai jos; reconfirmat: CI verde (run 40834113159), Release `os-206` publicat; nicio comandă nouă în hub. Nimic de făcut.
 - 2026-10-29 06:20–08:30 UTC (08:20–10:30 ora României) — sesiune programată, fără Adrian — **P6-35 (C-38) gata: `gpu fwsec` + `gpu firmware`, CI verde, Release `os-206`.**
   - Hub: comandă nouă C-38 (aprobată 08:25 prin delegare, cu prioritate: fereastra C-36 pe workstation poate fi azi). (Clona hub-ului iar
     divergentă → ramura veche păstrată ca `backup-local`, `main` = `origin/main`; nimic forțat.)
