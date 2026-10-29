@@ -3,6 +3,7 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-10-29 ~21:15 UTC — trecere extra cerută de centrul de comandă („C-42, Release nou cu CI verde”): C-42 era deja gata în sesiunea de mai jos (P6-37); reconfirmat: CI verde (run 40949687259), Release `os-209`; nicio comandă nouă în hub. Nimic de făcut.
 - 2026-10-29 19:40–21:06 UTC (21:40–23:06 ora României) — sesiune programată, fără Adrian — **P6-37 (C-42) gata: Cyber-GPU fixat pe `aee06c4`, CI verde, Release `os-209`.** Oprirea din 18:42 ridicată de comanda nouă C-42 (21:45, prin delegare).
   - Clonele locale erau scurte (fără istoric comun) → `git fetch --unshallow` + `main` = `origin/main`; nimic forțat.
   - Fixarea `2c9c90c` → `aee06c4` (kernel + user; doar adăugări, C-39: antetele Booter/bootloader citite după fișierele oficiale 570.144); `CYBER_GPU_REV`, textul din `kronos-calcul` și scenarii actualizate. Codul `gpu firmware` neschimbat, nimic nou care scrie în placă.
