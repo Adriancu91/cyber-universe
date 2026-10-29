@@ -3,6 +3,7 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-10-29 ~00:40 UTC — trecere extra cerută de centrul de comandă („C-37, apoi confirmă CI și Release”): C-37 era deja gata în sesiunea de mai jos; verificat din nou: run 205 verde, Release `os-205` (C-29 + C-31 + P6-34) publicat. Nimic de făcut.
 - 2026-10-28 22:10 – 2026-10-29 00:35 UTC (00:10–02:35 ora României) — sesiune programată, fără Adrian — **P6-34 (C-37) gata: CI verde, Release `os-205`.**
   - Hub: comandă nouă C-37 (Adrian a pus `CYBER_GPU_TOKEN`, dar pasul de acces tot pica). (Clona hub-ului iar fără istoric comun → ramura
     veche păstrată ca `vechi-local-*`, `main` = `origin/main`; nimic forțat.)
