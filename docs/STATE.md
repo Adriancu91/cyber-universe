@@ -3,6 +3,7 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-10-29 13:00 UTC (15:00 ora României) — sesiune programată, oprire scurtă: nicio comandă nouă pentru `cyber-universe` în hub (C-41 amânat de Adrian; C-7, C-11 după întoarcerea lui; propunerea Cyber-GPU `idei/2026-10-29_cyber-universe_gpu-fixare-c39.md` = doar propunere, fără comandă), nicio decizie nouă după 13:30; CI verde (run 208), Release `os-208`. Coada fără sarcini libere (P6-10, P6-12 p.2 hardware; P3-10 Adrian; P5-07 BLOCAT). Nimic construit. Clonele vechi din sesiune erau fără istoric comun → clone noi, nimic forțat. Oprirea de siguranță nu se aplică (P6-36 gata la 12:50).
 - 2026-10-29 ~13:00 UTC — trecere extra cerută de centrul de comandă („fă C-40”): C-40 era deja gata în sesiunea de mai jos (P6-36); reconfirmat: CI verde (run 40871248931), Release `os-208`; nicio comandă nouă în hub. Nimic de făcut.
 - 2026-10-29 10:43–12:50 UTC (12:43–14:50 ora României) — sesiune programată, fără Adrian — **P6-36 (C-40) gata: frânele Kronos de pe workstation.**
   - Hub: comandă nouă C-40 (rezultatele workstation 29 oct: 69,5 simb/s pe 18 fire, **așteptarea firelor 62,6 %**, ecranul 14–38 %). Preluată ca P6-36.
