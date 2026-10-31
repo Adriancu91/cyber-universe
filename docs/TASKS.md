@@ -304,6 +304,8 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 - [x] **P6-37** Fixarea Cyber-GPU după C-39 (C-42): `2c9c90c` → `aee06c4` (kernel + user, doar adăugări), textul fixării în scenarii, teste QEMU (`gpu firmware --sim` → antete citite 4/4), CI verde → Release nou. Dep: P6-35
   Rezultat (2026-10-29): `gpu firmware --sim` → „HS v2: 2 semnaturi de 384 octeti” la ambele Booter, mărimile reale (61.304 / 41.080 / 24.684 octeți), „criteriul I4: TRECE (fisiere oficiale 4/4, antete citite 4/4)”; suita locală 79/80 + 1 sărit (`keyboard-ro-usb` trece la reluare); CI verde (run 40949687259) → Release `os-209`.
 
+- [~] **P6-38** Modelul Kronos #477 pe stick (C-46): tabelul modelelor cunoscute (#477, #459 rezervă) cu SHA-256 și vectorii de control, alegerea implicită 477 > 459 > primul `*.kgr`, `kronos --control`, teste QEMU, Release nou. Dep: P6-37
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)

@@ -18,12 +18,21 @@ if [[ ! -f "$BUNDLE" ]]; then
     exit 1
 fi
 git bundle verify -q "$BUNDLE" >/dev/null 2>&1
-if [[ -d "$MIRROR" ]]; then
-    git -C "$MIRROR" fetch -q --force "$BUNDLE" 'refs/heads/*:refs/heads/*'
-else
-    mkdir -p "$(dirname "$MIRROR")"
-    git clone -q --bare "$BUNDLE" "$MIRROR"
-fi
+# 2026-10-31: the bundle can be shallow (made from a shallow clone: the parent of its oldest commit is missing), and
+# then `git clone` / `git fetch` from it refuse ("remote did not send all necessary objects"). So the mirror is built
+# with `git bundle unbundle` (which does not walk the history), the branch heads are set by hand and every commit whose
+# parent is missing goes into the mirror's `shallow` file; git (and cargo) can then fetch from it normally.
+rm -rf "$MIRROR"
+mkdir -p "$(dirname "$MIRROR")"
+git init -q --bare "$MIRROR"
+git -C "$MIRROR" bundle unbundle "$BUNDLE" | while read -r sha ref; do
+    git -C "$MIRROR" update-ref "$ref" "$sha"
+done
+for _ in $(seq 1 50); do
+    cut=$(git -C "$MIRROR" rev-list --all 2>&1 >/dev/null | grep -o 'parents of commit [0-9a-f]*' | awk '{print $4}' | head -1 || true)
+    [[ -z "$cut" ]] && break
+    echo "$cut" >> "$MIRROR/shallow"
+done
 git -C "$MIRROR" symbolic-ref HEAD refs/heads/g0-g2-fundatie   # cargo fetches HEAD for a short rev
 # Every fetch of the GitHub URL (with or without .git) goes to the mirror.
 git config --global --unset-all "url.file://$MIRROR.insteadOf" 2>/dev/null || true
