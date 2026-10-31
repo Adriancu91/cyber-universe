@@ -3,6 +3,7 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-10-31 15:42 UTC (17:42 ora României) — sesiune programată, oprire scurtă: nicio comandă nouă pentru `cyber-universe` în hub (după 14:01 doar stările Kronos și suita-office; COMENZI schimbat doar la C-45, a lui Kronos), nicio decizie nouă, niciun rezultat nou în `rezultate/`. CI verde (run 41205484585), Release `os-210`. Coada fără sarcini libere (P6-10, P6-12 p.2 hardware; P3-10 Adrian; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian; C-41 amânat). Nimic construit (deci fără `env-check --install`). Release-ul `kronos-kgr1-477` tot nefăcut (îl face Adrian). Oprirea de siguranță nu se aplică (P6-38 gata la 14:05); **atenție:** dacă și următoarele 2 sesiuni nu termină nicio sarcină → „OPRIT: necesită analiza lui Adrian”.
 - 2026-10-31 12:41–14:05 UTC (14:41–16:05 ora României) — sesiune programată, fără Adrian — **P6-38 (C-46) gata: modelul Kronos #477 pe stick, CI verde, Release `os-210`.** Oprirea „OPRIT” ridicată de comanda nouă C-46 (Adrian, „da #477”, 13:50; C-44 a lui Kronos e gata: `MODEL.md` arată #477).
   - `kronos` știe acum de modelele Kronos: #477 (`kronos_477_q8_0.kgr`, SHA-256 `bcbe8187…3963`) și #459 (rezerva, `e80618b4…382e`), cu cele 3 texte de control și primele 5 simboluri greedy din `MODEL.md`.
   - Modelul implicit din `/usb/kronos/` (sau `--dosar`): întâi #477, apoi #459 (scrie „rezerva”), apoi primul `*.kgr`. Fără `.sha256` lângă fișier, un nume cunoscut se verifică cu suma din tabel.
