@@ -52,13 +52,26 @@ pub fn run() {
     assert!(run_one(&quiet) == 0, "kronos: --fara-ecran a esuat");
     let penalty = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--n", "5", "--repetitie", "1.5", "Ana", "are", "mere."];
     assert!(run_one(&penalty) == 0, "kronos: --repetitie a esuat");
+    // P6-38 (C-46): the control texts of a known model (here the tiny model of the official vectors) must pass; an
+    // unknown model has none (exit 1). The default choice: #477 before #459 before any other .kgr, and the built-in sum
+    // of the chosen name must refuse a file that is not that model (exit 3).
+    let control = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--control"];
+    assert!(run_one(&control) == 0, "kronos: --control pe modelul mic nu trece");
+    let unknown = ["kronos", "--model", "/disk/kronos/mini-q8.kgr", "--control"];
+    let code = run_one(&unknown);
+    assert!(code == 1, "kronos: --control pe un model necunoscut a dat codul {}", code);
+    for dir in ["/disk/kronos-477", "/disk/kronos-459"] {
+        let pick = ["kronos", "--dosar", dir, "--simboluri", "1,2"];
+        let code = run_one(&pick);
+        assert!(code == 3, "kronos: {}: copia modelului mic cu numele modelului mare acceptata (cod {})", dir, code);
+    }
     let ms = (crate::arch::x86_64::apic::ticks() - t0) * 1000 / crate::arch::x86_64::apic::HZ;
     while sched::alive() > 1 {
         sched::sleep_ms(10);
     }
     assert!(frame::free_frames() == before, "kronos: {} cadre libere inainte, {} dupa", before, frame::free_frames());
     crate::info!(
-        "test: kronos: motorul KGR1 = referinta (F32, Q8_0, vectori si scalar), suma gresita refuzata, vectorii oficiali Kronos si tokenizerul trec, {} ms, pe {} nuclee; cadre libere identice",
+        "test: kronos: motorul KGR1 = referinta (F32, Q8_0, vectori si scalar), suma gresita refuzata, vectorii oficiali Kronos si tokenizerul trec, control si alegerea modelului (477 > 459) OK, {} ms, pe {} nuclee; cadre libere identice",
         ms,
         sched::running_cpus()
     );

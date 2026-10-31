@@ -43,7 +43,7 @@
   strat cu strat (LayerNorm, QKV, atenție cauzală cu memoria cheilor/valorilor, MLP cu GELU exact, logit-uri pe `emb_token`)
   pe toate nucleele, cu vectori AVX2+FMA (în assembler) sau scalar. `exp`/`sqrt`/`erf`/GELU vin din `gpu-compute`.
   `kronos --simboluri 1,2,3 [--n 32] [--model <cale>] [--fire n] [--fara-vector]` continuă textul (greedy) și arată
-  simbolurile pe secundă; modelul implicit = primul `*.kgr` din `/usb/kronos/`. `kronos --verifica <model> <ref>` compară
+  simbolurile pe secundă; modelul implicit: vezi „Modelele cunoscute” mai jos. `kronos --verifica <model> <ref>` compară
   cu un fișier de referință (logit-uri în toleranța `1e-4·(1+|ref|)`, continuarea greedy identică).
   Memoria cheilor/valorilor stă într-o zonă `mem_map` separată de heap (modelul #459 cere 36 MiB).
   **Textul direct (P6-27b):** `kronos [--n 32] Ana are mere.` codează textul cu tokenizerul din fișier (`src/bpe.rs`, cheia
@@ -60,6 +60,13 @@
   Test: scenariile `kronos-kgr` (2 nuclee, AVX2) și `kronos-kgr-1` (1 nucleu, scalar), pe modelul minuscul cu greutăți
   aleatoare din `tests/kronos/` (`tools/kgr-mini.py`) și pe vectorii oficiali (`mic_f32.kgr`, `mic_q8_0.kgr`, `vectori.json`);
   `tools/build.sh` le pune pe discul de test la `/kronos` doar în build-urile `test-kronos-*`.
+  **Modelele cunoscute (P6-38, C-46):** `kronos` știe de **#477** (`kronos_477_q8_0.kgr`, modelul Kronos pentru OS) și de **#459**
+  (`kronos_459_q8_0.kgr`, rezerva): SHA-256 și cele 3 texte de control cu primele 5 simboluri greedy, din hub
+  `integrare/kronos/MODEL.md`. Modelul implicit din `/usb/kronos/` (sau `--dosar <cale>`): întâi #477, apoi #459, apoi primul `*.kgr`.
+  Fără `--suma` și fără `<model>.kgr.sha256`, un fișier cu numele unui model cunoscut e verificat cu suma lui din tabel.
+  `kronos --control` rulează cele 3 texte pe modelul recunoscut după sumă → „CONTROL: TRECE (#477 …)” sau „NU TRECE” (cod 1);
+  pe un model necunoscut: cod 1. Test: tot în `kronos-kgr*` (`--control` pe `mic_q8_0.kgr`, care e și el în tabel; copii ale modelului
+  minuscul numite ca modelele mari în `/kronos-477`, `/kronos-459` → alese în ordinea cerută și refuzate de suma din tabel, cod 3).
   **Viteza (P6-29, comanda C-29):** firele lucrează într-un **bazin pornit o dată** (înainte: fire noi la fiecare produs,
   49 de produse pe simbol); lucrul se dă printr-un contor de generație, firele așteaptă cu `pause` (și `yield` din când în
   când, niciodată somn de 10 ms); fiecare rând al rezultatului e calculat de un singur fir, deci rezultatul e același bit cu bit

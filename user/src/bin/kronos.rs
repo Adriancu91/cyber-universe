@@ -6,9 +6,13 @@
 //!   kronos --verifica <model.kgr> <ref>    compares the engine with a reference file (logits + greedy continuation)
 //!   kronos --vectori <vectori.json> <fel>  the official Kronos test vectors (hub `integrare/kronos/vectori/`, P6-27b),
 //!                                          `fel` = f32 or q8_0; the model file is next to the JSON
-//! Options: `--model <cale>` (default: the first *.kgr in /usb/kronos), `--n <simboluri>` (default 32), `--fire <n>`
+//!   kronos --control                       P6-38 (C-46): the 3 control texts of the model (recognised by its SHA-256)
+//!                                          against the tokens Kronos published for it (hub `integrare/kronos/MODEL.md`)
+//! Options: `--model <cale>` (default, P6-38: kronos_477_q8_0.kgr in /usb/kronos, else kronos_459_q8_0.kgr (the
+//! fallback), else the first *.kgr there), `--dosar <cale>` (look there instead of /usb/kronos), `--n <simboluri>` (default 32), `--fire <n>`
 //! (default: every processor), `--fara-vector` (scalar arithmetic even when AVX2 + FMA exist), `--suma <hex>` (the
-//! SHA-256 the file must have; otherwise `<model>.sha256` next to it, if present), `--reglaj <cale>` (the tuning file;
+//! SHA-256 the file must have; otherwise `<model>.sha256` next to it, if present; otherwise, P6-38, the sum of the
+//! known model with that file name), `--reglaj <cale>` (the tuning file;
 //! default `/usb/kronos/reglaj-<procesor>.txt` when it exists, written by `kronos-calcul --cauta`, P6-28). `--fire` and
 //! `--fara-vector` win over the tuning file. `--profil` (P6-29, C-29): after the text, where the time of the generated
 //! tokens went (TSC cycles per kind of work: the products per layer kind, the output head, attention, the rest, the
@@ -90,22 +94,146 @@ fn hex(d: &[u8; 32]) -> String {
     d.iter().map(|b| alloc::format!("{:02x}", b)).collect()
 }
 
-/// First *.kgr file in /usb/kronos.
-fn default_model() -> Option<String> {
+/// One control text of a known model: its tokens and the first greedy tokens Kronos published for it.
+struct Control {
+    text: &'static str,
+    ids: &'static [u32],
+    greedy: &'static [u32],
+    greedy_text: &'static str,
+}
+
+/// A model the OS knows (P6-38, C-46): the file name expected on the stick, its SHA-256 and its control texts.
+struct Known {
+    name: &'static str,
+    file: &'static str,
+    sha256: &'static str,
+    controls: [Control; 3],
+}
+
+const TEXTS: [&str; 3] = ["Ana are mere.", "Capitala României este", "def suma(a, b):"];
+/// The tokens of the 3 texts with the w2 tokenizer (the same in every model below: hub `MODEL.md`, `vectori.json`).
+const IDS: [&[u32]; 3] = [&[65, 1988, 1585, 2717, 46], &[7132, 1373, 2710, 5734, 1744], &[2082, 15746, 40, 97, 44, 1376, 1754]];
+
+const fn control(i: usize, greedy: &'static [u32], greedy_text: &'static str) -> Control {
+    Control { text: TEXTS[i], ids: IDS[i], greedy, greedy_text }
+}
+
+/// Hub `integrare/kronos/MODEL.md` (S54, C-44) for #477 and #459; `integrare/kronos/vectori/vectori.json` (q8_0) for
+/// the tiny random model of the official vectors (on the test disk, so the control path is tested in QEMU).
+const KNOWN: [Known; 3] = [
+    Known {
+        name: "#477",
+        file: "kronos_477_q8_0.kgr",
+        sha256: "bcbe8187087dbb3e531a8a7b10991cd24ea14a6e067d07c0fcbb8d3edd753963",
+        controls: [
+            control(0, &[2233, 1585, 32, 475, 50], " Acum are 1192"),
+            control(1, &[8369, 1497, 2207, 117, 44], " orașul Bacău,"),
+            control(2, &[1510, 1947, 1358, 1646, 1376], "\n    return a + b"),
+        ],
+    },
+    Known {
+        name: "#459 (rezerva)",
+        file: "kronos_459_q8_0.kgr",
+        sha256: "e80618b4ef555983085c3127acb10114e4f4915d939734207aa849ba0f6d382e",
+        controls: [
+            control(0, &[2233, 1585, 32, 475, 50], " Acum are 1192"),
+            control(1, &[8369, 1497, 4444, 6882, 46], " orașul Baia Mare."),
+            control(2, &[1510, 1947, 1358, 1646, 1376], "\n    return a + b"),
+        ],
+    },
+    Known {
+        name: "modelul mic al vectorilor oficiali (greutati la intamplare)",
+        file: "mic_q8_0.kgr",
+        sha256: "b08f4c2976b95d9e1cc3058766b41e13d1ab1a8466b5eb06fa59ff665dd692a0",
+        controls: [
+            control(0, &[4978, 3604, 4649, 13843, 3604], "aționale bunny ep rule bunny"),
+            control(1, &[3604, 3604, 3604, 13843, 3604], " bunny bunny bunny rule bunny"),
+            control(2, &[8117, 8117, 3604, 3604, 3604], " atac atac bunny bunny bunny"),
+        ],
+    },
+];
+
+fn known_by_file(path: &str) -> Option<&'static Known> {
+    let base = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+    KNOWN.iter().find(|k| k.file == base)
+}
+
+fn known_by_sum(sum: &str) -> Option<&'static Known> {
+    KNOWN.iter().find(|k| k.sha256 == sum)
+}
+
+/// P6-38 (C-46): the model in `dir` (default /usb/kronos): kronos_477_q8_0.kgr, else kronos_459_q8_0.kgr (the
+/// fallback Kronos keeps), else the first *.kgr; with a line saying which and why.
+fn default_model(dir: &str) -> Option<(String, String)> {
     let mut buf = [0u8; 4096];
-    let n = cyber_user::list("/usb/kronos", &mut buf);
+    let n = cyber_user::list(dir, &mut buf);
     if n <= 0 {
         return None;
     }
-    core::str::from_utf8(&buf[..n as usize])
+    let names: Vec<&str> = core::str::from_utf8(&buf[..n as usize])
         .ok()?
         .split(['\n', '\0'])
-        .find(|l| l.to_ascii_lowercase().ends_with(".kgr"))
-        .map(|l| alloc::format!("/usb/kronos/{}", l))
+        .filter(|l| l.to_ascii_lowercase().ends_with(".kgr"))
+        .collect();
+    let has = |f: &str| names.iter().find(|l| l.to_ascii_lowercase() == f).copied();
+    let (name, why) = if let Some(l) = has(KNOWN[0].file) {
+        (l, String::from("#477, modelul Kronos pentru OS"))
+    } else if let Some(l) = has(KNOWN[1].file) {
+        (l, alloc::format!("#459, rezerva: {} lipseste", KNOWN[0].file))
+    } else {
+        let l = *names.first()?;
+        (l, alloc::format!("primul .kgr; nici {}, nici {}", KNOWN[0].file, KNOWN[1].file))
+    };
+    Some((alloc::format!("{}/{}", dir.trim_end_matches('/'), name), why))
+}
+
+/// `--control`: the 3 control texts with the key/value cache, greedy, against the published tokens. Also the smallest
+/// gap between the first and the second logit on the greedy steps (Kronos publishes it: below ~0.015 a tiny numeric
+/// difference could change a token).
+fn run_controls(m: &mut Model, tok: &Tokenizer, k: &Known) -> Result<bool, String> {
+    let mut all_ok = true;
+    for (n, c) in k.controls.iter().enumerate() {
+        let ids = tok.encode(c.text);
+        let enc_ok = ids == c.ids;
+        m.reset();
+        let mut logits = m.forward(c.ids, false)?;
+        let (mut got, mut gap) = (Vec::new(), f32::INFINITY);
+        for i in 0..c.greedy.len() {
+            let next = kgr::argmax(&logits);
+            let second = logits.iter().enumerate().filter(|&(j, _)| j as u32 != next).map(|(_, &v)| v).fold(f32::NEG_INFINITY, f32::max);
+            gap = gap.min(logits[next as usize] - second);
+            got.push(next);
+            if i + 1 < c.greedy.len() {
+                logits = m.forward(&[next], false)?;
+            }
+        }
+        let text = tok.decode(&got);
+        let ok = enc_ok && got == c.greedy && text == c.greedy_text;
+        all_ok &= ok;
+        println!(
+            "kronos: control {} `{}`: simboluri {:?} {}; greedy {:?} {}, textul `{}`; marja minima {:.3}",
+            n + 1,
+            c.text,
+            ids,
+            if enc_ok { "= asteptat" } else { "DIFERIT" },
+            got,
+            if got == c.greedy { "= asteptat" } else { "DIFERIT" },
+            text.replace('\n', "\\n"),
+            gap
+        );
+        if !ok {
+            println!("kronos: asteptat {:?} {:?} `{}`", c.ids, c.greedy, c.greedy_text.replace('\n', "\\n"));
+        }
+    }
+    Ok(all_ok)
 }
 
 struct Opts {
     model: Option<String>,
+    /// `--dosar` (P6-38): where the default model is looked for.
+    dir: Option<String>,
+    /// `--control` (P6-38): the control texts of the known model.
+    control: bool,
     reference: Option<String>,
     ids: Vec<u32>,
     n: usize,
@@ -127,6 +255,8 @@ struct Opts {
 fn parse_args() -> Result<Opts, String> {
     let mut o = Opts {
         model: None,
+        dir: None,
+        control: false,
         reference: None,
         ids: Vec::new(),
         n: 32,
@@ -146,6 +276,8 @@ fn parse_args() -> Result<Opts, String> {
         let mut val = || args.next().ok_or_else(|| alloc::format!("{} cere o valoare", a));
         match a {
             "--model" => o.model = Some(val()?.into()),
+            "--dosar" => o.dir = Some(val()?.into()),
+            "--control" => o.control = true,
             "--verifica" => {
                 o.model = Some(val()?.into());
                 o.reference = Some(val()?.into());
@@ -533,9 +665,19 @@ fn main() -> i64 {
         },
         None => None,
     };
-    let Some(path) = o.model.clone().or_else(default_model) else {
-        println!("kronos: niciun model: pune fisierul .kgr pe stick in /usb/kronos/ (sau --model <cale>)");
-        return 4;
+    let dir = o.dir.clone().unwrap_or_else(|| String::from("/usb/kronos"));
+    let path = match o.model.clone() {
+        Some(p) => p,
+        None => match default_model(&dir) {
+            Some((p, why)) => {
+                println!("kronos: model ales: {} ({})", p, why);
+                p
+            }
+            None => {
+                println!("kronos: niciun model: pune {} (si {}.sha256) pe stick in {}/ (sau --model <cale>)", KNOWN[0].file, KNOWN[0].file, dir);
+                return 4;
+            }
+        },
     };
     let t0 = now_ms();
     let bytes = match read_all(&path) {
@@ -547,9 +689,16 @@ fn main() -> i64 {
     };
     let t_read = now_ms();
     let sum = hex(&Sha256::digest(bytes));
-    let expected = o.sum.clone().or_else(|| {
-        read_all(&alloc::format!("{}.sha256", path)).ok().and_then(|b| core::str::from_utf8(b).ok().map(String::from))
-    });
+    let expected = o
+        .sum
+        .clone()
+        .or_else(|| read_all(&alloc::format!("{}.sha256", path)).ok().and_then(|b| core::str::from_utf8(b).ok().map(String::from)))
+        .or_else(|| {
+            known_by_file(&path).map(|k| {
+                println!("kronos: fara {}.sha256: folosesc suma cunoscuta a lui {}", path, k.name);
+                String::from(k.sha256)
+            })
+        });
     match expected.as_deref().map(|s| s.trim().split_whitespace().next().unwrap_or("").to_ascii_lowercase()) {
         Some(e) if e == sum => println!("kronos: SHA-256 {} = suma asteptata", sum),
         Some(e) => {
@@ -557,6 +706,15 @@ fn main() -> i64 {
             return 3;
         }
         None => println!("kronos: SHA-256 {} (nicio suma asteptata: --suma sau {}.sha256)", sum, path),
+    }
+    let known = known_by_sum(&sum);
+    match known {
+        Some(k) => println!("kronos: modelul cunoscut {} ({})", k.name, k.file),
+        None => println!("kronos: model necunoscut OS-ului (nu e #477 sau #459)"),
+    }
+    if o.control && known.is_none() {
+        println!("kronos: --control: nu am textele de control pentru acest model (SHA-256 {}); CONTROL: NU TRECE", sum);
+        return 1;
     }
     let file = match File::parse(bytes) {
         Ok(f) => f,
@@ -588,7 +746,7 @@ fn main() -> i64 {
         m.parameters()
     );
     println!("kronos: sursa `{}`, tokenizer {} octeti; {}", m.source, m.tokenizer.len(), m.tune.describe());
-    let tok = if vectors.is_some() || !o.words.is_empty() {
+    let tok = if vectors.is_some() || !o.words.is_empty() || o.control {
         match Tokenizer::from_json(m.tokenizer, c.vocab) {
             Ok(t) => {
                 println!(
@@ -616,6 +774,27 @@ fn main() -> i64 {
             }
             Ok(false) => {
                 println!("kronos: vectorii oficiali Kronos ({}): NU se potrivesc", kind);
+                1
+            }
+            Err(e) => {
+                println!("kronos: {}", e);
+                1
+            }
+        };
+    }
+    if o.control {
+        let (Some(k), Some(tok)) = (known, &tok) else {
+            return 1;
+        };
+        let ok = run_controls(&mut m, tok, k);
+        kgr::stop_pool();
+        return match ok {
+            Ok(true) => {
+                println!("kronos: CONTROL: TRECE ({}: 3 texte, simbolurile si textul = cele publicate de Kronos)", k.name);
+                0
+            }
+            Ok(false) => {
+                println!("kronos: CONTROL: NU TRECE ({}): motorul nu da simbolurile publicate de Kronos", k.name);
                 1
             }
             Err(e) => {
