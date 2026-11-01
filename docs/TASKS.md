@@ -316,6 +316,8 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 - [x] **P6-41** Bucla automată, partea OS (C-53): la pornire, dacă există `/usb/auto/teste.txt`, rulează comenzile din lista albă (fără nicio scriere în placa video), scrie `auto/raport-<data>.txt` pe loc, redenumește lista în `teste-facut-<data>.txt` și repornește; ceasul de siguranță (implicit 10 min); scriptul pentru Windows (`tools/windows/`); documentația pregătirii cu Adrian. Dep: P6-40
   Rezultat (2026-11-01): în QEMU, scenariile `auto` (7 comenzi: 5 rulate, `gpu i6 --scrie` și `reboot` refuzate, raport cu ieșirea programelor, lista redenumită, repornire), `auto-ceas` (comanda blocată intenționat → ceasul de siguranță repornește după 4 s, raportul se oprește la „in lucru: test-blocheaza”) și `auto-intrerupt` (lista întreruptă nu se reia, „INTRERUPT” în raport) trec; scriptul `tools/windows/bucla-automata.ps1` (în Release) + `docs/BUCLA_AUTOMATA.md`. Suita locală 84 trecute + 1 sărit; `kronos-calcul` pică doar aici (temporizatorul cu `-smp 4`, cunoscut). Watchdog-ul chipsetului: pas următor.
 
+- [~] **P6-42** `gpu tur` + `gpu lant` (C-55): fixarea cyber-gpu `4e6f747` (≥ `911e6d0`); `gpu tur` doar citire, un rând `fapt …` pe fapt, pe lista albă a modului automat; `gpu lant` = pașii ferestrei în lanț, oprire la primul eșec, Bus Master pus la loc, doar cu „DA”, interzis în modul automat. Teste QEMU/simulare. Dep: P6-41
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
