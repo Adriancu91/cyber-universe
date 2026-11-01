@@ -1,0 +1,9 @@
+# lista de test P6-41 (scenariul auto)
+ceas 5
+uptime
+gpu i6 --scrie
+reboot
+ls /disk
+test-jurnal din lista
+run kronos --control
+cat /disk/salut.txt

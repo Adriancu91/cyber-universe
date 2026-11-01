@@ -100,6 +100,8 @@ test-gpu-write = ["qemu-test"]
 test-gpu-sim = ["test-shell", "dep:gpu-sim"]
 # P6-22: `raport` may also write on the test disk (/disk), since QEMU has no writable stick in the scenario.
 test-raport = ["test-shell"]
+# P6-41: the automatic test loop on the test disk (`/disk/auto`), `test-blocheaza`, the safety clock in seconds.
+test-auto = ["test-shell"]
 # P6-23: program permissions (secret files, visible paths, promises) checked by /bin/cat and `hello drepturi`.
 test-rights = ["qemu-test"]
 # P6-19: /bin/kronos-calcul (gpu-compute on every processor) started by the kernel test.

@@ -341,6 +341,7 @@ fn write(fd: u64, buf: u64, len: u64) -> i64 {
         return len as i64;
     }
     let text = core::str::from_utf8(bytes).unwrap_or("<text invalid>");
+    crate::shell::program_output(text); // the automatic mode's report (P6-41)
     crate::serial_print!("{}", text);
     crate::print!("{}", text);
     len as i64

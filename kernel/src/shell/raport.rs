@@ -118,7 +118,7 @@ fn pick_file() -> Result<(String, String), String> {
 }
 
 /// The report text (before hiding secrets).
-fn build(reason: &str) -> String {
+pub(super) fn build(reason: &str) -> String {
     let mut t = String::new();
     t.push_str("== raport Cyber Universe OS ==\n");
     match crate::drivers::rtc::now() {
@@ -176,7 +176,7 @@ fn section(t: &mut String, name: &str, f: fn()) {
 }
 
 /// The secret values (key and token files), trimmed; short ones are ignored (they would hide ordinary words).
-fn secrets() -> Vec<String> {
+pub(super) fn secrets() -> Vec<String> {
     let mut v = Vec::new();
     for f in SECRET_FILES {
         if let Ok(bytes) = fs::read_all(f) {

@@ -3,6 +3,14 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-01 18:41–19:45 UTC (20:41–21:45 ora României) — sesiune programată, fără Adrian — **P6-41 (C-53) gata: bucla automată, partea OS.**
+  - La pornire: sesiunea de la 17:20 terminase P6-40 (CI run 41334819032 verde, **Release `os-212`**) dar nu ajunsese la hub → C-52 marcat `gata` acum, cu pașii ferestrei I6 în hub.
+  - Comenzi noi în hub: C-53 (bucla automată, OS) și C-55 (`gpu tur` + `gpu lant`). C-53 preluat (P6-41); **C-55 rămâne `nou` pentru sesiunea următoare.**
+  - `kernel/src/shell/auto.rs`: la pornire (înainte de desktop) `/usb/auto/teste.txt` → comenzile din lista albă (fără nicio scriere în placă; `--scrie`, `gpu i6`, `reboot` refuzate), raportul `auto/raport-AAAALLZZ-HHMM.txt` scris pe loc după fiecare comandă (și ieșirea programelor: `shell::program_output` din apelul `write`), rezumat „REZULTAT: n rulate, m refuzate”, cutia neagră la final, lista → `teste-facut-<data>.txt`, repornire.
+  - Ceasul de siguranță: fir de sistem, `ceas N` minute (implicit 10). Marcajul `auto/in-lucru.txt` → o listă întreruptă nu se reia (INTRERUPT în raport). Shell-ul: comenzile mutate în `dispatch()` (refolosit de modul automat).
+  - `tools/windows/bucla-automata.ps1` (`pregateste` / `citeste`; sumele SHA-256, `bcdedit /set {fwbootmgr} bootsequence`, doar 08–22, fără parole) — intră și în Release. **Neverificat cu PowerShell** (nu există în cloud; descărcarea lui a fost refuzată) → prima rulare cu Adrian.
+  - `docs/BUCLA_AUTOMATA.md`: pregătirea cu Adrian (BIOS, intrarea automată în Windows, administrator doar pentru script).
+  - Scenarii noi `auto`, `auto-ceas`, `auto-intrerupt` (feature `test-auto`, disc `/disk/auto`). Suita locală 84 trecute + 1 sărit; `kronos-calcul` pică doar aici (cunoscut) → CI decide.
 - 2026-11-01 17:20–18:20 UTC (19:20–20:20 ora României) — sesiune programată, fără Adrian — **P6-40 (C-52) gata: primele scrieri în placă din OS (I6), construite și testate doar în QEMU/simulare.**
   - Comanda nouă C-52 în hub (19:25, prin delegare): exact propunerea `idei/2026-11-01_cyber-gpu-i6-in-os.md`. Regula „OPRIT” nu s-a aplicat (sesiunea asta a terminat o sarcină).
   - Cyber-GPU fixat pe `9597863` (≥ `d879742`, copia din hub; gpu-compute neschimbat, Kronos neatins). Și `user/`.
@@ -822,9 +830,9 @@
   lanțurile cu `openssl verify` — zero diferențe. CI verde pe toate commit-urile terminate (ultimele încă rulau la final).
 
 ## Următoarea sarcină
-**Nicio sarcină liberă.** Așteaptă **testul 4** al lui Adrian (C-5 pasul 3): `log rtl`, `net`, `ping 1.1.1.1`, `log usb`, `hw`, `ls /usb`.
-Din pozele lui: reparații (sarcini noi P6-10c…), apoi P6-10 și P3-10. Sesiunile fără rezultate noi: verifică hub-ul și CI, apoi se opresc
-(dar NU scriu „OPRIT” cât timp C-5 e `preluat`, cum cere C-5 pasul 4).
+**C-55 (comandă nouă în hub, `nou`): `gpu tur` + `gpu lant`** — exact `idei/2026-11-01_cyber-gpu-tur-si-lant.md`: fixarea cyber-gpu ≥ `911e6d0`
+(ramura `g0-g2-fundatie`, copia din hub), `gpu tur` (0 scrieri) pus pe lista albă din `shell/auto.rs`, `gpu lant` doar cu „DA” tastat și refuzat
+în modul automat. După C-55: watchdog-ul chipsetului (dacă Adrian vrea) și fereastra cu Adrian (I6 + prima tură a buclei, ~3 nov).
 
 ## Mediu (verificat la P0-01, sesiune cloud)
 | Unealtă | Versiune |

@@ -21,6 +21,9 @@ if grep -q "gardul Bus Master" "$OUT/kernel"; then
     echo "[release] EROARE: nucleul normal contine adaptoarele gpu-scrie"; exit 1
 fi
 FILES=(BOOTX64.EFI kernel initrd.tar limine.conf limine-uefi-cd.bin cyber.rw cyber-universe-usb.img VERSIUNE)
+# P6-41 (C-53): the Windows script of the automatic loop, next to the files it copies.
+cp "$ROOT/tools/windows/bucla-automata.ps1" "$OUT/"
+FILES+=(bucla-automata.ps1)
 # The TEST STICK of the I6 window (`tools/build.sh --gpu-scrie --usb`), when built: its kernel and its whole image.
 GS="$ROOT/build/iso-gpu-scrie/boot/kernel"
 if [[ -f "$GS" && -f "$ROOT/build/cyber-universe-gpu-scrie-usb.img" ]]; then

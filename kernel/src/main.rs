@@ -159,6 +159,7 @@ extern "C" fn kernel_main() -> ! {
 
     #[cfg(not(feature = "qemu-test"))]
     {
+        shell::auto::run_if_present(); // P6-41: `/usb/auto/teste.txt` = the automatic test loop (restarts at the end)
         run_desktop(); // the desktop first; when it closes (Escape), the text shell
         loop {
             shell::run();
@@ -332,6 +333,11 @@ fn run_tests() -> ! {
 
     #[cfg(feature = "test-shell")]
     {
+        #[cfg(feature = "test-auto")]
+        {
+            shell::auto::self_test();
+            shell::auto::run_if_present();
+        }
         serial_println!("TASTATURA: astept taste");
         shell::run();
     }

@@ -1,0 +1,5 @@
+# scenariul auto-ceas: a doua comanda se blocheaza intentionat
+ceas-test-secunde 4
+uptime
+test-blocheaza
+uptime

@@ -5,6 +5,7 @@ use crate::drivers::keyboard::{Key, wait_key};
 use crate::fs::{self, Kind};
 use alloc::{format, string::String, vec::Vec};
 
+pub mod auto;
 mod raport;
 #[cfg(feature = "qemu-test")]
 pub use raport::self_test as raport_self_test;
@@ -29,6 +30,26 @@ fn emit_capture_begin() {
 
 fn emit_capture_end() -> String {
     CAPTURE.lock().take().map(|(_, t)| t).unwrap_or_default()
+}
+
+/// While the automatic mode runs a command, what programs started by it print is also kept here (P6-41).
+static PROGRAM_CAPTURE: crate::sched::Mutex<Option<String>> = crate::sched::Mutex::new(None);
+
+fn program_capture_begin() {
+    *PROGRAM_CAPTURE.lock() = Some(String::new());
+}
+
+fn program_capture_end() -> String {
+    PROGRAM_CAPTURE.lock().take().unwrap_or_default()
+}
+
+/// Called by the `write` system call for console output: keeps a copy for the automatic mode's report.
+pub fn program_output(text: &str) {
+    if let Some(buf) = PROGRAM_CAPTURE.lock().as_mut()
+        && buf.len() < 1024 * 1024
+    {
+        buf.push_str(text);
+    }
 }
 
 fn emit(text: &str) {
@@ -65,48 +86,64 @@ pub fn run() {
         raport::auto_if_errors();
         out!("{}", PROMPT);
         let Some(line) = read_line() else { return }; // the terminal window closed
-        let words: Vec<&str> = line.split_whitespace().collect();
-        let Some((&cmd, args)) = words.split_first() else { continue };
-        match cmd {
-            "help" => help(),
-            "ls" => ls(args.first().copied().unwrap_or("/")),
-            "cat" => cat(args),
-            "run" => run_program(args),
-            "fetch" => run_program(&words), // same as `run fetch ...` (test 6 L: typed without `run`)
-            "desktop" => run_program(&["desktop"]),
-            "mod" => module(args),
-            "tastatura" => layout(args),
-            "ping" => ping(args),
-            "host" => host(args),
-            "http" => http(args),
-            "mem" => mem(),
-            "lspci" => lspci(),
-            "lsusb" => lsusb(),
-            "usb" => usb(args),
-            "net" => net(),
-            "rtl" => rtl(args),
-            "hw" => hw(),
-            "raport" => raport::manual(),
-            "gpu" => gpu(args),
-            "cpu" => cpu(args),
-            "log" => show_log(args),
-            "uptime" => uptime(),
-            "reboot" => reboot(args),
-            "exit" => match crate::term::of_shell(crate::sched::current_id()) {
-                Some(t) => {
-                    crate::term::close(t);
-                    return;
-                }
-                None => out!("exit: shell-ul consolei nu se inchide (merge cat calculatorul)\n"),
-            },
-            #[cfg(feature = "qemu-test")]
-            "test-gata" => return,
-            // Test builds: put a line in the log (scenario `raport`: a token must not reach the report).
-            #[cfg(feature = "qemu-test")]
-            "test-jurnal" => crate::info!("test-jurnal: {}", args.join(" ")),
-            _ => out!("comanda necunoscuta: {} (scrie help)\n", cmd),
+        if !dispatch(&line) {
+            return;
         }
     }
+}
+
+/// Runs one command line. `false` = this shell must end (`exit` in a terminal window, `test-gata`).
+fn dispatch(line: &str) -> bool {
+    let words: Vec<&str> = line.split_whitespace().collect();
+    let Some((&cmd, args)) = words.split_first() else { return true };
+    match cmd {
+        "help" => help(),
+        "ls" => ls(args.first().copied().unwrap_or("/")),
+        "cat" => cat(args),
+        "run" => run_program(args),
+        "fetch" => run_program(&words), // same as `run fetch ...` (test 6 L: typed without `run`)
+        "desktop" => run_program(&["desktop"]),
+        "mod" => module(args),
+        "tastatura" => layout(args),
+        "ping" => ping(args),
+        "host" => host(args),
+        "http" => http(args),
+        "mem" => mem(),
+        "lspci" => lspci(),
+        "lsusb" => lsusb(),
+        "usb" => usb(args),
+        "net" => net(),
+        "rtl" => rtl(args),
+        "hw" => hw(),
+        "raport" => raport::manual(),
+        "gpu" => gpu(args),
+        "cpu" => cpu(args),
+        "log" => show_log(args),
+        "uptime" => uptime(),
+        "reboot" => reboot(args),
+        "exit" => match crate::term::of_shell(crate::sched::current_id()) {
+            Some(t) => {
+                crate::term::close(t);
+                return false;
+            }
+            None => out!("exit: shell-ul consolei nu se inchide (merge cat calculatorul)\n"),
+        },
+        #[cfg(feature = "qemu-test")]
+        "test-gata" => return false,
+        // Test builds: put a line in the log (scenario `raport`: a token must not reach the report).
+        #[cfg(feature = "qemu-test")]
+        "test-jurnal" => crate::info!("test-jurnal: {}", args.join(" ")),
+        // Test builds: a command that never ends (scenario `auto-ceas`: the safety clock must restart the machine).
+        #[cfg(feature = "test-auto")]
+        "test-blocheaza" => {
+            crate::info!("test-blocheaza: ma blochez intentionat");
+            loop {
+                core::hint::spin_loop();
+            }
+        }
+        _ => out!("comanda necunoscuta: {} (scrie help)\n", cmd),
+    }
+    true
 }
 
 /// Reads one line, echoing it; Backspace erases the last character. `None` if the terminal closed.
