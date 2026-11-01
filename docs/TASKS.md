@@ -310,6 +310,8 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 - [x] **P6-39** Kronos în OS: produsul „proiecție” și afișarea pe ecran (C-48): proiecția la generare pe firele împărțirii pe capete (`fire_proiectie`, căutată de `--cauta`, `--fire-proiectie`), textul pe ecran în bloc cel mult o dată pe secundă, consola mută ecranul o dată pe bloc. Simbolurile identice. Dep: P6-38
   Rezultat (2026-11-01): în QEMU simbolurile identice cu proiecția pe 1, 2, 3 și 4 fire; consola: blocul = aceeași imagine ca rând cu rând; suita locală 80/80 + 1 sărit (`kronos-calcul` = temporizatorul cunoscut la `-smp 4`, trece la reluare). Viteza reală = workstation (Adrian).
 
+- [~] **P6-40** Primele scrieri în placă din OS (C-52, I6): fixarea cyber-gpu `9597863`, `gpu pregatire-i6` (doar citire, fereastra de 16 MiB), jurnalul fiecărui acces pe stick pe loc, `gpu i6 --scrie` doar în stick-ul de test (`gpu-scrie`, „DA” tastat, Bus Master pus la loc și la eroare). Teste doar în QEMU/simulare; placa reală doar cu Adrian. Dep: P6-35
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
