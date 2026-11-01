@@ -3,6 +3,7 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-01 ~11:40 UTC — trecere extra cerută de centrul de comandă („fă C-48”): C-48 era deja gata în sesiunea de mai jos (P6-39); reconfirmat: CI verde (run 41299339979), Release `os-211`; nicio comandă nouă pentru `cyber-universe` în hub. Nimic de făcut.
 - 2026-11-01 10:41–11:35 UTC (12:41–13:35 ora României) — sesiune programată, fără Adrian — **P6-39 (C-48) gata: proiecția Kronos și ecranul, CI verde, Release `os-211`.** Oprirea „OPRIT” ridicată de comanda nouă C-48 (Adrian, prin centrul de comandă, 11:55; rezultatele workstation din 1 nov: 123 simb/s fără ecran, proiecția 46,6 % la 2,1 GB/s, ecranul 45,7 %).
   - Cauza găsită: proiecția era împărțită pe toate 36 de fire, dar vine imediat după împărțirea qkv + atenție (o parte pe cap → 12 fire lucrează, 24 așteaptă) și pornea și pe firele care stătuseră degeaba. `--cauta` nu vedea asta (măsura produsele fără împărțirea pe capete).
   - Motor: la generare, proiecția pe `fire_proiectie` fire (implicit câte capete: 12 la #477); cheie nouă în reglaj, `kronos --fire-proiectie N`. Aceiași biți (fiecare valoare de un singur fir, același cod).
