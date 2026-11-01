@@ -73,7 +73,7 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   **SIMULARE**, iar dimensionarea BAR-urilor (care scrie) se face doar în model.
   Test: scenariile `gpu` (calea reală în QEMU → „nicio placa NVIDIA”, `--sim` refuzat în build-ul obișnuit) și `gpu-sim`;
   `tools/after-gpu.sh` verifică în sursă că adaptoarele doar refuză (și că dimensionarea apare doar în blocul de simulare).
-- **`gpu gfw` și `gpu vbios` (P6-21, comanda C-19):** pașii I2 și I3 din Cyber-GPU (fixat acum pe `aee06c4`, P6-37; înainte `2c9c90c`, P6-35, `8313973`, P6-31, și `dac2e32`; ramura lor
+- **`gpu gfw` și `gpu vbios` (P6-21, comanda C-19):** pașii I2 și I3 din Cyber-GPU (fixat acum pe `9597863`, P6-40; înainte `aee06c4`, P6-37; înainte `2c9c90c`, P6-35, `8313973`, P6-31, și `dac2e32`; ramura lor
   `g0-g2-fundatie`), **doar citire**. `gpu gfw` așteaptă (max 4 s) ca firmware-ul plăcii să termine pornirea: rundele, timpul,
   `PRIV_LEVEL_MASK`, progresul (gata = `0xff`). `gpu vbios` citește VBIOS-ul prin fereastra PROM (BAR0 `0x300000`, 1 MiB): imaginile
   (offset, tip PCI-AT/EFI/FWSEC, mărime), tabela BIT și jetonul 0x70, numărul de citiri (max 300 000, 2 s). Ambele au nevoie de primii
@@ -102,3 +102,21 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   Verificat o dată, de mână, cu un stick de test de 128 MiB cu fișiere false de mărimea oficială (gsp de 63.571.696 octeți): 4 × „ALT CONTINUT”, fără probleme de memorie.
 - **Fixarea `aee06c4` (P6-37, comanda C-42):** Cyber-GPU după C-39 — antetele `booter_load`, `booter_unload` și `bootloader` citite după forma
   fișierelor oficiale 570.144 (`bin_size` nu e mărimea fișierului). Față de `2c9c90c` doar adăugări; codul `gpu firmware` din OS neschimbat.
+- **Primele scrieri în placă: `gpu pregatire-i6` și `gpu i6 --scrie` (P6-40, comanda C-52, fișierul `gpu_i6.rs`):** Cyber-GPU fixat pe
+  `9597863` (≥ `d879742`; față de `aee06c4` doar adăugări: `fuse`, `i6_check`, `i6_log`, `gpu_pci::bus_master`, `Journal::with_sink`).
+  - `gpu pregatire-i6` = pasul 1 al ferestrei I6, **doar citire**: FWSEC în VBIOS, siguranța FWSEC → semnătura, VRAM, WPR2, regiunea FRTS,
+    „criteriul I6-citire”. Fereastra `ReadOnlyBar0Window` are acum lungimea dată: 4 MiB pentru I2–I3b, **16 MiB** pentru I6 (siguranțele
+    sunt la `0x824xxx`); tot pagină cu pagină, fără drept de scriere.
+  - Jurnalul pe loc: fiecare acces la placă (citire, scriere, pas) e scris cu ora în `/usb/raport/gpu-jurnal-NNN.txt` și golit pe stick
+    înainte ca biblioteca să facă accesul următor. După `gpu i6 --scrie` fișierul e recitit și verificat cu `i6_log::check_i6`.
+  - `gpu i6 --scrie` (cere `DA` tastat): pregătirea, FWSEC + semnătura + comanda FRTS copiate în RAM (zonă de 64 KiB, contiguă, între
+    16 MiB și 4 GiB, rezervată pentru totdeauna), Bus Master pornit, FWSEC-FRTS pe falcon-ul GSP prin `GuardedBar0`, Bus Master pus la
+    loc **și la eroare**. Adaptoarele care pot scrie (`mod hw`) există **doar** în build-ul `gpu-scrie` (stick-ul de test,
+    `tools/build.sh --gpu-scrie --usb`, în Release: `kernel-gpu-scrie` și `cyber-universe-gpu-scrie-usb.img`), cu gardul lor: în configurație
+    doar registrul Command cu doar bitul 2 schimbat; în BAR0 doar fereastra GSP `0x110000–0x113FFF`. Fără `gpu-scrie` comanda doar refuză.
+  - Test: `gpu-i6` (`gpu pregatire-i6 --sim`; `gpu i6 --scrie --sim` refuzat fără `DA`; cu `DA`: zona DMA reală a OS-ului citită de modelul
+    falcon-ului `gpu_sim::fake_gsp`, 22 de blocuri, 84 de scrieri în cele 18 registre din plan, WPR2 = regiunea FRTS, Bus Master înapoi,
+    jurnalul de pe disc TRECE la `i6_log`; `--eroare`: FWSEC cu cod de eroare → Bus Master tot pus la loc; `tools/after-gpu-i6.sh` verifică
+    fișierele de pe disc), `gpu-scrie` (build-ul stick-ului de test în QEMU: fără `DA` nimic, cu `DA` → „nicio placa NVIDIA”),
+    `tools/after-gpu.sh` (gardul din sursă), `tools/release-files.sh` (nucleul normal nu conține adaptoarele). **Nimic nu a rulat pe placa
+    reală**; pe RTX 3070 Ti doar în fereastra cu Adrian de față.

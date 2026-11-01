@@ -21,14 +21,14 @@ const AMD: u16 = 0x1002;
 const INTEL: u16 = 0x8086;
 
 /// Private virtual page for the register window (unused by anything else; see mem/README.md).
-const WINDOW: u64 = 0xFFFF_C100_0000_0000;
+pub(super) const WINDOW: u64 = 0xFFFF_C100_0000_0000;
 /// Page-level write-through + cache disable (PWT, PCD): device registers must not be cached.
-const UNCACHED: u64 = (1 << 3) | (1 << 4);
+pub(super) const UNCACHED: u64 = (1 << 3) | (1 << 4);
 
 const NV_PMC_BOOT_0: u64 = 0x0;
 const NV_PMC_BOOT_42: u64 = 0xA00;
 
-static WINDOW_LOCK: crate::sched::Mutex<()> = crate::sched::Mutex::new(());
+pub(super) static WINDOW_LOCK: crate::sched::Mutex<()> = crate::sched::Mutex::new(());
 
 /// One base address register, as read from the configuration space (size not measured: that needs a write).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -170,7 +170,7 @@ fn with_readonly_window<T>(phys: u64, f: impl FnOnce(u64) -> T) -> Result<T, &'s
     Ok(r)
 }
 
-fn read_reg(window: u64, offset: u64) -> u32 {
+pub(super) fn read_reg(window: u64, offset: u64) -> u32 {
     // SAFETY: `window` is the read-only, uncached mapping of BAR0's first page made by `with_readonly_window`;
     // offset < 4096 and 4-byte aligned. Reading NV_PMC_BOOT_0/42 has no side effects (public documentation).
     unsafe { ((window + offset) as *const u32).read_volatile() }
@@ -286,9 +286,9 @@ pub fn identify() -> Vec<String> {
 pub const CYBER_GPU_REV: &str = "9597863";
 
 /// Configuration space of one function for the Cyber-GPU libraries: reads only.
-struct ReadOnlyConfig<'a> {
-    dev: &'a Device,
-    refused: usize,
+pub(super) struct ReadOnlyConfig<'a> {
+    pub(super) dev: &'a Device,
+    pub(super) refused: usize,
 }
 
 impl gpu_core::hal::ConfigSpace for ReadOnlyConfig<'_> {
@@ -426,29 +426,34 @@ pub fn identify_sim() -> Vec<String> {
 // window as above, so the libraries still cannot write: every write they ask for is refused and counted.
 // ---------------------------------------------------------------------------------------------------------------
 
-/// The first `INIT_WINDOW` bytes of BAR0, mapped page by page on demand at `WINDOW`, without write permission.
+/// The first `len` bytes of BAR0 (`INIT_WINDOW` = 4 MiB for I2–I3b; P6-40: `fuse::FUSE_WINDOW` = 16 MiB, the whole BAR0
+/// of the GA104, for the I6 pre-check), mapped page by page on demand at `WINDOW`, without write permission.
 /// The caller holds `WINDOW_LOCK` for the whole lifetime of this value.
-struct ReadOnlyBar0Window {
+pub(super) struct ReadOnlyBar0Window {
     phys: u64,
+    len: u64,
     mapped: Option<u64>,
-    remaps: usize,
-    map_failed: bool,
-    refused: usize,
+    pub(super) remaps: usize,
+    pub(super) map_failed: bool,
+    pub(super) refused: usize,
 }
 
 impl ReadOnlyBar0Window {
     fn new(phys: u64) -> Self {
-        ReadOnlyBar0Window { phys, mapped: None, remaps: 0, map_failed: false, refused: 0 }
+        Self::with_len(phys, nvidia_ga104::regs::INIT_WINDOW)
+    }
+    pub(super) fn with_len(phys: u64, len: u64) -> Self {
+        ReadOnlyBar0Window { phys, len, mapped: None, remaps: 0, map_failed: false, refused: 0 }
     }
 }
 
 impl gpu_core::hal::Mmio for ReadOnlyBar0Window {
     fn len(&self) -> u64 {
-        nvidia_ga104::regs::INIT_WINDOW
+        self.len
     }
     fn read32_raw(&mut self, offset: u64) -> u32 {
         // `checked_read32` in gpu-core already bounds and aligns the offset; keep the window safe regardless.
-        let offset = offset.min(nvidia_ga104::regs::INIT_WINDOW - 4) & !3;
+        let offset = offset.min(self.len - 4) & !3;
         let page = offset & !0xFFF;
         if self.mapped != Some(page) {
             if self.mapped.take().is_some() {
@@ -479,7 +484,7 @@ impl Drop for ReadOnlyBar0Window {
 }
 
 /// Time for the Cyber-GPU polling loops: the TSC (rate measured at boot). Waits spin; they are bounded by the library.
-struct TscClock;
+pub(super) struct TscClock;
 
 impl gpu_core::hal::Clock for TscClock {
     fn now_us(&mut self) -> u64 {
@@ -573,7 +578,7 @@ fn fwsec_lines(p: &str, r: &gpu_core::error::GpuResult<nvidia_ga104::fwsec::Fwse
 }
 
 /// `read_layout` then `locate`, both on the same read-only window.
-fn locate_fwsec<M: gpu_core::hal::Mmio + ?Sized, K: gpu_core::hal::Clock + ?Sized>(
+pub(super) fn locate_fwsec<M: gpu_core::hal::Mmio + ?Sized, K: gpu_core::hal::Clock + ?Sized>(
     win: &mut M,
     journal: &mut gpu_core::diag::Journal,
     clock: &mut K,
@@ -646,7 +651,7 @@ pub fn init_step(step: InitStep) -> Vec<String> {
     lines
 }
 
-fn writes_line(refused: usize) -> String {
+pub(super) fn writes_line(refused: usize) -> String {
     if refused == 0 {
         String::from("0 scrieri in placa (doar citire; adaptorul cyber-gpu a refuzat 0 scrieri)")
     } else {
@@ -765,6 +770,27 @@ pub const PLAN: &[&str] = &[
     " 7. hw                   -> poza",
     " 8. net                  -> poza (placa de retea a workstation-ului e necunoscuta: notam ce apare)",
     "Nu se scrie nimic in placa video; dupa poze: oprire si inapoi in Windows pentru Kronos.",
+    "",
+    "Fereastra I6 (P6-40, C-52; DOAR cu Adrian de fata, DOAR stick-ul de test `gpu-scrie`):",
+    " 0. inainte: oprire completa (cablul scos 30 s), ca placa sa porneasca rece",
+    " 1. gpu pregatire-i6     -> poza (doar citire: semnatura 0/1/2, VRAM 8192 MiB, WPR2 coborat, TRECE, 0 scrieri)",
+    "    daca NU TRECE: STOP, poza, nu continua",
+    " 2. gpu i6 --scrie       -> citeste avertismentul, scrie DA -> poza cu toate randurile",
+    "    (Bus Master pornit, FWSEC-FRTS pe GSP, Bus Master oprit la loc; jurnalul fiecarei scrieri merge pe stick pe loc)",
+    " 3. raport               -> /usb/raport/... (impreuna cu /usb/raport/gpu-jurnal-NNN.txt)",
+    " 4. oprire completa (cablul scos 30 s) -> Windows: nvidia-smi + Kronos",
+    "Ecran stins sau blocat: astepti 1 minut, apoi butonul tinut 10 s si cablul scos 30 s.",
+];
+
+/// P6-40: what `gpu i6 --scrie` says before it asks for `DA`.
+pub const I6_WARNING: &[&str] = &[
+    "ATENTIE: gpu i6 --scrie SCRIE in placa video (pasul I6, prima scriere a driverului nostru):",
+    " - 1 scriere in configuratia PCI: Bus Master pornit (bitul 2 din COMMAND);",
+    " - ~720 de scrieri in 18 registre, toate in fereastra GSP 0x110000-0x113FFF: FWSEC (programul semnat NVIDIA",
+    "   din VBIOS) incarcat prin DMA in falcon-ul GSP si pornit; el ridica zona protejata WPR2 in memoria video;",
+    " - 1 scriere la final: Bus Master inapoi cum era (si daca I6 da eroare).",
+    "VBIOS-ul nu se scrie; sigurantele doar se citesc; totul dispare la oprirea completa (cablul scos 30 s).",
+    "Fiecare scriere merge pe loc in /usb/raport/gpu-jurnal-NNN.txt. Doar cu Adrian de fata.",
 ];
 
 /// Scenario `gpu-ro`: maps the first BAR of the first display controller through the read-only window and writes

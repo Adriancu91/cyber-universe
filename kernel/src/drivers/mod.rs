@@ -4,6 +4,7 @@
 pub mod ahci;
 pub mod e1000;
 pub mod gpu;
+pub mod gpu_i6;
 pub mod keyboard;
 pub mod mouse;
 pub mod nic;

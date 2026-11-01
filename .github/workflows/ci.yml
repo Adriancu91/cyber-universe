@@ -77,6 +77,10 @@ jobs:
       - name: Imagine pentru stick USB (docs/USB.md)
         run: tools/build.sh --usb
 
+      # P6-40 (C-52): the test stick of the I6 window (`gpu i6 --scrie`), a separate kernel and image in the Release.
+      - name: Stick-ul de test pentru fereastra I6 (gpu-scrie)
+        run: tools/build.sh --gpu-scrie --usb
+
       - name: Imaginea pentru stick
         uses: actions/upload-artifact@v4
         with:

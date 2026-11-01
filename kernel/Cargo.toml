@@ -22,6 +22,9 @@ nvidia-ga104 = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "9597863
 gpu-sim = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "9597863", optional = true }
 
 [features]
+# P6-40 (C-52): the TEST STICK for the I6 window with Adrian: `gpu i6 --scrie` may write to the card (Bus Master, GSP
+# falcon registers), after `DA` is typed. Never in the normal build. Built by `tools/build.sh --gpu-scrie`.
+gpu-scrie = ["nvidia-ga104/hw-write"]
 # Test build: the kernel waits for a byte on COM1, then exits QEMU through isa-debug-exit.
 qemu-test = []
 # Test scenarios (tests/scenarios.txt). Each one deliberately triggers a situation and checks the kernel's reaction.

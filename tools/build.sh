@@ -3,6 +3,9 @@
 #   tools/build.sh           -> build/cyber-universe.iso
 #   tools/build.sh --test    -> build/cyber-universe-test.iso (kernel built with the `qemu-test` feature)
 #   tools/build.sh --usb     -> also build/cyber-universe-usb.img, to write on a USB stick (docs/USB.md)
+#   tools/build.sh --gpu-scrie --usb
+#                            -> build/cyber-universe-gpu-scrie{.iso,-usb.img}: the TEST STICK of the I6 window (P6-40, C-52),
+#                               whose `gpu i6 --scrie` may write to the graphics card (only with Adrian, after `DA`)
 #   tools/build.sh --test --features "test-panic"
 #                            -> build/cyber-universe-test-test-panic.iso (extra scenario features)
 set -euo pipefail
@@ -24,10 +27,14 @@ while [[ $# -gt 0 ]]; do
         --test) MODE="test"; shift ;;
         --usb) USB=1; shift ;;
         --features) EXTRA_FEATURES="$2"; shift 2 ;;
+        --gpu-scrie) MODE="gpu-scrie"; shift ;;
         *) echo "Opțiune necunoscută: $1" >&2; exit 2 ;;
     esac
 done
-if [[ "$MODE" == "test" ]]; then
+if [[ "$MODE" == "gpu-scrie" ]]; then
+    FEATURES=(--features "gpu-scrie")
+    ISO_NAME="cyber-universe-gpu-scrie.iso"
+elif [[ "$MODE" == "test" ]]; then
     FEATURES=(--features "qemu-test${EXTRA_FEATURES:+,$EXTRA_FEATURES}")
     ISO_NAME="cyber-universe-test.iso"
     if [[ -n "$EXTRA_FEATURES" ]]; then

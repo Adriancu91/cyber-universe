@@ -151,6 +151,7 @@ fn help() {
     out!("  net              placa de retea (adresa MAC, pachete)\n");
     out!("  rtl porneste [variante]  reporneste placa Realtek cu variantele date (fara: ca la pornire; `rtl` le arata)\n");
     out!("  gpu [identifica|plan]  placile video (nivel 0: doar citire; NVIDIA: registrele de identitate)\n");
+    out!("  gpu pregatire-i6 pregatirea pasului I6 (doar citire); gpu i6 --scrie = prima scriere (doar stick-ul de test)\n");
     out!("  hw               raport hardware pe o pagina (pentru o singura poza)\n");
     out!("  raport           scrie pe stick /usb/raport/<data>-<nr>.txt: hw, lspci, net, jurnalele (fara chei)\n");
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
@@ -454,12 +455,77 @@ fn gpu(args: &[&str]) {
                 }
             }
         }
+        Some("pregatire-i6") => {
+            // P6-40 (C-52): step 1 of the I6 window, read only (16 MiB read-only window), journal live on the stick.
+            let rest = &args[1..];
+            if let Some(bad) = rest.iter().find(|a| **a != "--sim") {
+                out!("gpu pregatire-i6: optiune necunoscuta: {} (folosire: gpu pregatire-i6 [--sim])\n", bad);
+                return;
+            }
+            if rest.contains(&"--sim") {
+                #[cfg(feature = "test-gpu-sim")]
+                for l in crate::drivers::gpu_i6::prepare_i6_sim() {
+                    out!("{}\n", l);
+                }
+                #[cfg(not(feature = "test-gpu-sim"))]
+                out!("gpu: --sim exista doar in build-ul de test (modelul gpu-sim nu intra in sistemul pornit de pe stick)\n");
+            } else {
+                for l in crate::drivers::gpu_i6::prepare_i6() {
+                    out!("{}\n", l);
+                }
+            }
+        }
+        Some("i6") => i6(&args[1..]),
         Some("plan") => {
             for l in crate::drivers::gpu::PLAN {
                 out!("{}\n", l);
             }
         }
-        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios [--detalii] | gpu fwsec | gpu firmware | gpu plan)\n", other),
+        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios [--detalii] | gpu fwsec | gpu firmware | gpu pregatire-i6 | gpu i6 --scrie | gpu plan)\n", other),
+    }
+}
+
+/// P6-40 (C-52): `gpu i6 --scrie [--sim]` — the first writes to the card (step I6). Asks for `DA` before anything.
+fn i6(rest: &[&str]) {
+    if let Some(bad) = rest.iter().find(|a| !matches!(**a, "--scrie" | "--sim" | "--eroare")) {
+        out!("gpu i6: optiune necunoscuta: {} (folosire: gpu i6 --scrie)\n", bad);
+        return;
+    }
+    if !rest.contains(&"--scrie") {
+        out!("gpu i6: scrie in placa video; ruleaza doar cu `gpu i6 --scrie`, in fereastra cu Adrian (vezi `gpu plan`)\n");
+        return;
+    }
+    let sim = rest.contains(&"--sim");
+    if !sim && !cfg!(feature = "gpu-scrie") {
+        for l in crate::drivers::gpu_i6::i6_write() {
+            out!("{}\n", l);
+        }
+        return;
+    }
+    if sim && !cfg!(feature = "test-gpu-sim") {
+        out!("gpu: --sim exista doar in build-ul de test (modelul gpu-sim nu intra in sistemul pornit de pe stick)\n");
+        return;
+    }
+    for l in crate::drivers::gpu::I6_WARNING {
+        out!("{}\n", l);
+    }
+    out!("Scrie DA (litere mari) si Enter ca sa continui; orice altceva opreste: ");
+    let Some(answer) = read_line() else { return };
+    if answer.trim() != "DA" {
+        out!("gpu i6: oprit, nimic scris in placa\n");
+        crate::info!("gpu: i6 --scrie: oprit la confirmare (nimic scris)");
+        return;
+    }
+    crate::info!("gpu: i6 --scrie: confirmat cu DA{}", if sim { " (SIMULARE)" } else { "" });
+    #[cfg(feature = "test-gpu-sim")]
+    if sim {
+        for l in crate::drivers::gpu_i6::i6_write_sim(rest.contains(&"--eroare")) {
+            out!("{}\n", l);
+        }
+        return;
+    }
+    for l in crate::drivers::gpu_i6::i6_write() {
+        out!("{}\n", l);
     }
 }
 

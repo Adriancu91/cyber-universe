@@ -16,5 +16,18 @@ printf 'Cyber Universe: sistemul poate scrie pe acest stick (comanda actualizeaz
     echo "commit $(git -C "$ROOT" rev-parse HEAD)"
     echo "data $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } > "$OUT/VERSIUNE"
-( cd "$OUT" && sha256sum BOOTX64.EFI kernel initrd.tar limine.conf limine-uefi-cd.bin cyber.rw cyber-universe-usb.img VERSIUNE > SHA256SUMS )
+# P6-40 (C-52): the normal kernel must not be able to write to a graphics card (no `gpu-scrie` adapters inside).
+if grep -q "gardul Bus Master" "$OUT/kernel"; then
+    echo "[release] EROARE: nucleul normal contine adaptoarele gpu-scrie"; exit 1
+fi
+FILES=(BOOTX64.EFI kernel initrd.tar limine.conf limine-uefi-cd.bin cyber.rw cyber-universe-usb.img VERSIUNE)
+# The TEST STICK of the I6 window (`tools/build.sh --gpu-scrie --usb`), when built: its kernel and its whole image.
+GS="$ROOT/build/iso-gpu-scrie/boot/kernel"
+if [[ -f "$GS" && -f "$ROOT/build/cyber-universe-gpu-scrie-usb.img" ]]; then
+    grep -q "gardul Bus Master" "$GS" || { echo "[release] EROARE: nucleul gpu-scrie nu are adaptoarele"; exit 1; }
+    cp "$GS" "$OUT/kernel-gpu-scrie"
+    cp "$ROOT/build/cyber-universe-gpu-scrie-usb.img" "$OUT/"
+    FILES+=(kernel-gpu-scrie cyber-universe-gpu-scrie-usb.img)
+fi
+( cd "$OUT" && sha256sum "${FILES[@]}" > SHA256SUMS )
 echo "[release] $(ls "$OUT" | wc -l) fisiere in build/release/"

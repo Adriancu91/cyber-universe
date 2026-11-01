@@ -30,3 +30,26 @@ if [[ -n "$bad" ]]; then
     echo "[after-gpu] EȘUAT: scriere posibilă în calea gpu:"; echo "$bad"; exit 1
 fi
 echo "[after-gpu] ok: nicio scriere în calea gpu (sursa verificată)"
+
+# P6-40 (C-52): kernel/src/drivers/gpu_i6.rs. Without the `gpu-scrie` build option it must not be able to write to a card:
+# everything that can (the `hw` module, `HardwareWritePermit::new`) sits behind `#[cfg(feature = "gpu-scrie")]`; the rest
+# (minus the test-only SIMULARE functions) has no write at all. Inside `hw`: configuration writes only to Command,
+# BAR0 writes only behind the GSP-window check.
+I6="$ROOT/kernel/src/drivers/gpu_i6.rs"
+if ! grep -B1 -n '^mod hw {' "$I6" | head -1 | grep -q '#\[cfg(feature = "gpu-scrie")\]'; then
+    echo "[after-gpu] EȘUAT: modulul hw din gpu_i6.rs nu e doar în build-ul gpu-scrie"; exit 1
+fi
+rest="$(sed '/^mod hw {/,/^}/d' "$I6" \
+    | sed '/^#\[cfg(feature = "test-gpu-sim")\]/,/^}/d' \
+    | sed '/^#\[cfg(feature = "gpu-scrie")\]/,/^}/d' | grep -v '^\s*//')"
+bad="$(echo "$rest" | grep -nE 'write_volatile|write32|write_bytes|\.enable|enable_as|power_on|set_command|WRITABLE|as \*mut|size_bars|SizingPermit|checked_write32|HardwareWritePermit::new|hw::' || true)"
+if [[ -n "$bad" ]]; then
+    echo "[after-gpu] EȘUAT: scriere posibilă în gpu_i6.rs în afara build-ului gpu-scrie:"; echo "$bad"; exit 1
+fi
+hw="$(sed -n '/^mod hw {/,/^}/p' "$I6" | grep -v '^\s*//')"
+if [[ "$(echo "$hw" | grep -c 'write_volatile')" != 1 ]] || [[ "$(echo "$hw" | grep -c 'dev\.write32(')" != 1 ]] \
+    || ! echo "$hw" | grep -q 'self.dev.write32(PCI_COMMAND, value)' \
+    || ! echo "$hw" | grep -q '(GSP_LO..=GSP_HI - 3).contains(&offset)'; then
+    echo "[after-gpu] EȘUAT: gardul scrierilor din gpu_i6.rs (Command / fereastra GSP) s-a schimbat"; exit 1
+fi
+echo "[after-gpu] ok: gpu_i6.rs scrie doar în build-ul gpu-scrie, doar Command (Bus Master) și fereastra GSP"
