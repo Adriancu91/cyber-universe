@@ -58,6 +58,7 @@ gpu vbios
 gpu fwsec
 gpu firmware
 gpu pregatire-i6
+gpu tur
 cpu porneste
 run kronos --control
 run kronos --profil --fara-ecran --n 64 Buna ziua
@@ -172,7 +173,7 @@ function Pregateste {
     $lista = if ($Teste) { Get-Content -Raw $Teste } else { $ListaImplicita }
     foreach ($rand in ($lista -split "`r?`n")) {
         $r = ($rand -split '#')[0].Trim()
-        if ($r -match '--scrie' -or $r -match '^gpu\s+i6\b' -or $r -match '^reboot\b') { Opreste "lista are o comanda care nu e voie in modul automat: $r" }
+        if ($r -match '--scrie' -or $r -match '^gpu\s+i6\b' -or $r -match '^gpu\s+lant\b' -or $r -match '^reboot\b') { Opreste "lista are o comanda care nu e voie in modul automat: $r" }
     }
     # ASCII cu sfarsit de rand LF: sistemul citeste textul simplu.
     [IO.File]::WriteAllText((Join-Path $auto 'teste.txt'), ($lista -replace "`r`n", "`n"), [Text.Encoding]::ASCII)

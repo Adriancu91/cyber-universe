@@ -36,20 +36,52 @@ echo "[after-gpu] ok: nicio scriere în calea gpu (sursa verificată)"
 # (minus the test-only SIMULARE functions) has no write at all. Inside `hw`: configuration writes only to Command,
 # BAR0 writes only behind the GSP-window check.
 I6="$ROOT/kernel/src/drivers/gpu_i6.rs"
-if ! grep -B1 -n '^mod hw {' "$I6" | head -1 | grep -q '#\[cfg(feature = "gpu-scrie")\]'; then
+# P6-42: `hw` is `pub(super)` (gpu_tur.rs uses it, also only in the gpu-scrie build; checked below).
+if ! grep -B1 -nE '^(pub\(super\) )?mod hw \{' "$I6" | head -1 | grep -q '#\[cfg(feature = "gpu-scrie")\]'; then
     echo "[after-gpu] EȘUAT: modulul hw din gpu_i6.rs nu e doar în build-ul gpu-scrie"; exit 1
 fi
-rest="$(sed '/^mod hw {/,/^}/d' "$I6" \
+rest="$(sed -E '/^(pub\(super\) )?mod hw \{/,/^}/d' "$I6" \
     | sed '/^#\[cfg(feature = "test-gpu-sim")\]/,/^}/d' \
     | sed '/^#\[cfg(feature = "gpu-scrie")\]/,/^}/d' | grep -v '^\s*//')"
 bad="$(echo "$rest" | grep -nE 'write_volatile|write32|write_bytes|\.enable|enable_as|power_on|set_command|WRITABLE|as \*mut|size_bars|SizingPermit|checked_write32|HardwareWritePermit::new|hw::' || true)"
 if [[ -n "$bad" ]]; then
     echo "[after-gpu] EȘUAT: scriere posibilă în gpu_i6.rs în afara build-ului gpu-scrie:"; echo "$bad"; exit 1
 fi
-hw="$(sed -n '/^mod hw {/,/^}/p' "$I6" | grep -v '^\s*//')"
+hw="$(sed -nE '/^(pub\(super\) )?mod hw \{/,/^}/p' "$I6" | grep -v '^\s*//')"
 if [[ "$(echo "$hw" | grep -c 'write_volatile')" != 1 ]] || [[ "$(echo "$hw" | grep -c 'dev\.write32(')" != 1 ]] \
     || ! echo "$hw" | grep -q 'self.dev.write32(PCI_COMMAND, value)' \
     || ! echo "$hw" | grep -q '(GSP_LO..=GSP_HI - 3).contains(&offset)'; then
     echo "[after-gpu] EȘUAT: gardul scrierilor din gpu_i6.rs (Command / fereastra GSP) s-a schimbat"; exit 1
 fi
 echo "[after-gpu] ok: gpu_i6.rs scrie doar în build-ul gpu-scrie, doar Command (Bus Master) și fereastra GSP"
+
+# P6-42 (C-55): kernel/src/drivers/gpu_tur.rs (`gpu tur`, `gpu lant`). Every item or match arm that can write (the `hw`
+# adapters, Bus Master, the falcon load, the write permit) must carry `#[cfg(feature = "gpu-scrie")]` (or be a test-only
+# SIMULARE item, `test-gpu-sim`); what is left after removing those items has no write at all.
+TUR="$ROOT/kernel/src/drivers/gpu_tur.rs"
+python3 - "$TUR" <<'PY' || exit 1
+import re, sys
+src = open(sys.argv[1]).read().splitlines()
+out, i = [], 0
+while i < len(src):
+    l = src[i]
+    if re.match(r'\s*#\[cfg\(feature = "(gpu-scrie|test-gpu-sim)"\)\]\s*$', l):
+        # Skip the next item / statement / match arm: until brackets balance and the line ends it.
+        depth, j = 0, i + 1
+        while j < len(src):
+            code = re.sub(r'"(\\.|[^"\\])*"', '""', src[j].split("//")[0])
+            depth += code.count("{") + code.count("(") + code.count("[") - code.count("}") - code.count(")") - code.count("]")
+            if depth <= 0 and re.search(r'[};,]\s*$', code):
+                break
+            j += 1
+        i = j + 1
+        continue
+    out.append(l)
+    i += 1
+body = "\n".join(x for x in out if not x.strip().startswith("//"))
+bad = [m.group(0) for m in re.finditer(r'write_volatile|write32|write_bytes|WRITABLE|as \*mut|HardwareWritePermit::new|hw::|set_bus_master|restore_command|i6_falcon|dma_put', body)]
+if bad:
+    print("[after-gpu] EȘUAT: scriere posibilă în gpu_tur.rs în afara build-ului gpu-scrie:", sorted(set(bad)))
+    sys.exit(1)
+print("[after-gpu] ok: gpu_tur.rs scrie doar în build-ul gpu-scrie (turul și lanțul doar-citire nu au nicio scriere)")
+PY

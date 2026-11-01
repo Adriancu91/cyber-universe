@@ -41,7 +41,7 @@ pub const GSP_LO: u64 = 0x11_0000;
 #[cfg_attr(not(any(feature = "gpu-scrie", feature = "test-gpu-sim")), allow(dead_code))]
 pub const GSP_HI: u64 = 0x11_3FFF;
 /// PCI Command register and its Bus Master bit.
-const PCI_COMMAND: u16 = 0x04;
+pub(super) const PCI_COMMAND: u16 = 0x04;
 #[cfg_attr(not(feature = "gpu-scrie"), allow(dead_code))]
 const CMD_BUS_MASTER: u16 = 1 << 2;
 /// The DMA area for the FWSEC image: 16 pages (64 KiB) between 16 MiB and 4 GiB; the real image is 0xEA00 bytes.
@@ -71,7 +71,7 @@ fn destinations() -> &'static [&'static str] {
 }
 
 /// Creates `<mount>/raport/gpu-jurnal-NNN.txt` and makes it the destination of `sink`.
-fn live_open(what: &str) -> Result<String, String> {
+pub(super) fn live_open(what: &str) -> Result<String, String> {
     let mut last_err = String::from("stick-ul nu e montat (/usb)");
     for mount in destinations() {
         if fs::list(mount).is_err() {
@@ -134,7 +134,7 @@ fn live_close() -> Option<(String, usize, Option<String>)> {
 }
 
 /// The journal of one command: live on the stick when `path` is set, in memory only otherwise.
-fn journal(live: bool) -> Journal {
+pub(super) fn journal(live: bool) -> Journal {
     if live {
         Journal::with_sink(JOURNAL_CAP, sink)
     } else {
@@ -144,7 +144,7 @@ fn journal(live: bool) -> Journal {
 
 /// Closes the live journal and reports it; for I6 also reads it back and checks the write order (`i6_log::check_i6`,
 /// configuration lines left out: Bus Master is not part of I6). Returns whether the check passed (true when not asked).
-fn close_and_check(p: &str, check_i6: bool, lines: &mut Vec<String>) -> bool {
+pub(super) fn close_and_check(p: &str, check_i6: bool, lines: &mut Vec<String>) -> bool {
     let Some((path, n, failed)) = live_close() else { return !check_i6 };
     match failed {
         None => lines.push(format!("{}: jurnalul pe loc: {} ({} randuri, fiecare scris pe loc)", p, path, n)),
@@ -194,7 +194,7 @@ static DMA: crate::sched::Mutex<Option<u64>> = crate::sched::Mutex::new(None);
 
 /// Copies `img` into the DMA area (zeros after it), reads it back, and describes it for the falcon loader.
 #[cfg_attr(not(any(feature = "gpu-scrie", feature = "test-gpu-sim")), allow(dead_code))]
-fn dma_put(img: &[u8]) -> Result<DmaImage, String> {
+pub(super) fn dma_put(img: &[u8]) -> Result<DmaImage, String> {
     let cap = (DMA_PAGES * 4096) as usize;
     if img.is_empty() || img.len() > cap || img.len() % hs_load::BLOCK as usize != 0 {
         return Err(format!("imaginea are {} octeti (trebuie multiplu de 256, cel mult {})", img.len(), cap));
@@ -224,7 +224,7 @@ fn dma_put(img: &[u8]) -> Result<DmaImage, String> {
 
 /// What the falcon reads at `image` (for the model in `--sim`): the DMA area itself.
 #[cfg(feature = "test-gpu-sim")]
-fn dma_bytes(image: &DmaImage) -> Vec<u8> {
+pub(super) fn dma_bytes(image: &DmaImage) -> Vec<u8> {
     let va = crate::mem::map::phys_to_virt(image.phys);
     // SAFETY: `image` was returned by `dma_put` (inside the pinned DMA area).
     unsafe { core::slice::from_raw_parts(va, image.len as usize) }.to_vec()
@@ -235,7 +235,7 @@ fn dma_bytes(image: &DmaImage) -> Vec<u8> {
 // ---------------------------------------------------------------------------------------------------------------
 
 /// Steps 1 of the window, read only: FWSEC in the VBIOS, then `i6_check` (fuse, VRAM, WPR2, FRTS).
-fn prepare<M: Mmio + ?Sized, K: Clock + ?Sized>(
+pub(super) fn prepare<M: Mmio + ?Sized, K: Clock + ?Sized>(
     p: &str,
     win: &mut M,
     journal: &mut Journal,
@@ -279,7 +279,7 @@ fn prepare<M: Mmio + ?Sized, K: Clock + ?Sized>(
 /// Step 2, nothing written to the card: FWSEC and the chosen signature copied from the VBIOS, the FRTS command patched
 /// in (`hs_load::fwsec_frts_image`).
 #[cfg_attr(not(feature = "gpu-scrie"), allow(dead_code))]
-fn build_image<M: Mmio + ?Sized, K: Clock + ?Sized>(
+pub(super) fn build_image<M: Mmio + ?Sized, K: Clock + ?Sized>(
     p: &str,
     win: &mut M,
     journal: &mut Journal,
@@ -338,17 +338,7 @@ fn run_writes<C: ConfigSpace + ?Sized, W: Mmio + ?Sized, K: Clock + ?Sized>(
         "{}: pasul 3: Bus Master pornit (COMMAND {:#06x} -> {:#06x})",
         p, old, cfg.read32(PCI_COMMAND) as u16
     ));
-    let i6 = GuardedBar0::new(rw, journal, permit).and_then(|mut b| falcon::fwsec_frts_dma(&mut b, clock, ucode, image, frts));
-    let i6_ok = match &i6 {
-        Ok(w) => {
-            lines.push(format!("{}: pas I6 FWSEC-FRTS: ok; WPR2 {:#x}..{:#x} (= regiunea FRTS)", p, w.start, w.end));
-            true
-        }
-        Err(e) => {
-            lines.push(format!("{}: pas I6 FWSEC-FRTS: ESEC: {} (oprit la prima eroare)", p, e));
-            false
-        }
-    };
+    let i6_ok = i6_falcon(p, rw, clock, journal, ucode, image, frts, permit, lines);
     let back = match restore_command(cfg, &bm, journal, old) {
         Ok(()) if cfg.read32(PCI_COMMAND) as u16 == old => {
             lines.push(format!("{}: pasul 5: Bus Master oprit la loc (COMMAND {:#06x}, ca inainte)", p, old));
@@ -366,8 +356,36 @@ fn run_writes<C: ConfigSpace + ?Sized, W: Mmio + ?Sized, K: Clock + ?Sized>(
     i6_ok && back
 }
 
+/// Step 4 alone (no Bus Master): FWSEC-FRTS through the guarded GSP window. Shared by `gpu i6 --scrie` and the
+/// `i6-fwsec-frts` step of `gpu lant`. Returns whether I6 passed.
 #[cfg_attr(not(any(feature = "gpu-scrie", feature = "test-gpu-sim")), allow(dead_code))]
-fn writes_summary(p: &str, journal: &Journal) -> String {
+#[allow(clippy::too_many_arguments)]
+pub(super) fn i6_falcon<W: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    rw: &mut W,
+    clock: &mut K,
+    journal: &mut Journal,
+    ucode: &HsUcode,
+    image: &DmaImage,
+    frts: (u64, u64),
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+) -> bool {
+    let i6 = GuardedBar0::new(rw, journal, permit).and_then(|mut b| falcon::fwsec_frts_dma(&mut b, clock, ucode, image, frts));
+    match &i6 {
+        Ok(w) => {
+            lines.push(format!("{}: pas I6 FWSEC-FRTS: ok; WPR2 {:#x}..{:#x} (= regiunea FRTS)", p, w.start, w.end));
+            true
+        }
+        Err(e) => {
+            lines.push(format!("{}: pas I6 FWSEC-FRTS: ESEC: {} (oprit la prima eroare)", p, e));
+            false
+        }
+    }
+}
+
+#[cfg_attr(not(any(feature = "gpu-scrie", feature = "test-gpu-sim")), allow(dead_code))]
+pub(super) fn writes_summary(p: &str, journal: &Journal) -> String {
     let (mut cfg, mut bar0) = (0usize, 0usize);
     for e in journal.events() {
         match e {
@@ -388,7 +406,7 @@ fn writes_summary(p: &str, journal: &Journal) -> String {
 // ---------------------------------------------------------------------------------------------------------------
 
 /// The first NVIDIA board the Cyber-GPU probe accepts, with BAR0, or the reason there is none.
-fn board(lines: &mut Vec<String>) -> Option<(crate::pci::Device, u64)> {
+pub(super) fn board(lines: &mut Vec<String>) -> Option<(crate::pci::Device, u64)> {
     let nv: Vec<crate::pci::Device> = gpu::display_devices().into_iter().filter(|d| d.vendor == NVIDIA).collect();
     let Some(d) = nv.into_iter().next() else {
         lines.push(String::from("nicio placa NVIDIA"));
@@ -416,7 +434,7 @@ fn board(lines: &mut Vec<String>) -> Option<(crate::pci::Device, u64)> {
     Some((d, bar0))
 }
 
-fn finish(mut lines: Vec<String>) -> Vec<String> {
+pub(super) fn finish(mut lines: Vec<String>) -> Vec<String> {
     for l in &lines {
         crate::info!("gpu: {}", l);
     }
@@ -521,14 +539,14 @@ pub fn i6_write() -> Vec<String> {
 
 /// The adapters that can reach the card: only in the test-stick build (`gpu-scrie`), each with its own fence.
 #[cfg(feature = "gpu-scrie")]
-mod hw {
+pub(super) mod hw {
     use super::{gpu, CMD_BUS_MASTER, GSP_HI, GSP_LO, PCI_COMMAND};
     use crate::mem::paging;
 
     /// Configuration space: reads anywhere; the only write let through is Command with nothing but bit 2 changed.
-    pub(super) struct BusMasterOnlyConfig<'a> {
-        pub(super) dev: &'a crate::pci::Device,
-        pub(super) refused: usize,
+    pub(crate) struct BusMasterOnlyConfig<'a> {
+        pub(crate) dev: &'a crate::pci::Device,
+        pub(crate) refused: usize,
     }
 
     impl gpu_core::hal::ConfigSpace for BusMasterOnlyConfig<'_> {
@@ -547,14 +565,14 @@ mod hw {
     }
 
     /// The whole 16 MiB BAR0 for reads; writes only inside the GSP window. One page mapped at a time (uncached).
-    pub(super) struct GspWriteWindow {
+    pub(crate) struct GspWriteWindow {
         phys: u64,
         mapped: Option<u64>,
-        pub(super) refused: usize,
+        pub(crate) refused: usize,
     }
 
     impl GspWriteWindow {
-        pub(super) fn new(phys: u64) -> Self {
+        pub(crate) fn new(phys: u64) -> Self {
             GspWriteWindow { phys, mapped: None, refused: 0 }
         }
         fn page(&mut self, offset: u64) -> Option<u64> {
@@ -614,7 +632,7 @@ mod hw {
 /// The read side of the workstation board: BAR0 16 MiB with the ASUS-like VBIOS chain and a GA10x-like FWSEC, the
 /// FWSEC fuse at version 1, VRAM 8 GiB, WPR2 down. All values SIM.
 #[cfg(feature = "test-gpu-sim")]
-fn sim_board() -> gpu_sim::mmio::SimMmio {
+pub(super) fn sim_board() -> gpu_sim::mmio::SimMmio {
     use gpu_sim::{mmio::SimMmio, rom};
     let mut m = SimMmio::ga104_bar0();
     m.load_bytes(nvidia_ga104::regs::PROM_BASE, &rom::asus_like_chain_with_fwsec(&rom::SimFwsec::ga10x_like()));
@@ -626,7 +644,7 @@ fn sim_board() -> gpu_sim::mmio::SimMmio {
 }
 
 #[cfg(feature = "test-gpu-sim")]
-fn sim_lines(mut lines: Vec<String>, what: &str) -> Vec<String> {
+pub(super) fn sim_lines(mut lines: Vec<String>, what: &str) -> Vec<String> {
     lines = lines.into_iter().map(|l| format!("SIMULARE: {}", l)).collect();
     lines.insert(0, format!("SIMULARE: {} pe modelele gpu-sim (cyber-gpu {}), nu placa reala", what, CYBER_GPU_REV));
     lines.push(String::from("SIMULARE: nicio placa reala atinsa; rezultatul nu dovedeste nimic despre hardware"));
@@ -651,7 +669,7 @@ pub fn prepare_i6_sim() -> Vec<String> {
 /// `hs_load::tests::fwsec_iface_*`): header at DMEM 0x300 (2 entries), DMEM mapper at 0x340, command buffer at 0x380
 /// (0x40 bytes), signature at 0x100. Synthetic bytes, never NVIDIA firmware.
 #[cfg(feature = "test-gpu-sim")]
-fn sim_fwsec() -> (nvidia_ga104::fwsec::FalconUcodeDescV3, Vec<u8>, Vec<u8>) {
+pub(super) fn sim_fwsec() -> (nvidia_ga104::fwsec::FalconUcodeDescV3, Vec<u8>, Vec<u8>) {
     let desc = nvidia_ga104::fwsec::FalconUcodeDescV3 {
         stored_size: 0x1600,
         pkc_data_offset: 0x100,

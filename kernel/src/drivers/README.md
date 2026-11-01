@@ -73,7 +73,7 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   **SIMULARE**, iar dimensionarea BAR-urilor (care scrie) se face doar în model.
   Test: scenariile `gpu` (calea reală în QEMU → „nicio placa NVIDIA”, `--sim` refuzat în build-ul obișnuit) și `gpu-sim`;
   `tools/after-gpu.sh` verifică în sursă că adaptoarele doar refuză (și că dimensionarea apare doar în blocul de simulare).
-- **`gpu gfw` și `gpu vbios` (P6-21, comanda C-19):** pașii I2 și I3 din Cyber-GPU (fixat acum pe `9597863`, P6-40; înainte `aee06c4`, P6-37; înainte `2c9c90c`, P6-35, `8313973`, P6-31, și `dac2e32`; ramura lor
+- **`gpu gfw` și `gpu vbios` (P6-21, comanda C-19):** pașii I2 și I3 din Cyber-GPU (fixat acum pe `4e6f747`, P6-42; înainte `9597863`, P6-40; înainte `aee06c4`, P6-37; înainte `2c9c90c`, P6-35, `8313973`, P6-31, și `dac2e32`; ramura lor
   `g0-g2-fundatie`), **doar citire**. `gpu gfw` așteaptă (max 4 s) ca firmware-ul plăcii să termine pornirea: rundele, timpul,
   `PRIV_LEVEL_MASK`, progresul (gata = `0xff`). `gpu vbios` citește VBIOS-ul prin fereastra PROM (BAR0 `0x300000`, 1 MiB): imaginile
   (offset, tip PCI-AT/EFI/FWSEC, mărime), tabela BIT și jetonul 0x70, numărul de citiri (max 300 000, 2 s). Ambele au nevoie de primii
@@ -102,6 +102,19 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   Verificat o dată, de mână, cu un stick de test de 128 MiB cu fișiere false de mărimea oficială (gsp de 63.571.696 octeți): 4 × „ALT CONTINUT”, fără probleme de memorie.
 - **Fixarea `aee06c4` (P6-37, comanda C-42):** Cyber-GPU după C-39 — antetele `booter_load`, `booter_unload` și `bootloader` citite după forma
   fișierelor oficiale 570.144 (`bin_size` nu e mărimea fișierului). Față de `2c9c90c` doar adăugări; codul `gpu firmware` din OS neschimbat.
+- **`gpu tur` și `gpu lant` (P6-42, comanda C-55, fișierul `gpu_tur.rs`):** Cyber-GPU fixat pe `4e6f747` (≥ `911e6d0`; față de
+  `9597863` doar adăugări: `read_tour`, `chain`, `board_compare`, `gpu_sim::observed`). Schița lor: `integration/cyber-universe/C-54_gpu-tur-si-lant.md`.
+  - `gpu tur` = **doar citire**: `read_tour::run_tour` prin adaptorul de configurație doar-citire și fereastra BAR0 de 16 MiB doar-citire;
+    un rând `fapt <cheie> = <valoare>` pe fiecare fapt (formatul pe care îl citește `compara_raport` din Cyber-GPU), apoi „0 scrieri”.
+    E pe lista albă a modului automat (C-53). Jurnalul pe loc pe stick, ca la `gpu pregatire-i6`.
+  - `gpu lant` (cere `DA`; refuzat în modul automat): `chain::run_chain(WINDOW_CHAIN, ..)` — pregătirea I6, Bus Master pornit, FWSEC-FRTS
+    (aceleași funcții ca `gpu i6 --scrie`, `i6_falcon` fără partea de Bus Master), I7 (blocat în plan: lanțul se oprește singur), Bus Master
+    pus la loc, turul după. Ordinea și regulile de oprire sunt ale driverului. Scrierile: doar în build-ul `gpu-scrie`; în rest lanțul rulează
+    doar citire (se oprește înainte de Bus Master, apoi turul).
+  - Test: `gpu-tur` (`gpu tur --sim` pe modelul plăcii din workstation; `gpu lant --sim` cu `DA` oprit la I7 cu Bus Master înapoi;
+    `--eroare` oprit la I6, Bus Master tot înapoi; `--doar-citire` 0 scrieri; `tools/after-gpu-tur.sh` verifică jurnalele de pe disc),
+    `gpu-scrie` (`gpu lant` → „nicio placa NVIDIA”), `tools/after-gpu.sh` (în `gpu_tur.rs` tot ce poate scrie e doar în build-ul `gpu-scrie`).
+    **Nimic nu a rulat pe placa reală.**
 - **Primele scrieri în placă: `gpu pregatire-i6` și `gpu i6 --scrie` (P6-40, comanda C-52, fișierul `gpu_i6.rs`):** Cyber-GPU fixat pe
   `9597863` (≥ `d879742`; față de `aee06c4` doar adăugări: `fuse`, `i6_check`, `i6_log`, `gpu_pci::bus_master`, `Journal::with_sink`).
   - `gpu pregatire-i6` = pasul 1 al ferestrei I6, **doar citire**: FWSEC în VBIOS, siguranța FWSEC → semnătura, VRAM, WPR2, regiunea FRTS,

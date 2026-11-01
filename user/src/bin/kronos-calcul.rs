@@ -1,5 +1,5 @@
 //! P6-19 (command C-16): Kronos' arithmetic on the processors of Cyber Universe OS, with the operators of the
-//! Cyber-GPU library `gpu-compute` (its CPU backend: the numerical oracle, pinned to commit 9597863).
+//! Cyber-GPU library `gpu-compute` (its CPU backend: the numerical oracle, pinned to commit 4e6f747).
 //!
 //! `kronos-calcul [n]` (default: every processor that runs threads) checks and times:
 //! 1. one Kronos-shaped transformer block (embedding, layernorm, QKV, causal attention, projection, MLP with GELU,
@@ -452,7 +452,7 @@ fn main() -> i64 {
         .unwrap_or(cyber_user::cpus() as usize)
         .clamp(1, MAX_THREADS);
     let simd = detect();
-    println!("kronos-calcul: gpu-compute (cyber-gpu 9597863, backend CPU), {} {}, vectori {}", n, fire(n), simd.name());
+    println!("kronos-calcul: gpu-compute (cyber-gpu 4e6f747, backend CPU), {} {}, vectori {}", n, fire(n), simd.name());
     let mut ok = true;
 
     // 1. The block.

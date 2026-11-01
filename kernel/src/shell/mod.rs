@@ -189,6 +189,7 @@ fn help() {
     out!("  rtl porneste [variante]  reporneste placa Realtek cu variantele date (fara: ca la pornire; `rtl` le arata)\n");
     out!("  gpu [identifica|plan]  placile video (nivel 0: doar citire; NVIDIA: registrele de identitate)\n");
     out!("  gpu pregatire-i6 pregatirea pasului I6 (doar citire); gpu i6 --scrie = prima scriere (doar stick-ul de test)\n");
+    out!("  gpu tur          turul de citire (doar citire, un rand `fapt` pe fapt); gpu lant = pasii ferestrei in lant (cere DA)\n");
     out!("  hw               raport hardware pe o pagina (pentru o singura poza)\n");
     out!("  raport           scrie pe stick /usb/raport/<data>-<nr>.txt: hw, lspci, net, jurnalele (fara chei)\n");
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
@@ -513,12 +514,71 @@ fn gpu(args: &[&str]) {
             }
         }
         Some("i6") => i6(&args[1..]),
+        Some("tur") => {
+            // P6-42 (C-55): the read-only tour, one `fapt` line per fact; allowed in the automatic loop.
+            let rest = &args[1..];
+            if let Some(bad) = rest.iter().find(|a| **a != "--sim") {
+                out!("gpu tur: optiune necunoscuta: {} (folosire: gpu tur [--sim])\n", bad);
+                return;
+            }
+            if rest.contains(&"--sim") {
+                #[cfg(feature = "test-gpu-sim")]
+                for l in crate::drivers::gpu_tur::tour_sim() {
+                    out!("{}\n", l);
+                }
+                #[cfg(not(feature = "test-gpu-sim"))]
+                out!("gpu: --sim exista doar in build-ul de test (modelul gpu-sim nu intra in sistemul pornit de pe stick)\n");
+            } else {
+                for l in crate::drivers::gpu_tur::tour() {
+                    out!("{}\n", l);
+                }
+            }
+        }
+        Some("lant") => lant(&args[1..]),
         Some("plan") => {
             for l in crate::drivers::gpu::PLAN {
                 out!("{}\n", l);
             }
         }
-        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios [--detalii] | gpu fwsec | gpu firmware | gpu pregatire-i6 | gpu i6 --scrie | gpu plan)\n", other),
+        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios [--detalii] | gpu fwsec | gpu firmware | gpu pregatire-i6 | gpu i6 --scrie | gpu tur | gpu lant | gpu plan)\n", other),
+    }
+}
+
+/// P6-42 (C-55): `gpu lant [--sim] [--eroare]` — the window steps in a chain. Asks for `DA` before anything; refused by
+/// the automatic loop (shell/auto.rs). Writes only in the test-stick build; elsewhere the chain runs read only.
+fn lant(rest: &[&str]) {
+    if let Some(bad) = rest.iter().find(|a| !matches!(**a, "--sim" | "--eroare" | "--doar-citire")) {
+        out!("gpu lant: optiune necunoscuta: {} (folosire: gpu lant)\n", bad);
+        return;
+    }
+    let sim = rest.contains(&"--sim");
+    if sim && !cfg!(feature = "test-gpu-sim") {
+        out!("gpu: --sim exista doar in build-ul de test (modelul gpu-sim nu intra in sistemul pornit de pe stick)\n");
+        return;
+    }
+    for l in crate::drivers::gpu::LANT_WARNING {
+        out!("{}\n", l);
+    }
+    if !sim && !cfg!(feature = "gpu-scrie") {
+        out!("(acest sistem nu poate scrie in placa: lantul va rula doar citire, oprit inainte de primul pas care scrie)\n");
+    }
+    out!("Scrie DA (litere mari) si Enter ca sa continui; orice altceva opreste: ");
+    let Some(answer) = read_line() else { return };
+    if answer.trim() != "DA" {
+        out!("gpu lant: oprit, nimic scris in placa\n");
+        crate::info!("gpu: lant: oprit la confirmare (nimic scris)");
+        return;
+    }
+    crate::info!("gpu: lant: confirmat cu DA{}", if sim { " (SIMULARE)" } else { "" });
+    #[cfg(feature = "test-gpu-sim")]
+    if sim {
+        for l in crate::drivers::gpu_tur::chain_sim(rest.contains(&"--eroare"), !rest.contains(&"--doar-citire")) {
+            out!("{}\n", l);
+        }
+        return;
+    }
+    for l in crate::drivers::gpu_tur::chain() {
+        out!("{}\n", l);
     }
 }
 

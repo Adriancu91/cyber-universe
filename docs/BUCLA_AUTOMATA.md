@@ -18,8 +18,8 @@ Raportul are tot până la comanda blocată (rândul „in lucru: …”). Dacă
 scrie „INTRERUPT” în raport, redenumește lista și repornește.
 
 **Lista albă (modul automat):** `hw`, `lspci`, `lsusb`, `net`, `mem`, `uptime`, `log`, `ls`, `cat`, `raport`, `cpu …`,
-`gpu`, `gpu identifica|gfw|vbios|fwsec|firmware|pregatire-i6|plan`, `run kronos …`, `run kronos-calcul …`.
-Refuzate mereu: tot ce conține `--scrie`, `gpu i6`, `reboot`, rețeaua, celelalte programe.
+`gpu`, `gpu identifica|gfw|vbios|fwsec|firmware|pregatire-i6|tur|plan`, `run kronos …`, `run kronos-calcul …`.
+Refuzate mereu: tot ce conține `--scrie`, `gpu i6`, `gpu lant`, `reboot`, rețeaua, celelalte programe.
 
 ## Pregătirea cu Adrian (o singură dată, ~20 min, la întoarcere)
 1. **BIOS-ul workstation-ului** (la pornire, tasta Del sau F2):

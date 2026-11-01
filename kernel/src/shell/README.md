@@ -32,7 +32,7 @@
   și cel manual, `tools/after-raport.sh` le citește cu `mtools` (fsck curat, secțiunile, niciun token); filtrul are și un test la pornire.
 - **`cat` și fișierele secrete (P6-23):** `cat /usb/claude.key` (sau `github.token`) nu afișează nimic: „fisier secret”.
 - **Modul automat (P6-41, comanda C-53):** `auto.rs`. La pornire, înainte de desktop, dacă există `/usb/auto/teste.txt`, rulează
-  comenzile din lista albă (doar citire; tot ce conține `--scrie`, `gpu i6`, `reboot` = refuzat), scrie `auto/raport-<AAAALLZZ-HHMM>.txt`
+  comenzile din lista albă (doar citire, inclusiv `gpu tur` din P6-42; tot ce conține `--scrie`, `gpu i6`, `gpu lant`, `reboot` = refuzat), scrie `auto/raport-<AAAALLZZ-HHMM>.txt`
   pe loc (inclusiv ce scriu programele pornite cu `run`, prin `program_output` din apelul de sistem `write`), redenumește lista în
   `teste-facut-<data>.txt` și repornește. Ceasul de siguranță (`ceas N` minute, implicit 10) repornește dacă lista nu termină;
   marcajul `auto/in-lucru.txt` împiedică reluarea unei liste întrerupte. Scenarii: `auto`, `auto-ceas`, `auto-intrerupt`
