@@ -14,6 +14,7 @@ fn run_one(args: &[&str]) -> i64 {
 }
 
 pub fn run() {
+    crate::gfx::console::self_test_block_scroll();
     let before = frame::free_frames();
     let t0 = crate::arch::x86_64::apic::ticks();
     let f32 = ["kronos", "--verifica", "/disk/kronos/mini-f32.kgr", "/disk/kronos/mini-f32.ref"];
@@ -47,6 +48,11 @@ pub fn run() {
     // P6-29: the thread pool with more threads than processors (workers yield) must still match the reference.
     let pool = ["kronos", "--verifica", "/disk/kronos/mini-q8.kgr", "/disk/kronos/mini-q8.ref", "--fire", "4"];
     assert!(run_one(&pool) == 0, "kronos: Q8_0 pe 4 fire diferit de referinta");
+    // P6-39: the projection on its own thread count (1 of 4, and 3 = not a divisor of the heads): the same tokens.
+    for n in ["1", "3"] {
+        let proj = ["kronos", "--verifica", "/disk/kronos/mini-q8.kgr", "/disk/kronos/mini-q8.ref", "--fire", "4", "--fire-proiectie", n];
+        assert!(run_one(&proj) == 0, "kronos: Q8_0 cu proiectia pe alt numar de fire diferit de referinta");
+    }
     // P6-36: text only at the end, 3 threads (more than the tiny model's processors here): the same tokens.
     let quiet = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--n", "5", "--fara-ecran", "--fire", "3", "Ana", "are", "mere."];
     assert!(run_one(&quiet) == 0, "kronos: --fara-ecran a esuat");

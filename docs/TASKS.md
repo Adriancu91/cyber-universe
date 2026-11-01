@@ -307,6 +307,9 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 - [x] **P6-38** Modelul Kronos #477 pe stick (C-46): tabelul modelelor cunoscute (#477, #459 rezervă) cu SHA-256 și vectorii de control, alegerea implicită 477 > 459 > primul `*.kgr`, `kronos --control`, teste QEMU, Release nou. Dep: P6-37
   Rezultat (2026-10-31): `kronos --control` pe modelul mic al vectorilor oficiali trece în QEMU; alegerea 477 > 459 > primul `*.kgr` și suma din tabel (refuz cod 3) verificate; suita locală 80/80 + 1 sărit. Pe hardware: `run kronos --control` (Adrian).
 
+- [x] **P6-39** Kronos în OS: produsul „proiecție” și afișarea pe ecran (C-48): proiecția la generare pe firele împărțirii pe capete (`fire_proiectie`, căutată de `--cauta`, `--fire-proiectie`), textul pe ecran în bloc cel mult o dată pe secundă, consola mută ecranul o dată pe bloc. Simbolurile identice. Dep: P6-38
+  Rezultat (2026-11-01): în QEMU simbolurile identice cu proiecția pe 1, 2, 3 și 4 fire; consola: blocul = aceeași imagine ca rând cu rând; suita locală 80/80 + 1 sărit (`kronos-calcul` = temporizatorul cunoscut la `-smp 4`, trece la reluare). Viteza reală = workstation (Adrian).
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)

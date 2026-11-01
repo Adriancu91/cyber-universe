@@ -89,6 +89,16 @@ impl fmt::Write for Console {
         if !TEXT_ON_SCREEN.load(Ordering::Acquire) {
             return Ok(()); // the window server owns the screen
         }
+        // P6-39 (C-48): moving the screen up costs about as much for many rows as for one (every changed pixel of the
+        // screen is rewritten; on the workstation ~59 ms). A text with several line ends that would go past the
+        // bottom moves the screen once, by all the rows it needs (at most up to the top), before it is drawn: the
+        // same picture at the end as row by row. Lines wrapped for length still move it one row at a time.
+        let lines = s.chars().filter(|&c| c == '\n').count();
+        let over = (self.row + lines).saturating_sub(self.rows.saturating_sub(1)).min(self.row);
+        if over > 1 {
+            self.fb.scroll_up(over * CELL_H, BACKGROUND);
+            self.row -= over;
+        }
         for c in s.chars() {
             self.put_char(c);
         }
@@ -212,3 +222,29 @@ macro_rules! println {
     () => { $crate::print!("\n") };
     ($($arg:tt)*) => { $crate::print!("{}\n", format_args!($($arg)*)) };
 }
+
+/// P6-39 self-test: text written in one block (the screen moved once) leaves exactly the picture of the same text
+/// written line by line (the screen moved once per line), with a long line that wraps; both on memory framebuffers.
+#[cfg(feature = "test-kronos-kgr")]
+pub fn self_test_block_scroll() {
+    use core::fmt::Write;
+    let (w, h) = (2 * MARGIN + 30 * CELL_W, 2 * MARGIN + 6 * CELL_H);
+    let mut a = alloc::vec![0u8; w * h * 4];
+    let mut b = alloc::vec![0u8; w * h * 4];
+    // SAFETY: each buffer has w * h * 4 bytes, lives until the end of this function and is used only by its console.
+    let (fa, fb) = unsafe { (Framebuffer::in_memory(a.as_mut_ptr(), w, h), Framebuffer::in_memory(b.as_mut_ptr(), w, h)) };
+    let (mut ca, mut cb) = (Console::new(fa), Console::new(fb));
+    let lines = ["intai 1\n", "intai 2\n", "intai 3\n", "Am fost la un restaurant de vis,\n", "rand 5\n", "un rand foarte lung care trece de marginea ecranului mic\n", "rand 7\n", "fara sfarsit"];
+    for c in [&mut ca, &mut cb] {
+        let _ = c.write_str(lines[0]);
+    }
+    for l in &lines[1..] {
+        let _ = ca.write_str(l);
+    }
+    let _ = cb.write_str(&lines[1..].concat());
+    drop((ca, cb));
+    assert!(a == b, "consola: textul scris intr-un bloc difera de acelasi text scris rand cu rand");
+    assert!(a.chunks_exact(4).any(|p| p != BACKGROUND.to_le_bytes()), "consola: testul n-a desenat nimic");
+    crate::info!("test: consola: un bloc de randuri = aceeasi imagine ca rand cu rand (ecranul mutat o data)");
+}
+

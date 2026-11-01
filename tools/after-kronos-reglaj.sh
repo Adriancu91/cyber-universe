@@ -15,4 +15,8 @@ mcopy -n -i "$IMG@@1M" "${files[0]}" "$TMP/r.txt" || fail "nu pot citi ${files[0
 grep -Eq '^vectori = (avx2|scalar)$' "$TMP/r.txt" || fail "vectori lipsă"
 grep -Eq '^fire = [0-9]+$' "$TMP/r.txt" || fail "fire lipsă"
 grep -Eq '^ordine = (t-j|j-t)$' "$TMP/r.txt" || fail "ordine lipsă sau varianta stricată"
+if grep -q '^fire_proiectie' "$TMP/r.txt"; then
+    grep -Eq '^fire_proiectie = [0-9]+$' "$TMP/r.txt" || fail "fire_proiectie nu e un număr"
+fi
+grep -Eq '^# proiectia: [0-9]+ fir' "$TMP/r.txt" || fail "nota despre proiecție lipsește (P6-39)"
 echo "[after-kronos-reglaj] OK: ${files[0]##*/}: $(grep -E '^(vectori|fire|ordine) =' "$TMP/r.txt" | tr '\n' ' ')"

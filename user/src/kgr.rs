@@ -648,12 +648,24 @@ pub struct Tuning {
     /// AVX2 + FMA (only when `has_avx2_fma()`), otherwise scalar.
     pub simd: bool,
     pub order: Order,
+    /// P6-39 (C-48): threads of the attention's output projection while generating (0 = as many as heads, at most
+    /// `threads`). On the workstation the projection took 46.6 % of the time at 2.1 GB/s: it is the only product that
+    /// comes right after the qkv + attention split, which uses one part per head (12) while the other threads wait;
+    /// sending the small projection [E, E] to the threads that just worked keeps it from waiting for the idle ones.
+    /// Every output is still computed by one thread with the same code: the same bits for any value.
+    pub proj_threads: usize,
 }
 
 impl Tuning {
     /// What the engine uses without a tuning file: every processor, vectors when present, order t-j.
     pub fn default_for(cpus: usize) -> Tuning {
-        Tuning { threads: cpus.clamp(1, MAX_THREADS), simd: has_avx2_fma(), order: Order::TJ }
+        Tuning { threads: cpus.clamp(1, MAX_THREADS), simd: has_avx2_fma(), order: Order::TJ, proj_threads: 0 }
+    }
+
+    /// Threads of the projection while generating, for a model with `heads` heads (see `proj_threads`).
+    pub fn proj_for(&self, heads: usize) -> usize {
+        let t = self.threads.clamp(1, MAX_THREADS);
+        if self.proj_threads > 0 { self.proj_threads.min(t) } else { heads.clamp(1, t) }
     }
 
     pub fn describe(&self) -> String {
@@ -671,11 +683,12 @@ impl Tuning {
         alloc::format!(
             "# Reglajul motorului KGR1 pentru acest procesor (kronos-calcul --cauta, P6-28).\n\
              # Il citeste `kronos` la pornire. Se poate sterge: atunci se folosesc valorile implicite.\n\
-             procesor = {}\nvectori = {}\nfire = {}\nordine = {}\n{}",
+             procesor = {}\nvectori = {}\nfire = {}\nordine = {}\n{}{}",
             processor,
             if self.simd { "avx2" } else { "scalar" },
             self.threads,
             self.order.name(),
+            if self.proj_threads > 0 { alloc::format!("fire_proiectie = {}\n", self.proj_threads) } else { String::new() },
             note
         )
     }
@@ -703,6 +716,10 @@ impl Tuning {
                 "fire" => match v.parse::<usize>() {
                     Ok(n) if n >= 1 => t.threads = n.min(MAX_THREADS),
                     _ => notes.push(alloc::format!("fire = `{}` nu e un numar", v)),
+                },
+                "fire_proiectie" => match v.parse::<usize>() {
+                    Ok(n) if n >= 1 => t.proj_threads = n.min(MAX_THREADS),
+                    _ => notes.push(alloc::format!("fire_proiectie = `{}` nu e un numar", v)),
                 },
                 "ordine" => match v {
                     "t-j" => t.order = Order::TJ,
@@ -927,7 +944,7 @@ impl<'a> Model<'a> {
             kcache,
             vcache,
             len: 0,
-            tune: Tuning { threads: 1, simd: false, order: Order::TJ },
+            tune: Tuning { threads: 1, simd: false, order: Order::TJ, proj_threads: 0 },
         })
     }
 
@@ -1063,7 +1080,15 @@ impl<'a> Model<'a> {
             prof::add(prof::ATTN, prof::now() - c0, 0);
             }
             let l = &self.layers[li];
-            self.linear(prof::PROJ, &l.proj, Some(l.proj_b), &att, t, &mut tmp);
+            if t == 1 {
+                // P6-39 (C-48): the projection on the threads of the heads split just before (see `proj_threads`).
+                let tune = Tuning { threads: self.tune.proj_for(h), ..self.tune };
+                let c0 = prof::now();
+                linear_act(&l.proj, Some(l.proj_b), &att, t, &mut tmp, tune, false);
+                prof::add(prof::PROJ, prof::now() - c0, l.proj.bytes() as u64);
+            } else {
+                self.linear(prof::PROJ, &l.proj, Some(l.proj_b), &att, t, &mut tmp);
+            }
             let c0 = prof::now();
             for (a, b) in x.iter_mut().zip(&tmp) {
                 *a += b;

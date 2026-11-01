@@ -14,10 +14,12 @@
 //! SHA-256 the file must have; otherwise `<model>.sha256` next to it, if present; otherwise, P6-38, the sum of the
 //! known model with that file name), `--reglaj <cale>` (the tuning file;
 //! default `/usb/kronos/reglaj-<procesor>.txt` when it exists, written by `kronos-calcul --cauta`, P6-28). `--fire` and
-//! `--fara-vector` win over the tuning file. `--profil` (P6-29, C-29): after the text, where the time of the generated
+//! `--fara-vector` win over the tuning file. `--fire-proiectie <n>` (P6-39): threads of the attention's projection while
+//! generating (default: `fire_proiectie` from the tuning file, else as many as the model's heads). `--profil` (P6-29, C-29): after the text, where the time of the generated
 //! tokens went (TSC cycles per kind of work: the products per layer kind, the output head, attention, the rest, the
 //! wait for threads, writing the text on the screen), with ms per token and GB/s of weights for the products.
-//! `--fara-ecran` (P6-36): the generated text is written only at the end (otherwise one line at a time).
+//! `--fara-ecran` (P6-36): the generated text is written only at the end (otherwise whole lines, in one block at most
+//! once a second, P6-39).
 //! `--repetitie <p>` (P6-29, optional, off by default): divides (or multiplies, when negative) the logit of every token
 //! already in the text by p > 1 before the greedy choice; without it the result is the plain greedy one.
 //! The shell splits on spaces, so the words of the text are joined back with one space (surrounding `"` removed).
@@ -238,6 +240,8 @@ struct Opts {
     ids: Vec<u32>,
     n: usize,
     threads: Option<usize>,
+    /// `--fire-proiectie <n>` (P6-39): threads of the projection while generating (wins over the tuning file).
+    proj_threads: Option<usize>,
     scalar: bool,
     sum: Option<String>,
     tuning: Option<String>,
@@ -261,6 +265,7 @@ fn parse_args() -> Result<Opts, String> {
         ids: Vec::new(),
         n: 32,
         threads: None,
+        proj_threads: None,
         scalar: false,
         sum: None,
         tuning: None,
@@ -288,6 +293,7 @@ fn parse_args() -> Result<Opts, String> {
                 }
             }
             "--n" => o.n = val()?.parse().map_err(|_| String::from("--n cere un numar"))?,
+            "--fire-proiectie" => o.proj_threads = Some(val()?.parse().map_err(|_| String::from("--fire-proiectie cere un numar"))?),
             "--fire" => o.threads = Some(val()?.parse().map_err(|_| String::from("--fire cere un numar"))?),
             "--fara-vector" => o.scalar = true,
             "--suma" => o.sum = Some(val()?.into()),
@@ -571,6 +577,9 @@ fn tuning(o: &Opts) -> kgr::Tuning {
         None if o.tuning.is_some() => println!("kronos: reglaj: nu pot citi {}; valorile implicite", path),
         None => println!("kronos: reglaj: niciun fisier pentru `{}` (kronos-calcul --cauta il scrie); valorile implicite", cpu),
     }
+    if let Some(n) = o.proj_threads {
+        t.proj_threads = n.clamp(1, kgr::MAX_THREADS);
+    }
     if let Some(n) = o.threads {
         t.threads = n.clamp(1, kgr::MAX_THREADS);
     }
@@ -596,6 +605,9 @@ fn penalize(logits: &mut [f32], seen: &[u32], p: f32) {
 }
 
 /// `--profil`: where the cycles of the generated tokens went.
+/// P6-39 (C-48): the generated text goes to the screen at most this often (whole lines, one block).
+const FLUSH_MS: u64 = 1000;
+
 fn profile_report(m: &Model, passes: usize, total: u64, screen: u64, pick: u64, per_ms: u64) {
     use kgr::prof;
     let ms = |c: u64| c as f64 / per_ms.max(1) as f64;
@@ -746,6 +758,14 @@ fn main() -> i64 {
         m.parameters()
     );
     println!("kronos: sursa `{}`, tokenizer {} octeti; {}", m.source, m.tokenizer.len(), m.tune.describe());
+    println!(
+        "kronos: proiectia la generare pe {} ({})",
+        match m.tune.proj_for(c.heads) {
+            1 => String::from("1 fir"),
+            n => alloc::format!("{} fire", n),
+        },
+        if m.tune.proj_threads > 0 { "din reglaj sau --fire-proiectie" } else { "cate capete are modelul" }
+    );
     let tok = if vectors.is_some() || !o.words.is_empty() || o.control {
         match Tokenizer::from_json(m.tokenizer, c.vocab) {
             Ok(t) => {
@@ -856,6 +876,7 @@ fn main() -> i64 {
     let mut stream = bpe::TextStream::default();
     let mut pending = String::new();
     let mut ended = false;
+    let mut last_flush = now_ms();
     if tok.is_some() {
         cyber_user::print!("kronos: continuare: ");
     }
@@ -873,13 +894,16 @@ fn main() -> i64 {
                 ended = true;
                 break;
             }
-            // P6-36 (C-40): the text goes to the screen one line at a time (each write costs a system call and a
-            // redraw; on the workstation writing token by token took 14-38 % of the time), or only at the end.
+            // P6-36 (C-40): the text goes to the screen in whole lines, or only at the end (`--fara-ecran`).
+            // P6-39 (C-48): on the workstation each line still cost ~59 ms (45.7 % of the time): every new line at the
+            // bottom moves the whole screen up. Now the finished lines go out in one block at most once a second
+            // (the console moves the screen once per block), and the rest at the end.
             pending.push_str(&stream.push(t.token_bytes(next)));
-            if !o.no_screen && pending.contains('\n') {
+            if !o.no_screen && pending.contains('\n') && now_ms() >= last_flush + FLUSH_MS {
                 let cut = pending.rfind('\n').unwrap() + 1;
                 cyber_user::print!("{}", &pending[..cut]);
                 pending.drain(..cut);
+                last_flush = now_ms();
             }
         }
         c_screen += kgr::prof::now() - c1;

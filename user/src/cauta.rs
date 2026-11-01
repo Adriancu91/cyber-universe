@@ -20,6 +20,10 @@
 //! variant on the model; the thread counts tried are 1, 2, 4, ..., half the processors and all of them.
 //! P6-36 (C-40): the time on the model is the average of 5 passes (it was the fastest of 3), so the cost of waiting for
 //! more threads counts in the choice.
+//! P6-39 (C-48): the pass on the model is now timed as `kronos` runs it: every layer's qkv on as many threads as heads
+//! (the qkv + attention split), then the projection on its own thread count (`Tuning::proj_threads`, default as many
+//! as heads), fc and MLP output on all. After the best variant is chosen, the projection's thread count is searched
+//! too (1, 2, 4, ..., heads, half, all), each checked against the float64 control, and written as `fire_proiectie`.
 
 use crate::kgr::{self, File, Mat, Order, Tuning};
 use alloc::{string::String, vec, vec::Vec};
@@ -93,6 +97,11 @@ fn time(m: &Mat, x: &[f32], rows: usize, y: &mut [f32], t: Tuning) -> u64 {
         .unwrap()
 }
 
+/// "1 fir" / "n fire".
+fn fire(n: usize) -> String {
+    if n == 1 { "1 fir".into() } else { alloc::format!("{} fire", n) }
+}
+
 fn us(cycles: u64, per_ms: u64) -> u64 {
     cycles * 1000 / per_ms
 }
@@ -117,8 +126,8 @@ fn write_file(path: &str, text: &str) -> i64 {
 /// Bytes read from the start of a model file for its keys (the tokenizer text is among them).
 const HEAD_BYTES: usize = 4 << 20;
 
-/// The sizes of a model: (layers, E, vocabulary, Q8_0?), from the keys at the start of its file.
-fn model_sizes(path: &str) -> Result<(usize, usize, usize, bool), String> {
+/// The sizes of a model: (layers, E, vocabulary, Q8_0?, heads), from the keys at the start of its file.
+fn model_sizes(path: &str) -> Result<(usize, usize, usize, bool, usize), String> {
     let fd = cyber_user::open(path);
     if fd < 0 {
         return Err(alloc::format!("{}: {}", path, cyber_user::error_text(fd)));
@@ -137,10 +146,11 @@ fn model_sizes(path: &str) -> Result<(usize, usize, usize, bool), String> {
     cyber_user::close(fd);
     let f = File::parse_keys(&buf[..at]).map_err(|e| alloc::format!("{}: {}", path, e))?;
     let (l, e, v) = (f.int("n_straturi")?, f.int("n_emb")?, f.int("vocabular")?);
-    if e % 32 != 0 || e > 16384 || l > 256 || v > 1 << 20 {
+    let h = f.int("n_capete").unwrap_or(1);
+    if e % 32 != 0 || e > 16384 || l > 256 || v > 1 << 20 || h == 0 || h > e {
         return Err(alloc::format!("{}: dimensiuni nerezonabile (E {}, {} straturi, vocabular {})", path, e, l, v));
     }
-    Ok((l, e, v, f.text("fel") == Some("q8_0")))
+    Ok((l, e, v, f.text("fel") == Some("q8_0"), h))
 }
 
 /// First *.kgr in `dir`.
@@ -162,9 +172,10 @@ fn first_model(dir: &str) -> Option<String> {
 struct Workload {
     mats: Vec<Mat<'static>>,
     bytes: usize,
+    heads: usize,
 }
 
-fn workload(layers: usize, e: usize, vocab: usize, q8: bool) -> Result<Workload, String> {
+fn workload(layers: usize, e: usize, vocab: usize, q8: bool, heads: usize) -> Result<Workload, String> {
     let mut shapes = Vec::new();
     for _ in 0..layers {
         shapes.extend_from_slice(&[(3 * e, e), (e, e), (4 * e, e), (e, 4 * e)]);
@@ -212,7 +223,7 @@ fn workload(layers: usize, e: usize, vocab: usize, q8: bool) -> Result<Workload,
             Mat::from_f32(unsafe { core::slice::from_raw_parts(m.as_ptr() as *const f32, m.len() / 4) }, r, c)
         });
     }
-    Ok(Workload { mats, bytes })
+    Ok(Workload { mats, bytes, heads })
 }
 
 /// Passes averaged by `time_model`.
@@ -223,9 +234,17 @@ const PASSES: u64 = 5;
 /// thread, as in `kronos` (4 per layer since qkv and attention share one split, + the head). The average, not the
 /// fastest run: a thread that comes late (the cost of synchronizing more threads) must count in the choice.
 fn time_model(w: &Workload, x: &[f32], y: &mut [f32], t: Tuning) -> u64 {
+    let last = w.mats.len() - 1;
     let pass = |y: &mut [f32]| {
-        for m in &w.mats {
-            kgr::linear(m, None, &x[..m.cols], 1, &mut y[..m.rows], t);
+        for (i, m) in w.mats.iter().enumerate() {
+            // P6-39: as in `kronos` while generating: qkv split by heads, the projection on its own thread count.
+            let threads = match i % 4 {
+                _ if i == last => t.threads,
+                0 => w.heads.clamp(1, t.threads),
+                1 => t.proj_for(w.heads),
+                _ => t.threads,
+            };
+            kgr::linear(m, None, &x[..m.cols], 1, &mut y[..m.rows], Tuning { threads, ..t });
         }
     };
     pass(y);
@@ -307,12 +326,13 @@ pub fn run(args: &[&str]) -> i64 {
     let model = model.or_else(|| first_model(&dir));
     let mut work = None;
     if let Some(path) = &model {
-        match model_sizes(path).and_then(|(l, e, v, q8)| workload(l, e, v, q8).map(|w| (w, l, e, v, q8))) {
+        match model_sizes(path).and_then(|(l, e, v, q8, h)| workload(l, e, v, q8, h).map(|w| (w, l, e, v, q8))) {
             Ok((w, l, e, v, q8)) => {
                 println!(
-                    "cauta: pe dimensiunile modelului {}: {} straturi, E {}, vocabular {}, {}; {} produse pe simbol, {:.1} MiB de greutati (aleatoare, aceleasi marimi)",
+                    "cauta: pe dimensiunile modelului {}: {} straturi, {} capete, E {}, vocabular {}, {}; {} produse pe simbol, {:.1} MiB de greutati (aleatoare, aceleasi marimi)",
                     path,
                     l,
+                    w.heads,
                     e,
                     v,
                     if q8 { "Q8_0" } else { "F32" },
@@ -345,7 +365,7 @@ pub fn run(args: &[&str]) -> i64 {
     for &simd in simds {
         for &order in &orders {
             for &th in &threads {
-                let t = Tuning { threads: th, simd, order };
+                let t = Tuning { threads: th, simd, order, proj_threads: 0 };
                 tried += 1;
                 let a = time(&m, &x[..inp], 1, &mut y1, t);
                 let b = time(&m, &x, ROWS, &mut y16, t);
@@ -382,11 +402,52 @@ pub fn run(args: &[&str]) -> i64 {
             }
         }
     }
-    let Some((t, a, b)) = best else {
+    let Some((mut t, a, b)) = best else {
         println!("cauta: nicio varianta corecta (ar fi o greseala in motor)");
         return 1;
     };
-    let base = Tuning { threads: 1, simd: false, order: Order::TJ };
+    // P6-39 (C-48): the projection's own thread count, on the best variant (each checked against the control).
+    let mut proj_note = String::new();
+    if let Some(w) = &work {
+        let proj = &w.mats[1];
+        let pc = control(proj, &xm[..proj.cols], 1);
+        let mut counts: Vec<usize> = threads.iter().copied().filter(|&n| n <= t.threads).collect();
+        counts.push(w.heads.min(t.threads));
+        counts.push(t.threads);
+        counts.sort_unstable();
+        counts.dedup();
+        let auto = t.proj_for(w.heads);
+        let mut results: Vec<(usize, u64)> = Vec::new();
+        for &n in &counts {
+            let tp = Tuning { proj_threads: n, ..t };
+            kgr::linear(proj, None, &xm[..proj.cols], 1, &mut ym[..proj.rows], Tuning { threads: n, ..t });
+            let wrong = bad(&ym[..proj.rows], &pc);
+            if wrong > 0 {
+                rejected += 1;
+                println!("cauta: proiectia pe {}: RESPINSA ({} rezultate in afara tolerantei)", fire(n), wrong);
+                continue;
+            }
+            let c = time_model(w, &xm, &mut ym, tp);
+            println!("cauta: proiectia pe {}: model {} us/simbol (~{} simboluri/s doar produsele)", fire(n), us(c, per_ms), per_ms * 1000 / c.max(1));
+            results.push((n, c));
+        }
+        // Ties (within 1 %) keep the default (as many threads as heads), which needs no line in the file.
+        let (mut best_p, mut best_c) = results.iter().copied().min_by_key(|r| r.1).unwrap_or((0, u64::MAX));
+        if let Some(&(n, c)) = results.iter().find(|r| r.0 == auto)
+            && c * 100 <= best_c * 101
+        {
+            (best_p, best_c) = (n, c);
+        }
+        if best_p > 0 {
+            if best_p != auto {
+                t.proj_threads = best_p;
+            }
+            best_score = best_score.min(best_c);
+            println!("cauta: proiectia (dupa impartirea pe capete): cea mai buna pe {}", fire(best_p));
+            proj_note = alloc::format!("# proiectia: {} fire, {} us/simbol pe model\n", best_p, us(best_c, per_ms));
+        }
+    }
+    let base = Tuning { threads: 1, simd: false, order: Order::TJ, proj_threads: 0 };
     let (a0, b0) = (time(&m, &x[..inp], 1, &mut y1, base), time(&m, &x, ROWS, &mut y16, base));
     let base_score = match &work {
         Some(w) => time_model(w, &xm, &mut ym, base),
@@ -419,6 +480,7 @@ pub fn run(args: &[&str]) -> i64 {
             us(base_score, per_ms)
         );
     }
+    note += &proj_note;
     kgr::stop_pool();
     let mut probe = [0u8; 16];
     if cyber_user::list(&dir, &mut probe) < 0 && cyber_user::create(&dir, true) < 0 {

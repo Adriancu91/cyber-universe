@@ -58,6 +58,15 @@ impl Framebuffer {
         })
     }
 
+    /// A framebuffer in ordinary memory (`width * height` pixels at `addr`, pitch = width * 4), for self-tests.
+    ///
+    /// # Safety
+    /// `addr` must point at `width * height * 4` writable bytes that outlive the value and nobody else uses.
+    #[cfg(feature = "test-kronos-kgr")]
+    pub unsafe fn in_memory(addr: *mut u8, width: usize, height: usize) -> Self {
+        Self { addr, width, height, pitch: width * 4, shadow: None }
+    }
+
     /// Starts the RAM copy (needs the heap). Rows `0..used` are read once from the screen, the rest are `fill` (the
     /// console cleared the screen and wrote only those rows). Returns false (and keeps working without a copy) if
     /// the memory is not there.
