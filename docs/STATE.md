@@ -3,6 +3,15 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-01 21:41–23:20 UTC (2026-11-01 23:41 – 2026-11-02 01:20 ora României) — sesiune programată, fără Adrian — **P6-42 (C-55) gata: `gpu tur` + `gpu lant`.**
+  - La pornire: regula „OPRIT” nu se aplică (P6-41 și P6-40 gata azi). Comanda C-55 (`nou`) preluată → P6-42. Hub clonat ca `Cyber-hub` (vechiul dosar `cyber-hub` a rămas; scripturile primesc calea hub-ului ca argument).
+  - Cyber-GPU fixat pe `4e6f747` (≥ `911e6d0`, vârful copiei din hub; față de `9597863` doar adăugări; gpu-compute neschimbat). Și `user/`, și textul din `kronos-calcul`.
+  - `kernel/src/drivers/gpu_tur.rs`: `gpu tur` (doar citire, `read_tour::run_tour`, un rând `fapt <cheie> = <valoare>` pe fapt, „0 scrieri”, jurnalul pe loc) — **pe lista albă a modului automat** (și în lista implicită din `bucla-automata.ps1`); `gpu lant` (`chain::run_chain(WINDOW_CHAIN)`, cere `DA`, **refuzat în modul automat**): pregătire → Bus Master → I6 → I7 (blocat în plan, lanțul se oprește singur) → Bus Master la loc → turul după. Scrierile doar în build-ul `gpu-scrie`; altfel lanțul rulează doar citire.
+  - `gpu_i6.rs`: pasul falcon separat (`i6_falcon`), ajutoarele vizibile pentru `gpu_tur.rs` (comportament neschimbat). `tools/after-gpu.sh` verifică acum și `gpu_tur.rs` (tot ce poate scrie e doar în `gpu-scrie`; verificat și pe o copie stricată intenționat).
+  - Teste: scenariul nou `gpu-tur` (tur 41 de fapte, 0 scrieri; lanț oprit la I7 cu Bus Master înapoi, 86 de scrieri; `--eroare` oprit la I6, Bus Master înapoi; `--doar-citire` 0 scrieri; `tools/after-gpu-tur.sh` verifică jurnalele de pe disc), `gpu-scrie` extins (`gpu lant` → „nicio placa NVIDIA”). Suita locală 86 trecute + 1 sărit (`fpu-smp` și `kronos-calcul` au picat o dată la temporizatorul cunoscut, trec la reluare).
+  - CI run 41357780425 **verde** → **Release `os-214`**.
+  - Observație pentru Cyber-GPU: pe modelul `gpu_sim::observed`, faptul `i6` iese „eroare: … FB: marimea memoriei placii nu e plauzibila” (modelul nu are VRAM-ul setat); pe placă ar trebui să apară valorile reale.
+  - Următoarea: coada fără sarcini libere (P6-10, P6-12 p.2 hardware; P3-10 Adrian; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian; C-41 amânat) → oprire scurtă dacă nu e comandă nouă. Pe workstation, cu Adrian: fereastra I6 (acum și `gpu lant` de pe stick-ul de test `os-214`), prima tură a buclei automate (cu `gpu tur`).
 - 2026-11-01 18:41–20:35 UTC (20:41–22:35 ora României) — sesiune programată, fără Adrian — **P6-41 (C-53) gata: bucla automată, partea OS.**
   - La pornire: sesiunea de la 17:20 terminase P6-40 (CI run 41334819032 verde, **Release `os-212`**) dar nu ajunsese la hub → C-52 marcat `gata` acum, cu pașii ferestrei I6 în hub.
   - Comenzi noi în hub: C-53 (bucla automată, OS) și C-55 (`gpu tur` + `gpu lant`). C-53 preluat (P6-41); **C-55 rămâne `nou` pentru sesiunea următoare.**
