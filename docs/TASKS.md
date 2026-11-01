@@ -313,6 +313,8 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 - [x] **P6-40** Primele scrieri în placă din OS (C-52, I6): fixarea cyber-gpu `9597863`, `gpu pregatire-i6` (doar citire, fereastra de 16 MiB), jurnalul fiecărui acces pe stick pe loc, `gpu i6 --scrie` doar în stick-ul de test (`gpu-scrie`, „DA” tastat, Bus Master pus la loc și la eroare). Teste doar în QEMU/simulare; placa reală doar cu Adrian. Dep: P6-35
   Rezultat (2026-11-01): în QEMU, pe modelele gpu-sim, `gpu i6 --scrie --sim` TRECE: zona DMA reală a OS-ului (sub 4 GiB) citită de modelul falcon-ului, 84 de scrieri în cele 18 registre din plan, WPR2 = regiunea FRTS, Bus Master pus la loc (și la eroarea FWSEC), jurnalul de pe disc TRECE la `i6_log`. Suita locală 81/83 + 1 sărit (`kronos-calcul` = temporizatorul cunoscut la `-smp 4`, pică și pe `main` în acest mediu cu 2 procesoare). Placa reală: doar cu Adrian.
 
+- [~] **P6-41** Bucla automată, partea OS (C-53): la pornire, dacă există `/usb/auto/teste.txt`, rulează comenzile din lista albă (fără nicio scriere în placa video), scrie `auto/raport-<data>.txt` pe loc, redenumește lista în `teste-facut-<data>.txt` și repornește; ceasul de siguranță (implicit 10 min); scriptul pentru Windows (`tools/windows/`); documentația pregătirii cu Adrian. Dep: P6-40
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
