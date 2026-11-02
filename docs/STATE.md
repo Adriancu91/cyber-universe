@@ -3,6 +3,7 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-02 00:41 UTC (02:41 ora României) — sesiune programată, oprire scurtă: nicio comandă nouă pentru `cyber-universe` în hub (după 01:20 doar stările suitei office și Cyber-GPU — sesiunea 34, fără lucru nou, așteaptă placa; COMENZI, DECIZII, RESURSE neschimbate), niciun rezultat nou în `rezultate/`. CI verde (run 41357780425), Release `os-214`. Nimic construit (fără `env-check --install`, nu era nevoie). Coada fără sarcini libere (P6-10, P6-12 p.2 hardware; P3-10 Adrian; P5-07 BLOCAT; C-7, C-11 după întoarcerea lui Adrian; C-41 amânat). Regula „OPRIT” nu se aplică (P6-42 terminat în sesiunea precedentă). Următoarea: oprire scurtă dacă nu e comandă nouă; pe workstation cu Adrian: fereastra I6 / `gpu lant` (`os-214`) și prima tură a buclei automate cu `gpu tur`.
 - 2026-11-01 21:41–23:20 UTC (2026-11-01 23:41 – 2026-11-02 01:20 ora României) — sesiune programată, fără Adrian — **P6-42 (C-55) gata: `gpu tur` + `gpu lant`.**
   - La pornire: regula „OPRIT” nu se aplică (P6-41 și P6-40 gata azi). Comanda C-55 (`nou`) preluată → P6-42. Hub clonat ca `Cyber-hub` (vechiul dosar `cyber-hub` a rămas; scripturile primesc calea hub-ului ca argument).
   - Cyber-GPU fixat pe `4e6f747` (≥ `911e6d0`, vârful copiei din hub; față de `9597863` doar adăugări; gpu-compute neschimbat). Și `user/`, și textul din `kronos-calcul`.
