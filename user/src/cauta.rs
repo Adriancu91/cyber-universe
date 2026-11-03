@@ -368,7 +368,7 @@ pub fn run(args: &[&str]) -> i64 {
     for &simd in simds {
         for &order in &orders {
             for &th in &threads {
-                let t = Tuning { threads: th, simd, order, proj_threads: 0 };
+                let t = Tuning { threads: th, simd, order, proj_threads: 0, pieces: 0 };
                 tried += 1;
                 let a = time(&m, &x[..inp], 1, &mut y1, t);
                 let b = time(&m, &x, ROWS, &mut y16, t);
@@ -475,7 +475,7 @@ pub fn run(args: &[&str]) -> i64 {
             proj_note += &alloc::format!("# bariera goala pe {}: {:.2} us\n", fire(n), c as f64 * 1000.0 / per_ms as f64);
         }
     }
-    let base = Tuning { threads: 1, simd: false, order: Order::TJ, proj_threads: 0 };
+    let base = Tuning { threads: 1, simd: false, order: Order::TJ, proj_threads: 0, pieces: 0 };
     let (a0, b0) = (time(&m, &x[..inp], 1, &mut y1, base), time(&m, &x, ROWS, &mut y16, base));
     let base_score = match &work {
         Some(w) => time_model(w, &xm, &mut ym, base),

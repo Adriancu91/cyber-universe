@@ -326,6 +326,7 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 
 - [~] **P6-45** Kronos: ideile lui Adrian din C-59 — profilul despărțit (adunare/trezire vs. cel mai lent), bucățele, echipe 9×4/6×6, un singur bloc pe simbol, un fir liber; toate măsurate în `--cauta`, câștigă cea mai rapidă; simbolurile identice. Dep: P6-43
   Pas 1 gata (2026-11-03): `kronos --profil` arată „bariera in medie: trezire … us, asteptat cel mai lent … us, adunare … us” (din ora TSC a fiecărui fir).
+  Pas 2 gata (2026-11-03): „bucățele” — `kronos --bucati N` / `bucati = N` în reglaj: N bucăți pe fir, contor comun, cine termină ia următoarea; QEMU: `--test-fire 6 --bucati 8`, `--verifica` Q8_0 pe 4 fire cu 8 bucăți = referința, `--control --fire 3 --bucati 4` trece. Rămân: echipe (3), un bloc pe simbol (4), un fir liber (5), variantele în `--cauta` (6).
 
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 

@@ -430,7 +430,33 @@ fn dot_q8_avx2(row: &[u8], x: &[f32]) -> f32 {
 struct Job<'a> {
     n: usize,
     parts: usize,
+    /// P6-45 (C-59, „bucățele”): more pieces than parts = the range is cut in `chunks` pieces and every thread of the job
+    /// takes the next free piece from NEXT until none is left (whoever is done helps with the rest); = parts: one
+    /// fixed range per part, as before.
+    chunks: usize,
     f: &'a (dyn Fn(usize, usize, usize) + Sync),
+}
+
+/// P6-45: the next free piece of the current job (pieces mode), on its own cache line.
+static NEXT: Line = Line(AtomicUsize::new(0));
+/// P6-45: pieces per part (0 or 1 = fixed ranges, the default); set by `kronos --bucati` / the tuning file (`bucati`).
+static PIECES: AtomicUsize = AtomicUsize::new(0);
+
+/// Sets the pieces per part of every later split (0 or 1 = one fixed range per part).
+pub fn set_pieces(n: usize) {
+    PIECES.store(n.min(64), Ordering::Relaxed);
+}
+
+/// Runs the pieces of `job` until none is left; `part` only names this thread's scratch (as before).
+fn run_pieces(job: &Job<'_>, part: usize) {
+    loop {
+        let c = NEXT.0.fetch_add(1, Ordering::Relaxed);
+        if c >= job.chunks {
+            return;
+        }
+        let (a, b) = split(job.n, job.chunks, c);
+        (job.f)(part, a, b);
+    }
 }
 
 /// One word on its own cache line (no false sharing between the threads that spin on different words).
@@ -510,10 +536,14 @@ extern "C" fn worker(arg: u64) -> i64 {
         // generation `seen`, so `par` does not return (the Job lives, JOB is not overwritten) until this worker has
         // stored `seen` in its DONE word below.
         let job = unsafe { &*(JOB.0.load(Ordering::Acquire) as *const Job<'static>) };
-        let (a, b) = split(job.n, job.parts, part);
         let stamps = &STAMPS[part - 1];
         stamps.start.store(prof::now(), Ordering::Relaxed);
-        (job.f)(part, a, b);
+        if job.chunks > job.parts {
+            run_pieces(job, part);
+        } else {
+            let (a, b) = split(job.n, job.parts, part);
+            (job.f)(part, a, b);
+        }
         stamps.end.store(prof::now(), Ordering::Relaxed);
         DONE[part - 1].0.store(seen, Ordering::Release);
     }
@@ -579,17 +609,27 @@ pub fn par_parts(n: usize, parts: usize, f: &(dyn Fn(usize, usize, usize) + Sync
     let workers = grow_pool(parts - 1);
     // Parts 1..=helped run on workers; parts without a worker (the kernel refused a thread) run here.
     let helped = workers.min(parts - 1);
-    let job = Job { n, parts, f };
+    let pieces = PIECES.load(Ordering::Relaxed);
+    let chunks = if pieces > 1 { (parts * pieces).min(n) } else { parts };
+    let job = Job { n, parts, chunks, f };
     JOB.0.store(&job as *const Job as usize, Ordering::Release);
+    // The workers of the previous job are all done (waited for below), so nobody reads NEXT while it is reset; the
+    // Release store of STATE publishes it with the job.
+    NEXT.0.store(0, Ordering::Relaxed);
     let generation = (STATE.0.load(Ordering::Relaxed) >> 8) + 1;
     let published = prof::now();
     STATE.0.store(generation << 8 | (helped + 1), Ordering::Release);
-    for p in helped + 1..parts {
-        let (a, b) = split(n, parts, p);
-        f(p, a, b);
+    if chunks > parts {
+        // Pieces: this thread takes pieces too (and so covers the parts the kernel refused a worker for).
+        run_pieces(&job, 0);
+    } else {
+        for p in helped + 1..parts {
+            let (a, b) = split(n, parts, p);
+            f(p, a, b);
+        }
+        let (a, b) = split(n, parts, 0);
+        f(0, a, b);
     }
-    let (a, b) = split(n, parts, 0);
-    f(0, a, b);
     let t0 = prof::now();
     for d in DONE.iter().take(helped) {
         spin_until(|| d.0.load(Ordering::Acquire) == generation);
@@ -630,6 +670,16 @@ pub fn self_test_pool(max_parts: usize) -> Result<usize, String> {
         });
         jobs += 1;
         let parts_used = parts.min(N);
+        if PIECES.load(Ordering::Relaxed) > 1 && parts_used > 1 {
+            // Pieces: any thread may compute any element, but each exactly once, by a thread of this job.
+            for (i, h) in hits.iter().enumerate() {
+                let v = h.load(Ordering::Relaxed);
+                if v & 0xff != 1 || v >> 8 >= parts_used {
+                    return Err(alloc::format!("lucrarea {} ({} parti, bucati): elementul {} = {:#x}", jobs, parts, i, v));
+                }
+            }
+            continue;
+        }
         for p in 0..parts_used {
             let (a, b) = split(N, parts_used, p);
             for (i, h) in hits.iter().enumerate().take(b).skip(a) {
@@ -788,12 +838,14 @@ pub struct Tuning {
     /// sending the small projection [E, E] to the threads that just worked keeps it from waiting for the idle ones.
     /// Every output is still computed by one thread with the same code: the same bits for any value.
     pub proj_threads: usize,
+    /// P6-45 (C-59): pieces per part of every split (0 or 1 = one fixed range per part). See `set_pieces`.
+    pub pieces: usize,
 }
 
 impl Tuning {
     /// What the engine uses without a tuning file: every processor, vectors when present, order t-j.
     pub fn default_for(cpus: usize) -> Tuning {
-        Tuning { threads: cpus.clamp(1, MAX_THREADS), simd: has_avx2_fma(), order: Order::TJ, proj_threads: 0 }
+        Tuning { threads: cpus.clamp(1, MAX_THREADS), simd: has_avx2_fma(), order: Order::TJ, proj_threads: 0, pieces: 0 }
     }
 
     /// Threads of the projection while generating, for a model with `heads` heads (see `proj_threads`).
@@ -804,11 +856,12 @@ impl Tuning {
 
     pub fn describe(&self) -> String {
         alloc::format!(
-            "{}, {} {}, ordine {}",
+            "{}, {} {}, ordine {}{}",
             if self.simd { "vectori AVX2+FMA" } else { "fara vectori (scalar)" },
             self.threads,
             if self.threads == 1 { "fir" } else { "fire" },
-            self.order.name()
+            self.order.name(),
+            if self.pieces > 1 { alloc::format!(", {} bucati pe fir", self.pieces) } else { String::new() }
         )
     }
 
@@ -817,12 +870,13 @@ impl Tuning {
         alloc::format!(
             "# Reglajul motorului KGR1 pentru acest procesor (kronos-calcul --cauta, P6-28).\n\
              # Il citeste `kronos` la pornire. Se poate sterge: atunci se folosesc valorile implicite.\n\
-             procesor = {}\nvectori = {}\nfire = {}\nordine = {}\n{}{}",
+             procesor = {}\nvectori = {}\nfire = {}\nordine = {}\n{}{}{}",
             processor,
             if self.simd { "avx2" } else { "scalar" },
             self.threads,
             self.order.name(),
             if self.proj_threads > 0 { alloc::format!("fire_proiectie = {}\n", self.proj_threads) } else { String::new() },
+            if self.pieces > 1 { alloc::format!("bucati = {}\n", self.pieces) } else { String::new() },
             note
         )
     }
@@ -854,6 +908,10 @@ impl Tuning {
                 "fire_proiectie" => match v.parse::<usize>() {
                     Ok(n) if n >= 1 => t.proj_threads = n.min(MAX_THREADS),
                     _ => notes.push(alloc::format!("fire_proiectie = `{}` nu e un numar", v)),
+                },
+                "bucati" => match v.parse::<usize>() {
+                    Ok(n) => t.pieces = n.min(64),
+                    _ => notes.push(alloc::format!("bucati = `{}` nu e un numar", v)),
                 },
                 "ordine" => match v {
                     "t-j" => t.order = Order::TJ,
@@ -1078,7 +1136,7 @@ impl<'a> Model<'a> {
             kcache,
             vcache,
             len: 0,
-            tune: Tuning { threads: 1, simd: false, order: Order::TJ, proj_threads: 0 },
+            tune: Tuning { threads: 1, simd: false, order: Order::TJ, proj_threads: 0, pieces: 0 },
         })
     }
 

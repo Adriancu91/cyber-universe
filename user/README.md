@@ -80,6 +80,11 @@
   bazinul (200 de lucrări cu 1..N părți, fiecare element scris o dată).
   `kronos --repetitie <p>` (opțional, implicit oprit): logit-ul fiecărui simbol deja apărut se împarte la `p` (dacă e pozitiv)
   sau se înmulțește (dacă e negativ) înainte de alegere; fără opțiune, alegerea e greedy simplă, ca înainte.
+  **P6-45 (C-59, ideile lui Adrian):** `--profil` desparte așteptarea pe barieră în „trezire” (lucrarea publicată → ultimul fir pornit),
+  „așteptat cel mai lent” (prima parte gata → ultima) și „adunare” (ultima parte gata → firul principal o vede), din ora TSC a fiecărui fir.
+  `--bucati N` (sau `bucati = N` în reglaj): fiecare împărțire e tăiată în N bucăți pe fir, iar firul care termină ia următoarea bucată
+  dintr-un contor comun (nimeni nu stă după cel lent); fiecare element tot de un singur fir, cu același cod → aceleași simboluri.
+  Test: `kronos --test-fire 6 --bucati 8`, `--verifica … --fire 4 --bucati 8`, `--control --fire 3 --bucati 4` (scenariul `kronos-kgr`).
 - `kronos-calcul --cauta [--emb E] [--iesire <dir>]` (P6-28, comanda C-27, `src/cauta.rs`) — primul pas spre „OS-ul care se
   reglează singur”: încearcă variante ale produsului din motorul KGR1 (vectori AVX2+FMA sau scalar; 1, 2, 4, … fire și toate
   nucleele; ordinea buclelor t-j sau j-t) pe o matrice Q8_0 [4E, E], pe 1 rând (generare) și pe 16 rânduri (citirea textului).

@@ -244,6 +244,8 @@ struct Opts {
     threads: Option<usize>,
     /// `--fire-proiectie <n>` (P6-39): threads of the projection while generating (wins over the tuning file).
     proj_threads: Option<usize>,
+    /// `--bucati <n>` (P6-45, C-59): pieces per thread in every split (wins over the tuning file; 1 = fixed ranges).
+    pieces: Option<usize>,
     scalar: bool,
     sum: Option<String>,
     tuning: Option<String>,
@@ -269,6 +271,7 @@ fn parse_args() -> Result<Opts, String> {
         n: 32,
         threads: None,
         proj_threads: None,
+        pieces: None,
         scalar: false,
         sum: None,
         tuning: None,
@@ -296,6 +299,7 @@ fn parse_args() -> Result<Opts, String> {
                 }
             }
             "--n" => o.n = val()?.parse().map_err(|_| String::from("--n cere un numar"))?,
+            "--bucati" => o.pieces = Some(val()?.parse().map_err(|_| String::from("--bucati cere un numar"))?),
             "--fire-proiectie" => o.proj_threads = Some(val()?.parse().map_err(|_| String::from("--fire-proiectie cere un numar"))?),
             "--fire" => o.threads = Some(val()?.parse().map_err(|_| String::from("--fire cere un numar"))?),
             "--fara-vector" => o.scalar = true,
@@ -584,6 +588,10 @@ fn tuning(o: &Opts) -> kgr::Tuning {
     if let Some(n) = o.proj_threads {
         t.proj_threads = n.clamp(1, kgr::MAX_THREADS);
     }
+    if let Some(n) = o.pieces {
+        t.pieces = n.min(64);
+    }
+    kgr::set_pieces(t.pieces);
     if let Some(n) = o.threads {
         t.threads = n.clamp(1, kgr::MAX_THREADS);
     }
@@ -686,11 +694,16 @@ fn main() -> i64 {
         }
     };
     if let Some(n) = o.pool_test {
+        kgr::set_pieces(o.pieces.unwrap_or(0));
         let r = kgr::self_test_pool(n);
         kgr::stop_pool();
         return match r {
             Ok(jobs) => {
-                println!("kronos: test fire: {} lucrari cu 1..{} parti, fiecare element scris o data, firele fara parte nu sunt asteptate (OK)", jobs, n);
+                let mode = match o.pieces {
+                    Some(k) if k > 1 => alloc::format!(", {} bucati pe fir", k),
+                    _ => String::new(),
+                };
+                println!("kronos: test fire: {} lucrari cu 1..{} parti{}, fiecare element scris o data, firele fara parte nu sunt asteptate (OK)", jobs, n, mode);
                 0
             }
             Err(e) => {

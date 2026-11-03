@@ -52,6 +52,14 @@ pub fn run() {
     // for, and must still take the next job that has one for them).
     let pool_test = ["kronos", "--test-fire", "6"];
     assert!(run_one(&pool_test) == 0, "kronos: testul grupului de fire a esuat");
+    // P6-45 (C-59, „bucățele”): the pool in pieces mode (every element once, any thread), then the same tokens as the
+    // reference with 8 pieces per thread on 4 threads, and the control texts.
+    let pool_pieces = ["kronos", "--test-fire", "6", "--bucati", "8"];
+    assert!(run_one(&pool_pieces) == 0, "kronos: testul grupului de fire cu bucati a esuat");
+    let pieces = ["kronos", "--verifica", "/disk/kronos/mini-q8.kgr", "/disk/kronos/mini-q8.ref", "--fire", "4", "--bucati", "8"];
+    assert!(run_one(&pieces) == 0, "kronos: Q8_0 cu bucati diferit de referinta");
+    let control_pieces = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--control", "--fire", "3", "--bucati", "4"];
+    assert!(run_one(&control_pieces) == 0, "kronos: --control cu bucati nu trece");
     // P6-39: the projection on its own thread count (1 of 4, and 3 = not a divisor of the heads): the same tokens.
     for n in ["1", "3"] {
         let proj = ["kronos", "--verifica", "/disk/kronos/mini-q8.kgr", "/disk/kronos/mini-q8.ref", "--fire", "4", "--fire-proiectie", n];
