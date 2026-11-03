@@ -445,6 +445,15 @@ static JOB: Line = Line(AtomicUsize::new(0));
 static STATE: Line = Line(AtomicUsize::new(0));
 /// Per worker (index = part - 1): the last generation it finished.
 static DONE: [Line; MAX_THREADS] = [const { Line(AtomicUsize::new(0)) }; MAX_THREADS];
+/// P6-45 (C-59, step 1): per worker, TSC when it started its part and when it finished it (written before DONE, read
+/// by `par` after it saw DONE), so the profile can tell waking/gathering apart from waiting for the slowest part.
+#[repr(align(128))]
+struct Stamps {
+    start: core::sync::atomic::AtomicU64,
+    end: core::sync::atomic::AtomicU64,
+}
+static STAMPS: [Stamps; MAX_THREADS] =
+    [const { Stamps { start: core::sync::atomic::AtomicU64::new(0), end: core::sync::atomic::AtomicU64::new(0) } }; MAX_THREADS];
 /// Workers started (they are parts 1..=WORKERS); only the main thread starts or stops them.
 static WORKERS: AtomicUsize = AtomicUsize::new(0);
 static QUIT: AtomicBool = AtomicBool::new(false);
@@ -502,7 +511,10 @@ extern "C" fn worker(arg: u64) -> i64 {
         // stored `seen` in its DONE word below.
         let job = unsafe { &*(JOB.0.load(Ordering::Acquire) as *const Job<'static>) };
         let (a, b) = split(job.n, job.parts, part);
+        let stamps = &STAMPS[part - 1];
+        stamps.start.store(prof::now(), Ordering::Relaxed);
         (job.f)(part, a, b);
+        stamps.end.store(prof::now(), Ordering::Relaxed);
         DONE[part - 1].0.store(seen, Ordering::Release);
     }
 }
@@ -570,6 +582,7 @@ pub fn par_parts(n: usize, parts: usize, f: &(dyn Fn(usize, usize, usize) + Sync
     let job = Job { n, parts, f };
     JOB.0.store(&job as *const Job as usize, Ordering::Release);
     let generation = (STATE.0.load(Ordering::Relaxed) >> 8) + 1;
+    let published = prof::now();
     STATE.0.store(generation << 8 | (helped + 1), Ordering::Release);
     for p in helped + 1..parts {
         let (a, b) = split(n, parts, p);
@@ -581,8 +594,20 @@ pub fn par_parts(n: usize, parts: usize, f: &(dyn Fn(usize, usize, usize) + Sync
     for d in DONE.iter().take(helped) {
         spin_until(|| d.0.load(Ordering::Acquire) == generation);
     }
-    prof::add(prof::SYNC, prof::now() - t0, 0);
+    let t1 = prof::now();
+    prof::add(prof::SYNC, t1 - t0, 0);
     prof::count(prof::BARRIERS);
+    // P6-45 (C-59, step 1): the wait split in three, from the stamps of the workers (TSC is shared by the cores).
+    // waking = publish -> the last worker starts; slowest = the first part done (this thread's included) -> the last;
+    // gathering = the last part done -> this thread sees it.
+    let (mut first_end, mut last_end, mut last_start) = (t0, t0, published);
+    for st in STAMPS.iter().take(helped) {
+        let (s0, s1) = (st.start.load(Ordering::Relaxed), st.end.load(Ordering::Relaxed));
+        last_start = last_start.max(s0);
+        first_end = first_end.min(s1);
+        last_end = last_end.max(s1);
+    }
+    prof::split_wait(last_start.saturating_sub(published), last_end.saturating_sub(first_end), t1.saturating_sub(last_end));
 }
 
 /// P6-43: many splits in a row with a changing number of parts (1..=max_parts, up and down, so workers without a part
@@ -659,6 +684,23 @@ pub mod prof {
         COUNTS[what].load(Ordering::Relaxed)
     }
 
+    /// P6-45: the waits split in three (TSC cycles, summed over every barrier): publish -> last worker started (waking),
+    /// first part done -> last part done (waiting for the slowest), last part done -> seen by `par` (gathering).
+    pub const WAKE: usize = 0;
+    pub const SLOWEST: usize = 1;
+    pub const GATHER: usize = 2;
+    static WAIT_PARTS: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
+
+    pub fn split_wait(wake: u64, slowest: u64, gather: u64) {
+        WAIT_PARTS[WAKE].fetch_add(wake, Ordering::Relaxed);
+        WAIT_PARTS[SLOWEST].fetch_add(slowest, Ordering::Relaxed);
+        WAIT_PARTS[GATHER].fetch_add(gather, Ordering::Relaxed);
+    }
+
+    pub fn wait_part(which: usize) -> u64 {
+        WAIT_PARTS[which].load(Ordering::Relaxed)
+    }
+
     static CYCLES: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
     static BYTES: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
 
@@ -680,7 +722,7 @@ pub mod prof {
             CYCLES[i].store(0, Ordering::Relaxed);
             BYTES[i].store(0, Ordering::Relaxed);
         }
-        for c in &COUNTS {
+        for c in COUNTS.iter().chain(WAIT_PARTS.iter()) {
             c.store(0, Ordering::Relaxed);
         }
     }

@@ -324,7 +324,8 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 
 - [~] **P6-44** Fixarea cyber-gpu ≥ `af02bea` (C-61, capătul WPR2): fixare pe `3286a3b`; după `gpu i6 --scrie` / `gpu lant` se citesc LO/HI brute (`falcon::check_frts_detail`, 3 citiri) și se afișează forma capătului; test în QEMU/simulare; Release nou cu stick-ul de test. Dep: P6-42
 
-- [ ] **P6-45** Kronos: ideile lui Adrian din C-59 — profilul despărțit (adunare/trezire vs. cel mai lent), bucățele, echipe 9×4/6×6, un singur bloc pe simbol, un fir liber; toate măsurate în `--cauta`, câștigă cea mai rapidă; simbolurile identice. Dep: P6-43
+- [~] **P6-45** Kronos: ideile lui Adrian din C-59 — profilul despărțit (adunare/trezire vs. cel mai lent), bucățele, echipe 9×4/6×6, un singur bloc pe simbol, un fir liber; toate măsurate în `--cauta`, câștigă cea mai rapidă; simbolurile identice. Dep: P6-43
+  Pas 1 gata (2026-11-03): `kronos --profil` arată „bariera in medie: trezire … us, asteptat cel mai lent … us, adunare … us” (din ora TSC a fiecărui fir).
 
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 

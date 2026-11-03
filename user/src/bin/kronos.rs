@@ -647,6 +647,15 @@ fn profile_report(m: &Model, passes: usize, total: u64, screen: u64, pick: u64, 
         ms(prof::get(prof::SYNC).0) * 1000.0 / barriers.max(1) as f64,
         yields
     );
+    // P6-45 (C-59): where the wait goes, per barrier on average: waking the workers, waiting for the slowest part,
+    // gathering (the last part done until the main thread sees it). Several can overlap the main thread's own part.
+    let us = |c: u64| ms(c) * 1000.0 / barriers.max(1) as f64;
+    println!(
+        "kronos: profil: bariera in medie: trezire {:.1} us, asteptat cel mai lent {:.1} us, adunare {:.1} us",
+        us(prof::wait_part(prof::WAKE)),
+        us(prof::wait_part(prof::SLOWEST)),
+        us(prof::wait_part(prof::GATHER))
+    );
     for (name, c) in [("afisarea textului pe ecran", screen), ("alegerea simbolului (argmax)", pick)] {
         known += c;
         println!("kronos: profil: {:<34} {:>9.1} ms {:>7.3} ms/simbol {:>5.1} %", name, ms(c), ms(c) / per, pct(c));
