@@ -450,6 +450,42 @@ pub fn run(args: &[&str]) -> i64 {
             proj_note = alloc::format!("# proiectia: {} fire, {} us/simbol pe model\n", best_p, us(best_c, per_ms));
         }
     }
+    // P6-45 (C-59, Adrian's „bucățele”): the model pass with N pieces per thread (a shared counter, whoever is done takes
+    // the next piece), each checked against the control; ties (within 1 %) keep fixed ranges (no line in the file).
+    let mut pieces_note = String::new();
+    if let Some(w) = &work
+        && t.threads > 1
+    {
+        let proj = &w.mats[1];
+        let pc = control(proj, &xm[..proj.cols], 1);
+        let mut results: Vec<(usize, u64)> = Vec::new();
+        for k in [1usize, 2, 4, 8] {
+            kgr::set_pieces(k);
+            kgr::linear(proj, None, &xm[..proj.cols], 1, &mut ym[..proj.rows], t);
+            let wrong = bad(&ym[..proj.rows], &pc);
+            if wrong > 0 {
+                rejected += 1;
+                println!("cauta: {} bucati pe fir: RESPINSA ({} rezultate in afara tolerantei)", k, wrong);
+                continue;
+            }
+            let c = time_model(w, &xm, &mut ym, t);
+            println!("cauta: {} bucati pe fir: model {} us/simbol (~{} simboluri/s doar produsele)", k, us(c, per_ms), per_ms * 1000 / c.max(1));
+            results.push((k, c));
+        }
+        kgr::set_pieces(0);
+        let (mut best_k, mut best_c) = results.iter().copied().min_by_key(|r| r.1).unwrap_or((1, u64::MAX));
+        if let Some(&(k, c)) = results.iter().find(|r| r.0 == 1)
+            && c * 100 <= best_c * 101
+        {
+            (best_k, best_c) = (k, c);
+        }
+        if best_c != u64::MAX {
+            t.pieces = if best_k > 1 { best_k } else { 0 };
+            best_score = best_score.min(best_c);
+            println!("cauta: bucati: cea mai buna {} pe fir", best_k);
+            pieces_note = alloc::format!("# bucati: {} pe fir, {} us/simbol pe model\n", best_k, us(best_c, per_ms));
+        }
+    }
     // P6-43 (C-59): what one wait for the threads costs, with no work (on the chosen threads, and on as many as heads).
     // On every processor too when the chosen variant uses one thread (so the line is always there with several).
     let all = cpus.min(kgr::MAX_THREADS);
@@ -509,6 +545,7 @@ pub fn run(args: &[&str]) -> i64 {
         );
     }
     note += &proj_note;
+    note += &pieces_note;
     kgr::stop_pool();
     let mut probe = [0u8; 16];
     if cyber_user::list(&dir, &mut probe) < 0 && cyber_user::create(&dir, true) < 0 {
