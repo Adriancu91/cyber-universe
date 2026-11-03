@@ -73,6 +73,14 @@ pub fn run() {
     assert!(run_one(&block_control) == 0, "kronos: --control intr-un bloc nu trece");
     let block_profile = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--n", "5", "--profil", "--fire", "3", "--bloc", "Ana", "are", "mere."];
     assert!(run_one(&block_profile) == 0, "kronos: --profil intr-un bloc a esuat");
+    // P6-45 step 3 (C-59, „echipe”): the wait in two steps (teams of 3 on up to 7 parts: a last team cut short, team 0
+    // led by the main thread), then the same tokens as the reference and the control texts with teams.
+    let team_test = ["kronos", "--test-fire", "7", "--echipe", "3"];
+    assert!(run_one(&team_test) == 0, "kronos: testul grupului de fire cu echipe a esuat");
+    let team_q8 = ["kronos", "--verifica", "/disk/kronos/mini-q8.kgr", "/disk/kronos/mini-q8.ref", "--fire", "5", "--echipe", "2"];
+    assert!(run_one(&team_q8) == 0, "kronos: Q8_0 cu echipe diferit de referinta");
+    let team_control = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--control", "--fire", "4", "--echipe", "2", "--bucati", "4"];
+    assert!(run_one(&team_control) == 0, "kronos: --control cu echipe nu trece");
     // P6-39: the projection on its own thread count (1 of 4, and 3 = not a divisor of the heads): the same tokens.
     for n in ["1", "3"] {
         let proj = ["kronos", "--verifica", "/disk/kronos/mini-q8.kgr", "/disk/kronos/mini-q8.ref", "--fire", "4", "--fire-proiectie", n];

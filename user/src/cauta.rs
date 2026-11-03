@@ -405,7 +405,7 @@ pub fn run(args: &[&str]) -> i64 {
     for &simd in simds {
         for &order in &orders {
             for &th in &threads {
-                let t = Tuning { threads: th, simd, order, proj_threads: 0, pieces: 0, block: false };
+                let t = Tuning { threads: th, simd, order, proj_threads: 0, pieces: 0, block: false, team: 0 };
                 tried += 1;
                 let a = time(&m, &x[..inp], 1, &mut y1, t);
                 let b = time(&m, &x, ROWS, &mut y16, t);
@@ -523,6 +523,46 @@ pub fn run(args: &[&str]) -> i64 {
             pieces_note = alloc::format!("# bucati: {} pe fir, {} us/simbol pe model\n", best_k, us(best_c, per_ms));
         }
     }
+    // P6-45 step 3 (C-59, Adrian's „echipe”): teams of 4 and of 6 neighbouring threads (9×4 / 6×6 on 36), the wait in two
+    // steps, on the chosen variant (its pieces included); each checked against the head's control; ties (within 1 %)
+    // keep no teams (no line in the file).
+    let mut team_note = String::new();
+    if let (Some(w), Some(hc)) = (&work, &head_control)
+        && t.threads > 4
+    {
+        let head = w.mats.last().unwrap();
+        kgr::set_pieces(t.pieces);
+        let mut results: Vec<(usize, u64)> = Vec::new();
+        for k in [4usize, 6] {
+            kgr::set_team(k);
+            let c = time_model(w, &xm, &mut ym, t);
+            let wrong = bad(&ym[..head.rows], hc);
+            if wrong > 0 {
+                rejected += 1;
+                println!("cauta: echipe de {}: RESPINSA ({} rezultate ale capului in afara tolerantei)", k, wrong);
+                continue;
+            }
+            println!("cauta: echipe de {} ({} echipe): model {} us/simbol (~{} simboluri/s doar produsele)", k, t.threads.div_ceil(k), us(c, per_ms), per_ms * 1000 / c.max(1));
+            results.push((k, c));
+        }
+        kgr::set_team(0);
+        kgr::set_pieces(0);
+        if let Some(&(k, c)) = results.iter().min_by_key(|r| r.1) {
+            let wins = c * 101 < best_score * 100;
+            println!(
+                "cauta: echipe: cele mai bune de {}: {} us/simbol fata de {} us fara echipe: {}",
+                k,
+                us(c, per_ms),
+                us(best_score, per_ms),
+                if wins { "alese" } else { "nu sunt mai rapide, fara echipe" }
+            );
+            team_note = alloc::format!("# echipe: cele mai bune de {}, {} us/simbol pe model\n", k, us(c, per_ms));
+            if wins {
+                t.team = k;
+                best_score = c;
+            }
+        }
+    }
     // P6-45 steps 4-5 (C-59, Adrian's ideas 3 and 5): the token as ONE block (no bell between the products), with 1/2/4/8
     // pieces per thread, on the chosen threads and with one processor left free for the system (interrupts, other
     // threads); each checked against the head's control. It is written to the file only if it beats the variant above
@@ -543,7 +583,7 @@ pub fn run(args: &[&str]) -> i64 {
         for &n in &counts {
             for k in [1usize, 2, 4, 8] {
                 kgr::set_pieces(k);
-                let tb = Tuning { threads: n, block: true, ..t };
+                let tb = Tuning { threads: n, block: true, team: 0, ..t };
                 let c = time_block(w, &xm, &mut ym, tb);
                 let wrong = bad(&ym[..head.rows], hc);
                 if wrong > 0 {
@@ -578,6 +618,7 @@ pub fn run(args: &[&str]) -> i64 {
             block_note = alloc::format!("# un bloc pe simbol: cel mai bun {}, {} bucati pe fir, {} us/simbol pe model\n", fire(n), k, us(c, per_ms));
             if wins {
                 t.block = true;
+                t.team = 0;
                 t.threads = n;
                 t.pieces = if k > 1 { k } else { 0 };
                 best_score = c;
@@ -608,7 +649,7 @@ pub fn run(args: &[&str]) -> i64 {
             proj_note += &alloc::format!("# bariera goala pe {}: {:.2} us\n", fire(n), c as f64 * 1000.0 / per_ms as f64);
         }
     }
-    let base = Tuning { threads: 1, simd: false, order: Order::TJ, proj_threads: 0, pieces: 0, block: false };
+    let base = Tuning { threads: 1, simd: false, order: Order::TJ, proj_threads: 0, pieces: 0, block: false, team: 0 };
     let (a0, b0) = (time(&m, &x[..inp], 1, &mut y1, base), time(&m, &x, ROWS, &mut y16, base));
     let base_score = match &work {
         Some(w) => time_model(w, &xm, &mut ym, base),
@@ -643,6 +684,7 @@ pub fn run(args: &[&str]) -> i64 {
     }
     note += &proj_note;
     note += &pieces_note;
+    note += &team_note;
     note += &block_note;
     kgr::stop_pool();
     let mut probe = [0u8; 16];

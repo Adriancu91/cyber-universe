@@ -248,6 +248,8 @@ struct Opts {
     pieces: Option<usize>,
     /// `--bloc` (P6-45 step 4, C-59): a generated token as one block (wins over the tuning file).
     block: bool,
+    /// `--echipe <n>` (P6-45 step 3, C-59): threads per team, the wait in two steps (wins over the tuning file).
+    team: Option<usize>,
     scalar: bool,
     sum: Option<String>,
     tuning: Option<String>,
@@ -275,6 +277,7 @@ fn parse_args() -> Result<Opts, String> {
         proj_threads: None,
         pieces: None,
         block: false,
+        team: None,
         scalar: false,
         sum: None,
         tuning: None,
@@ -307,6 +310,7 @@ fn parse_args() -> Result<Opts, String> {
             "--fire" => o.threads = Some(val()?.parse().map_err(|_| String::from("--fire cere un numar"))?),
             "--fara-vector" => o.scalar = true,
             "--bloc" => o.block = true,
+            "--echipe" => o.team = Some(val()?.parse().map_err(|_| String::from("--echipe cere un numar"))?),
             "--test-fire" => o.pool_test = Some(val()?.parse().map_err(|_| String::from("--test-fire cere un numar"))?),
             "--suma" => o.sum = Some(val()?.into()),
             "--reglaj" => o.tuning = Some(val()?.into()),
@@ -599,6 +603,10 @@ fn tuning(o: &Opts) -> kgr::Tuning {
     if o.block {
         t.block = true;
     }
+    if let Some(n) = o.team {
+        t.team = n.min(kgr::MAX_THREADS);
+    }
+    kgr::set_team(t.team);
     if let Some(n) = o.threads {
         t.threads = n.clamp(1, kgr::MAX_THREADS);
     }
@@ -703,6 +711,7 @@ fn main() -> i64 {
     };
     if let Some(n) = o.pool_test {
         kgr::set_pieces(o.pieces.unwrap_or(0));
+        kgr::set_team(o.team.unwrap_or(0));
         if o.block {
             // P6-45 step 4: the block (stages that each need the whole stage before, tails between them).
             let r = kgr::self_test_block(n);
@@ -722,10 +731,13 @@ fn main() -> i64 {
         kgr::stop_pool();
         return match r {
             Ok(jobs) => {
-                let mode = match o.pieces {
+                let mut mode = match o.pieces {
                     Some(k) if k > 1 => alloc::format!(", {} bucati pe fir", k),
                     _ => String::new(),
                 };
+                if let Some(k) = o.team.filter(|&k| k > 1) {
+                    mode += &alloc::format!(", echipe de {}", k);
+                }
                 println!("kronos: test fire: {} lucrari cu 1..{} parti{}, fiecare element scris o data, firele fara parte nu sunt asteptate (OK)", jobs, n, mode);
                 0
             }

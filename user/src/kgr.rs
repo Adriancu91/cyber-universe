@@ -434,13 +434,32 @@ struct Job<'a> {
     /// takes the next free piece from NEXT until none is left (whoever is done helps with the rest); = parts: one
     /// fixed range per part, as before.
     chunks: usize,
+    /// Threads per team in this job (<= 1 = none) and the last part served by a worker (teams end there).
+    team: usize,
+    helped: usize,
     f: &'a (dyn Fn(usize, usize, usize) + Sync),
+}
+
+/// The parts a leader waits for: its teammates that run on workers (`leader` excluded).
+fn teammates(leader: usize, team: usize, helped: usize) -> core::ops::Range<usize> {
+    leader + 1..(leader + team).min(helped + 1)
 }
 
 /// P6-45: the next free piece of the current job (pieces mode), on its own cache line.
 static NEXT: Line = Line(AtomicUsize::new(0));
 /// P6-45: pieces per part (0 or 1 = fixed ranges, the default); set by `kronos --bucati` / the tuning file (`bucati`).
 static PIECES: AtomicUsize = AtomicUsize::new(0);
+
+/// P6-45 step 3 (C-59, Adrian's „echipe”): threads per team (0 or 1 = off). With teams, part p belongs to team p / size
+/// (neighbouring threads: on the workstation the same physical cores); a team's first part (its leader) waits for its
+/// teammates, then signals for the whole team, and `par` waits only for the leaders: a wait in two steps, 1 + parts/size
+/// words read by the main thread instead of every part's. The ranges stay the same (same slice per team every token).
+static TEAM: AtomicUsize = AtomicUsize::new(0);
+
+/// Sets the threads per team of every later split (0 or 1 = no teams). See `TEAM`.
+pub fn set_team(n: usize) {
+    TEAM.store(n.min(MAX_THREADS), Ordering::Relaxed);
+}
 
 /// Sets the pieces per part of every later split (0 or 1 = one fixed range per part).
 pub fn set_pieces(n: usize) {
@@ -544,6 +563,13 @@ extern "C" fn worker(arg: u64) -> i64 {
             let (a, b) = split(job.n, job.parts, part);
             (job.f)(part, a, b);
         }
+        if job.team > 1 && part % job.team == 0 {
+            // Team leader: first its teammates (Acquire), then one signal for the whole team (Release: `par` sees
+            // every teammate's writes through it).
+            for m in teammates(part, job.team, job.helped) {
+                spin_until(|| DONE[m - 1].0.load(Ordering::Acquire) == seen);
+            }
+        }
         stamps.end.store(prof::now(), Ordering::Relaxed);
         DONE[part - 1].0.store(seen, Ordering::Release);
     }
@@ -611,7 +637,8 @@ pub fn par_parts(n: usize, parts: usize, f: &(dyn Fn(usize, usize, usize) + Sync
     let helped = workers.min(parts - 1);
     let pieces = PIECES.load(Ordering::Relaxed);
     let chunks = if pieces > 1 { (parts * pieces).min(n) } else { parts };
-    let job = Job { n, parts, chunks, f };
+    let team = TEAM.load(Ordering::Relaxed);
+    let job = Job { n, parts, chunks, team, helped, f };
     JOB.0.store(&job as *const Job as usize, Ordering::Release);
     // The workers of the previous job are all done (waited for below), so nobody reads NEXT while it is reset; the
     // Release store of STATE publishes it with the job.
@@ -631,8 +658,18 @@ pub fn par_parts(n: usize, parts: usize, f: &(dyn Fn(usize, usize, usize) + Sync
         f(0, a, b);
     }
     let t0 = prof::now();
-    for d in DONE.iter().take(helped) {
-        spin_until(|| d.0.load(Ordering::Acquire) == generation);
+    if team > 1 {
+        // Two steps: this thread leads team 0 (its teammates), then waits only for the other teams' leaders.
+        for m in teammates(0, team, helped) {
+            spin_until(|| DONE[m - 1].0.load(Ordering::Acquire) == generation);
+        }
+        for leader in (team..=helped).step_by(team) {
+            spin_until(|| DONE[leader - 1].0.load(Ordering::Acquire) == generation);
+        }
+    } else {
+        for d in DONE.iter().take(helped) {
+            spin_until(|| d.0.load(Ordering::Acquire) == generation);
+        }
     }
     let t1 = prof::now();
     prof::add(prof::SYNC, t1 - t0, 0);
@@ -1003,12 +1040,14 @@ pub struct Tuning {
     /// P6-45 step 4 (C-59): a generated token as ONE block (`run_block`, no bell between computations); tuning file
     /// `planificare = bloc` (absent = `azi`, a split per product as before).
     pub block: bool,
+    /// P6-45 step 3 (C-59): threads per team (0 or 1 = none; 4 = 9×4, 6 = 6×6 on 36 threads); `echipe = N`. See `set_team`.
+    pub team: usize,
 }
 
 impl Tuning {
     /// What the engine uses without a tuning file: every processor, vectors when present, order t-j.
     pub fn default_for(cpus: usize) -> Tuning {
-        Tuning { threads: cpus.clamp(1, MAX_THREADS), simd: has_avx2_fma(), order: Order::TJ, proj_threads: 0, pieces: 0, block: false }
+        Tuning { threads: cpus.clamp(1, MAX_THREADS), simd: has_avx2_fma(), order: Order::TJ, proj_threads: 0, pieces: 0, block: false, team: 0 }
     }
 
     /// Threads of the projection while generating, for a model with `heads` heads (see `proj_threads`).
@@ -1019,13 +1058,14 @@ impl Tuning {
 
     pub fn describe(&self) -> String {
         alloc::format!(
-            "{}, {} {}, ordine {}{}{}",
+            "{}, {} {}, ordine {}{}{}{}",
             if self.simd { "vectori AVX2+FMA" } else { "fara vectori (scalar)" },
             self.threads,
             if self.threads == 1 { "fir" } else { "fire" },
             self.order.name(),
             if self.pieces > 1 { alloc::format!(", {} bucati pe fir", self.pieces) } else { String::new() },
-            if self.block { ", un bloc pe simbol" } else { "" }
+            if self.block { ", un bloc pe simbol" } else { "" },
+            if self.team > 1 { alloc::format!(", echipe de {}", self.team) } else { String::new() }
         )
     }
 
@@ -1034,7 +1074,7 @@ impl Tuning {
         alloc::format!(
             "# Reglajul motorului KGR1 pentru acest procesor (kronos-calcul --cauta, P6-28).\n\
              # Il citeste `kronos` la pornire. Se poate sterge: atunci se folosesc valorile implicite.\n\
-             procesor = {}\nvectori = {}\nfire = {}\nordine = {}\n{}{}{}{}",
+             procesor = {}\nvectori = {}\nfire = {}\nordine = {}\n{}{}{}{}{}",
             processor,
             if self.simd { "avx2" } else { "scalar" },
             self.threads,
@@ -1042,6 +1082,7 @@ impl Tuning {
             if self.proj_threads > 0 { alloc::format!("fire_proiectie = {}\n", self.proj_threads) } else { String::new() },
             if self.pieces > 1 { alloc::format!("bucati = {}\n", self.pieces) } else { String::new() },
             if self.block { "planificare = bloc\n" } else { "" },
+            if self.team > 1 { alloc::format!("echipe = {}\n", self.team) } else { String::new() },
             note
         )
     }
@@ -1077,6 +1118,10 @@ impl Tuning {
                 "bucati" => match v.parse::<usize>() {
                     Ok(n) => t.pieces = n.min(64),
                     _ => notes.push(alloc::format!("bucati = `{}` nu e un numar", v)),
+                },
+                "echipe" => match v.parse::<usize>() {
+                    Ok(n) => t.team = n.min(MAX_THREADS),
+                    _ => notes.push(alloc::format!("echipe = `{}` nu e un numar", v)),
                 },
                 "planificare" => match v {
                     "bloc" => t.block = true,
@@ -1311,7 +1356,7 @@ impl<'a> Model<'a> {
             kcache,
             vcache,
             len: 0,
-            tune: Tuning { threads: 1, simd: false, order: Order::TJ, proj_threads: 0, pieces: 0, block: false },
+            tune: Tuning { threads: 1, simd: false, order: Order::TJ, proj_threads: 0, pieces: 0, block: false, team: 0 },
         })
     }
 
