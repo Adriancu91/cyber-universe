@@ -570,10 +570,23 @@ fn test_heap() {
 #[cfg(feature = "qemu-test")]
 fn test_timer() {
     use arch::x86_64::apic;
-    let start = apic::ticks();
-    apic::pit_sleep_ms(1000);
-    let n = apic::ticks() - start;
-    assert!((90..=110).contains(&n), "temporizator: {} intreruperi intr-o secunda (asteptat 100)", n);
+    // P6-43: on a loaded emulator (CI, `-smp 4` under TCG) a second can lose ~15 ticks while the host runs other
+    // virtual processors (84-87 seen); a broken timer is wrong every time, so up to 3 measurements, one must be right.
+    let mut seen = alloc::vec::Vec::new();
+    for _ in 0..3 {
+        let start = apic::ticks();
+        apic::pit_sleep_ms(1000);
+        let n = apic::ticks() - start;
+        seen.push(n);
+        if (90..=110).contains(&n) {
+            break;
+        }
+    }
+    let n = *seen.last().unwrap();
+    assert!((90..=110).contains(&n), "temporizator: {:?} intreruperi intr-o secunda la 3 masuratori (asteptat 100)", seen);
+    if seen.len() > 1 {
+        warn!("temporizator: {:?} intreruperi pe secunda (gazda incarcata); ultima masuratoare buna", seen);
+    }
     // `hlt` must wake up on the next timer interrupt. With several processors this thread may run on one whose own
     // timer wakes it without counting the time (only the boot processor counts): a few `hlt` then.
     let before = apic::ticks();
