@@ -60,6 +60,19 @@ pub fn run() {
     assert!(run_one(&pieces) == 0, "kronos: Q8_0 cu bucati diferit de referinta");
     let control_pieces = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--control", "--fire", "3", "--bucati", "4"];
     assert!(run_one(&control_pieces) == 0, "kronos: --control cu bucati nu trece");
+    // P6-45 step 4 (C-59, idea 3): a generated token as ONE block (no bell between the computations): the block alone
+    // (stages that need the whole stage before), then the same tokens as the reference (Q8_0 on 4 threads, F32 on 3 with
+    // 8 pieces per thread) and the control texts.
+    let block_test = ["kronos", "--test-fire", "6", "--bloc"];
+    assert!(run_one(&block_test) == 0, "kronos: testul blocului a esuat");
+    let block_q8 = ["kronos", "--verifica", "/disk/kronos/mini-q8.kgr", "/disk/kronos/mini-q8.ref", "--fire", "4", "--bloc"];
+    assert!(run_one(&block_q8) == 0, "kronos: Q8_0 intr-un bloc diferit de referinta");
+    let block_f32 = ["kronos", "--verifica", "/disk/kronos/mini-f32.kgr", "/disk/kronos/mini-f32.ref", "--fire", "3", "--bloc", "--bucati", "8"];
+    assert!(run_one(&block_f32) == 0, "kronos: F32 intr-un bloc cu bucati diferit de referinta");
+    let block_control = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--control", "--fire", "3", "--bloc"];
+    assert!(run_one(&block_control) == 0, "kronos: --control intr-un bloc nu trece");
+    let block_profile = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--n", "5", "--profil", "--fire", "3", "--bloc", "Ana", "are", "mere."];
+    assert!(run_one(&block_profile) == 0, "kronos: --profil intr-un bloc a esuat");
     // P6-39: the projection on its own thread count (1 of 4, and 3 = not a divisor of the heads): the same tokens.
     for n in ["1", "3"] {
         let proj = ["kronos", "--verifica", "/disk/kronos/mini-q8.kgr", "/disk/kronos/mini-q8.ref", "--fire", "4", "--fire-proiectie", n];

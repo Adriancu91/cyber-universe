@@ -258,6 +258,43 @@ fn time_model(w: &Workload, x: &[f32], y: &mut [f32], t: Tuning) -> u64 {
     (rdtsc() - c0) / PASSES
 }
 
+/// P6-45 step 4 (C-59): as `time_model`, but the token's products as ONE block (`kgr::run_block`: no bell between
+/// them, pieces from a shared counter). Each product writes `y[..rows]` from `x` (they run in order, so never at once).
+fn time_block(w: &Workload, x: &[f32], y: &mut [f32], t: Tuning) -> u64 {
+    #[derive(Clone, Copy)]
+    struct Y(*mut f32);
+    // SAFETY: each piece writes only its own outputs; the stages run one after another (see `run_block`).
+    unsafe impl Sync for Y {}
+    unsafe impl Send for Y {}
+    let yo = Y(y.as_mut_ptr());
+    let parts = t.threads.clamp(1, kgr::MAX_THREADS);
+    let runs: Vec<_> = w
+        .mats
+        .iter()
+        .map(|m| {
+            move |_: usize, a: usize, b: usize| {
+                let yo = yo;
+                for j in a..b {
+                    // SAFETY: output j of this product belongs to this piece only; y has at least m.rows floats.
+                    unsafe { *yo.0.add(j) = kgr::output_one(m, &x[..m.cols], j, t) };
+                }
+            }
+        })
+        .collect();
+    let stages: Vec<kgr::Stage> = w
+        .mats
+        .iter()
+        .zip(&runs)
+        .map(|(m, r)| kgr::Stage { n: m.rows, chunks: kgr::block_chunks(m.rows, parts), kind: kgr::prof::REST, run: r, tail: None })
+        .collect();
+    kgr::run_block(&stages, parts);
+    let c0 = rdtsc();
+    for _ in 0..PASSES {
+        kgr::run_block(&stages, parts);
+    }
+    (rdtsc() - c0) / PASSES
+}
+
 pub fn run(args: &[&str]) -> i64 {
     let (mut emb, mut dir, mut broken, mut model) = (512usize, String::from("/usb/kronos"), false, None::<String>);
     let mut i = 0;
@@ -368,7 +405,7 @@ pub fn run(args: &[&str]) -> i64 {
     for &simd in simds {
         for &order in &orders {
             for &th in &threads {
-                let t = Tuning { threads: th, simd, order, proj_threads: 0, pieces: 0 };
+                let t = Tuning { threads: th, simd, order, proj_threads: 0, pieces: 0, block: false };
                 tried += 1;
                 let a = time(&m, &x[..inp], 1, &mut y1, t);
                 let b = time(&m, &x, ROWS, &mut y16, t);
@@ -486,9 +523,69 @@ pub fn run(args: &[&str]) -> i64 {
             pieces_note = alloc::format!("# bucati: {} pe fir, {} us/simbol pe model\n", best_k, us(best_c, per_ms));
         }
     }
+    // P6-45 steps 4-5 (C-59, Adrian's ideas 3 and 5): the token as ONE block (no bell between the products), with 1/2/4/8
+    // pieces per thread, on the chosen threads and with one processor left free for the system (interrupts, other
+    // threads); each checked against the head's control. It is written to the file only if it beats the variant above
+    // by more than 1 %.
+    let mut block_note = String::new();
+    let all = cpus.min(kgr::MAX_THREADS);
+    if let (Some(w), Some(hc)) = (&work, &head_control)
+        && all > 1
+    {
+        let head = w.mats.last().unwrap();
+        // On the chosen threads (every processor when the chosen variant uses one), and one fewer when that is all.
+        let first = if t.threads > 1 { t.threads } else { all };
+        let mut counts = vec![first];
+        if first == all && first > 2 {
+            counts.push(first - 1);
+        }
+        let mut found: Option<(usize, usize, u64)> = None;
+        for &n in &counts {
+            for k in [1usize, 2, 4, 8] {
+                kgr::set_pieces(k);
+                let tb = Tuning { threads: n, block: true, ..t };
+                let c = time_block(w, &xm, &mut ym, tb);
+                let wrong = bad(&ym[..head.rows], hc);
+                if wrong > 0 {
+                    rejected += 1;
+                    println!("cauta: un bloc pe simbol, {}, {} bucati pe fir: RESPINSA ({} rezultate ale capului in afara tolerantei)", fire(n), k, wrong);
+                    continue;
+                }
+                println!(
+                    "cauta: un bloc pe simbol, {}{}, {} bucati pe fir: model {} us/simbol (~{} simboluri/s doar produsele)",
+                    fire(n),
+                    if n < all { " (un procesor liber)" } else { "" },
+                    k,
+                    us(c, per_ms),
+                    per_ms * 1000 / c.max(1)
+                );
+                if found.is_none_or(|f| c < f.2) {
+                    found = Some((n, k, c));
+                }
+            }
+        }
+        kgr::set_pieces(0);
+        if let Some((n, k, c)) = found {
+            let wins = c * 101 < best_score * 100;
+            println!(
+                "cauta: un bloc pe simbol: cel mai bun pe {}, {} bucati pe fir: {} us/simbol fata de {} us fara bloc: {}",
+                fire(n),
+                k,
+                us(c, per_ms),
+                us(best_score, per_ms),
+                if wins { "ales (planificare = bloc)" } else { "nu e mai rapid, raman la impartirea de acum" }
+            );
+            block_note = alloc::format!("# un bloc pe simbol: cel mai bun {}, {} bucati pe fir, {} us/simbol pe model\n", fire(n), k, us(c, per_ms));
+            if wins {
+                t.block = true;
+                t.threads = n;
+                t.pieces = if k > 1 { k } else { 0 };
+                best_score = c;
+            }
+        }
+    }
     // P6-43 (C-59): what one wait for the threads costs, with no work (on the chosen threads, and on as many as heads).
     // On every processor too when the chosen variant uses one thread (so the line is always there with several).
-    let all = cpus.min(kgr::MAX_THREADS);
     if all > 1 {
         let mut sizes = vec![if t.threads > 1 { t.threads } else { all }];
         if let Some(w) = &work
@@ -511,7 +608,7 @@ pub fn run(args: &[&str]) -> i64 {
             proj_note += &alloc::format!("# bariera goala pe {}: {:.2} us\n", fire(n), c as f64 * 1000.0 / per_ms as f64);
         }
     }
-    let base = Tuning { threads: 1, simd: false, order: Order::TJ, proj_threads: 0, pieces: 0 };
+    let base = Tuning { threads: 1, simd: false, order: Order::TJ, proj_threads: 0, pieces: 0, block: false };
     let (a0, b0) = (time(&m, &x[..inp], 1, &mut y1, base), time(&m, &x, ROWS, &mut y16, base));
     let base_score = match &work {
         Some(w) => time_model(w, &xm, &mut ym, base),
@@ -546,6 +643,7 @@ pub fn run(args: &[&str]) -> i64 {
     }
     note += &proj_note;
     note += &pieces_note;
+    note += &block_note;
     kgr::stop_pool();
     let mut probe = [0u8; 16];
     if cyber_user::list(&dir, &mut probe) < 0 && cyber_user::create(&dir, true) < 0 {

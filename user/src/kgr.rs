@@ -650,6 +650,166 @@ pub fn par_parts(n: usize, parts: usize, f: &(dyn Fn(usize, usize, usize) + Sync
     prof::split_wait(last_start.saturating_sub(published), last_end.saturating_sub(first_end), t1.saturating_sub(last_end));
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// P6-45 step 4 (C-59, Adrian's idea 3): ONE block per token, no bell between the computations.
+// ---------------------------------------------------------------------------------------------------------------
+// `par` per product means: the main thread publishes, every worker wakes, works, signals; the main thread gathers and
+// publishes the next product (~49-61 times per token). In a block, the whole list of a token's computations is given
+// to the threads at once: every thread walks the list, takes pieces of the current stage from its shared counter and,
+// when a stage has no piece left, goes on to wait only until the stage before the next one is complete (its counter of
+// finished pieces). The thread that finishes the LAST piece of a stage runs the stage's short serial tail (residual
+// add + LayerNorm) and opens the next stage. Nobody gathers, nobody republishes: one `par` per token.
+// Every element is still computed by the same code, once, from the same inputs: the same bits as without the block.
+
+/// One stage of a block: `run(part, a, b)` computes elements a..b of 0..n (cut in `chunks` pieces taken from a shared
+/// counter); `tail` (optional) runs once, on the thread that finished the stage's last piece, before the next stage
+/// opens. `kind` = the profile line the stage's time goes to.
+pub struct Stage<'a> {
+    pub n: usize,
+    pub chunks: usize,
+    pub kind: usize,
+    pub run: &'a (dyn Fn(usize, usize, usize) + Sync),
+    pub tail: Option<&'a (dyn Fn() + Sync)>,
+}
+
+/// Counters of one stage, 128 bytes apart (so never on one cache line; the program heap does not hand out 128-aligned
+/// blocks, hence padding instead of `Line`): the next free piece, the pieces finished, open (1 = the stage before is
+/// complete, tail included).
+struct StageCtl {
+    next: Pad,
+    done: Pad,
+    open: Pad,
+}
+
+/// One counter followed by 120 bytes of padding.
+struct Pad([AtomicUsize; 16]);
+
+impl Pad {
+    fn new(v: usize) -> Pad {
+        let p = Pad([const { AtomicUsize::new(0) }; 16]);
+        p.0[0].store(v, Ordering::Relaxed);
+        p
+    }
+}
+
+/// Runs `stages` in order on `parts` threads as ONE split (see above). Returns when every stage is complete.
+pub fn run_block(stages: &[Stage<'_>], parts: usize) {
+    if stages.is_empty() {
+        return;
+    }
+    let ctl: Vec<StageCtl> = (0..stages.len())
+        .map(|s| StageCtl { next: Pad::new(0), done: Pad::new(0), open: Pad::new((s == 0) as usize) })
+        .collect();
+    let parts = parts.clamp(1, MAX_THREADS);
+    let walk = |part: usize| {
+        for (s, st) in stages.iter().enumerate() {
+            let c = &ctl[s];
+            // The wait for the stage before counts in this stage's time too ("din care asteptarea firelor", as in `par`).
+            let t0 = prof::now();
+            if c.open.0[0].load(Ordering::Acquire) == 0 {
+                spin_until(|| c.open.0[0].load(Ordering::Acquire) != 0);
+                if part == 0 {
+                    prof::add(prof::SYNC, prof::now() - t0, 0);
+                    prof::count(prof::BARRIERS);
+                }
+            }
+            let chunks = st.chunks.clamp(1, st.n.max(1));
+            loop {
+                let k = c.next.0[0].fetch_add(1, Ordering::Relaxed);
+                if k >= chunks {
+                    break;
+                }
+                let (a, b) = split(st.n, chunks, k);
+                (st.run)(part, a, b);
+                // AcqRel: the last finisher sees every other piece's writes (release sequence on `done`).
+                if c.done.0[0].fetch_add(1, Ordering::AcqRel) + 1 == chunks {
+                    if let Some(tail) = st.tail {
+                        tail();
+                    }
+                    if let Some(n) = ctl.get(s + 1) {
+                        n.open.0[0].store(1, Ordering::Release);
+                    }
+                }
+            }
+            if part == 0 {
+                prof::add(st.kind, prof::now() - t0, 0);
+            }
+        }
+    };
+    if parts == 1 {
+        walk(0);
+        return;
+    }
+    // One fixed range per part (n = parts), so each thread walks the list exactly once; parts the kernel refused a
+    // worker for run on this thread one after another, which is still correct (any thread can take any piece).
+    let saved = PIECES.swap(0, Ordering::Relaxed);
+    par_parts(parts, parts, &|part, _, _| walk(part));
+    PIECES.store(saved, Ordering::Relaxed);
+    // Every piece of the last stage was finished inside some thread's walk, and `par_parts` waited for all of them.
+}
+
+/// Pieces of a stage of `n` elements on `parts` threads: `pieces` per thread (at least 1), at most n.
+pub fn block_chunks(n: usize, parts: usize) -> usize {
+    (parts * PIECES.load(Ordering::Relaxed).max(1)).clamp(1, n.max(1))
+}
+
+/// P6-45: self-test of `run_block`: 12 stages, each reading ALL of the stage before (a permutation, +1) and a tail
+/// that adds a value every element of the next stage needs: every element must be exact, so no thread ever started a
+/// stage before the one before was complete.
+pub fn self_test_block(max_parts: usize) -> Result<usize, String> {
+    const N: usize = 97;
+    const S: usize = 12;
+    let vals: Vec<AtomicUsize> = (0..N * (S + 1)).map(|_| AtomicUsize::new(0)).collect();
+    let bonus: Vec<AtomicUsize> = (0..S + 1).map(|_| AtomicUsize::new(0)).collect();
+    let mut runs = 0;
+    for parts in 1..=max_parts.clamp(1, MAX_THREADS) {
+        for v in &vals {
+            v.store(0, Ordering::Relaxed);
+        }
+        for (i, v) in vals.iter().take(N).enumerate() {
+            v.store(i, Ordering::Relaxed);
+        }
+        let runs_v: Vec<_> = (1..=S)
+            .map(|s| {
+                let (vals, bonus) = (&vals, &bonus);
+                move |_: usize, a: usize, b: usize| {
+                    for i in a..b {
+                        let prev = vals[(s - 1) * N + (i * 7 + 3) % N].load(Ordering::Relaxed);
+                        vals[s * N + i].fetch_add(prev + 1 + bonus[s - 1].load(Ordering::Relaxed), Ordering::Relaxed);
+                    }
+                }
+            })
+            .collect();
+        let tails: Vec<_> = (1..=S)
+            .map(|s| {
+                let bonus = &bonus;
+                move || bonus[s].store(s, Ordering::Relaxed)
+            })
+            .collect();
+        let stages: Vec<Stage> = (0..S)
+            .map(|k| Stage { n: N, chunks: block_chunks(N, parts) + k % 3, kind: prof::REST, run: &runs_v[k], tail: Some(&tails[k]) })
+            .collect();
+        run_block(&stages, parts);
+        runs += 1;
+        // The same values computed on one thread, in order.
+        let mut want: Vec<usize> = (0..N).collect();
+        for s in 1..=S {
+            let b = if s == 1 { 0 } else { s - 1 };
+            want = (0..N).map(|i| want[(i * 7 + 3) % N] + 1 + b).collect();
+            for (i, w) in want.iter().enumerate() {
+                let got = vals[s * N + i].load(Ordering::Relaxed);
+                if got != *w {
+                    return Err(alloc::format!("bloc pe {} fire: etapa {}, elementul {} = {}, asteptat {}", parts, s, i, got, w));
+                }
+            }
+        }
+        for b in &bonus {
+            b.store(0, Ordering::Relaxed);
+        }
+    }
+    Ok(runs)
+}
+
 /// P6-43: many splits in a row with a changing number of parts (1..=max_parts, up and down, so workers without a part
 /// in one job get one in the next): every element of every job must be written exactly once, by the right part.
 /// Returns the number of jobs.
@@ -840,12 +1000,15 @@ pub struct Tuning {
     pub proj_threads: usize,
     /// P6-45 (C-59): pieces per part of every split (0 or 1 = one fixed range per part). See `set_pieces`.
     pub pieces: usize,
+    /// P6-45 step 4 (C-59): a generated token as ONE block (`run_block`, no bell between computations); tuning file
+    /// `planificare = bloc` (absent = `azi`, a split per product as before).
+    pub block: bool,
 }
 
 impl Tuning {
     /// What the engine uses without a tuning file: every processor, vectors when present, order t-j.
     pub fn default_for(cpus: usize) -> Tuning {
-        Tuning { threads: cpus.clamp(1, MAX_THREADS), simd: has_avx2_fma(), order: Order::TJ, proj_threads: 0, pieces: 0 }
+        Tuning { threads: cpus.clamp(1, MAX_THREADS), simd: has_avx2_fma(), order: Order::TJ, proj_threads: 0, pieces: 0, block: false }
     }
 
     /// Threads of the projection while generating, for a model with `heads` heads (see `proj_threads`).
@@ -856,12 +1019,13 @@ impl Tuning {
 
     pub fn describe(&self) -> String {
         alloc::format!(
-            "{}, {} {}, ordine {}{}",
+            "{}, {} {}, ordine {}{}{}",
             if self.simd { "vectori AVX2+FMA" } else { "fara vectori (scalar)" },
             self.threads,
             if self.threads == 1 { "fir" } else { "fire" },
             self.order.name(),
-            if self.pieces > 1 { alloc::format!(", {} bucati pe fir", self.pieces) } else { String::new() }
+            if self.pieces > 1 { alloc::format!(", {} bucati pe fir", self.pieces) } else { String::new() },
+            if self.block { ", un bloc pe simbol" } else { "" }
         )
     }
 
@@ -870,13 +1034,14 @@ impl Tuning {
         alloc::format!(
             "# Reglajul motorului KGR1 pentru acest procesor (kronos-calcul --cauta, P6-28).\n\
              # Il citeste `kronos` la pornire. Se poate sterge: atunci se folosesc valorile implicite.\n\
-             procesor = {}\nvectori = {}\nfire = {}\nordine = {}\n{}{}{}",
+             procesor = {}\nvectori = {}\nfire = {}\nordine = {}\n{}{}{}{}",
             processor,
             if self.simd { "avx2" } else { "scalar" },
             self.threads,
             self.order.name(),
             if self.proj_threads > 0 { alloc::format!("fire_proiectie = {}\n", self.proj_threads) } else { String::new() },
             if self.pieces > 1 { alloc::format!("bucati = {}\n", self.pieces) } else { String::new() },
+            if self.block { "planificare = bloc\n" } else { "" },
             note
         )
     }
@@ -912,6 +1077,11 @@ impl Tuning {
                 "bucati" => match v.parse::<usize>() {
                     Ok(n) => t.pieces = n.min(64),
                     _ => notes.push(alloc::format!("bucati = `{}` nu e un numar", v)),
+                },
+                "planificare" => match v {
+                    "bloc" => t.block = true,
+                    "azi" => t.block = false,
+                    _ => notes.push(alloc::format!("planificare = `{}` necunoscuta (bloc / azi)", v)),
                 },
                 "ordine" => match v {
                     "t-j" => t.order = Order::TJ,
@@ -959,6 +1129,11 @@ fn output(w: &Mat, b: Option<&[f32]>, xr: &[f32], j: usize, tune: Tuning) -> f32
         v += b[j];
     }
     v
+}
+
+/// One output of a product without bias (for `kronos-calcul --cauta`, P6-45: the products of a block).
+pub fn output_one(w: &Mat, x: &[f32], j: usize, tune: Tuning) -> f32 {
+    output(w, None, x, j, tune)
 }
 
 /// GELU (exact erf form) of one value: the same arithmetic as `reference::gelu_erf` on a slice.
@@ -1136,7 +1311,7 @@ impl<'a> Model<'a> {
             kcache,
             vcache,
             len: 0,
-            tune: Tuning { threads: 1, simd: false, order: Order::TJ, proj_threads: 0, pieces: 0 },
+            tune: Tuning { threads: 1, simd: false, order: Order::TJ, proj_threads: 0, pieces: 0, block: false },
         })
     }
 
@@ -1178,6 +1353,9 @@ impl<'a> Model<'a> {
         }
         if let Some(&bad) = ids.iter().find(|&&i| i as usize >= self.cfg.vocab) {
             return Err(alloc::format!("simbolul {} e in afara vocabularului ({})", bad, self.cfg.vocab));
+        }
+        if t == 1 && self.tune.block && self.tune.threads > 1 {
+            return Ok(self.forward_block(ids[0], p0));
         }
         let mut x = vec![0.0f32; t * e];
         let mut row = vec![0.0f32; e];
@@ -1303,6 +1481,176 @@ impl<'a> Model<'a> {
         let mut logits = vec![0.0f32; rows * self.cfg.vocab];
         self.linear(prof::HEAD, &self.tok, None, &hbuf, rows, &mut logits);
         Ok(logits)
+    }
+
+    /// P6-45 step 4 (C-59): one generated token as ONE block (see `run_block`): per layer the stages qkv (columns) ->
+    /// attention (heads, k and v into the cache) -> projection (tail: residual + ln2) -> fc + GELU -> MLP output (tail:
+    /// residual + the next layer's ln1, or the final LayerNorm), then the head. Each value comes from the same function
+    /// as in `forward` (`output`, `attend`, `layernorm`, the same element-wise adds): the same bits.
+    fn forward_block(&mut self, id: u32, p0: usize) -> Vec<f32> {
+        let (e, h) = (self.cfg.emb, self.cfg.heads);
+        let d = e / h;
+        let parts = self.tune.threads.clamp(1, MAX_THREADS);
+        let mut x = vec![0.0f32; e];
+        let mut row = vec![0.0f32; e];
+        self.tok.row(id as usize, &mut x);
+        self.pos.row(p0, &mut row);
+        for (a, b) in x.iter_mut().zip(&row) {
+            *a += b;
+        }
+        let mut hbuf = vec![0.0f32; e];
+        let c0 = prof::now();
+        layernorm(&x, self.layers[0].ln1, &mut hbuf, 1, e, self.cfg.eps);
+        prof::add(prof::REST, prof::now() - c0, 0);
+        let mut qkv = vec![0.0f32; 3 * e];
+        let mut att = vec![0.0f32; e];
+        let mut tmp = vec![0.0f32; e];
+        let mut big = vec![0.0f32; 4 * e];
+        let mut scores = vec![0.0f32; parts * (p0 + 1)];
+        let mut logits = vec![0.0f32; self.cfg.vocab];
+        let scale = 1.0 / math::sqrt(d as f32);
+        let (tune, eps, nl) = (self.tune, self.cfg.eps, self.layers.len());
+        let (xo, ho, qo, ao, to, bo, so, lo) = (
+            Out(x.as_mut_ptr()),
+            Out(hbuf.as_mut_ptr()),
+            Out(qkv.as_mut_ptr()),
+            Out(att.as_mut_ptr()),
+            Out(tmp.as_mut_ptr()),
+            Out(big.as_mut_ptr()),
+            Out(scores.as_mut_ptr()),
+            Out(logits.as_mut_ptr()),
+        );
+        let caches: Vec<(Out, Out)> =
+            self.kcache.iter_mut().zip(self.vcache.iter_mut()).map(|(k, v)| (Out(k.as_mut_ptr()), Out(v.as_mut_ptr()))).collect();
+        // SAFETY (for every `sl` / `sl_mut` below): each buffer above lives until `run_block` returns; inside a stage,
+        // `run` writes only elements a..b of the stage's output (its pieces are disjoint) and reads buffers written by
+        // EARLIER stages only (complete before this stage opened: Acquire on `open`); a tail runs alone, after every
+        // piece of its stage and before the next stage opens, so its exclusive slices alias nothing in use.
+        let sl = |o: Out, n: usize| unsafe { core::slice::from_raw_parts(o.0 as *const f32, n) };
+        #[allow(clippy::mut_from_ref)]
+        let sl_mut = |o: Out, n: usize| unsafe { core::slice::from_raw_parts_mut(o.0, n) };
+        let layers = &self.layers;
+        let (tok, lnf) = (&self.tok, self.lnf);
+        // Closures of every stage, per layer (they must outlive the Stage list).
+        let qkv_run: Vec<_> = (0..nl)
+            .map(|li| {
+                move |_: usize, a: usize, b: usize| {
+                    let (qo, l) = (qo, &layers[li]);
+                    let hb = sl(ho, e);
+                    for col in a..b {
+                        // SAFETY: column `col` of qkv belongs to this piece only.
+                        unsafe { *qo.0.add(col) = output(&l.qkv, Some(l.qkv_b), hb, col, tune) };
+                    }
+                }
+            })
+            .collect();
+        let attn_run: Vec<_> = (0..nl)
+            .map(|li| {
+                let (kc, vc) = caches[li];
+                move |part: usize, a: usize, b: usize| {
+                    let (kc, vc, qo, ao, so) = (kc, vc, qo, ao, so);
+                    // SAFETY: the scores row `part` is this thread's (one walk per part at a time); head j's cache columns
+                    // at position p0 and its output columns are written only by the piece that has head j.
+                    let sc = unsafe { core::slice::from_raw_parts_mut(so.0.add(part * (p0 + 1)), p0 + 1) };
+                    for j in a..b {
+                        unsafe {
+                            core::ptr::copy_nonoverlapping(qo.0.add(e + j * d), kc.0.add(p0 * e + j * d), d);
+                            core::ptr::copy_nonoverlapping(qo.0.add(2 * e + j * d), vc.0.add(p0 * e + j * d), d);
+                            let q = core::slice::from_raw_parts(qo.0.add(j * d), d);
+                            let out = core::slice::from_raw_parts_mut(ao.0.add(j * d), d);
+                            attend(q, kc.0, vc.0, e, j * d, p0, scale, sc, out);
+                        }
+                    }
+                }
+            })
+            .collect();
+        let proj_run: Vec<_> = (0..nl)
+            .map(|li| {
+                move |_: usize, a: usize, b: usize| {
+                    let (to, l) = (to, &layers[li]);
+                    let at = sl(ao, e);
+                    for j in a..b {
+                        // SAFETY: output j belongs to this piece only.
+                        unsafe { *to.0.add(j) = output(&l.proj, Some(l.proj_b), at, j, tune) };
+                    }
+                }
+            })
+            .collect();
+        let proj_tail: Vec<_> = (0..nl)
+            .map(|li| {
+                move || {
+                    let (x, t) = (sl_mut(xo, e), sl(to, e));
+                    for (a, b) in x.iter_mut().zip(t) {
+                        *a += b;
+                    }
+                    layernorm(x, layers[li].ln2, sl_mut(ho, e), 1, e, eps);
+                }
+            })
+            .collect();
+        let fc_run: Vec<_> = (0..nl)
+            .map(|li| {
+                move |_: usize, a: usize, b: usize| {
+                    let (bo, l) = (bo, &layers[li]);
+                    let hb = sl(ho, e);
+                    for j in a..b {
+                        // SAFETY: output j belongs to this piece only.
+                        unsafe { *bo.0.add(j) = gelu1(output(&l.fc, Some(l.fc_b), hb, j, tune)) };
+                    }
+                }
+            })
+            .collect();
+        let out_run: Vec<_> = (0..nl)
+            .map(|li| {
+                move |_: usize, a: usize, b: usize| {
+                    let (to, l) = (to, &layers[li]);
+                    let bg = sl(bo, 4 * e);
+                    for j in a..b {
+                        // SAFETY: output j belongs to this piece only.
+                        unsafe { *to.0.add(j) = output(&l.out, Some(l.out_b), bg, j, tune) };
+                    }
+                }
+            })
+            .collect();
+        let out_tail: Vec<_> = (0..nl)
+            .map(|li| {
+                move || {
+                    let (x, t) = (sl_mut(xo, e), sl(to, e));
+                    for (a, b) in x.iter_mut().zip(t) {
+                        *a += b;
+                    }
+                    let norm = if li + 1 < nl { layers[li + 1].ln1 } else { lnf };
+                    layernorm(x, norm, sl_mut(ho, e), 1, e, eps);
+                }
+            })
+            .collect();
+        let head_run = move |_: usize, a: usize, b: usize| {
+            let lo = lo;
+            let hb = sl(ho, e);
+            for j in a..b {
+                // SAFETY: logit j belongs to this piece only.
+                unsafe { *lo.0.add(j) = output(tok, None, hb, j, tune) };
+            }
+        };
+        let mut stages: Vec<Stage> = Vec::with_capacity(5 * nl + 1);
+        for li in 0..nl {
+            stages.push(Stage { n: 3 * e, chunks: block_chunks(3 * e, parts), kind: prof::QKV, run: &qkv_run[li], tail: None });
+            stages.push(Stage { n: h, chunks: h, kind: prof::ATTN, run: &attn_run[li], tail: None });
+            stages.push(Stage { n: e, chunks: block_chunks(e, parts), kind: prof::PROJ, run: &proj_run[li], tail: Some(&proj_tail[li]) });
+            stages.push(Stage { n: 4 * e, chunks: block_chunks(4 * e, parts), kind: prof::FC, run: &fc_run[li], tail: None });
+            stages.push(Stage { n: e, chunks: block_chunks(e, parts), kind: prof::OUT, run: &out_run[li], tail: Some(&out_tail[li]) });
+        }
+        stages.push(Stage { n: self.cfg.vocab, chunks: block_chunks(self.cfg.vocab, parts), kind: prof::HEAD, run: &head_run, tail: None });
+        run_block(&stages, parts);
+        drop(stages);
+        for l in &self.layers {
+            prof::add(prof::QKV, 0, l.qkv.bytes() as u64);
+            prof::add(prof::PROJ, 0, l.proj.bytes() as u64);
+            prof::add(prof::FC, 0, l.fc.bytes() as u64);
+            prof::add(prof::OUT, 0, l.out.bytes() as u64);
+        }
+        prof::add(prof::HEAD, 0, self.tok.bytes() as u64);
+        self.len = p0 + 1;
+        logits
     }
 }
 

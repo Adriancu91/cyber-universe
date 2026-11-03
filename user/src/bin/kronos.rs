@@ -246,6 +246,8 @@ struct Opts {
     proj_threads: Option<usize>,
     /// `--bucati <n>` (P6-45, C-59): pieces per thread in every split (wins over the tuning file; 1 = fixed ranges).
     pieces: Option<usize>,
+    /// `--bloc` (P6-45 step 4, C-59): a generated token as one block (wins over the tuning file).
+    block: bool,
     scalar: bool,
     sum: Option<String>,
     tuning: Option<String>,
@@ -272,6 +274,7 @@ fn parse_args() -> Result<Opts, String> {
         threads: None,
         proj_threads: None,
         pieces: None,
+        block: false,
         scalar: false,
         sum: None,
         tuning: None,
@@ -303,6 +306,7 @@ fn parse_args() -> Result<Opts, String> {
             "--fire-proiectie" => o.proj_threads = Some(val()?.parse().map_err(|_| String::from("--fire-proiectie cere un numar"))?),
             "--fire" => o.threads = Some(val()?.parse().map_err(|_| String::from("--fire cere un numar"))?),
             "--fara-vector" => o.scalar = true,
+            "--bloc" => o.block = true,
             "--test-fire" => o.pool_test = Some(val()?.parse().map_err(|_| String::from("--test-fire cere un numar"))?),
             "--suma" => o.sum = Some(val()?.into()),
             "--reglaj" => o.tuning = Some(val()?.into()),
@@ -592,6 +596,9 @@ fn tuning(o: &Opts) -> kgr::Tuning {
         t.pieces = n.min(64);
     }
     kgr::set_pieces(t.pieces);
+    if o.block {
+        t.block = true;
+    }
     if let Some(n) = o.threads {
         t.threads = n.clamp(1, kgr::MAX_THREADS);
     }
@@ -659,10 +666,11 @@ fn profile_report(m: &Model, passes: usize, total: u64, screen: u64, pick: u64, 
     // gathering (the last part done until the main thread sees it). Several can overlap the main thread's own part.
     let us = |c: u64| ms(c) * 1000.0 / barriers.max(1) as f64;
     println!(
-        "kronos: profil: bariera in medie: trezire {:.1} us, asteptat cel mai lent {:.1} us, adunare {:.1} us",
+        "kronos: profil: bariera in medie: trezire {:.1} us, asteptat cel mai lent {:.1} us, adunare {:.1} us{}",
         us(prof::wait_part(prof::WAKE)),
         us(prof::wait_part(prof::SLOWEST)),
-        us(prof::wait_part(prof::GATHER))
+        us(prof::wait_part(prof::GATHER)),
+        if m.tune.block { " (un bloc pe simbol: barierele = asteptarile intre etape, fara despartire)" } else { "" }
     );
     for (name, c) in [("afisarea textului pe ecran", screen), ("alegerea simbolului (argmax)", pick)] {
         known += c;
@@ -695,6 +703,21 @@ fn main() -> i64 {
     };
     if let Some(n) = o.pool_test {
         kgr::set_pieces(o.pieces.unwrap_or(0));
+        if o.block {
+            // P6-45 step 4: the block (stages that each need the whole stage before, tails between them).
+            let r = kgr::self_test_block(n);
+            kgr::stop_pool();
+            return match r {
+                Ok(runs) => {
+                    println!("kronos: test bloc: {} blocuri pe 1..{} fire, 12 etape fiecare, fiecare element = calculul pe un fir (OK)", runs, n);
+                    0
+                }
+                Err(e) => {
+                    println!("kronos: test bloc: GRESIT: {}", e);
+                    1
+                }
+            };
+        }
         let r = kgr::self_test_pool(n);
         kgr::stop_pool();
         return match r {

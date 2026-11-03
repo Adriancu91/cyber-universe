@@ -85,6 +85,14 @@
   `--bucati N` (sau `bucati = N` în reglaj): fiecare împărțire e tăiată în N bucăți pe fir, iar firul care termină ia următoarea bucată
   dintr-un contor comun (nimeni nu stă după cel lent); fiecare element tot de un singur fir, cu același cod → aceleași simboluri.
   Test: `kronos --test-fire 6 --bucati 8`, `--verifica … --fire 4 --bucati 8`, `--control --fire 3 --bucati 4` (scenariul `kronos-kgr`).
+  **P6-45 pașii 4–5 (ideile 3 și 5):** `--bloc` (sau `planificare = bloc` în reglaj): un simbol generat = **un singur bloc**
+  (`kgr::run_block`): toate calculele lui (pe strat: qkv → atenție → proiecție → fc → ieșire MLP, apoi capul) sunt date firelor deodată;
+  fiecare fir ia bucăți din contorul comun al etapei, iar firul care termină ultima bucată face partea scurtă de după (adunare + LayerNorm)
+  și deschide etapa următoare — fără firul principal care adună și republică (o singură împărțire pe simbol în loc de ~49).
+  Fiecare valoare tot cu aceeași funcție → aceleași simboluri. `kronos-calcul --cauta` măsoară blocul cu 1/2/4/8 bucăți, pe firele alese
+  și cu **un procesor liber** (toate minus unul), și îl scrie în reglaj doar dacă e cu peste 1 % mai rapid.
+  Test: `kronos --test-fire 6 --bloc`, `--verifica … --fire 4 --bloc`, F32 `--fire 3 --bloc --bucati 8`, `--control --fire 3 --bloc`,
+  `--profil --bloc` (scenariul `kronos-kgr`); `kronos-reglaj` cere rândul „un bloc pe simbol”.
 - `kronos-calcul --cauta [--emb E] [--iesire <dir>]` (P6-28, comanda C-27, `src/cauta.rs`) — primul pas spre „OS-ul care se
   reglează singur”: încearcă variante ale produsului din motorul KGR1 (vectori AVX2+FMA sau scalar; 1, 2, 4, … fire și toate
   nucleele; ordinea buclelor t-j sau j-t) pe o matrice Q8_0 [4E, E], pe 1 rând (generare) și pe 16 rânduri (citirea textului).

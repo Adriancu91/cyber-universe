@@ -18,5 +18,9 @@ grep -Eq '^ordine = (t-j|j-t)$' "$TMP/r.txt" || fail "ordine lipsă sau varianta
 if grep -q '^fire_proiectie' "$TMP/r.txt"; then
     grep -Eq '^fire_proiectie = [0-9]+$' "$TMP/r.txt" || fail "fire_proiectie nu e un număr"
 fi
+if grep -q '^planificare' "$TMP/r.txt"; then
+    grep -Eq '^planificare = bloc$' "$TMP/r.txt" || fail "planificare necunoscută (P6-45)"
+fi
+grep -Eq '^# un bloc pe simbol: cel mai bun [0-9]+ fir' "$TMP/r.txt" || fail "nota despre blocul pe simbol lipsește (P6-45)"
 grep -Eq '^# proiectia: [0-9]+ fir' "$TMP/r.txt" || fail "nota despre proiecție lipsește (P6-39)"
 echo "[after-kronos-reglaj] OK: ${files[0]##*/}: $(grep -E '^(vectori|fire|ordine) =' "$TMP/r.txt" | tr '\n' ' ')"
