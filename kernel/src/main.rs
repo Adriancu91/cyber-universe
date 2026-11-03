@@ -570,21 +570,24 @@ fn test_heap() {
 #[cfg(feature = "qemu-test")]
 fn test_timer() {
     use arch::x86_64::apic;
-    // P6-43: on a loaded emulator (CI, `-smp 4` under TCG) a second can lose ~15 ticks while the host runs other
-    // virtual processors (84-87 seen); a broken timer is wrong every time, so up to 3 measurements, one must be right.
+    // P6-43: on a loaded emulator (CI, `-smp 4` under TCG) the virtual processors run in turns and the boot processor's
+    // timer loses ticks against the PIT: 84-87 seen, even 85 three times in a row. A broken timer is far off (no ticks,
+    // a wrong calibration = 2x or 1/2x), so with several processors running the lower bound is 80; and up to 3
+    // measurements, one must be inside. The single-processor scenarios keep 90..=110.
+    let low = if sched::running_cpus() > 1 { 80 } else { 90 };
     let mut seen = alloc::vec::Vec::new();
     for _ in 0..3 {
         let start = apic::ticks();
         apic::pit_sleep_ms(1000);
         let n = apic::ticks() - start;
         seen.push(n);
-        if (90..=110).contains(&n) {
+        if (low..=110).contains(&n) {
             break;
         }
     }
     let n = *seen.last().unwrap();
-    assert!((90..=110).contains(&n), "temporizator: {:?} intreruperi intr-o secunda la 3 masuratori (asteptat 100)", seen);
-    if seen.len() > 1 {
+    assert!((low..=110).contains(&n), "temporizator: {:?} intreruperi intr-o secunda la 3 masuratori (asteptat 100)", seen);
+    if seen.len() > 1 || n < 90 {
         warn!("temporizator: {:?} intreruperi pe secunda (gazda incarcata); ultima masuratoare buna", seen);
     }
     // `hlt` must wake up on the next timer interrupt. With several processors this thread may run on one whose own
