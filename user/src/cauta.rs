@@ -85,6 +85,9 @@ fn bad(y: &[f32], c: &(Vec<f64>, Vec<f64>)) -> usize {
 }
 
 /// Fewest cycles of 3 runs (after one warm-up run).
+/// Empty splits timed for the cost of one wait for the threads (P6-43).
+const BARRIER_ROUNDS: u64 = 2000;
+
 fn time(m: &Mat, x: &[f32], rows: usize, y: &mut [f32], t: Tuning) -> u64 {
     kgr::linear(m, None, x, rows, y, t);
     (0..3)
@@ -445,6 +448,31 @@ pub fn run(args: &[&str]) -> i64 {
             best_score = best_score.min(best_c);
             println!("cauta: proiectia (dupa impartirea pe capete): cea mai buna pe {}", fire(best_p));
             proj_note = alloc::format!("# proiectia: {} fire, {} us/simbol pe model\n", best_p, us(best_c, per_ms));
+        }
+    }
+    // P6-43 (C-59): what one wait for the threads costs, with no work (on the chosen threads, and on as many as heads).
+    // On every processor too when the chosen variant uses one thread (so the line is always there with several).
+    let all = cpus.min(kgr::MAX_THREADS);
+    if all > 1 {
+        let mut sizes = vec![if t.threads > 1 { t.threads } else { all }];
+        if let Some(w) = &work
+            && w.heads > 1
+            && w.heads < sizes[0]
+        {
+            sizes.push(w.heads);
+        }
+        for &n in &sizes {
+            kgr::par(n, n, &|_, _| {});
+            let c0 = rdtsc();
+            for _ in 0..BARRIER_ROUNDS {
+                kgr::par(n, n, &|_, _| {});
+            }
+            let c = (rdtsc() - c0) / BARRIER_ROUNDS;
+            let per_token = work.as_ref().map_or(String::new(), |w| {
+                alloc::format!(" ({} pe simbol = {} us/simbol)", w.mats.len(), us(c * w.mats.len() as u64, per_ms))
+            });
+            println!("cauta: bariera goala pe {}: {:.2} us{}", fire(n), c as f64 * 1000.0 / per_ms as f64, per_token);
+            proj_note += &alloc::format!("# bariera goala pe {}: {:.2} us\n", fire(n), c as f64 * 1000.0 / per_ms as f64);
         }
     }
     let base = Tuning { threads: 1, simd: false, order: Order::TJ, proj_threads: 0 };

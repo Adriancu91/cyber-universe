@@ -232,6 +232,8 @@ fn run_controls(m: &mut Model, tok: &Tokenizer, k: &Known) -> Result<bool, Strin
 
 struct Opts {
     model: Option<String>,
+    /// `--test-fire N` (P6-43): only the thread pool's self-test, with up to N parts.
+    pool_test: Option<usize>,
     /// `--dosar` (P6-38): where the default model is looked for.
     dir: Option<String>,
     /// `--control` (P6-38): the control texts of the known model.
@@ -259,6 +261,7 @@ struct Opts {
 fn parse_args() -> Result<Opts, String> {
     let mut o = Opts {
         model: None,
+        pool_test: None,
         dir: None,
         control: false,
         reference: None,
@@ -296,6 +299,7 @@ fn parse_args() -> Result<Opts, String> {
             "--fire-proiectie" => o.proj_threads = Some(val()?.parse().map_err(|_| String::from("--fire-proiectie cere un numar"))?),
             "--fire" => o.threads = Some(val()?.parse().map_err(|_| String::from("--fire cere un numar"))?),
             "--fara-vector" => o.scalar = true,
+            "--test-fire" => o.pool_test = Some(val()?.parse().map_err(|_| String::from("--test-fire cere un numar"))?),
             "--suma" => o.sum = Some(val()?.into()),
             "--reglaj" => o.tuning = Some(val()?.into()),
             "--codeaza" => o.encode_only = true,
@@ -634,6 +638,15 @@ fn profile_report(m: &Model, passes: usize, total: u64, screen: u64, pick: u64, 
         };
         println!("kronos: profil: {:<34} {:>9.1} ms {:>7.3} ms/simbol {:>5.1} %{}", prof::NAMES[k], ms(c), ms(c) / per, pct(c), rate);
     }
+    // P6-43 (C-59): how many waits for the threads, and what one costs on average.
+    let (barriers, yields) = (prof::counted(prof::BARRIERS), prof::counted(prof::YIELDS));
+    println!(
+        "kronos: profil: bariere (asteptari ale firelor): {} = {:.1} pe simbol, {:.1} us in medie pe bariera; cedari ale procesorului: {}",
+        barriers,
+        barriers as f64 / per,
+        ms(prof::get(prof::SYNC).0) * 1000.0 / barriers.max(1) as f64,
+        yields
+    );
     for (name, c) in [("afisarea textului pe ecran", screen), ("alegerea simbolului (argmax)", pick)] {
         known += c;
         println!("kronos: profil: {:<34} {:>9.1} ms {:>7.3} ms/simbol {:>5.1} %", name, ms(c), ms(c) / per, pct(c));
@@ -663,6 +676,20 @@ fn main() -> i64 {
             return 2;
         }
     };
+    if let Some(n) = o.pool_test {
+        let r = kgr::self_test_pool(n);
+        kgr::stop_pool();
+        return match r {
+            Ok(jobs) => {
+                println!("kronos: test fire: {} lucrari cu 1..{} parti, fiecare element scris o data, firele fara parte nu sunt asteptate (OK)", jobs, n);
+                0
+            }
+            Err(e) => {
+                println!("kronos: test fire: GRESIT: {}", e);
+                1
+            }
+        };
+    }
     let vectors = match &o.vectors {
         Some((json, kind)) => match load_vectors(json, kind) {
             Ok((j, model, sum)) => {

@@ -11,7 +11,7 @@
 //! positions are kept (a cache), so generating one more token costs one row, not the whole text again.
 
 use alloc::{string::String, vec, vec::Vec};
-use core::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicUsize, Ordering};
 use gpu_compute::{math, reference};
 
 /// Most threads one forward pass uses (the workstation has 36; the kernel allows 64 per program).
@@ -416,39 +416,65 @@ fn dot_q8_avx2(row: &[u8], x: &[f32]) -> f32 {
 // part and count themselves done; `par` waits the same way. Each output element is still computed by exactly one
 // thread with the same code, so the results are the same bit for bit whatever the number of threads.
 
+// P6-43 (C-59): on the workstation (36 threads) the threads waited 62.9 % of the time, ~105 us per wait, while a wait on
+// 36 cores should cost a few us. Two causes, both fixed here:
+// - `par` waited for EVERY worker, also those without a part (qkv + attention and the projection use 12 parts of 36);
+//   those idled through the long qkv + attention split and, after 4000 pauses, gave their processor away (`yield`,
+//   through the scheduler's single lock), so the next product waited for them to come back. Now the job word holds
+//   the generation AND the number of parts: only workers with a part read the job and are waited for.
+// - the shared DONE counter (bumped by 35 threads) shared a cache line with GEN (read by all of them in their spin):
+//   every bump disturbed every spinner. Now each worker has its own "done" word on its own cache line.
+// And the waiting threads stay awake: with no more threads than processors they no longer give their processor away
+// every few thousand pauses (only after ~65 000, a few ms: longer than any product).
+
 struct Job<'a> {
     n: usize,
     parts: usize,
     f: &'a (dyn Fn(usize, usize, usize) + Sync),
 }
 
-/// Address of the `Job` being run (valid until every worker counted itself in DONE).
-static JOB: AtomicUsize = AtomicUsize::new(0);
-/// Bumped by `par` for every job (and once more to stop the pool).
-static GEN: AtomicUsize = AtomicUsize::new(0);
-/// Workers done with the current generation.
-static DONE: AtomicUsize = AtomicUsize::new(0);
+/// One word on its own cache line (no false sharing between the threads that spin on different words).
+#[repr(align(128))]
+struct Line(AtomicUsize);
+
+/// Address of the `Job` being run (valid until every worker with a part has signalled its generation as done).
+static JOB: Line = Line(AtomicUsize::new(0));
+/// `generation << 8 | parts` of the current job (written by `par` after `JOB`); generation bumped once per job and once
+/// more to stop the pool (then parts = 0xff: every worker sees it). Read in ONE load, so a worker never pairs one
+/// job's generation with another job's number of parts.
+static STATE: Line = Line(AtomicUsize::new(0));
+/// Per worker (index = part - 1): the last generation it finished.
+static DONE: [Line; MAX_THREADS] = [const { Line(AtomicUsize::new(0)) }; MAX_THREADS];
 /// Workers started (they are parts 1..=WORKERS); only the main thread starts or stops them.
 static WORKERS: AtomicUsize = AtomicUsize::new(0);
 static QUIT: AtomicBool = AtomicBool::new(false);
 /// Thread id and stack of every worker (index = part - 1).
 static HANDLES: [(AtomicI64, AtomicUsize); MAX_THREADS] = [const { (AtomicI64::new(0), AtomicUsize::new(0)) }; MAX_THREADS];
+/// Spins of a waiting thread between two `yield`s: SPINS when the program has more threads than processors (as in
+/// QEMU: the thread it waits for may need this processor), SPINS_AWAKE otherwise (P6-43).
+static SPIN_LIMIT: AtomicU32 = AtomicU32::new(SPINS);
 
-/// Spins of a waiting thread between two `yield`s (gives the processor away when threads outnumber processors, as in
-/// QEMU; costs ~1 us on a free core).
+/// Spins between two `yield`s when threads outnumber processors (~1 us of pauses on a free core).
 const SPINS: u32 = 4000;
+/// Spins between two `yield`s when every thread has its processor (a few ms: far longer than any product, short enough
+/// that an idle worker, not a busy one taken by the 10 ms timer, gives its processor to a system thread that needs one).
+const SPINS_AWAKE: u32 = 1 << 16;
+const PARTS_MASK: usize = 0xff;
+const _: () = assert!(MAX_THREADS < PARTS_MASK);
 
 fn split(n: usize, parts: usize, part: usize) -> (usize, usize) {
     (n * part / parts, n * (part + 1) / parts)
 }
 
-fn spin_until(done: impl Fn() -> bool) {
+fn spin_until(mut done: impl FnMut() -> bool) {
+    let limit = SPIN_LIMIT.load(Ordering::Relaxed);
     let mut spins = 0;
     while !done() {
         core::hint::spin_loop();
         spins += 1;
-        if spins == SPINS {
+        if spins >= limit {
             spins = 0;
+            prof::count(prof::YIELDS);
             cyber_user::yield_now();
         }
     }
@@ -459,29 +485,39 @@ extern "C" fn worker(arg: u64) -> i64 {
     let part = (arg & 0xff) as usize;
     let mut seen = (arg >> 8) as usize;
     loop {
-        spin_until(|| GEN.load(Ordering::Acquire) != seen);
-        seen = GEN.load(Ordering::Acquire);
+        let mut state = 0;
+        spin_until(|| {
+            state = STATE.0.load(Ordering::Acquire);
+            state >> 8 != seen
+        });
+        seen = state >> 8;
         if QUIT.load(Ordering::Acquire) {
-            DONE.fetch_add(1, Ordering::AcqRel);
             return 0;
         }
-        // SAFETY: JOB holds the address of the Job on `par`'s stack, published before GEN was bumped; `par` does not
-        // return (so the Job lives) until every worker, this one included, has counted itself in DONE below.
-        let job = unsafe { &*(JOB.load(Ordering::Acquire) as *const Job<'static>) };
-        if part < job.parts {
-            let (a, b) = split(job.n, job.parts, part);
-            (job.f)(part, a, b);
+        if part >= state & PARTS_MASK {
+            continue; // no part in this job: nobody waits for this thread
         }
-        DONE.fetch_add(1, Ordering::AcqRel);
+        // SAFETY: JOB holds the address of the Job on `par`'s stack, written before STATE; this worker has a part in
+        // generation `seen`, so `par` does not return (the Job lives, JOB is not overwritten) until this worker has
+        // stored `seen` in its DONE word below.
+        let job = unsafe { &*(JOB.0.load(Ordering::Acquire) as *const Job<'static>) };
+        let (a, b) = split(job.n, job.parts, part);
+        (job.f)(part, a, b);
+        DONE[part - 1].0.store(seen, Ordering::Release);
     }
 }
 
 /// Starts workers until there are `want` (fewer if the kernel refuses); returns how many there are.
 fn grow_pool(want: usize) -> usize {
     let mut have = WORKERS.load(Ordering::Relaxed);
+    if have >= want.min(MAX_THREADS - 1) {
+        return have;
+    }
     while have < want.min(MAX_THREADS - 1) {
         let part = have + 1;
-        let (id, stack) = cyber_user::thread::spawn_with_stack(worker, part as u64 | (GEN.load(Ordering::Acquire) as u64) << 8);
+        let generation = STATE.0.load(Ordering::Acquire) >> 8;
+        DONE[have].0.store(generation, Ordering::Relaxed);
+        let (id, stack) = cyber_user::thread::spawn_with_stack(worker, part as u64 | (generation as u64) << 8);
         if id < 0 {
             break;
         }
@@ -490,6 +526,9 @@ fn grow_pool(want: usize) -> usize {
         have += 1;
         WORKERS.store(have, Ordering::Release);
     }
+    // The program's threads = the workers + this one: stay awake only if each has its own processor.
+    let cpus = cyber_user::cpus().max(1) as usize;
+    SPIN_LIMIT.store(if have < cpus { SPINS_AWAKE } else { SPINS }, Ordering::Relaxed);
     have
 }
 
@@ -499,9 +538,9 @@ pub fn stop_pool() {
     if w == 0 {
         return;
     }
-    DONE.store(0, Ordering::Relaxed);
     QUIT.store(true, Ordering::Release);
-    GEN.fetch_add(1, Ordering::AcqRel);
+    let generation = (STATE.0.load(Ordering::Acquire) >> 8) + 1;
+    STATE.0.store(generation << 8 | PARTS_MASK, Ordering::Release);
     for h in HANDLES.iter().take(w) {
         cyber_user::thread::join(h.0.load(Ordering::Relaxed));
     }
@@ -526,20 +565,57 @@ pub fn par_parts(n: usize, parts: usize, f: &(dyn Fn(usize, usize, usize) + Sync
         return;
     }
     let workers = grow_pool(parts - 1);
+    // Parts 1..=helped run on workers; parts without a worker (the kernel refused a thread) run here.
+    let helped = workers.min(parts - 1);
     let job = Job { n, parts, f };
-    JOB.store(&job as *const Job as usize, Ordering::Release);
-    DONE.store(0, Ordering::Release);
-    GEN.fetch_add(1, Ordering::AcqRel);
-    // Parts without a worker (the kernel refused a thread) run here.
-    for p in workers + 1..parts {
+    JOB.0.store(&job as *const Job as usize, Ordering::Release);
+    let generation = (STATE.0.load(Ordering::Relaxed) >> 8) + 1;
+    STATE.0.store(generation << 8 | (helped + 1), Ordering::Release);
+    for p in helped + 1..parts {
         let (a, b) = split(n, parts, p);
         f(p, a, b);
     }
     let (a, b) = split(n, parts, 0);
     f(0, a, b);
     let t0 = prof::now();
-    spin_until(|| DONE.load(Ordering::Acquire) == workers);
+    for d in DONE.iter().take(helped) {
+        spin_until(|| d.0.load(Ordering::Acquire) == generation);
+    }
     prof::add(prof::SYNC, prof::now() - t0, 0);
+    prof::count(prof::BARRIERS);
+}
+
+/// P6-43: many splits in a row with a changing number of parts (1..=max_parts, up and down, so workers without a part
+/// in one job get one in the next): every element of every job must be written exactly once, by the right part.
+/// Returns the number of jobs.
+pub fn self_test_pool(max_parts: usize) -> Result<usize, String> {
+    let max_parts = max_parts.clamp(1, MAX_THREADS);
+    const N: usize = 97;
+    let hits: Vec<AtomicUsize> = (0..N).map(|_| AtomicUsize::new(0)).collect();
+    let mut jobs = 0;
+    for round in 0..200 {
+        let parts = if round % 2 == 0 { 1 + round / 2 % max_parts } else { max_parts - round / 2 % max_parts };
+        for h in &hits {
+            h.store(0, Ordering::Relaxed);
+        }
+        par_parts(N, parts, &|part, a, b| {
+            for i in a..b {
+                hits[i].fetch_add(1 + (part << 8), Ordering::Relaxed);
+            }
+        });
+        jobs += 1;
+        let parts_used = parts.min(N);
+        for p in 0..parts_used {
+            let (a, b) = split(N, parts_used, p);
+            for (i, h) in hits.iter().enumerate().take(b).skip(a) {
+                let v = h.load(Ordering::Relaxed);
+                if v != 1 + (p << 8) {
+                    return Err(alloc::format!("lucrarea {} ({} parti): elementul {} = {:#x}, asteptat {:#x}", jobs, parts, i, v, 1 + (p << 8)));
+                }
+            }
+        }
+    }
+    Ok(jobs)
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -570,6 +646,19 @@ pub mod prof {
         "din care asteptarea firelor",
     ];
 
+    /// Events counted by `count` (P6-43): finished waits for threads at the end of a split, and `yield`s of waiting threads.
+    pub const BARRIERS: usize = 0;
+    pub const YIELDS: usize = 1;
+    static COUNTS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+
+    pub fn count(what: usize) {
+        COUNTS[what].fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn counted(what: usize) -> u64 {
+        COUNTS[what].load(Ordering::Relaxed)
+    }
+
     static CYCLES: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
     static BYTES: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
 
@@ -590,6 +679,9 @@ pub mod prof {
         for i in 0..N {
             CYCLES[i].store(0, Ordering::Relaxed);
             BYTES[i].store(0, Ordering::Relaxed);
+        }
+        for c in &COUNTS {
+            c.store(0, Ordering::Relaxed);
         }
     }
 

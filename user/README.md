@@ -73,6 +73,11 @@
   pe orice număr de fire. Atenția se împarte pe (poziție, cap) în același bazin. `kronos --profil <text>` arată, după
   generare, unde s-a dus timpul simbolurilor noi (cicluri TSC): produsele qkv / proiecție / fc / ieșire pe straturi, capul de
   ieșire, atenția, restul, așteptarea firelor, afișarea pe ecran, argmax — în ms, ms/simbol, procente și GB/s de greutăți.
+  **P6-43 (C-59):** `par` așteaptă **doar firele care au o parte de lucru** (generația și numărul de părți într-un singur cuvânt
+  atomic), fiecare fir semnalează „gata” pe linia lui de cache (fără contor comun), iar când firele programului nu sunt mai multe
+  decât procesoarele, cele care așteaptă nu mai cedează procesorul la ~4000 de pauze (abia la ~65 000, câteva ms). `--profil` are rândul
+  „bariere: N pe simbol, … us în medie”, `kronos-calcul --cauta` rândul „bariera goala pe N fire”, `kronos --test-fire N` verifică
+  bazinul (200 de lucrări cu 1..N părți, fiecare element scris o dată).
   `kronos --repetitie <p>` (opțional, implicit oprit): logit-ul fiecărui simbol deja apărut se împarte la `p` (dacă e pozitiv)
   sau se înmulțește (dacă e negativ) înainte de alegere; fără opțiune, alegerea e greedy simplă, ca înainte.
 - `kronos-calcul --cauta [--emb E] [--iesire <dir>]` (P6-28, comanda C-27, `src/cauta.rs`) — primul pas spre „OS-ul care se

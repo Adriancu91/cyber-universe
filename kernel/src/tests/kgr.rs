@@ -48,6 +48,10 @@ pub fn run() {
     // P6-29: the thread pool with more threads than processors (workers yield) must still match the reference.
     let pool = ["kronos", "--verifica", "/disk/kronos/mini-q8.kgr", "/disk/kronos/mini-q8.ref", "--fire", "4"];
     assert!(run_one(&pool) == 0, "kronos: Q8_0 pe 4 fire diferit de referinta");
+    // P6-43 (C-59): the pool alone, the number of parts changing at every job (workers without a part are not waited
+    // for, and must still take the next job that has one for them).
+    let pool_test = ["kronos", "--test-fire", "6"];
+    assert!(run_one(&pool_test) == 0, "kronos: testul grupului de fire a esuat");
     // P6-39: the projection on its own thread count (1 of 4, and 3 = not a divisor of the heads): the same tokens.
     for n in ["1", "3"] {
         let proj = ["kronos", "--verifica", "/disk/kronos/mini-q8.kgr", "/disk/kronos/mini-q8.ref", "--fire", "4", "--fire-proiectie", n];
