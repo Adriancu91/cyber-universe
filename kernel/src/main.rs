@@ -736,6 +736,12 @@ fn test_sleep_and_mutex() {
     }
     let total = *COUNTER.lock();
     assert!(total == 40_000, "mutex: {} in loc de 40000", total);
+    // A refused `try_lock` must leave the lock with its holder (it used to release it).
+    let held = COUNTER.lock();
+    assert!(COUNTER.try_lock().is_none(), "mutex: try_lock a reusit pe un lacat luat");
+    assert!(COUNTER.try_lock().is_none(), "mutex: un try_lock refuzat a eliberat lacatul");
+    drop(held);
+    assert!(COUNTER.try_lock().is_some(), "mutex: try_lock refuzat pe un lacat liber");
     info!("test: sleep_ms(500) = {} ticks; mutex: 4 fire x 10000 = {}", slept, total);
 }
 

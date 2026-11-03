@@ -35,10 +35,15 @@ impl<T> Mutex<T> {
 
     /// Takes the lock only if it is free right now (never sleeps).
     pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
-        self.locked
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
-            .then_some(MutexGuard { mutex: self })
+        // The guard is built only when the lock was taken: a guard built and dropped on failure (as `then_some`
+        // did, it evaluates its argument eagerly) would release the lock of the thread that holds it. That broke
+        // `thread_join` (which polls PROCS with `try_lock`) on several processors: two threads in PROCS at once,
+        // a program's thread list corrupted ("fir fara proces"), or a hang (kronos-calcul, CI 2026-11-03).
+        if self.locked.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+            Some(MutexGuard { mutex: self })
+        } else {
+            None
+        }
     }
 }
 
