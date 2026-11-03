@@ -372,7 +372,7 @@ pub(super) fn i6_falcon<W: Mmio + ?Sized, K: Clock + ?Sized>(
     lines: &mut Vec<String>,
 ) -> bool {
     let i6 = GuardedBar0::new(rw, journal, permit).and_then(|mut b| falcon::fwsec_frts_dma(&mut b, clock, ucode, image, frts));
-    match &i6 {
+    let ok = match &i6 {
         Ok(w) => {
             lines.push(format!("{}: pas I6 FWSEC-FRTS: ok; WPR2 {:#x}..{:#x} (= regiunea FRTS)", p, w.start, w.end));
             true
@@ -381,6 +381,29 @@ pub(super) fn i6_falcon<W: Mmio + ?Sized, K: Clock + ?Sized>(
             lines.push(format!("{}: pas I6 FWSEC-FRTS: ESEC: {} (oprit la prima eroare)", p, e));
             false
         }
+    };
+    lines.push(wpr2_detail(p, rw, journal, frts));
+    ok
+}
+
+/// P6-44 (C-61): after I6, success or not, the raw WPR2 registers and the form of the end the board wrote (3 reads,
+/// `falcon::check_frts_detail`, no permit: reads only). On 3 nov the board's HI was most likely the last 4 KiB page of
+/// the region, not its exclusive end; this line shows it, and the journal on the stick keeps the 3 reads.
+fn wpr2_detail<W: Mmio + ?Sized>(p: &str, rw: &mut W, journal: &mut Journal, frts: (u64, u64)) -> String {
+    match GuardedBar0::new(rw, journal, None).and_then(|mut b| falcon::check_frts_detail(&mut b, frts)) {
+        Ok(c) => format!(
+            "{}: WPR2 citit dupa I6: LO {:#010x} HI {:#010x} (capat: {}) = {:#x}..{:#x}",
+            p,
+            c.lo_raw,
+            c.hi_raw,
+            match c.end_form {
+                falcon::Wpr2End::Exclusive => "exclusiv",
+                falcon::Wpr2End::InclusiveLastPage => "ultima pagina",
+            },
+            c.wpr2.start,
+            c.wpr2.end
+        ),
+        Err(e) => format!("{}: WPR2 citit dupa I6: {}", p, e),
     }
 }
 

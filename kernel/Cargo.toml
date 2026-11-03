@@ -15,11 +15,11 @@ cyber_rtl8168 = { path = "../rtl8168" }
 cyber_e1000e = { path = "../e1000e" }
 # P6-19 (C-16): the Cyber-GPU libraries (MIT, same author), pinned to one commit (P6-35: 2c9c90c, with fw_check + FwsecLocation::lines; P6-31: 8313973 on their branch g0-g2-fundatie, with vbios_diag; P6-21: dac2e32; was 41e44ba = tag `stabil-2026-10-23`).
 # Read-only use: PCI decoding, the GA104 level-0 probe. The kernel's ConfigSpace adapter refuses every write (drivers/gpu.rs).
-gpu-core = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "4e6f747" }
-gpu-pci = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "4e6f747" }
-nvidia-ga104 = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "4e6f747" }
+gpu-core = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "3286a3b" }
+gpu-pci = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "3286a3b" }
+nvidia-ga104 = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "3286a3b" }
 # SIMULATION only (`gpu identifica --sim` in test builds); never compiled into the kernel people boot.
-gpu-sim = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "4e6f747", optional = true }
+gpu-sim = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "3286a3b", optional = true }
 
 [features]
 # P6-40 (C-52): the TEST STICK for the I6 window with Adrian: `gpu i6 --scrie` may write to the card (Bus Master, GSP

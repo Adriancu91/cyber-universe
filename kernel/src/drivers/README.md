@@ -73,7 +73,7 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   **SIMULARE**, iar dimensionarea BAR-urilor (care scrie) se face doar în model.
   Test: scenariile `gpu` (calea reală în QEMU → „nicio placa NVIDIA”, `--sim` refuzat în build-ul obișnuit) și `gpu-sim`;
   `tools/after-gpu.sh` verifică în sursă că adaptoarele doar refuză (și că dimensionarea apare doar în blocul de simulare).
-- **`gpu gfw` și `gpu vbios` (P6-21, comanda C-19):** pașii I2 și I3 din Cyber-GPU (fixat acum pe `4e6f747`, P6-42; înainte `9597863`, P6-40; înainte `aee06c4`, P6-37; înainte `2c9c90c`, P6-35, `8313973`, P6-31, și `dac2e32`; ramura lor
+- **`gpu gfw` și `gpu vbios` (P6-21, comanda C-19):** pașii I2 și I3 din Cyber-GPU (fixat acum pe `3286a3b`, P6-44; înainte pe `4e6f747`, P6-42; înainte `9597863`, P6-40; înainte `aee06c4`, P6-37; înainte `2c9c90c`, P6-35, `8313973`, P6-31, și `dac2e32`; ramura lor
   `g0-g2-fundatie`), **doar citire**. `gpu gfw` așteaptă (max 4 s) ca firmware-ul plăcii să termine pornirea: rundele, timpul,
   `PRIV_LEVEL_MASK`, progresul (gata = `0xff`). `gpu vbios` citește VBIOS-ul prin fereastra PROM (BAR0 `0x300000`, 1 MiB): imaginile
   (offset, tip PCI-AT/EFI/FWSEC, mărime), tabela BIT și jetonul 0x70, numărul de citiri (max 300 000, 2 s). Ambele au nevoie de primii
@@ -102,6 +102,11 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   Verificat o dată, de mână, cu un stick de test de 128 MiB cu fișiere false de mărimea oficială (gsp de 63.571.696 octeți): 4 × „ALT CONTINUT”, fără probleme de memorie.
 - **Fixarea `aee06c4` (P6-37, comanda C-42):** Cyber-GPU după C-39 — antetele `booter_load`, `booter_unload` și `bootloader` citite după forma
   fișierelor oficiale 570.144 (`bin_size` nu e mărimea fișierului). Față de `2c9c90c` doar adăugări; codul `gpu firmware` din OS neschimbat.
+- **Capătul WPR2 după I6 (P6-44, comanda C-61):** Cyber-GPU fixat pe `3286a3b` (= `af02bea` + documentație; față de `4e6f747` doar adăugări în
+  `nvidia-ga104` și `gpu-sim`). `falcon::check_frts` acceptă capătul WPR2 și ca „ultima pagină de 4 KiB” (placa, 3 nov) și numește registrul
+  greșit (LO sau HI). După I6 (`gpu i6 --scrie`, pasul `i6-fwsec-frts` din `gpu lant`), reușit sau nu, OS-ul citește LO/HI cu
+  `falcon::check_frts_detail` (3 citiri, fără permis de scriere) și scrie „WPR2 citit dupa I6: LO … HI … (capat: ultima pagina / exclusiv)”
+  sau motivul exact. Test: `gpu-i6`, `gpu-tur` (modelul scrie HI ca ultima pagină).
 - **`gpu tur` și `gpu lant` (P6-42, comanda C-55, fișierul `gpu_tur.rs`):** Cyber-GPU fixat pe `4e6f747` (≥ `911e6d0`; față de
   `9597863` doar adăugări: `read_tour`, `chain`, `board_compare`, `gpu_sim::observed`). Schița lor: `integration/cyber-universe/C-54_gpu-tur-si-lant.md`.
   - `gpu tur` = **doar citire**: `read_tour::run_tour` prin adaptorul de configurație doar-citire și fereastra BAR0 de 16 MiB doar-citire;
