@@ -322,6 +322,8 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 - [x] **P6-43** Kronos în OS: mai puțină așteptare între fire (C-59): se așteaptă doar firele care au lucru, semnal „gata” pe fir (fără contor comun), firele nu mai cedează procesorul la fiecare ~4000 de pauze când sunt destule procesoare; `--profil` arată barierele (număr, µs) și `--cauta` costul unei bariere. Simbolurile identice. Dep: P6-39
   Rezultat (2026-11-03): în QEMU simbolurile identice (vectorii oficiali F32/Q8_0, `--control`, proiecția pe 1 și 3 fire, 4 fire pe 2 nuclee); testul nou `kronos --test-fire 6` (200 de lucrări cu 1..6 părți, fiecare element scris o dată) trece; `--profil` arată barierele, `--cauta` „bariera goala pe 2 fire: ~1,4 us”. Suita locală 86 trecute + 1 sărit (`kronos-calcul` = temporizatorul cunoscut la `-smp 4`, pică la pornire, înainte de program). Viteza reală = workstation (Adrian).
 
+- [~] **P6-44** Fixarea cyber-gpu ≥ `af02bea` (C-61, capătul WPR2): fixare pe `3286a3b`; după `gpu i6 --scrie` / `gpu lant` se citesc LO/HI brute (`falcon::check_frts_detail`, 3 citiri) și se afișează forma capătului; test în QEMU/simulare; Release nou cu stick-ul de test. Dep: P6-42
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
