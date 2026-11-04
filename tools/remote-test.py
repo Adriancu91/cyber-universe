@@ -5,11 +5,11 @@ Started by tools/before-remote.sh; tools/after-remote.sh checks the log.
   remote-test.py <key file> <log file>
 """
 import importlib.util
-import sys
-sys.dont_write_bytecode = True  # no __pycache__ next to the tools
 import os
 import sys
 import time
+
+sys.dont_write_bytecode = True  # no __pycache__ next to the tools
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location("remote_client", os.path.join(HERE, "remote-client.py"))
