@@ -341,7 +341,7 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 
 - [~] **P6-50** (prima, ordinea nouă din 4 nov 23:10) F3 (C-68): actualizare de sine din Release-uri (HTTPS + SHA-256) cu backup și revenire automată dacă versiunea nouă nu pornește; rapoarte urcate în hub (token cu drepturi minime, doar pe stick — îl face Adrian). Dep: P6-08
 
-- [ ] **P6-51** F4 (C-68, ramura paralelă — o altă sesiune lucrează pe `wip/P7-F4-hardware`, nu se dublează): citirea completă a hardware-ului — PCI/USB/ACPI cu nume și stare; placa Wi-Fi doar identificată și citită (fără scriere). Dep: —
+- [~] **P6-51** F4 (C-68; ramura `wip/P7-F4-hardware` gata cu CI verde — integrarea în `main`: sesiunea programată 4 nov 21:42 UTC): citirea completă a hardware-ului — PCI/USB/ACPI cu nume și stare; placa Wi-Fi doar identificată și citită (fără scriere). Dep: —
 
 - [ ] **P6-52** F8/F9 (C-68): editor de text + terminal + git simplu în OS; unelte de test/profil/jurnal (comparare rapoarte), toate pe lista albă. Dep: P6-49
   Pas 1 gata (2026-11-04): `compara <f1> <f2>` (F9: compararea rapoartelor), pe lista albă. Rămân: editorul / terminalul / git simplu (după ce F2 de pe ramura paralelă intră în `main`).
