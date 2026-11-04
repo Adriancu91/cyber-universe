@@ -56,6 +56,8 @@ test-high-dma = ["qemu-test"]
 test-dns = ["qemu-test"]
 # P5-04: TCP against the harness's web server (tools/before-tcp.sh) at 10.0.2.2:18080.
 test-tcp = ["qemu-test"]
+# P6-50: the automatic return to the old version (trial, confirmation, return) on a writable test stick.
+test-revenire = ["qemu-test"]
 # P5-05: /bin/fetch and /bin/udp against tools/before-appnet.sh (web server + UDP echo).
 test-appnet = ["qemu-test"]
 # P5-10: the official vectors of crypto/ (SHA-2, HMAC, HKDF) run in the kernel.

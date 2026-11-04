@@ -9,6 +9,9 @@
 //! printed. The stick must be marked for writing (an empty file `cyber.rw` in its root, see kernel/src/fs/fat32.rs).
 //! /etc/update.conf (optional, `name = value`) can change: repo, host, port, address (connect there for every host
 //! instead of resolving it — tests only), token (the token file), dir (where the stick is mounted).
+//! P6-50 (C-68 F3): before the swap, the running version is copied to `boot/vechi/` (kernel, initrd.tar, VERSIUNE); after
+//! it, `boot/incercare.txt` = "de-incercat" + the tag: the next boot is a trial, and the kernel (kernel/src/revenire.rs)
+//! puts the old version back if the new one never confirms.
 //! Exit code 0 = updated or already up to date, 1 = nothing changed because of an error.
 #![no_std]
 #![no_main]
@@ -42,6 +45,10 @@ const FILES: [(&str, &str); 6] = [
     ("limine-uefi-cd.bin", "boot/limine/limine-uefi-cd.bin"),
     ("VERSIUNE", "VERSIUNE"),
 ];
+
+/// The files copied to boot/vechi/ before an update (P6-50): (place on the stick, its copy).
+const KEPT: [(&str, &str); 3] =
+    [("boot/kernel", "boot/vechi/kernel"), ("boot/initrd.tar", "boot/vechi/initrd.tar"), ("VERSIUNE", "boot/vechi/VERSIUNE")];
 
 /// Set once files start being put in place: an error after that no longer means "nothing changed".
 static SWAPPING: AtomicBool = AtomicBool::new(false);
@@ -264,6 +271,13 @@ fn run(c: &Config, force: bool) -> Result<(), String> {
         write_checked(&format!("{}.nou", path_of(c, rel)), &data, &sum)?;
         println!("actualizeaza: {} ({} KiB) descarcat, verificat, scris", rel, data.len().div_ceil(1024));
     }
+    // P6-50: a copy of the running version, for the automatic return.
+    for (rel, kept) in KEPT {
+        let Some(old) = read_file(&path_of(c, rel), MAX_BODY) else { continue };
+        let sum: [u8; 32] = Sha256::digest(&old).into();
+        write_checked(&path_of(c, kept), &old, &sum)?;
+    }
+    println!("actualizeaza: versiunea de acum pastrata in boot/vechi/ (pentru revenire)");
     if cyber_user::sync(&c.dir) < 0 {
         println!("actualizeaza: atentie: stick-ul nu a confirmat golirea memoriei");
     }
@@ -287,9 +301,15 @@ fn run(c: &Config, force: bool) -> Result<(), String> {
         }
         let _ = cyber_user::remove(&old);
     }
+    // P6-50: the next boot is a trial of the new version.
+    let marker = format!("de-incercat\n{}\n", tag);
+    let sum: [u8; 32] = Sha256::digest(marker.as_bytes()).into();
+    if let Err(e) = write_checked(&path_of(c, "boot/incercare.txt"), marker.as_bytes(), &sum) {
+        println!("actualizeaza: atentie: marcajul de incercare nu s-a scris ({}); versiunea noua porneste fara revenire automata", e);
+    }
     if cyber_user::sync(&c.dir) < 0 {
         println!("actualizeaza: atentie: stick-ul nu a confirmat golirea memoriei; asteapta 10 secunde inainte sa-l scoti");
     }
-    println!("actualizeaza: gata - stick-ul are acum {}. Reporneste calculatorul.", tag);
+    println!("actualizeaza: gata - stick-ul are acum {}. Reporneste calculatorul (prima pornire e o incercare: daca nu merge, revine singur la versiunea veche).", tag);
     Ok(())
 }

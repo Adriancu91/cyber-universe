@@ -28,6 +28,7 @@ mod term;
 #[cfg(feature = "qemu-test")]
 mod qemu;
 mod random;
+mod revenire;
 #[cfg(feature = "qemu-test")]
 mod tests;
 mod time;
@@ -159,7 +160,15 @@ extern "C" fn kernel_main() -> ! {
 
     #[cfg(not(feature = "qemu-test"))]
     {
+        // P6-50: a new version on trial is confirmed later; one that never confirmed is replaced by the old one.
+        if revenire::at_boot("/usb") == revenire::Outcome::Returned {
+            power::reboot(None);
+        }
+        if revenire::auto_update("/usb") {
+            power::reboot(None); // `/usb/actualizare-automata`: a new version was put in place
+        }
         shell::auto::run_if_present(); // P6-41: `/usb/auto/teste.txt` = the automatic test loop (restarts at the end)
+        revenire::system_ready();
         run_desktop(); // the desktop first; when it closes (Escape), the text shell
         loop {
             shell::run();
@@ -274,6 +283,8 @@ fn run_tests() -> ! {
     test_claude_tools();
     #[cfg(feature = "test-update")]
     test_update();
+    #[cfg(feature = "test-revenire")]
+    revenire::self_test();
     #[cfg(feature = "test-ghpush")]
     test_ghpush();
     #[cfg(feature = "test-usb")]
@@ -1588,6 +1599,10 @@ fn test_update() {
         assert!(fs::kind(f).is_err(), "test: {} a ramas pe disc", f);
     }
     assert!(run(Some(b"tok-bun\n"), "actualizare") == 0, "test: actualizarea a esuat");
+    // P6-50: the running version kept in boot/vechi/, the next boot marked as a trial.
+    assert!(fs::read_all("/disk/boot/vechi/kernel").ok() == Some(old_kernel.clone()), "test: boot/vechi/kernel nu e nucleul vechi");
+    assert!(fs::read_all("/disk/boot/incercare.txt").is_ok_and(|m| m.starts_with(b"de-incercat\nos-42")), "test: marcajul de incercare lipseste");
+    info!("test: actualizare: versiunea veche pastrata in boot/vechi/, marcaj de-incercat os-42");
     assert!(run(Some(b"tok-bun"), "a doua oara") == 0, "test: a doua rulare a esuat");
     assert!(fs::read_all("/disk/boot/kernel").is_ok_and(|k| k != old_kernel && k.len() == 1_300_007), "test: nucleul nu e cel nou");
     info!("test: actualizarea OK (fara token refuzat, suma gresita fara schimbari, copie veche refacuta, la zi a doua oara)");

@@ -337,9 +337,9 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 
 - [x] ANULAT **P6-48** F1 (C-68): mașina virtuală pe Windows. **Anulată de Adrian (4 nov, 23:10 ora României): fără mașina virtuală**, testele rămân în CI (QEMU) și pe workstation cu stick. Făcut și scos curat: discul `cyber-universe-vm.qcow2`, `vm-pornire.ps1`, testul din CI (commit-urile `f41bf22`, apoi scoase); rămâne doar limita CI de 60 min.
 
-- [~] **P6-49** F2 (C-68, ramura paralelă `wip/P6-49-remote`): remote text direct din OS — comenzile shell-ului prin rețea (portul 2323), cheie doar pe stick, doar comenzile din lista albă. Dep: —
+- [ ] **P6-49** F2 (C-68): remote text din OS — **se face pe ramura paralelă `wip/P7-F2-remote` de o altă sesiune** (cum cere ordinea nouă). O variantă dublură, făcută aici înainte să văd ramura, a rămas pe `wip/P6-49-remote` și **nu se îmbină**. Dep: —
 
-- [ ] **P6-50** (prima, ordinea nouă din 4 nov 23:10) F3 (C-68): actualizare de sine din Release-uri (HTTPS + SHA-256) cu backup și revenire automată dacă versiunea nouă nu pornește; rapoarte urcate în hub (token cu drepturi minime, doar pe stick — îl face Adrian). Dep: P6-08
+- [~] **P6-50** (prima, ordinea nouă din 4 nov 23:10) F3 (C-68): actualizare de sine din Release-uri (HTTPS + SHA-256) cu backup și revenire automată dacă versiunea nouă nu pornește; rapoarte urcate în hub (token cu drepturi minime, doar pe stick — îl face Adrian). Dep: P6-08
 
 - [ ] **P6-51** F4 (C-68, ramura paralelă — o altă sesiune lucrează pe `wip/P7-F4-hardware`, nu se dublează): citirea completă a hardware-ului — PCI/USB/ACPI cu nume și stare; placa Wi-Fi doar identificată și citită (fără scriere). Dep: —
 
