@@ -56,6 +56,9 @@ test-high-dma = ["qemu-test"]
 test-dns = ["qemu-test"]
 # P5-04: TCP against the harness's web server (tools/before-tcp.sh) at 10.0.2.2:18080.
 test-tcp = ["qemu-test"]
+# P6-49 (F2): the remote console against tools/remote-test.py (QEMU hostfwd 127.0.0.1:12323 -> 2323); the key is
+# made by tools/before-remote.sh on the test disk, never in the repository.
+test-remote = ["qemu-test"]
 # P5-05: /bin/fetch and /bin/udp against tools/before-appnet.sh (web server + UDP echo).
 test-appnet = ["qemu-test"]
 # P5-10: the official vectors of crypto/ (SHA-2, HMAC, HKDF) run in the kernel.

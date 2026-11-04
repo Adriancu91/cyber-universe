@@ -33,7 +33,7 @@ pub const R_CREATE: u8 = 4;
 
 /// Files only programs that ask for them may see: these names in these folders (compared without regard to case:
 /// FAT). The real ones live on the stick; /disk and /etc are covered too (a copy there, and the QEMU tests).
-pub const SECRET_NAMES: &[&str] = &["claude.key", "github.token"];
+pub const SECRET_NAMES: &[&str] = &["claude.key", "github.token", "remote.cheie"];
 pub const SECRET_DIRS: &[&str] = &["/usb", "/disk", "/etc"];
 
 #[derive(Clone, Debug, PartialEq, Eq)]

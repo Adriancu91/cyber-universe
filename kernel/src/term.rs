@@ -16,6 +16,8 @@ struct Term {
     output: VecDeque<u8>,
     /// The window program has ended (or the shell said `exit`).
     closed: bool,
+    /// The remote console (P6-49): its shell runs only the commands on the allow-list.
+    restricted: bool,
 }
 
 static TERMS: Mutex<Vec<Term>> = Mutex::new(Vec::new());
@@ -26,12 +28,26 @@ const OUTPUT_MAX: usize = 64 * 1024;
 
 /// Opens a terminal for the program on thread `owner` and starts its shell. Returns its id.
 pub fn open(owner: u64) -> u64 {
+    open_with(owner, false)
+}
+
+/// Opens a terminal whose shell runs only the allow-listed commands (the remote console, P6-49).
+pub fn open_restricted(owner: u64) -> u64 {
+    open_with(owner, true)
+}
+
+fn open_with(owner: u64, restricted: bool) -> u64 {
     let id = NEXT_ID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     let mut terms = TERMS.lock();
     // The shell thread looks itself up in TERMS, which stays locked until its entry exists.
     let shell = sched::spawn(shell_thread);
-    terms.push(Term { id, owner, shell, input: VecDeque::new(), output: VecDeque::new(), closed: false });
+    terms.push(Term { id, owner, shell, input: VecDeque::new(), output: VecDeque::new(), closed: false, restricted });
     id
+}
+
+/// Does the shell on thread `thread` run for the remote console (allow-list only)?
+pub fn is_restricted(thread: u64) -> bool {
+    TERMS.lock().iter().any(|t| t.shell == thread && thread != 0 && t.restricted)
 }
 
 fn shell_thread() {

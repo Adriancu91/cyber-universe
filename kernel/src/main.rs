@@ -258,6 +258,8 @@ fn run_tests() -> ! {
     test_dns();
     #[cfg(feature = "test-tcp")]
     test_tcp();
+    #[cfg(feature = "test-remote")]
+    test_remote();
     #[cfg(feature = "test-appnet")]
     test_appnet();
     #[cfg(feature = "test-crypto")]
@@ -1370,6 +1372,33 @@ fn test_tcp() {
 
     assert!(tcp::connect(server, 18081, 3000) == Err(tcp::Error::Refused), "test: portul inchis trebuia refuzat");
     info!("tcp: port inchis -> conexiune refuzata (corect)");
+}
+
+/// The remote console (P6-49, F2). The harness's client (tools/remote-test.py, started by tools/before-remote.sh)
+/// connects through QEMU's port forward: three wrong keys, the pause, the right key, allowed and refused commands,
+/// then `remote opreste` from the session. Here: no key -> no start; key on the disk -> start; wait until the client
+/// has stopped the service.
+#[cfg(feature = "test-remote")]
+fn test_remote() {
+    use net::remote;
+    remote::self_test();
+    assert!(proc::rights::is_secret("/disk/remote.cheie"), "test: remote.cheie trebuie sa fie fisier secret");
+    assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
+    fs::rename("/disk/remote.cheie", "/disk/remote.ascuns").expect("test: cheia de test lipseste de pe disc");
+    match remote::start(remote::PORT_DEFAULT) {
+        Err(msg) if msg.contains("lipseste cheia") => info!("{}", msg),
+        other => panic!("test: remote a pornit fara cheie: {:?}", other),
+    }
+    fs::rename("/disk/remote.ascuns", "/disk/remote.cheie").expect("test: cheia inapoi");
+    remote::start(remote::PORT_DEFAULT).expect("test: remote porneste");
+    assert!(remote::start(remote::PORT_DEFAULT).is_err(), "test: al doilea start trebuia refuzat");
+    info!("test: remote: astept clientul");
+    let deadline = arch::x86_64::apic::ticks() + 50 * arch::x86_64::apic::HZ;
+    while remote::running() {
+        assert!(arch::x86_64::apic::ticks() < deadline, "test: clientul nu a oprit serviciul ({})", remote::status());
+        sched::sleep_ms(100);
+    }
+    info!("test: remote: serviciul oprit din sesiune; {}", remote::status());
 }
 
 /// Programs on the network (P5-05): /bin/fetch downloads the test page over TCP, /bin/udp talks to the UDP

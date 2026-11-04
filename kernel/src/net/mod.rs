@@ -8,6 +8,7 @@ pub mod dhcp;
 pub mod dns;
 pub mod icmp;
 pub mod ipv4;
+pub mod remote;
 pub mod tcp;
 pub mod udp;
 
