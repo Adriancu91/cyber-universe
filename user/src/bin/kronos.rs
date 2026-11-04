@@ -18,6 +18,9 @@
 //! generating (default: `fire_proiectie` from the tuning file, else as many as the model's heads). `--profil` (P6-29, C-29): after the text, where the time of the generated
 //! tokens went (TSC cycles per kind of work: the products per layer kind, the output head, attention, the rest, the
 //! wait for threads, writing the text on the screen), with ms per token and GB/s of weights for the products.
+//! `--fara-cedari` (P6-47, C-67): waiting threads never yield their processor (refused with more threads than processors).
+//! With `--profil` and one block per token, every stage is also shown as seen by all threads (work, threads that worked,
+//! how late the last one started, yields).
 //! `--fara-ecran` (P6-36): the generated text is written only at the end (otherwise whole lines, in one block at most
 //! once a second, P6-39).
 //! `--repetitie <p>` (P6-29, optional, off by default): divides (or multiplies, when negative) the logit of every token
@@ -256,6 +259,8 @@ struct Opts {
     words: Vec<String>,
     encode_only: bool,
     profile: bool,
+    /// `--fara-cedari` (P6-47, C-67): waiting threads never give their processor away (only if threads <= processors).
+    no_yield: bool,
     /// `--fara-ecran` (P6-36): the generated text is written only at the end (nothing on the screen while generating).
     no_screen: bool,
     /// Repetition penalty (> 1), None = off.
@@ -284,6 +289,7 @@ fn parse_args() -> Result<Opts, String> {
         words: Vec::new(),
         encode_only: false,
         profile: false,
+        no_yield: false,
         no_screen: false,
         penalty: None,
         vectors: None,
@@ -316,6 +322,7 @@ fn parse_args() -> Result<Opts, String> {
             "--reglaj" => o.tuning = Some(val()?.into()),
             "--codeaza" => o.encode_only = true,
             "--profil" => o.profile = true,
+            "--fara-cedari" => o.no_yield = true,
             "--fara-ecran" => o.no_screen = true,
             "--repetitie" => {
                 let p: f32 = val()?.parse().map_err(|_| String::from("--repetitie cere un numar (de ex. 1.3)"))?;
@@ -613,6 +620,13 @@ fn tuning(o: &Opts) -> kgr::Tuning {
     if o.scalar {
         t.simd = false;
     }
+    // P6-47 (C-67): only when every thread has its processor (otherwise a spinning thread could keep the one it waits
+    // for from running until the timer takes the processor away).
+    let cpus = cyber_user::cpus().max(1) as usize;
+    if o.no_yield && t.threads > cpus {
+        println!("kronos: --fara-cedari refuzat: {} fire pe {} procesoare (firele care asteapta trebuie sa cedeze)", t.threads, cpus);
+    }
+    kgr::set_no_yield(o.no_yield && t.threads <= cpus);
     t
 }
 
@@ -630,6 +644,9 @@ fn penalize(logits: &mut [f32], seen: &[u32], p: f32) {
         }
     }
 }
+
+/// P6-47: short names of the block's stages in `--profil` (index = `prof` kind).
+const PROFILE_SHORT: [&str; kgr::prof::N] = ["qkv", "proiectie", "fc 4E", "iesire MLP", "cap", "atentie", "restul", "asteptare"];
 
 /// `--profil`: where the cycles of the generated tokens went.
 /// P6-39 (C-48): the generated text goes to the screen at most this often (whole lines, one block).
@@ -680,6 +697,46 @@ fn profile_report(m: &Model, passes: usize, total: u64, screen: u64, pick: u64, 
         us(prof::wait_part(prof::GATHER)),
         if m.tune.block { " (un bloc pe simbol: barierele = asteptarile intre etape, fara despartire)" } else { "" }
     );
+    // P6-47 (C-67): how the waiting threads behave, and (one block per token) every stage seen from ALL threads.
+    let cpus = cyber_user::cpus();
+    println!(
+        "kronos: profil: {} procesoare, {} {}; firele care asteapta: {}",
+        cpus,
+        m.tune.threads,
+        if m.tune.threads == 1 { "fir" } else { "fire" },
+        match kgr::spin_policy() {
+            None => String::from("nu cedeaza niciodata procesorul (--fara-cedari)"),
+            Some(n) => alloc::format!("cedeaza procesorul dupa {} pauze", n),
+        }
+    );
+    if m.tune.block {
+        for k in [prof::QKV, prof::ATTN, prof::PROJ, prof::FC, prof::OUT, prof::HEAD] {
+            let [work, pieces, yields, lag, helpers, stages] = prof::block(k);
+            if stages == 0 {
+                continue;
+            }
+            let (wall, bytes) = prof::get(k);
+            let st = stages as f64;
+            let us_st = |c: u64| ms(c) * 1000.0 / st;
+            let rate = if bytes > 0 && work > 0 {
+                alloc::format!("; cu toate firele ocupate: {:.2} GB/s", bytes as f64 * m.tune.threads as f64 / (ms(work) * 1e6))
+            } else {
+                String::new()
+            };
+            println!(
+                "kronos: profil: etapa {:<11} {:>7.1} us/etapa (firul 0); lucrul / {} fire = {:>6.1} us{}; au lucrat {:.1} fire, {:.1} bucati; ultimul fir a inceput la {:.1} us; cedari {:.1}/etapa",
+                PROFILE_SHORT[k],
+                us_st(wall),
+                m.tune.threads,
+                us_st(work) / m.tune.threads.max(1) as f64,
+                rate,
+                helpers as f64 / st,
+                pieces as f64 / st,
+                us_st(lag),
+                yields as f64 / st
+            );
+        }
+    }
     for (name, c) in [("afisarea textului pe ecran", screen), ("alegerea simbolului (argmax)", pick)] {
         known += c;
         println!("kronos: profil: {:<34} {:>9.1} ms {:>7.3} ms/simbol {:>5.1} %", name, ms(c), ms(c) / per, pct(c));
@@ -944,6 +1001,7 @@ fn main() -> i64 {
     }
     let n = o.n.min(c.context.saturating_sub(o.ids.len()));
     let per_ms = if o.profile { kgr::prof::calibrate() } else { 0 };
+    kgr::prof::set_detail(o.profile);
     let t1 = now_ms();
     let mut logits = match m.forward(&o.ids, false) {
         Ok(l) => l,

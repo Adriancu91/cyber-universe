@@ -73,6 +73,14 @@ pub fn run() {
     assert!(run_one(&block_control) == 0, "kronos: --control intr-un bloc nu trece");
     let block_profile = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--n", "5", "--profil", "--fire", "3", "--bloc", "Ana", "are", "mere."];
     assert!(run_one(&block_profile) == 0, "kronos: --profil intr-un bloc a esuat");
+    // P6-47 (C-67): waiting threads that never yield: refused with more threads than processors, allowed otherwise;
+    // the same control texts in a block on 2 threads (on 2 processors: never yielding; on 1: refused, yielding).
+    let no_yield_refused = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--n", "3", "--profil", "--fire", "3", "--bloc", "--fara-cedari", "Ana"];
+    assert!(run_one(&no_yield_refused) == 0, "kronos: --fara-cedari refuzat a esuat");
+    let no_yield_profile = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--n", "3", "--profil", "--fire", "1", "--bloc", "--fara-cedari", "Ana"];
+    assert!(run_one(&no_yield_profile) == 0, "kronos: --profil cu --fara-cedari a esuat");
+    let no_yield_control = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--control", "--fire", "2", "--bloc", "--fara-cedari"];
+    assert!(run_one(&no_yield_control) == 0, "kronos: --control cu --fara-cedari nu trece");
     // P6-45 step 3 (C-59, „echipe”): the wait in two steps (teams of 3 on up to 7 parts: a last team cut short, team 0
     // led by the main thread), then the same tokens as the reference and the control texts with teams.
     let team_test = ["kronos", "--test-fire", "7", "--echipe", "3"];

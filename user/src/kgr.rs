@@ -520,8 +520,26 @@ fn split(n: usize, parts: usize, part: usize) -> (usize, usize) {
     (n * part / parts, n * (part + 1) / parts)
 }
 
+/// P6-47 (C-67): `kronos --fara-cedari`: waiting threads never give their processor away (only when every thread of the
+/// program has its own processor; the 10 ms timer still lets the kernel's threads run).
+static NO_YIELD: AtomicBool = AtomicBool::new(false);
+
+/// Turns `NO_YIELD` on or off (see there).
+pub fn set_no_yield(on: bool) {
+    NO_YIELD.store(on, Ordering::Relaxed);
+}
+
+/// P6-47: how a waiting thread behaves now: `None` = it never yields, `Some(n)` = it yields after n pauses.
+pub fn spin_policy() -> Option<u32> {
+    if NO_YIELD.load(Ordering::Relaxed) { None } else { Some(SPIN_LIMIT.load(Ordering::Relaxed)) }
+}
+
+fn spin_limit() -> u32 {
+    if NO_YIELD.load(Ordering::Relaxed) { u32::MAX } else { SPIN_LIMIT.load(Ordering::Relaxed) }
+}
+
 fn spin_until(mut done: impl FnMut() -> bool) {
-    let limit = SPIN_LIMIT.load(Ordering::Relaxed);
+    let limit = spin_limit();
     let mut spins = 0;
     while !done() {
         core::hint::spin_loop();
@@ -716,6 +734,9 @@ struct StageCtl {
     next: Pad,
     done: Pad,
     open: Pad,
+    /// P6-47 (profile only): word 0 = TSC when the stage opened, word 1 = the latest first-piece start after that
+    /// (cycles after opening), word 2 = threads that took at least one piece.
+    seen: Pad,
 }
 
 /// One counter followed by 120 bytes of padding.
@@ -735,35 +756,72 @@ pub fn run_block(stages: &[Stage<'_>], parts: usize) {
         return;
     }
     let ctl: Vec<StageCtl> = (0..stages.len())
-        .map(|s| StageCtl { next: Pad::new(0), done: Pad::new(0), open: Pad::new((s == 0) as usize) })
+        .map(|s| StageCtl { next: Pad::new(0), done: Pad::new(0), open: Pad::new((s == 0) as usize), seen: Pad::new(0) })
         .collect();
     let parts = parts.clamp(1, MAX_THREADS);
+    // P6-47 (C-67): with `--profil`, every thread also measures its own work per kind, the pieces it took, the
+    // yields while waiting for a stage to open, and how late it started a stage (kept per thread, added once at the end).
+    let detail = prof::detail();
+    if detail {
+        ctl[0].seen.0[0].store(prof::now() as usize, Ordering::Relaxed);
+    }
     let walk = |part: usize| {
+        let mut work = [0u64; prof::N];
+        let mut pieces = [0u64; prof::N];
+        let mut yields = [0u64; prof::N];
+        let limit = spin_limit();
         for (s, st) in stages.iter().enumerate() {
             let c = &ctl[s];
             // The wait for the stage before counts in this stage's time too ("din care asteptarea firelor", as in `par`).
             let t0 = prof::now();
             if c.open.0[0].load(Ordering::Acquire) == 0 {
-                spin_until(|| c.open.0[0].load(Ordering::Acquire) != 0);
+                let mut spins = 0u32;
+                while c.open.0[0].load(Ordering::Acquire) == 0 {
+                    core::hint::spin_loop();
+                    spins += 1;
+                    if spins >= limit {
+                        spins = 0;
+                        prof::count(prof::YIELDS);
+                        yields[st.kind] += 1;
+                        cyber_user::yield_now();
+                    }
+                }
                 if part == 0 {
                     prof::add(prof::SYNC, prof::now() - t0, 0);
                     prof::count(prof::BARRIERS);
                 }
             }
             let chunks = st.chunks.clamp(1, st.n.max(1));
+            let mut first = true;
             loop {
                 let k = c.next.0[0].fetch_add(1, Ordering::Relaxed);
                 if k >= chunks {
                     break;
                 }
                 let (a, b) = split(st.n, chunks, k);
-                (st.run)(part, a, b);
+                if detail {
+                    let w0 = prof::now();
+                    if first {
+                        first = false;
+                        let opened = c.seen.0[0].load(Ordering::Relaxed) as u64;
+                        c.seen.0[1].fetch_max(w0.saturating_sub(opened) as usize, Ordering::Relaxed);
+                        c.seen.0[2].fetch_add(1, Ordering::Relaxed);
+                    }
+                    (st.run)(part, a, b);
+                    work[st.kind] += prof::now() - w0;
+                    pieces[st.kind] += 1;
+                } else {
+                    (st.run)(part, a, b);
+                }
                 // AcqRel: the last finisher sees every other piece's writes (release sequence on `done`).
                 if c.done.0[0].fetch_add(1, Ordering::AcqRel) + 1 == chunks {
                     if let Some(tail) = st.tail {
                         tail();
                     }
                     if let Some(n) = ctl.get(s + 1) {
+                        if detail {
+                            n.seen.0[0].store(prof::now() as usize, Ordering::Relaxed);
+                        }
                         n.open.0[0].store(1, Ordering::Release);
                     }
                 }
@@ -772,17 +830,29 @@ pub fn run_block(stages: &[Stage<'_>], parts: usize) {
                 prof::add(st.kind, prof::now() - t0, 0);
             }
         }
+        if detail {
+            for k in 0..prof::N {
+                if work[k] + pieces[k] + yields[k] > 0 {
+                    prof::add_block(k, work[k], pieces[k], yields[k]);
+                }
+            }
+        }
     };
     if parts == 1 {
         walk(0);
-        return;
+    } else {
+        // One fixed range per part (n = parts), so each thread walks the list exactly once; parts the kernel refused a
+        // worker for run on this thread one after another, which is still correct (any thread can take any piece).
+        let saved = PIECES.swap(0, Ordering::Relaxed);
+        par_parts(parts, parts, &|part, _, _| walk(part));
+        PIECES.store(saved, Ordering::Relaxed);
+        // Every piece of the last stage was finished inside some thread's walk, and `par_parts` waited for all of them.
     }
-    // One fixed range per part (n = parts), so each thread walks the list exactly once; parts the kernel refused a
-    // worker for run on this thread one after another, which is still correct (any thread can take any piece).
-    let saved = PIECES.swap(0, Ordering::Relaxed);
-    par_parts(parts, parts, &|part, _, _| walk(part));
-    PIECES.store(saved, Ordering::Relaxed);
-    // Every piece of the last stage was finished inside some thread's walk, and `par_parts` waited for all of them.
+    if detail {
+        for (st, c) in stages.iter().zip(&ctl) {
+            prof::add_stage(st.kind, c.seen.0[1].load(Ordering::Relaxed) as u64, c.seen.0[2].load(Ordering::Relaxed) as u64);
+        }
+    }
 }
 
 /// Pieces of a stage of `n` elements on `parts` threads: `pieces` per thread (at least 1), at most n.
@@ -908,7 +978,7 @@ pub mod prof {
     pub const SYNC: usize = 7;
     pub const N: usize = 8;
     pub const NAMES: [&str; N] = [
-        "produs qkv (+ atentia, la generare)",
+        "produs qkv",
         "produs proiectie (straturi)",
         "produs fc 4E (straturi)",
         "produs iesire MLP (straturi)",
@@ -948,6 +1018,44 @@ pub mod prof {
         WAIT_PARTS[which].load(Ordering::Relaxed)
     }
 
+    /// P6-47 (C-67): `--profil` turns on the per-thread detail of the block (see `run_block`).
+    static DETAIL: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+    pub fn set_detail(on: bool) {
+        DETAIL.store(on, Ordering::Relaxed);
+    }
+
+    pub fn detail() -> bool {
+        DETAIL.load(Ordering::Relaxed)
+    }
+
+    /// Per kind, summed over every thread and stage of the block: cycles inside the pieces, pieces, yields while waiting
+    /// for the stage to open; per stage: the latest first-piece start after opening, threads that worked, stages.
+    static B_WORK: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
+    static B_PIECES: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
+    static B_YIELDS: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
+    static B_LAG: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
+    static B_HELPERS: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
+    static B_STAGES: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
+
+    pub fn add_block(kind: usize, work: u64, pieces: u64, yields: u64) {
+        B_WORK[kind].fetch_add(work, Ordering::Relaxed);
+        B_PIECES[kind].fetch_add(pieces, Ordering::Relaxed);
+        B_YIELDS[kind].fetch_add(yields, Ordering::Relaxed);
+    }
+
+    pub fn add_stage(kind: usize, lag: u64, helpers: u64) {
+        B_LAG[kind].fetch_add(lag, Ordering::Relaxed);
+        B_HELPERS[kind].fetch_add(helpers, Ordering::Relaxed);
+        B_STAGES[kind].fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// (work cycles, pieces, yields, sum of latest starts, sum of threads that worked, stages) of `kind`.
+    pub fn block(kind: usize) -> [u64; 6] {
+        let g = |a: &[AtomicU64; N]| a[kind].load(Ordering::Relaxed);
+        [g(&B_WORK), g(&B_PIECES), g(&B_YIELDS), g(&B_LAG), g(&B_HELPERS), g(&B_STAGES)]
+    }
+
     static CYCLES: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
     static BYTES: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
 
@@ -971,6 +1079,11 @@ pub mod prof {
         }
         for c in COUNTS.iter().chain(WAIT_PARTS.iter()) {
             c.store(0, Ordering::Relaxed);
+        }
+        for a in [&B_WORK, &B_PIECES, &B_YIELDS, &B_LAG, &B_HELPERS, &B_STAGES] {
+            for c in a.iter() {
+                c.store(0, Ordering::Relaxed);
+            }
         }
     }
 
@@ -1437,6 +1550,9 @@ impl<'a> Model<'a> {
                 let (kc, vc) = (Out(self.kcache[li].as_mut_ptr()), Out(self.vcache[li].as_mut_ptr()));
                 let (qo, ao, so) = (Out(qkv.as_mut_ptr()), Out(att.as_mut_ptr()), Out(scores.as_mut_ptr()));
                 let (hb, tune) = (&hbuf[..e], self.tune);
+                // P6-47 (C-67): the thread of part 0 times its heads' attention; that time moves from qkv to `atentia`
+                // (the split's wall time stays where it was: qkv = the rest, the wait for the threads included).
+                let att_c = core::sync::atomic::AtomicU64::new(0);
                 par_parts(h, parts, &|part, h0, h1| {
                     let (kc, vc, qo, ao, so) = (kc, vc, qo, ao, so);
                     for j in h0..h1 {
@@ -1454,6 +1570,7 @@ impl<'a> Model<'a> {
                     }
                     // SAFETY: `scores` row `part` belongs to this part.
                     let sc = unsafe { core::slice::from_raw_parts_mut(so.0.add(part * (p0 + 1)), p0 + 1) };
+                    let a0 = prof::now();
                     for j in h0..h1 {
                         // SAFETY: q and the output of head j (row 0, columns j*d..j*d+d) are this part's alone; rows
                         // 0..=p0 of the cache hold head j's keys and values (earlier positions from before this call,
@@ -1464,8 +1581,13 @@ impl<'a> Model<'a> {
                             attend(q, kc.0, vc.0, e, j * d, p0, scale, sc, out);
                         }
                     }
+                    if part == 0 {
+                        att_c.store(prof::now() - a0, Ordering::Relaxed);
+                    }
                 });
-                prof::add(prof::QKV, prof::now() - c0, l.qkv.bytes() as u64);
+                let (all, att) = (prof::now() - c0, att_c.load(Ordering::Relaxed));
+                prof::add(prof::QKV, all.saturating_sub(att), l.qkv.bytes() as u64);
+                prof::add(prof::ATTN, att.min(all), 0);
             } else {
             self.linear(prof::QKV, &l.qkv, Some(l.qkv_b), &hbuf, t, &mut qkv);
             let c0 = prof::now();

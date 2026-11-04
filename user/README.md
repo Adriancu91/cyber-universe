@@ -93,6 +93,15 @@
   și cu **un procesor liber** (toate minus unul), și îl scrie în reglaj doar dacă e cu peste 1 % mai rapid.
   Test: `kronos --test-fire 6 --bloc`, `--verifica … --fire 4 --bloc`, F32 `--fire 3 --bloc --bucati 8`, `--control --fire 3 --bloc`,
   `--profil --bloc` (scenariul `kronos-kgr`); `kronos-reglaj` cere rândul „un bloc pe simbol”.
+  **P6-47 (C-67, qkv și proiecția mai lente decât fc/MLP):** în bloc, qkv, proiecția, fc și ieșirea MLP au deja aceeași formă de cod
+  (aceeași funcție `output`, bucăți din contorul etapei); diferența apare doar la rularea reală, nu în `--cauta` (acolo tot modelul =
+  2088 µs/simbol, în rularea reală produsele = 4,85 ms). Ca să vedem de ce, `--profil` arată acum pentru fiecare etapă a blocului,
+  văzută de TOATE firele: timpul pe etapă al firului 0, lucrul împărțit la fire (cât ar dura cu toate firele ocupate), câte fire
+  au lucrat, cât de târziu a început ultimul fir după deschiderea etapei și cedările procesorului în așteptări; plus câte procesoare
+  sunt și după câte pauze cedează un fir care așteaptă. Pe 4 nov: 32 729 cedări în 315 ms (~520 pe simbol) — bănuiala: firele care
+  cedează procesorul ajung târziu la etapele următoare. De încercat: `--fara-cedari` (firele nu cedează niciodata; refuzat dacă sunt
+  mai multe fire decât procesoare). Fără blocul de simbol, „atentia” e acum despărțită de „produs qkv” (timpul firului 0 pe capetele lui).
+  Test: `--profil --bloc` (rândurile „etapa …”), `--fara-cedari` refuzat cu 3 fire pe 2 procesoare, `--control --fire 2 --bloc --fara-cedari`.
 - `kronos-calcul --cauta [--emb E] [--iesire <dir>]` (P6-28, comanda C-27, `src/cauta.rs`) — primul pas spre „OS-ul care se
   reglează singur”: încearcă variante ale produsului din motorul KGR1 (vectori AVX2+FMA sau scalar; 1, 2, 4, … fire și toate
   nucleele; ordinea buclelor t-j sau j-t) pe o matrice Q8_0 [4E, E], pe 1 rând (generare) și pe 16 rânduri (citirea textului).
