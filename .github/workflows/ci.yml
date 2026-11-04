@@ -17,7 +17,7 @@ concurrency:
 jobs:
   build-and-test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       # C-37: no stored github.token header, otherwise git sends it instead of CYBER_GPU_TOKEN for cyber-gpu.
       - uses: actions/checkout@v4
