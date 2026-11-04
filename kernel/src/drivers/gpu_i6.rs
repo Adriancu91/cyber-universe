@@ -386,20 +386,17 @@ pub(super) fn i6_falcon<W: Mmio + ?Sized, K: Clock + ?Sized>(
     ok
 }
 
-/// P6-44 (C-61): after I6, success or not, the raw WPR2 registers and the form of the end the board wrote (3 reads,
-/// `falcon::check_frts_detail`, no permit: reads only). On 3 nov the board's HI was most likely the last 4 KiB page of
-/// the region, not its exclusive end; this line shows it, and the journal on the stick keeps the 3 reads.
+/// P6-44 (C-61), P6-46 (C-66): after I6, success or not, the raw WPR2 registers and the form of the end the board
+/// wrote (`falcon::read_frts_after_i6`: 3 status reads, journalled, no permit, no write path). On 4 nov the board's HI
+/// was the start of the last 128 KiB block of the FRTS region; this line names that form.
 fn wpr2_detail<W: Mmio + ?Sized>(p: &str, rw: &mut W, journal: &mut Journal, frts: (u64, u64)) -> String {
-    match GuardedBar0::new(rw, journal, None).and_then(|mut b| falcon::check_frts_detail(&mut b, frts)) {
+    match falcon::read_frts_after_i6(rw, journal, frts) {
         Ok(c) => format!(
             "{}: WPR2 citit dupa I6: LO {:#010x} HI {:#010x} (capat: {}) = {:#x}..{:#x}",
             p,
             c.lo_raw,
             c.hi_raw,
-            match c.end_form {
-                falcon::Wpr2End::Exclusive => "exclusiv",
-                falcon::Wpr2End::InclusiveLastPage => "ultima pagina",
-            },
+            c.form.label(),
             c.wpr2.start,
             c.wpr2.end
         ),
