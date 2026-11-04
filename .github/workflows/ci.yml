@@ -77,6 +77,10 @@ jobs:
       - name: Imagine pentru stick USB (docs/USB.md)
         run: tools/build.sh --usb
 
+      # P6-48 (C-68, F1): the virtual machine disk + test of tools/windows/vm-pornire.ps1 with pwsh (PowerShell 7).
+      - name: Discul mașinii virtuale + testul scriptului vm-pornire.ps1
+        run: tools/vm-image.sh && tools/vm-test.sh
+
       # P6-40 (C-52): the test stick of the I6 window (`gpu i6 --scrie`), a separate kernel and image in the Release.
       - name: Stick-ul de test pentru fereastra I6 (gpu-scrie)
         run: tools/build.sh --gpu-scrie --usb
