@@ -11,6 +11,9 @@
 //!   the old version.
 //! With `/usb/actualizare-automata` on the stick, `auto_update` runs `actualizeaza` at boot and restarts into the new
 //! version when there is one.
+//! Every confirmation and every return leaves a report in `raport/actualizare-<date>.txt` on the stick; with a GitHub
+//! token on the stick (`github.token`, fine-grained, only "Contents" of the hub) it is also sent to the hub
+//! (`Adriancu91/Cyber-hub`, `rezultate/os-actualizari/`) with `/bin/gh-trimite`.
 //! Limit: a new kernel that fails before it mounts the stick cannot return by itself (it never reads the marker); the
 //! old files are still in `boot/vechi/` for a manual return.
 //! Idea: A/B updates with a trial boot and confirmation (as in phones and embedded systems); our own code.
@@ -98,6 +101,7 @@ pub fn at_boot(dir: &str) -> Outcome {
                     now_text()
                 );
                 let _ = write_file(&path(dir, STORY), note.as_bytes());
+                report(dir, &format!("REVENIRE: {}", note));
                 let _ = fs::remove(&path(dir, MARKER));
                 let _ = fs::flush(&path(dir, MARKER));
                 crate::warn!("actualizare: versiunea {} nu s-a confirmat; am pus la loc versiunea veche (boot/vechi/), repornesc", version);
@@ -166,7 +170,11 @@ fn trial() {
     let Some(dir) = TRIAL_DIR.lock().take() else { return };
     let version = read_marker(&dir).map(|(_, v)| v).unwrap_or_default();
     match fs::remove(&path(&dir, MARKER)).and_then(|_| fs::flush(&path(&dir, "boot"))) {
-        Ok(()) => crate::info!("actualizare: versiunea {} confirmata (merge de {} s)", version, crate::time::uptime_ms().unwrap_or(0) / 1000),
+        Ok(()) => {
+            let secs = crate::time::uptime_ms().unwrap_or(0) / 1000;
+            crate::info!("actualizare: versiunea {} confirmata (merge de {} s)", version, secs);
+            report(&dir, &format!("CONFIRMAT: versiunea {} a pornit si a mers {} s fara probleme ({})\n", version, secs, now_text()));
+        }
         Err(e) => crate::error!("actualizare: confirmarea nu s-a scris: {}", e.message()),
     }
 }
@@ -193,6 +201,40 @@ pub fn auto_update(dir: &str) -> bool {
     let updated = code == 0 && read_marker(dir).is_some_and(|(s, _)| s == "de-incercat");
     crate::info!("actualizare automata: {}", if updated { "versiune noua pusa, repornesc" } else { "nimic nou" });
     updated
+}
+
+const HUB: &str = "Adriancu91/Cyber-hub";
+
+/// The report on the stick, and in the hub when there is a token.
+fn report(dir: &str, text: &str) {
+    let stamp = crate::drivers::rtc::now()
+        .map(|t| format!("{:04}{:02}{:02}-{:02}{:02}{:02}-{}", t.year, t.month, t.day, t.hour, t.minute, t.second, crate::time::uptime_ms().unwrap_or(0) % 1000))
+        .unwrap_or_else(|| format!("pornire-{}", crate::time::uptime_ms().unwrap_or(0)));
+    let _ = fs::create(&path(dir, "raport"), Kind::Dir);
+    let file = path(dir, &format!("raport/actualizare-{}.txt", stamp));
+    let body = format!("== Cyber Universe: actualizare ==\n{}", text);
+    if let Err(e) = write_file(&file, body.as_bytes()) {
+        crate::warn!("actualizare: raportul nu s-a scris: {}", e);
+        return;
+    }
+    crate::info!("actualizare: raport {}", file);
+    if fs::kind(&path(dir, "github.token")).is_err() {
+        crate::info!("actualizare: fara github.token pe stick: raportul ramane doar pe stick");
+        return;
+    }
+    if !crate::net::wait_ready(10_000) {
+        crate::warn!("actualizare: reteaua nu are adresa: raportul ramane doar pe stick");
+        return;
+    }
+    let dest = format!("rezultate/os-actualizari/actualizare-{}.txt", stamp);
+    let msg = "cyber-universe: raport de actualizare (automat, din OS)";
+    match crate::proc::spawn_path("/bin/gh-trimite", &["gh-trimite", &file, HUB, &dest, msg]) {
+        Ok(id) => {
+            let code = crate::proc::wait_child(id);
+            crate::info!("actualizare: raportul {} in hub ({})", if code == 0 { "trimis" } else { "NU s-a trimis" }, dest);
+        }
+        Err(_) => crate::warn!("actualizare: /bin/gh-trimite nu porneste"),
+    }
 }
 
 fn now_text() -> String {
@@ -229,6 +271,14 @@ pub fn self_test() {
         crate::sched::sleep_ms(100);
     }
     assert!(get("boot/kernel") == b"nucleu NOU", "test: dupa confirmare ramane versiunea noua");
+    let reports = || {
+        fs::list("/usb/raport").unwrap_or_default().iter().filter(|(n, _)| n.starts_with("actualizare-")).count()
+    };
+    let deadline = crate::time::uptime_ms().unwrap_or(0) + 5000;
+    while reports() < 1 {
+        assert!(crate::time::uptime_ms().unwrap_or(0) < deadline, "test: raportul confirmarii lipseste");
+        crate::sched::sleep_ms(100);
+    }
     crate::info!("test: revenire: prima pornire confirmata");
     // 2. The trial boot never confirmed -> the old files go back.
     put(MARKER, b"in-incercare\nos-999\n");
@@ -236,6 +286,7 @@ pub fn self_test() {
     assert!(get("boot/kernel") == b"nucleu VECHI" && get("boot/initrd.tar") == b"initrd VECHI" && get("VERSIUNE") == b"commit vechi\n", "test: fisierele vechi nu sunt la loc");
     assert!(fs::kind(&path(d, MARKER)).is_err() && get(STORY).windows(6).any(|w| w == b"os-999"), "test: marcaj sters, revenit.txt scris");
     assert!(fs::kind("/usb/boot/kernel.nou").is_err(), "test: a ramas kernel.nou");
+    assert!(reports() >= 2, "test: raportul revenirii lipseste");
     crate::info!("test: revenire: versiunea neconfirmata inlocuita cu cea veche");
     // 3. Return asked, nothing to return to -> marker removed, nothing touched.
     let _ = fs::remove("/usb/boot/vechi/initrd.tar");

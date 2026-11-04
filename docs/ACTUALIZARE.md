@@ -19,9 +19,10 @@ Un nucleu nou care pică **înainte să citească stick-ul** (de ex. la pornirea
 ajunge la marcaj. Fișierele vechi rămân însă în `boot/vechi/`: se pun la loc de mână (din Windows, copiind
 `boot/vechi/kernel` peste `boot/kernel` și `boot/vechi/initrd.tar` peste `boot/initrd.tar`).
 
-## Ce mai urmează (restul F3)
-Rapoartele de actualizare urcate în hub cu `gh-trimite` — au nevoie de tokenul GitHub cu drepturi minime pe stick
-(`github.token`), pe care îl face Adrian.
+## Rapoartele
+Fiecare confirmare și fiecare revenire lasă un raport pe stick: `raport/actualizare-<data>.txt`. Dacă pe stick există și
+`github.token` (token „fine-grained” cu drepturi doar la „Contents” pentru `Adriancu91/Cyber-hub`, făcut de Adrian),
+raportul se trimite și în hub, în `rezultate/os-actualizari/`, cu `gh-trimite`. Fără token, rămâne doar pe stick.
 
 ## Cum e testat (QEMU)
 - Scenariul `update`: după actualizare, `boot/vechi/kernel` e nucleul vechi și marcajul e „de-incercat os-42”.
