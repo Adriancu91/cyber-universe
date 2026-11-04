@@ -114,7 +114,12 @@ fn dispatch(line: &str) -> bool {
         "usb" => usb(args),
         "net" => net(),
         "rtl" => rtl(args),
-        "hw" => hw(),
+        "hw" => match args {
+            [] => hw(),
+            ["lista"] => hw_lista(false),
+            ["lista", "--detalii"] => hw_lista(true),
+            _ => out!("folosire: hw sau hw lista [--detalii]\n"),
+        },
         "raport" => raport::manual(),
         "gpu" => gpu(args),
         "cpu" => cpu(args),
@@ -191,6 +196,7 @@ fn help() {
     out!("  gpu pregatire-i6 pregatirea pasului I6 (doar citire); gpu i6 --scrie = prima scriere (doar stick-ul de test)\n");
     out!("  gpu tur          turul de citire (doar citire, un rand `fapt` pe fapt); gpu lant = pasii ferestrei in lant (cere DA)\n");
     out!("  hw               raport hardware pe o pagina (pentru o singura poza)\n");
+    out!("  hw lista [--detalii]  tot hardware-ul: procesor, memorie, PCI, Wi-Fi, USB, ACPI (doar citire)\n");
     out!("  raport           scrie pe stick /usb/raport/<data>-<nr>.txt: hw, lspci, net, jurnalele (fara chei)\n");
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
     out!("  uptime           de cat timp merge sistemul\n");
@@ -754,6 +760,13 @@ fn hw() {
     }
     out!("retea:\n");
     net();
+}
+
+/// `hw lista`: the full hardware list from `crate::hw` (F4), by reads only.
+fn hw_lista(detalii: bool) {
+    for line in crate::hw::lista(detalii, &driver_of, &cpu_name()) {
+        out!("{}\n", line);
+    }
 }
 
 /// The processor's name from CPUID (leaves 0x8000_0002..4), or its vendor if the name is missing.

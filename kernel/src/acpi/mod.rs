@@ -124,6 +124,13 @@ pub fn init() -> bool {
     true
 }
 
+/// Every table found at boot: (physical address, header), in RSDT/XSDT order. Read only (`hw lista`, F4).
+pub fn tables() -> alloc::vec::Vec<(u64, SdtHeader)> {
+    // SAFETY: written once during boot, read-only afterwards.
+    let tables = unsafe { &(&*core::ptr::addr_of!(TABLES))[..TABLE_COUNT] };
+    tables.iter().filter_map(|&phys| header(phys).map(|(h, _)| (phys, h))).collect()
+}
+
 /// Finds a table by its 4-letter signature; returns a pointer to its header and its length.
 pub fn find(signature: &[u8; 4]) -> Option<(*const u8, usize)> {
     // SAFETY: written once during boot, read-only afterwards.
