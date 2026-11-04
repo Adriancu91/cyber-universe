@@ -53,6 +53,9 @@ param(
     # Portul monitorului QEMU (QMP), doar pe 127.0.0.1.
     [ValidateRange(1024, 65535)] [int]$PortQmp = 4444,
 
+    # P6-49 (F2): consola remote a OS-ului (portul 2323 din masina) se vede pe Windows la 127.0.0.1:<PortRemote>.
+    [ValidateRange(1024, 65535)] [int]$PortRemote = 2323,
+
     # supraveghe: secunde intre verificari; minute pana la oprire (0 = fara limita).
     [ValidateRange(2, 3600)] [int]$IntervalSecunde = 30,
     [ValidateRange(0, 100000)] [int]$MinuteMaxim = 0,
@@ -181,8 +184,9 @@ function Argumente([string]$serial) {
         '-device', 'usb-storage,bus=xhci.0,drive=disc,bootindex=0',
         '-device', 'usb-kbd,bus=xhci.0',
         # Network: the e1000e card (driver in the OS), QEMU "user" network = internet through Windows.
+        # The OS's remote console (port 2323, P6-49) is forwarded to 127.0.0.1 only: not visible from the network.
         '-nic', 'none',
-        '-netdev', 'user,id=n0',
+        '-netdev', "user,id=n0,hostfwd=tcp:127.0.0.1:$($PortRemote)-:2323",
         '-device', 'e1000e,netdev=n0',
         '-serial', "file:$serial",
         '-qmp', "tcp:127.0.0.1:$($PortQmp),server=on,wait=off"

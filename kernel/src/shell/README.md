@@ -37,3 +37,7 @@
   `teste-facut-<data>.txt` și repornește. Ceasul de siguranță (`ceas N` minute, implicit 10) repornește dacă lista nu termină;
   marcajul `auto/in-lucru.txt` împiedică reluarea unei liste întrerupte. Scenarii: `auto`, `auto-ceas`, `auto-intrerupt`
   (disc de test `/disk/auto`, feature `test-auto`). Pregătirea pe workstation: `docs/BUCLA_AUTOMATA.md`.
+- **`remote porneste [port] | opreste | stare` (P6-49, F2):** consola text prin rețea (`net/remote.rs`, ghid în `docs/REMOTE.md`).
+  Shell-ul unei sesiuni remote e un terminal „restricționat” (`term::open_restricted`): înainte de fiecare comandă se verifică
+  `remote_allowed` (lista modului automat + `help`, `exit`, `remote stare|opreste`); refuzurile și comenzile merg în jurnal.
+  Testat în scenariul `remote`.

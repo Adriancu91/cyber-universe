@@ -14,6 +14,8 @@ Dacă sistemul se blochează, se repornește doar mașina — Windows și Kronos
 - **Memorie:** implicit 16 GB (`-MemorieGB`, cel mult 32).
 - **Placa video NU e dată mașinii.** Scriptul nu are nicio opțiune pentru asta; testele cu placa se fac doar pe hardware real, cu Adrian.
 - Rețea: placa virtuală e1000e, prin rețeaua lui Windows (mașina iese spre internet, nu e vizibilă din rețea).
+- Remote (F2, P6-49): portul 2323 al OS-ului se vede pe Windows la `127.0.0.1:2323` (`-PortRemote` îl schimbă), doar local.
+  Cu `remote.cheie` (și opțional `remote.porneste`) pe discul mașinii: `py remote-client.py 127.0.0.1 -k remote.cheie` (ghid: `docs/REMOTE.md`).
 
 ## Pregătire (o singură dată, centrul de comandă — C-70)
 1. QEMU pentru Windows, descărcat de pe pagina oficială (qemu.org → Download → Windows), instalat în `C:\Program Files\qemu`

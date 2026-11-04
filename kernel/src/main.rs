@@ -160,6 +160,7 @@ extern "C" fn kernel_main() -> ! {
     #[cfg(not(feature = "qemu-test"))]
     {
         shell::auto::run_if_present(); // P6-41: `/usb/auto/teste.txt` = the automatic test loop (restarts at the end)
+        net::remote::start_if_asked(); // P6-49: `remote.porneste` next to the key = the remote console at boot
         run_desktop(); // the desktop first; when it closes (Escape), the text shell
         loop {
             shell::run();
@@ -1390,7 +1391,13 @@ fn test_remote() {
         other => panic!("test: remote a pornit fara cheie: {:?}", other),
     }
     fs::rename("/disk/remote.ascuns", "/disk/remote.cheie").expect("test: cheia inapoi");
-    remote::start(remote::PORT_DEFAULT).expect("test: remote porneste");
+    // The disk also has `remote.porneste` (tools/before-remote.sh): the boot-time start, as in the virtual machine.
+    remote::start_if_asked();
+    let deadline = arch::x86_64::apic::ticks() + 10 * arch::x86_64::apic::HZ;
+    while !remote::running() {
+        assert!(arch::x86_64::apic::ticks() < deadline, "test: pornirea automata nu a pornit serviciul");
+        sched::sleep_ms(20);
+    }
     assert!(remote::start(remote::PORT_DEFAULT).is_err(), "test: al doilea start trebuia refuzat");
     info!("test: remote: astept clientul");
     let deadline = arch::x86_64::apic::ticks() + 50 * arch::x86_64::apic::HZ;

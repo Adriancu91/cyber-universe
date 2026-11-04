@@ -7,4 +7,6 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 key="$ROOT/build/remote-test.cheie"
 python3 -c "import secrets; print(secrets.token_urlsafe(32))" > "$key"
 MTOOLS_SKIP_CHECK=1 mcopy -o -i "$DISK_IMG@@1M" "$key" ::/remote.cheie
+echo 2323 > "$ROOT/build/remote.porneste"   # the boot-time start (as in the virtual machine), port 2323
+MTOOLS_SKIP_CHECK=1 mcopy -o -i "$DISK_IMG@@1M" "$ROOT/build/remote.porneste" ::/remote.porneste
 exec python3 "$ROOT/tools/remote-test.py" "$key" "$ROOT/build/remote-client.log"

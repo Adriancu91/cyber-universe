@@ -10,6 +10,7 @@
 //! allow-listed commands (`shell::remote_allowed`: the automatic mode's read-only list — nothing that writes to the
 //! video card, no `reboot`); every command and every refusal is logged (`log remote`). One session at a time;
 //! `exit` ends it, `remote opreste` (local or remote) stops the service, 30 minutes without input close the session.
+//! At boot the service starts by itself only if the file `remote.porneste` exists next to the key (the virtual machine).
 //!
 //! No encryption yet: meant for the virtual machine (QEMU `hostfwd` on 127.0.0.1) and the home network; TLS comes later.
 //! Idea of a line-based protocol: RFC 854 (Telnet), much simplified. Our own code.
@@ -88,6 +89,34 @@ pub fn start(port: u16) -> Result<String, String> {
     let addr = super::config().map(|c| ip(c.ip)).unwrap_or_default();
     crate::info!("remote: pornit pe {}:{} (cheia din {})", addr, port, from);
     Ok(format!("remote: pornit pe {}:{}, cheia din {}; `remote opreste` il opreste", addr, port, from))
+}
+
+/// Files that ask for the service at boot (opt-in, next to the key); the content may be a port number.
+pub const AUTOSTART_FILES: &[&str] = &["/usb/remote.porneste", "/disk/remote.porneste"];
+
+/// At boot: starts the service in the background (once the network has an address) if `remote.porneste` exists,
+/// so the virtual machine can be reached without typing anything in it. Without that file: nothing.
+pub fn start_if_asked() {
+    if AUTOSTART_FILES.iter().any(|p| crate::fs::kind(p).is_ok()) {
+        sched::spawn(autostart);
+    }
+}
+
+fn autostart() {
+    let port = AUTOSTART_FILES
+        .iter()
+        .find_map(|p| crate::fs::read_all(p).ok())
+        .and_then(|b| String::from_utf8_lossy(&b).trim().parse::<u16>().ok())
+        .filter(|&p| p != 0)
+        .unwrap_or(PORT_DEFAULT);
+    if !super::wait_ready(30_000) {
+        crate::warn!("remote: pornirea automata: reteaua nu are adresa (nu pornesc)");
+        return;
+    }
+    crate::info!("remote: pornire automata (remote.porneste)");
+    if let Err(msg) = start(port) {
+        crate::warn!("{}", msg);
+    }
 }
 
 /// Asks the service to stop (it closes the open session too). `false` if it was not running.
