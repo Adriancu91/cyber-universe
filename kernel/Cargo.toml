@@ -72,6 +72,8 @@ test-claude = ["qemu-test"]
 test-claude-app = ["qemu-test"]
 # P6-06: Claude's tools in the chat window, with the confirmation boxes.
 test-claude-tools = ["qemu-test"]
+# P6-53: /bin/web (the text browser) against the small site of tools/web-test-server.py (HTTPS + plain HTTP).
+test-web = ["qemu-test"]
 # P6-08: /bin/actualizeaza against an imitation of GitHub (API + file storage) on the host, writing the test disk.
 test-update = ["qemu-test"]
 # P6-09: /bin/gh-trimite against an imitation of the GitHub contents API on the host.

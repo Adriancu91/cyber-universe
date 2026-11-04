@@ -124,6 +124,18 @@
   apelul de sistem `random`. `adresă` = unde se conectează în loc să caute numele (numele tot trebuie să fie în certificat).
   `/etc/certs/` are rădăcinile reale (lista Mozilla, P6-02); se citește doar fișierul emitentului căutat (`src/https.rs`).
   Testul `https` adaugă rădăcina de test; `https-real` (doar cu internet, în CI) descarcă example.com și api.github.com.
+- `web <adresă>` (P6-53, C-68 F6a) — **browserul text**: descarcă o pagină prin HTTPS (sau HTTP simplu; un nume fără
+  `https://` primește `https://`) și o arată ca text: titlul, titlurile (`#`, `##`), paragrafele, listele (`*`, `1.`),
+  tabelele simple (celule despărțite prin ` | `), citatele (`> `), textul preformatat, imaginile (doar textul `alt`) și
+  **legăturile numerotate `[N]`**, listate cu adresa completă la sfârșitul paginii. Scripturile, stilurile și restul
+  `<head>` nu se arată; paginile făcute de JavaScript nu se văd (treapta a: pagini simple și documentație).
+  `web <N>` deschide legătura N a ultimei pagini, `web --pagina P` arată pagina de ecran P fără să descarce din nou,
+  `web --legaturi` toate legăturile. Opțiuni: `--linii L` (rânduri pe pagină de ecran, 40), `--latime W` (78),
+  `--adresa A` (doar teste). Urmează redirecționările (cel mult 5). Ultima pagină se păstrează în `/tmp/web/`
+  (`pagina.txt`, `legaturi.txt`, se pot citi și cu `cat`). Analizorul HTML (`src/html.rs`) e scris de noi, tolerant
+  (marcajul stricat devine text sau e ignorat); sursa ideilor: doar specificația publică WHATWG HTML (nume de etichete
+  și de entități). Nu e pe lista albă a modului automat (descarcă din rețea, ca `fetch`). Test: scenariul `web`
+  (`tools/web-test-server.py`: pagini HTTPS + HTTP, redirecționare, text simplu, pagină lipsă).
 - `claude <întrebare>` (P6-04) — întreabă Claude prin API (`POST /v1/messages`, JSON prin biblioteca `json/`, HTTPS) și
   scrie răspunsul. Cheia: un rând în `/usb/claude.key` — **nu se afișează și nu intră niciodată în repo**. `/etc/claude.conf`
   (opțional, rânduri `nume = valoare`): `model` (implicit `claude-sonnet-5-5`), `max_tokens` (1024), `host`, `port`,

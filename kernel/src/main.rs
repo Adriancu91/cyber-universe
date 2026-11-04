@@ -276,6 +276,8 @@ fn run_tests() -> ! {
     test_https();
     #[cfg(feature = "test-https-real")]
     test_https_real();
+    #[cfg(feature = "test-web")]
+    test_web();
     #[cfg(feature = "test-claude")]
     test_claude();
     #[cfg(feature = "test-claude-app")]
@@ -1450,9 +1452,33 @@ fn test_https() {
     }
 }
 
+/// The text browser (P6-53): /bin/web against the small site of tools/web-test-server.py (HTTPS on 10.0.2.2:18447,
+/// plain HTTP on 10.0.2.2:18448): the start page, link 1 of it, a saved screen page, a redirect, plain text,
+/// a missing page and a link number that does not exist.
+#[cfg(feature = "test-web")]
+fn test_web() {
+    assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
+    add_test_root();
+    let a = "10.0.2.2";
+    for (args, what) in [
+        (&["web", "https://test.cyber.local:18447/", "--adresa", a][..], "web pagina de start"),
+        (&["web", "1", "--adresa", a, "--linii", "20"][..], "web legatura 1"),
+        (&["web", "--pagina", "3", "--linii", "20"][..], "web pagina 3"),
+        (&["web", "1", "--adresa", a, "--linii", "8"][..], "web legatura 1 (inapoi)"),
+        (&["web", "http://test.cyber.local:18448/vechi", "--adresa", a, "--linii", "5"][..], "web http + redirectionare"),
+        (&["web", "https://test.cyber.local:18447/text.txt", "--adresa", a][..], "web text simplu"),
+        (&["web", "https://test.cyber.local:18447/lipsa", "--adresa", a][..], "web pagina lipsa"),
+        (&["web", "9"][..], "web legatura inexistenta"),
+    ] {
+        let id = proc::spawn_path("/bin/web", args).expect("test: /bin/web");
+        let code = proc::wait_child(id);
+        info!("test: {} a iesit cu codul {}", what, code);
+    }
+}
+
 /// Adds the test root (tls/tests/data, its private key is public) to /etc/certs, under the name the programs look
 /// for (its subject id). Only test builds do this.
-#[cfg(any(feature = "test-https", feature = "test-claude", feature = "test-claude-app", feature = "test-claude-tools", feature = "test-update", feature = "test-ghpush"))]
+#[cfg(any(feature = "test-https", feature = "test-web", feature = "test-claude", feature = "test-claude-app", feature = "test-claude-tools", feature = "test-update", feature = "test-ghpush"))]
 fn add_test_root() {
     let root: &[u8] = include_bytes!("../../tls/tests/data/root.der");
     let subject = cyber_crypto::x509::Cert::parse(root).expect("test: radacina de test").subject;
