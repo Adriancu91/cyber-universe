@@ -14,6 +14,17 @@
 - **Ce ar debloca:** suita își atinge ținta, iar Adrian decide cum ajunge codul (sau doar formatul fișierelor) la OS.
 - **Nevoie de Adrian:** mai târziu, nu acum.
 
+### B-006 · testul temporizatorului cu `-smp 4` (scenariul `kronos-calcul`) · 2026-11-04
+- **Problema:** testul de pornire numără întreruperile ceasului într-o secundă; cu 4 procesoare emulate pe o gazdă încărcată
+  (CI, cloud) procesorul principal pierde bătăi: 84–87 (3 nov), [74, 75, 74] în CI pe 4 nov (run 41891180062) și [72, 72, 73] local.
+  Nu are legătură cu codul schimbat (pică înainte să pornească vreun program).
+- **Am încercat:** 1) 3 măsurători în loc de una (P6-43); 2) pragul de jos 80 cu mai multe procesoare (P6-43); 3) reparația lacătului
+  `try_lock` (P6-43, altă cauză a aceluiași scenariu); 4) acum pragul 60 cu mai multe procesoare (P6-47) — tot departe de un ceas
+  stricat (0 bătăi, sau 50 = calibrare pe jumătate). Scenariile cu un procesor păstrează 90–110.
+- **Eroarea exactă:** `PANIC: temporizator: [74, 75, 74] intreruperi intr-o secunda la 3 masuratori (asteptat 100)`
+- **Ce ar debloca:** dacă pică și sub 60: măsurarea ceasului față de TSC în loc de PIT, sau testul cu `-smp 4` pe o gazdă mai liberă.
+- **Nevoie de Adrian:** nu.
+
 <!-- Șablon:
 ### B-001 · P0-01 · 2026-10-27
 - **Problema:** ...
