@@ -337,7 +337,8 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 
 - [x] ANULAT **P6-48** F1 (C-68): mașina virtuală pe Windows. **Anulată de Adrian (4 nov, 23:10 ora României): fără mașina virtuală**, testele rămân în CI (QEMU) și pe workstation cu stick. Făcut și scos curat: discul `cyber-universe-vm.qcow2`, `vm-pornire.ps1`, testul din CI (commit-urile `f41bf22`, apoi scoase); rămâne doar limita CI de 60 min.
 
-- [~] **P6-49** F2 (C-68): remote text din OS — făcut pe ramura paralelă `wip/P7-F2-remote` (CI verde); **integrarea în `main`: sesiunea programată 4 nov 21:42 UTC**. O variantă dublură, făcută aici înainte să văd ramura, a rămas pe `wip/P6-49-remote` și **nu se îmbină**. Dep: —
+- [x] **P6-49** F2 (C-68): remote text din OS — făcut pe ramura paralelă `wip/P7-F2-remote`, integrat în `main` pe 4 nov (fără părțile mașinii virtuale). O variantă dublură, făcută aici înainte să văd ramura, a rămas pe `wip/P6-49-remote` și **nu se îmbină**. Dep: —
+  Rezultat (2026-11-04): `remote porneste [port] | opreste | stare` — shell text prin TCP (port 2323), cheia doar din `remote.cheie` pe stick, doar lista albă, 3/10 chei greșite → pauză/oprire, jurnal `log remote`; clientul `tools/remote-client.py`; ghid `docs/REMOTE.md`. **Încă fără criptare** (doar rețeaua de acasă; TLS = pas următor). Scenariul `remote` + 14 scenarii de regresie trec în `main`.
 
 - [~] **P6-50** (prima, ordinea nouă din 4 nov 23:10) F3 (C-68): actualizare de sine din Release-uri (HTTPS + SHA-256) cu backup și revenire automată dacă versiunea nouă nu pornește; rapoarte urcate în hub (token cu drepturi minime, doar pe stick — îl face Adrian). Dep: P6-08
 
