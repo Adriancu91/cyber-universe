@@ -24,10 +24,6 @@ FILES=(BOOTX64.EFI kernel initrd.tar limine.conf limine-uefi-cd.bin cyber.rw cyb
 # P6-41 (C-53): the Windows script of the automatic loop, next to the files it copies.
 cp "$ROOT/tools/windows/bucla-automata.ps1" "$OUT/"
 FILES+=(bucla-automata.ps1)
-# P6-48 (C-68, F1): the virtual machine for Windows: its disk (tools/vm-image.sh) and the script that runs it.
-[[ -f "$ROOT/build/cyber-universe-vm.qcow2" ]] || { echo "[release] EROARE: lipseste build/cyber-universe-vm.qcow2 (tools/vm-image.sh)"; exit 1; }
-cp "$ROOT/build/cyber-universe-vm.qcow2" "$ROOT/tools/windows/vm-pornire.ps1" "$OUT/"
-FILES+=(cyber-universe-vm.qcow2 vm-pornire.ps1)
 # The TEST STICK of the I6 window (`tools/build.sh --gpu-scrie --usb`), when built: its kernel and its whole image.
 GS="$ROOT/build/iso-gpu-scrie/boot/kernel"
 if [[ -f "$GS" && -f "$ROOT/build/cyber-universe-gpu-scrie-usb.img" ]]; then
