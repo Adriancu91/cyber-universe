@@ -150,7 +150,7 @@ pub fn allowed(line: &str) -> Result<(), &'static str> {
     match words.as_slice() {
         [] => Err("rand gol"),
         ["hw" | "lspci" | "lsusb" | "net" | "mem" | "uptime" | "raport", ..] => Ok(()),
-        ["log" | "ls" | "cat", ..] => Ok(()),
+        ["log" | "ls" | "cat" | "compara", ..] => Ok(()),
         ["cpu", ..] => Ok(()),
         ["gpu"] => Ok(()),
         ["gpu", sub, ..] => match *sub {
@@ -295,7 +295,7 @@ fn say(text: &str) {
 /// Boot-time self test of the allow-list (every `auto` test build).
 #[cfg(feature = "test-auto")]
 pub fn self_test() {
-    for ok in ["hw", "gpu", "gpu identifica", "gpu pregatire-i6", "gpu tur", "gpu plan", "run kronos --profil --n 64 Buna", "run kronos-calcul --cauta", "cpu porneste", "raport", "log gpu 40"] {
+    for ok in ["hw", "gpu", "gpu identifica", "gpu pregatire-i6", "gpu tur", "gpu plan", "run kronos --profil --n 64 Buna", "run kronos-calcul --cauta", "cpu porneste", "raport", "log gpu 40", "compara /usb/a.txt /usb/b.txt"] {
         assert!(allowed(ok).is_ok(), "auto: `{}` trebuia permis", ok);
     }
     for bad in ["gpu i6 --scrie", "gpu i6", "gpu lant", "gpu lant --sim", "gpu pregatire-i6 --scrie", "reboot", "run fetch https://x", "http get x", "rtl", "run editor", "mod incarca x", "exit", "test-gata"] {

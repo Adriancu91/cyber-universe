@@ -6,6 +6,7 @@ use crate::fs::{self, Kind};
 use alloc::{format, string::String, vec::Vec};
 
 pub mod auto;
+pub mod compara;
 mod raport;
 #[cfg(feature = "qemu-test")]
 pub use raport::self_test as raport_self_test;
@@ -116,6 +117,10 @@ fn dispatch(line: &str) -> bool {
         "rtl" => rtl(args),
         "hw" => hw(),
         "raport" => raport::manual(),
+        "compara" => match args {
+            [a, b] => out!("{}", compara::compare_files(a, b)),
+            _ => out!("folosire: compara <fisier1> <fisier2>\n"),
+        },
         "gpu" => gpu(args),
         "cpu" => cpu(args),
         "log" => show_log(args),
@@ -194,6 +199,7 @@ fn help() {
     out!("  raport           scrie pe stick /usb/raport/<data>-<nr>.txt: hw, lspci, net, jurnalele (fara chei)\n");
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
     out!("  uptime           de cat timp merge sistemul\n");
+    out!("  compara <f1> <f2>  randurile care difera intre doua rapoarte sau jurnale\n");
     out!("  cpu [porneste]   nucleele procesorului (porneste = porneste-le pe celelalte)\n");
     out!("  usb citire [mare|mica]  citirea de pe stick: 64 KiB pe comanda (varianta noua) sau 4 KiB (implicit)\n");
     out!("  reboot [acpi|cf9|8042|triplu]  reporneste (implicit: toate metodele, pe rand)\n");

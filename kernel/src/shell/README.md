@@ -37,3 +37,7 @@
   `teste-facut-<data>.txt` și repornește. Ceasul de siguranță (`ceas N` minute, implicit 10) repornește dacă lista nu termină;
   marcajul `auto/in-lucru.txt` împiedică reluarea unei liste întrerupte. Scenarii: `auto`, `auto-ceas`, `auto-intrerupt`
   (disc de test `/disk/auto`, feature `test-auto`). Pregătirea pe workstation: `docs/BUCLA_AUTOMATA.md`.
+- **`compara <f1> <f2>` (P6-52 pas 1, C-68 F9):** rândurile care diferă între două rapoarte sau jurnale (`-` doar în primul,
+  `+` doar în al doilea, cu numărul rândului), apoi „N la fel, X doar în primul, Y doar în al doilea”. Caută următorul rând comun
+  până la 64 de rânduri înainte (memorie puțină, fără tabel complet); cel mult 200 de rânduri afișate; fișierele secrete refuzate.
+  E pe lista albă a buclei automate (doar citește). Testat la pornire (`test: compara OK`, scenariul `boot`).

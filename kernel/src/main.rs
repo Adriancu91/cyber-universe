@@ -249,6 +249,7 @@ fn run_tests() -> ! {
     test_paging();
     test_gpu_decode();
     shell::raport_self_test();
+    shell::compara::self_test();
     proc::rights::self_test();
     assert!(acpi::fadt::self_test(), "acpi: FADT RESET_REG decodat gresit");
     info!("test: FADT RESET_REG decodare OK");
