@@ -329,6 +329,10 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
   Pas 1 gata (2026-11-03): `kronos --profil` arată „bariera in medie: trezire … us, asteptat cel mai lent … us, adunare … us” (din ora TSC a fiecărui fir).
   Pas 2 gata (2026-11-03): „bucățele” — `kronos --bucati N` / `bucati = N` în reglaj: N bucăți pe fir, contor comun, cine termină ia următoarea; QEMU: `--test-fire 6 --bucati 8`, `--verifica` Q8_0 pe 4 fire cu 8 bucăți = referința, `--control --fire 3 --bucati 4` trece. `kronos-calcul --cauta` măsoară 1/2/4/8 bucăți pe fir pe trecerea prin model (fiecare verificată cu controlul) și scrie `bucati = N` în reglaj dacă bate împărțirea fixă cu peste 1 % (QEMU: scris și citit de `kronos`). Rămân: echipe (3), un bloc pe simbol (4), un fir liber (5).
 
+- [~] **P6-46** Fixarea cyber-gpu ≥ `9ac89b8` (C-66, partea OS): `check_frts` acceptă HI = ultimul bloc de 128 KiB (FWSEC-FRTS a reușit pe placă, 4 nov); rândul „WPR2 citit dupa I6” prin `falcon::read_frts_after_i6` (doar citire, fără permis); testele de simulare cu forma de 128 KiB; Release nou cu stick-ul de test. Dep: P6-44
+
+- [ ] **P6-47** Kronos 206 simb/s → `qkv` și `proiecția` la viteza fc/MLP (C-67): de ce citesc memoria de 5–10× mai încet (12,5 / 6,0 GB/s față de 34–60 GB/s), adu-le la aceeași formă; `--profil` desparte qkv de atenție; CONTROL neschimbat; Release nou. Dep: P6-45
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
