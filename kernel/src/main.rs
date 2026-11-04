@@ -13,6 +13,7 @@ mod boot;
 mod drivers;
 mod fs;
 mod gfx;
+mod hw;
 mod input;
 mod log;
 mod mem;
@@ -253,6 +254,8 @@ fn run_tests() -> ! {
     proc::rights::self_test();
     assert!(acpi::fadt::self_test(), "acpi: FADT RESET_REG decodat gresit");
     info!("test: FADT RESET_REG decodare OK");
+    assert!(hw::names::self_test(), "hw: tabelul de nume hardware gresit");
+    info!("test: tabelul de nume hardware OK (Wi-Fi recunoscut dupa clasa si id)");
     test_heap();
     test_timer();
     test_threads();
