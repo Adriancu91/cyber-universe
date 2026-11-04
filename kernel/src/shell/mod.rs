@@ -7,6 +7,7 @@ use alloc::{format, string::String, vec::Vec};
 
 pub mod auto;
 mod raport;
+pub mod remote;
 #[cfg(feature = "qemu-test")]
 pub use raport::self_test as raport_self_test;
 
@@ -21,15 +22,24 @@ macro_rules! out {
     }};
 }
 
-/// While `raport` runs a command, that shell's output goes into the report instead: (shell thread, text so far).
-static CAPTURE: crate::sched::Mutex<Option<(u64, String)>> = crate::sched::Mutex::new(None);
+/// While `raport`, the automatic mode or a remote session (P6-49) runs a command, that thread's output goes into
+/// the capture instead: (thread, text so far), one per thread that captures.
+static CAPTURE: crate::sched::Mutex<Vec<(u64, String)>> = crate::sched::Mutex::new(Vec::new());
 
 fn emit_capture_begin() {
-    *CAPTURE.lock() = Some((crate::sched::current_id(), String::new()));
+    let me = crate::sched::current_id();
+    let mut c = CAPTURE.lock();
+    c.retain(|(id, _)| *id != me);
+    c.push((me, String::new()));
 }
 
 fn emit_capture_end() -> String {
-    CAPTURE.lock().take().map(|(_, t)| t).unwrap_or_default()
+    let me = crate::sched::current_id();
+    let mut c = CAPTURE.lock();
+    match c.iter().position(|(id, _)| *id == me) {
+        Some(i) => c.swap_remove(i).1,
+        None => String::new(),
+    }
 }
 
 /// While the automatic mode runs a command, what programs started by it print is also kept here (P6-41).
@@ -54,10 +64,9 @@ pub fn program_output(text: &str) {
 
 fn emit(text: &str) {
     {
+        let me = crate::sched::current_id();
         let mut c = CAPTURE.lock();
-        if let Some((id, buf)) = c.as_mut()
-            && *id == crate::sched::current_id()
-        {
+        if let Some((_, buf)) = c.iter_mut().find(|(id, _)| *id == me) {
             buf.push_str(text);
             return;
         }
@@ -116,6 +125,7 @@ fn dispatch(line: &str) -> bool {
         "rtl" => rtl(args),
         "hw" => hw(),
         "raport" => raport::manual(),
+        "remote" => out!("{}", remote::command(args)),
         "gpu" => gpu(args),
         "cpu" => cpu(args),
         "log" => show_log(args),
@@ -194,6 +204,7 @@ fn help() {
     out!("  raport           scrie pe stick /usb/raport/<data>-<nr>.txt: hw, lspci, net, jurnalele (fara chei)\n");
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
     out!("  uptime           de cat timp merge sistemul\n");
+    out!("  remote [cheie-noua|porneste]  accesul text de la distanta (portul 2323, cheia in /usb/remote.cheie)\n");
     out!("  cpu [porneste]   nucleele procesorului (porneste = porneste-le pe celelalte)\n");
     out!("  usb citire [mare|mica]  citirea de pe stick: 64 KiB pe comanda (varianta noua) sau 4 KiB (implicit)\n");
     out!("  reboot [acpi|cf9|8042|triplu]  reporneste (implicit: toate metodele, pe rand)\n");

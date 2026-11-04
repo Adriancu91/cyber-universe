@@ -1,5 +1,7 @@
-//! TCP client (RFC 9293, retransmission timer from RFC 6298): reliable byte streams to a server.
+//! TCP (RFC 9293, retransmission timer from RFC 6298): reliable byte streams.
 //! `connect` opens a connection, `send` queues bytes, `recv` takes what arrived in order, `close` ends it.
+//! Server side (P6-49): `listen` opens a port, `accept` hands over the next connection a client opened on it
+//! (passive open: LISTEN -> SYN-RECEIVED -> ESTABLISHED).
 //!
 //! All segments go out through the TCP thread (`thread`): the network receive thread must never wait for
 //! ARP itself (the ARP answer would arrive on that same thread). The TCP thread also retransmits what the
@@ -56,6 +58,8 @@ impl Error {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
     SynSent,
+    /// A client's SYN arrived on a listening port; our SYN+ACK went out, waiting for its ACK.
+    SynReceived,
     Established,
     /// We sent FIN, waiting for its ACK.
     FinWait1,
@@ -122,6 +126,10 @@ static CHANGED: WaitQueue = WaitQueue::new();
 static NEXT_ID: AtomicU32 = AtomicU32::new(1);
 static NEXT_PORT: AtomicU16 = AtomicU16::new(0);
 static STARTED: AtomicBool = AtomicBool::new(false);
+/// Listening ports and, for each, the connections established on it and not yet taken by `accept`.
+static LISTEN: Mutex<Vec<(u16, VecDeque<u32>)>> = Mutex::new(Vec::new());
+/// Most half-open (SYN-RECEIVED) connections per listening port; more SYNs are ignored.
+const BACKLOG: usize = 4;
 
 /// Test hooks: the next data segment we send / the n-th data segment we receive is "lost".
 #[cfg(feature = "qemu-test")]
@@ -249,8 +257,8 @@ impl Tcb {
         self.timed = None; // Karn: no round-trip sample from a retransmitted segment
         self.rto_ms = (self.rto_ms * 2).min(RTO_MAX_MS);
         self.rto_at = apic::ticks() + ms_to_ticks(self.rto_ms);
-        if self.state == State::SynSent {
-            self.emit(out, self.iss, SYN, &[]);
+        if matches!(self.state, State::SynSent | State::SynReceived) {
+            self.emit(out, self.iss, SYN, &[]); // SYN, or SYN+ACK (emit adds ACK outside SYN-SENT)
             return;
         }
         let n = self.sent_data().min(self.mss);
@@ -378,6 +386,22 @@ pub fn handle(src: Ipv4, dst: Ipv4, s: &[u8]) {
     let mut out = Vec::new();
     let mut conns = CONNS.lock();
     let Some(c) = conns.iter_mut().find(|c| c.remote == src && c.remote_port == sport && c.local_port == dport) else {
+        if flags & (SYN | ACK | RST) == SYN && LISTEN.lock().iter().any(|(p, _)| *p == dport) {
+            let half_open = conns.iter().filter(|c| c.local_port == dport && c.state == State::SynReceived).count();
+            if half_open < BACKLOG {
+                let mut c = new_tcb(State::SynReceived, dport, src, sport);
+                c.orphan = true; // nobody owns it until `accept` takes it
+                c.rcv_nxt = seq.wrapping_add(1);
+                c.snd_wnd = window;
+                c.mss = parse_mss(options).unwrap_or(536).min(OUR_MSS as usize);
+                c.emit(&mut out, c.iss, SYN, &[]);
+                c.arm_timer();
+                conns.push(c);
+            }
+            drop(conns);
+            transmit(out);
+            return;
+        }
         drop(conns);
         refuse(src, dst, sport, dport, seq, ack, flags, data.len() as u32);
         return;
@@ -415,6 +439,16 @@ pub fn handle(src: Ipv4, dst: Ipv4, s: &[u8]) {
         drop(conns);
         transmit(out);
         CHANGED.wake_all();
+        return;
+    }
+
+    // The client sent its SYN again (our SYN+ACK was lost): answer it again.
+    if c.state == State::SynReceived && flags & SYN != 0 && flags & RST == 0 {
+        if seq.wrapping_add(1) == c.rcv_nxt {
+            c.emit(&mut out, c.iss, SYN, &[]);
+        }
+        drop(conns);
+        transmit(out);
         return;
     }
 
@@ -459,6 +493,17 @@ pub fn handle(src: Ipv4, dst: Ipv4, s: &[u8]) {
     if !before(ack, c.snd_una) {
         c.snd_wnd = window;
     }
+    // Passive open: the ACK of our SYN+ACK makes the connection established; `accept` may take it.
+    let mut accepted = None;
+    if c.state == State::SynReceived {
+        if c.snd_una != c.iss.wrapping_add(1) {
+            drop(conns);
+            refuse(src, dst, sport, dport, seq, ack, flags, data.len() as u32);
+            return;
+        }
+        c.set_state(State::Established);
+        accepted = Some((c.local_port, c.id));
+    }
     // Data and FIN.
     let mut answer = false;
     if !data.is_empty() && matches!(c.state, State::Established | State::FinWait1 | State::FinWait2) {
@@ -483,6 +528,11 @@ pub fn handle(src: Ipv4, dst: Ipv4, s: &[u8]) {
     }
     c.pump(&mut out);
     drop(conns);
+    if let Some((port, id)) = accepted
+        && let Some((_, queue)) = LISTEN.lock().iter_mut().find(|(p, _)| *p == port)
+    {
+        queue.push_back(id);
+    }
     transmit(out);
     CHANGED.wake_all();
 }
@@ -543,28 +593,17 @@ fn thread() {
     }
 }
 
-/// Opens a connection to `ip`:`port`, waiting up to `timeout_ms` for the server. Returns its handle.
-pub fn connect(ip: Ipv4, port: u16, timeout_ms: u64) -> Result<u32, Error> {
-    let cfg = config().filter(|c| c.ip != [0; 4]).ok_or(Error::NoNetwork)?;
-    start();
-    if NEXT_PORT.load(Ordering::Relaxed) == 0 {
-        NEXT_PORT.store((apic::ticks() % 8192) as u16 + 1, Ordering::Relaxed);
-    }
+/// A new connection block with a fresh id and initial sequence number.
+fn new_tcb(state: State, local_port: u16, remote: Ipv4, remote_port: u16) -> Tcb {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    let iss = (apic::ticks() as u32).wrapping_mul(0x9E37_79B9) ^ u32::from_be_bytes([cfg.mac[2], cfg.mac[3], cfg.mac[4], cfg.mac[5]]) ^ id;
-    let mut conns = CONNS.lock();
-    let local_port = loop {
-        let p = 49152 + NEXT_PORT.fetch_add(1, Ordering::Relaxed) % 16384;
-        if !conns.iter().any(|c| c.local_port == p) {
-            break p;
-        }
-    };
-    let mut c = Tcb {
+    let mac = config().map_or([0; 6], |c| c.mac);
+    let iss = (apic::ticks() as u32).wrapping_mul(0x9E37_79B9) ^ u32::from_be_bytes([mac[2], mac[3], mac[4], mac[5]]) ^ id.wrapping_mul(0x85EB_CA6B);
+    Tcb {
         id,
-        state: State::SynSent,
+        state,
         local_port,
-        remote: ip,
-        remote_port: port,
+        remote,
+        remote_port,
         iss,
         snd_una: iss,
         snd_nxt: iss.wrapping_add(1),
@@ -588,7 +627,25 @@ pub fn connect(ip: Ipv4, port: u16, timeout_ms: u64) -> Result<u32, Error> {
         orphan: false,
         since: apic::ticks(),
         retransmits: 0,
+    }
+}
+
+/// Opens a connection to `ip`:`port`, waiting up to `timeout_ms` for the server. Returns its handle.
+pub fn connect(ip: Ipv4, port: u16, timeout_ms: u64) -> Result<u32, Error> {
+    config().filter(|c| c.ip != [0; 4]).ok_or(Error::NoNetwork)?;
+    start();
+    if NEXT_PORT.load(Ordering::Relaxed) == 0 {
+        NEXT_PORT.store((apic::ticks() % 8192) as u16 + 1, Ordering::Relaxed);
+    }
+    let mut conns = CONNS.lock();
+    let local_port = loop {
+        let p = 49152 + NEXT_PORT.fetch_add(1, Ordering::Relaxed) % 16384;
+        if !conns.iter().any(|c| c.local_port == p) {
+            break p;
+        }
     };
+    let mut c = new_tcb(State::SynSent, local_port, ip, port);
+    let (id, iss) = (c.id, c.iss);
     let mut out = Vec::new();
     c.emit(&mut out, iss, SYN, &[]);
     c.arm_timer();
@@ -723,4 +780,38 @@ pub fn close(id: u32, timeout_ms: u64) {
 #[cfg(feature = "qemu-test")]
 pub fn retransmissions(id: u32) -> u32 {
     CONNS.lock().iter().find(|c| c.id == id).map_or(0, |c| c.retransmits)
+}
+
+/// Starts accepting connections on `port` (P6-49). Clients that connect before `accept` wait in a queue.
+pub fn listen(port: u16) -> Result<(), Error> {
+    config().filter(|c| c.ip != [0; 4]).ok_or(Error::NoNetwork)?;
+    start();
+    let mut l = LISTEN.lock();
+    if !l.iter().any(|(p, _)| *p == port) {
+        l.push((port, VecDeque::new()));
+    }
+    Ok(())
+}
+
+/// Waits up to `timeout_ms` for the next connection opened by a client on the listening `port`.
+/// Returns its handle and the client's address; the connection is then used like one from `connect`.
+pub fn accept(port: u16, timeout_ms: u64) -> Result<(u32, Ipv4, u16), Error> {
+    let deadline = apic::ticks() + ms_to_ticks(timeout_ms);
+    loop {
+        let next = LISTEN.lock().iter_mut().find(|(p, _)| *p == port).ok_or(Error::Closed)?.1.pop_front();
+        if let Some(id) = next {
+            let mut conns = CONNS.lock();
+            if let Some(c) = conns.iter_mut().find(|c| c.id == id && !c.reset && c.state != State::Closed) {
+                c.orphan = false;
+                return Ok((id, c.remote, c.remote_port));
+            }
+            continue; // closed before it was taken
+        }
+        let ready = CHANGED.wait_until_or(deadline, || {
+            LISTEN.try_lock().is_some_and(|l| l.iter().any(|(p, q)| *p == port && !q.is_empty()))
+        });
+        if !ready {
+            return Err(Error::Timeout);
+        }
+    }
 }

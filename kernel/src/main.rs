@@ -160,6 +160,7 @@ extern "C" fn kernel_main() -> ! {
     #[cfg(not(feature = "qemu-test"))]
     {
         shell::auto::run_if_present(); // P6-41: `/usb/auto/teste.txt` = the automatic test loop (restarts at the end)
+        shell::remote::start_if_configured(); // P6-49: `/usb/remote.cheie` = the remote text service on port 2323
         run_desktop(); // the desktop first; when it closes (Escape), the text shell
         loop {
             shell::run();
@@ -240,6 +241,7 @@ fn run_tests() -> ! {
     test_paging();
     test_gpu_decode();
     shell::raport_self_test();
+    shell::remote::self_test();
     proc::rights::self_test();
     assert!(acpi::fadt::self_test(), "acpi: FADT RESET_REG decodat gresit");
     info!("test: FADT RESET_REG decodare OK");
@@ -258,6 +260,8 @@ fn run_tests() -> ! {
     test_dns();
     #[cfg(feature = "test-tcp")]
     test_tcp();
+    #[cfg(feature = "test-remote")]
+    test_remote();
     #[cfg(feature = "test-appnet")]
     test_appnet();
     #[cfg(feature = "test-crypto")]
@@ -1370,6 +1374,23 @@ fn test_tcp() {
 
     assert!(tcp::connect(server, 18081, 3000) == Err(tcp::Error::Refused), "test: portul inchis trebuia refuzat");
     info!("tcp: port inchis -> conexiune refuzata (corect)");
+}
+
+/// The remote text service (P6-49): tools/before-remote.sh connects through QEMU hostfwd (127.0.0.1:12323 -> :2323),
+/// sends a wrong key (refused), then the right one, `uptime`, `reboot` (refused), `gpu i6 --scrie` (refused), `iesire`.
+#[cfg(feature = "test-remote")]
+fn test_remote() {
+    use core::sync::atomic::Ordering;
+    assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
+    shell::remote::start(alloc::string::String::from("cheie-de-test-remote-0123"));
+    let deadline = arch::x86_64::apic::ticks() + 90 * arch::x86_64::apic::HZ;
+    // The wrong-key session ends first, then the good one.
+    while shell::remote::SESSIONS_DONE.load(Ordering::Acquire) < 2 {
+        assert!(arch::x86_64::apic::ticks() < deadline, "test: remote: clientul nu a terminat in 90 s");
+        sched::sleep_ms(50);
+    }
+    sched::sleep_ms(1000); // the client writes its result file before QEMU stops
+    info!("test: remote OK");
 }
 
 /// Programs on the network (P5-05): /bin/fetch downloads the test page over TCP, /bin/udp talks to the UDP

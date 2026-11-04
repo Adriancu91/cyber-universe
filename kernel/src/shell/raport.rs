@@ -18,7 +18,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 /// Files whose contents are secret; they are read only to hide them.
 const SECRET_FILES: &[&str] =
-    &["/usb/claude.key", "/usb/github.token", "/disk/claude.key", "/disk/github.token", "/etc/claude.key", "/etc/github.token"];
+    &["/usb/claude.key", "/usb/github.token", "/usb/remote.cheie", "/disk/claude.key", "/disk/github.token", "/etc/claude.key", "/etc/github.token"];
 /// Prefixes of keys and tokens: the prefix and the rest of the word are hidden.
 /// Header names (ending in ':') come first: their whole value, to the end of the line, is hidden.
 const SECRET_PREFIXES: &[&str] = &[
