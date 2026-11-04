@@ -87,9 +87,29 @@ pub fn run() {
         raport::auto_if_errors();
         out!("{}", PROMPT);
         let Some(line) = read_line() else { return }; // the terminal window closed
+        // The remote console (P6-49): only the allow-listed commands, each one noted in the log.
+        if !line.trim().is_empty() && crate::term::is_restricted(crate::sched::current_id()) {
+            if let Err(why) = remote_allowed(&line) {
+                crate::info!("remote: REFUZAT: {} ({})", line.trim(), why);
+                out!("REFUZAT: {} (prin remote merg doar comenzile din lista alba; `help` le arata)\n", why);
+                continue;
+            }
+            crate::info!("remote: comanda: {}", line.trim());
+        }
         if !dispatch(&line) {
             return;
         }
+    }
+}
+
+/// The remote console's allow-list (P6-49): the automatic mode's read-only list, plus `help`, `exit`,
+/// `remote stare` and `remote opreste`. Nothing that writes to the video card, no `reboot`, no other programs.
+pub fn remote_allowed(line: &str) -> Result<(), &'static str> {
+    let words: Vec<&str> = line.split_whitespace().collect();
+    match words.as_slice() {
+        ["help"] | ["exit"] | ["remote", "stare"] | ["remote", "opreste"] => Ok(()),
+        ["remote", ..] => Err("prin remote merge doar `remote stare` si `remote opreste`"),
+        _ => auto::allowed(line),
     }
 }
 
@@ -130,6 +150,7 @@ fn dispatch(line: &str) -> bool {
         "cpu" => cpu(args),
         "log" => show_log(args),
         "uptime" => uptime(),
+        "remote" => remote(args),
         "reboot" => reboot(args),
         "exit" => match crate::term::of_shell(crate::sched::current_id()) {
             Some(t) => {
@@ -206,10 +227,33 @@ fn help() {
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
     out!("  uptime           de cat timp merge sistemul\n");
     out!("  compara <f1> <f2>  randurile care difera intre doua rapoarte sau jurnale\n");
+    out!("  remote porneste [port]|opreste|stare  consola text prin retea (cheia din remote.cheie; implicit portul 2323)\n");
     out!("  cpu [porneste]   nucleele procesorului (porneste = porneste-le pe celelalte)\n");
     out!("  usb citire [mare|mica]  citirea de pe stick: 64 KiB pe comanda (varianta noua) sau 4 KiB (implicit)\n");
     out!("  reboot [acpi|cf9|8042|triplu]  reporneste (implicit: toate metodele, pe rand)\n");
     out!("  exit             inchide terminalul (doar in fereastra Terminal)\n");
+}
+
+fn remote(args: &[&str]) {
+    use crate::net::remote;
+    match args {
+        ["porneste"] | ["porneste", _] => {
+            let port = match args.get(1).map(|p| p.parse::<u16>()) {
+                None => remote::PORT_DEFAULT,
+                Some(Ok(p)) if p != 0 => p,
+                Some(_) => {
+                    out!("remote: port gresit (1-65535)\n");
+                    return;
+                }
+            };
+            match remote::start(port) {
+                Ok(msg) | Err(msg) => out!("{}\n", msg),
+            }
+        }
+        ["opreste"] => out!("{}\n", if remote::stop() { "remote: opresc serviciul" } else { "remote: serviciul nu merge" }),
+        ["stare"] | [] => out!("{}\n", remote::status()),
+        _ => out!("folosire: remote porneste [port] | remote opreste | remote stare\n"),
+    }
 }
 
 fn ls(path: &str) {

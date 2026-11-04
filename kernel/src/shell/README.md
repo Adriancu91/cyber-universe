@@ -41,3 +41,7 @@
   `+` doar în al doilea, cu numărul rândului), apoi „N la fel, X doar în primul, Y doar în al doilea”. Caută următorul rând comun
   până la 64 de rânduri înainte (memorie puțină, fără tabel complet); cel mult 200 de rânduri afișate; fișierele secrete refuzate.
   E pe lista albă a buclei automate (doar citește). Testat la pornire (`test: compara OK`, scenariul `boot`).
+- **`remote porneste [port] | opreste | stare` (P6-49, F2):** consola text prin rețea (`net/remote.rs`, ghid în `docs/REMOTE.md`).
+  Shell-ul unei sesiuni remote e un terminal „restricționat” (`term::open_restricted`): înainte de fiecare comandă se verifică
+  `remote_allowed` (lista modului automat + `help`, `exit`, `remote stare|opreste`); refuzurile și comenzile merg în jurnal.
+  Testat în scenariul `remote`.

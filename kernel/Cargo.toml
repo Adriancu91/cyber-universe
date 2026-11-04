@@ -58,6 +58,9 @@ test-dns = ["qemu-test"]
 test-tcp = ["qemu-test"]
 # P6-50: the automatic return to the old version (trial, confirmation, return) on a writable test stick.
 test-revenire = ["qemu-test"]
+# P6-49 (F2): the remote console against tools/remote-test.py (QEMU hostfwd 127.0.0.1:12323 -> 2323); the key is
+# made by tools/before-remote.sh on the test disk, never in the repository.
+test-remote = ["qemu-test"]
 # P5-05: /bin/fetch and /bin/udp against tools/before-appnet.sh (web server + UDP echo).
 test-appnet = ["qemu-test"]
 # P5-10: the official vectors of crypto/ (SHA-2, HMAC, HKDF) run in the kernel.
