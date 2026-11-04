@@ -346,7 +346,7 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 - [ ] **P6-52** F8/F9 (C-68): editor de text + terminal + git simplu în OS; unelte de test/profil/jurnal (comparare rapoarte), toate pe lista albă. Dep: P6-49
   Pas 1 gata (2026-11-04): `compara <f1> <f2>` (F9: compararea rapoartelor), pe lista albă. Rămân: editorul / terminalul / git simplu (după ce F2 de pe ramura paralelă intră în `main`).
 
-- [ ] **P6-53** F6a (C-68): browser text — citește pagini HTML simple și documentație. Dep: P6-52
+- [~] **P6-53** (sesiunea programată 4 nov 21:42 UTC; C-71: fără să aștepte P6-52) F6a (C-68): browser text — citește pagini HTML simple și documentație. Dep: P6-52
 
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
