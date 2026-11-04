@@ -79,6 +79,11 @@ Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet 
 2. În Cyber Universe: **Start → settings → Actualizeaza** (sau, în terminal, `run actualizeaza`).
 3. Aștepți mesajul **„gata - stick-ul are acum os-…”**, apoi repornești calculatorul. Dacă scrie „nimic schimbat pe
    stick”, stick-ul a rămas exact cum era (pornește ca înainte) — trimite-mi o poză cu mesajul.
+4. **Prima pornire după actualizare e o încercare** (P6-50): dacă versiunea nouă nu merge un minut, la pornirea următoare
+   sistemul pune singur la loc versiunea veche (`docs/ACTUALIZARE.md`).
+5. **Git simplu (P6-52):** `run gh-ia <proprietar/depozit> <cale> <fișier>` ia un fișier de pe GitHub pe stick (ex.
+   `run gh-ia Adriancu91/cyber-universe docs/STATE.md /usb/STATE.md`); `run gh-trimite <fișier> <proprietar/depozit> <cale>`
+   îl trimite înapoi. Pentru depozitele publice `gh-ia` nu are nevoie de token.
 
 ## Pentru Claude (tehnic)
 - Varianta B merge pentru că firmware-ul UEFI caută `EFI/BOOT/BOOTX64.EFI` pe orice partiție FAT32, iar Limine își citește

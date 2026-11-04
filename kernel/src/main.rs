@@ -1713,6 +1713,23 @@ fn test_ghpush() {
     assert!(run(good, &["/etc/mare.bin", R, "date/mare.bin"], "300 KB") == 0);
     assert!(run(good, &["/etc/nota.txt", R, "../afara.txt"], "cale cu ..") == 1);
     info!("test: trimiterea pe GitHub OK");
+    // P6-52: gh-ia takes files back (the token from the last run is still in /etc/github.token).
+    let take = |args: &[&str], what: &str| {
+        let mut all = alloc::vec!["gh-ia"];
+        all.extend_from_slice(args);
+        let id = proc::spawn_path("/bin/gh-ia", &all).expect("test: /bin/gh-ia");
+        let code = proc::wait_child(id);
+        info!("test: gh-ia ({}) a iesit cu codul {}", what, code);
+        code
+    };
+    assert!(take(&[R, "date/mare.bin", "/etc/mare-inapoi.bin"], "300 KB") == 0);
+    assert!(fs::read_all("/etc/mare-inapoi.bin").ok() == Some(big.clone()), "test: gh-ia: mare.bin difera");
+    assert!(take(&[R, "date/mare.bin", "/etc/mare-inapoi.bin"], "la fel") == 0);
+    assert!(take(&[R, "note/cu spatiu.txt", "/etc/nota-inapoi.txt"], "nume cu spatiu") == 0);
+    assert!(fs::read_all("/etc/nota-inapoi.txt").ok() == fs::read_all("/etc/nota.txt").ok(), "test: gh-ia: nota difera");
+    assert!(take(&[R, "note/lipsa.txt", "/etc/lipsa.txt"], "fisier lipsa") == 1 && fs::kind("/etc/lipsa.txt").is_err());
+    assert!(take(&[R, "../afara.txt", "/etc/x.txt"], "cale cu ..") == 1);
+    info!("test: luarea de pe GitHub OK");
 }
 
 /// HTTPS with real web sites (P6-02): /bin/fetch resolves the name, connects through QEMU's network to the
