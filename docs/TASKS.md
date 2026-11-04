@@ -335,6 +335,18 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 - [x] **P6-47** Kronos 206 simb/s → `qkv` și `proiecția` la viteza fc/MLP (C-67): de ce citesc memoria de 5–10× mai încet (12,5 / 6,0 GB/s față de 34–60 GB/s), adu-le la aceeași formă; `--profil` desparte qkv de atenție; CONTROL neschimbat; Release nou. Dep: P6-45
   Rezultat (2026-11-04, partea fără placă): în bloc, qkv/proiecția/fc/MLP au deja aceeași formă de cod; diferența apare doar în rularea reală (`--cauta`: tot modelul 2088 µs/simbol; rularea reală: produsele 4,85 ms) → `--profil` arată acum fiecare etapă văzută de toate firele (lucru, câte fire au lucrat, întârzierea ultimului fir, cedări) și politica de așteptare; atenția despărțită de qkv și fără bloc; `--fara-cedari` (bănuiala: ~520 cedări ale procesorului pe simbol pe 4 nov). Simbolurile neschimbate (`--control --fire 2 --bloc --fara-cedari`, `kronos-kgr` trece). **Release `os-224`**. Verdictul (care e frâna și dacă `--fara-cedari` o ridică) la fereastra următoare.
 
+- [~] **P6-48** F1 din planul independenței (C-68): imaginea de disc pentru mașina virtuală din fiecare Release (`cyber-universe-vm.qcow2`) + `tools/windows/vm-pornire.ps1` (porneste/opreste/reporneste/stare pe Windows, rețea, serialul în fișier, ceas de siguranță, nuclee limitate — implicit 8, placa video nu e dată mașinii) + `docs/MASINA_VIRTUALA.md`. Test: imaginea pornește în QEMU ca disc USB, cu rețea. Dep: P6-07
+
+- [ ] **P6-49** F2 (C-68): remote text direct din OS — ecranul text și tastatura prin rețea, cheie doar pe stick/discul mașinii, doar comenzile din lista albă. Dep: P6-48
+
+- [ ] **P6-50** F3 (C-68): actualizare de sine din Release-uri (HTTPS + SHA-256) cu backup și revenire automată dacă versiunea nouă nu pornește; rapoarte urcate în hub (token cu drepturi minime, doar pe stick — îl face Adrian). Dep: P6-48
+
+- [ ] **P6-51** F4 (C-68): citirea completă a hardware-ului — PCI/USB/ACPI cu nume și stare; placa Wi-Fi doar identificată și citită (fără scriere). Dep: P6-48
+
+- [ ] **P6-52** F8/F9 (C-68): editor de text + terminal + git simplu în OS; unelte de test/profil/jurnal (comparare rapoarte), toate pe lista albă. Dep: P6-49
+
+- [ ] **P6-53** F6a (C-68): browser text — citește pagini HTML simple și documentație. Dep: P6-48
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
