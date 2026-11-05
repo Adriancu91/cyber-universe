@@ -354,6 +354,8 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 - [x] **P6-53** F6a (C-68; făcut după C-71 fără să aștepte restul P6-52 — browserul nu are nevoie de editor): browser text — citește pagini HTML simple și documentație. Dep: P6-52
   Rezultat (2026-11-04): `/bin/web <adresă>` (HTTPS sau HTTP) arată pagina ca text — titlu, titluri, paragrafe, liste, tabele, citate, `<pre>`, `alt` la imagini, legături numerotate `[N]` cu adresa completă la sfârșit; `web <N>` deschide legătura N, `web --pagina P` pagina de ecran P (din `/tmp/web/`, fără descărcare), `web --legaturi`; redirecționări urmate (≤ 5). Analizor HTML propriu, tolerant (`user/src/html.rs`, după specificația publică WHATWG). Scenariul `web` (42 de verificări) trece în QEMU; nu e pe lista albă a modului automat.
 
+- [~] **P6-54** F2 pas 2 (C-68; „TLS = pas următor” din P6-49): consola remote criptată și autentificată cu cheia de pe stick (X25519 + HKDF + ChaCha20-Poly1305, protocol propriu mic după modelul PSK+DHE din TLS 1.3; clientul Python fără biblioteci). Plan: `docs/plans/P6-54.md`. Dep: P6-49
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)

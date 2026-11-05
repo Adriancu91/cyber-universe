@@ -89,3 +89,12 @@ Regula clean-room rămâne: nimic GPL copiat; nimic MIT străin fără notificar
 **Firmware-ul NVIDIA nu îl distribuim niciodată** (nici în repo, nici în arhivele de stick); Adrian îl descarcă singur. Argumentul de
 redistribuire din `cyber-gpu/docs/RESEARCH_I4_I8.md` §5.1 presupunea un OS cu licență OSI, deci nu mai e valabil pentru noi.
 În `Cargo.toml`: `license-file = "../LICENSE"` în loc de `license = "MIT"`. De verificat cu un avocat înainte de investitori (DECIZII.md din hub).
+
+### D-016 — Consola remote: criptare cu protocol propriu mic, nu TLS complet (2026-11-05)
+Pentru F2 (C-68, P6-54) remote-ul se criptează cu un protocol propriu, după modelul PSK + (EC)DHE din TLS 1.3 (RFC 8446 §2.2):
+X25519 la fiecare conexiune, cheile recordurilor din HKDF-SHA256 peste cheia comună de pe stick, recorduri ChaCha20-Poly1305
+(RFC 8439). Motiv: clientul trebuie să meargă pe Windows doar cu Python standard (Adrian nu instalează biblioteci), iar un
+server TLS complet ar cere certificate pe stick și mult cod nou; piesele folosite sunt deja verificate pe vectorii oficiali
+(P5-10 … P5-12). Cheia comună ține locul certificatului: cine are fișierul `remote.cheie` poate intra, cine nu, nu poate nici citi.
+Protocolul vechi necriptat (`CYBER-REMOTE 1`) dispare. Dacă mai târziu se cere TLS adevărat (de ex. pentru un client străin),
+se adaugă ca decizie nouă.

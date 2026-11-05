@@ -35,7 +35,11 @@ Unelte de profil și jurnal (P6-52, F9), toate doar citire:
 - Cheia se compară în timp constant; `cat` nu o arată; rapoartele o ascund.
 - O singură sesiune odată; 30 de minute fără taste → sesiunea se închide.
 - Fiecare comandă și fiecare refuz apar în jurnalul OS-ului: `log remote`.
-- **Încă fără criptare:** folosește-l doar în rețeaua de acasă. TLS vine într-un pas următor.
+- **Criptat (P6-54):** tot ce circulă (comenzile, răspunsurile) e criptat și semnat cu cheia comună; cheia nu trece niciodată
+  prin rețea. Cineva din rețea fără cheie nu poate citi și nici schimba nimic; un record schimbat închide sesiunea.
+  Recomandat tot doar în rețeaua de acasă (portul nu se deschide spre internet).
+- Clientul trebuie să fie cel nou (din același Release ca OS-ul); verificare rapidă: `py tools\remote-client.py --test`
+  trebuie să scrie „criptografia OK”. Un client vechi primește „nu ma pot conecta”.
 
 ## Test automat
 Scenariul `remote` din `tests/scenarios.txt` (`tools/test.sh remote`), descris în `kernel/src/net/README.md`.

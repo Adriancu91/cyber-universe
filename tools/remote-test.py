@@ -46,7 +46,32 @@ def main():
     code, _, text = attempt(key, wait=5)
     check(code == 3 and "prea multe chei gresite" in text, f"pauza dupa 3 chei gresite (cod {code}: {text})")
     time.sleep(3.5)
-    # 3. The right key: allowed commands answer, the others are refused, the key is never shown.
+    # 3a. The right key, then a record with one byte changed: the OS must close the session (nothing typed).
+    code, sock, first = attempt(key, wait=5)
+    check(code == 0, f"cheia buna acceptata pentru proba cu record stricat (cod {code})")
+    if code == 0:
+        rec = bytearray(sock.seal(b"uptime\n"))
+        rec[5] ^= 0x01
+        sock.sock.sendall(bytes(rec))
+        sock.settimeout(10)
+        closed = False
+        try:
+            end = time.time() + 10
+            while time.time() < end:
+                if sock.sock.recv(4096) == b"":
+                    closed = True
+                    break
+        except OSError:
+            closed = True
+        check(closed, "record stricat: OS-ul a inchis sesiunea")
+        sock.close()
+    # 3b. What travels on the wire: the greeting and 48 bytes, then nothing readable (no key prompt any more).
+    raw = rc.socket.create_connection((HOST, PORT), timeout=10)
+    hello = rc.read_until_len(raw, len(rc.GREETING) + rc.HELLO_LEN, 10, b"")
+    raw.close()
+    check(hello.startswith(b"CYBER-REMOTE 2\n") and b"cheie" not in hello, "salutul e cel criptat (CYBER-REMOTE 2)")
+    time.sleep(0.5)
+    # 3c. The right key: allowed commands answer, the others are refused, the key is never shown.
     code, sock, first = attempt(key, wait=5)
     check(code == 0, f"cheia buna acceptata (cod {code})")
     if code == 0:

@@ -27,15 +27,18 @@
   Încă lipsesc: „persist timer” pentru fereastra zero, SACK și scalarea ferestrei.
 - `remote.rs` (P6-49, F2) — **consola text prin rețea**: `remote porneste [port]` (implicit 2323) citește cheia din
   `remote.cheie` (stick `/usb`, apoi disc `/disk`; cel puțin 16 caractere; **niciodată în repo**) și ascultă pe port.
-  Protocol pe rânduri: OS-ul trimite `CYBER-REMOTE 1` și `cheie: `, clientul trimite cheia; `OK` → un shell propriu (ca o
+  Protocol **criptat** (P6-54, `remote_crypto.rs`): OS-ul trimite `CYBER-REMOTE 2` + o valoare X25519 nouă; clientul o trimite
+  pe a lui și un prim record `AUTH`; cheile recordurilor (ChaCha20-Poly1305) ies din X25519 + cheie (HKDF-SHA256), cheia nu
+  circulă niciodată; `OK` (criptat) → un shell propriu (ca o
   fereastră Terminal): ce scrie shell-ul pleacă la client, ce trimite clientul sunt taste. Doar comenzile din **lista albă**
   (`shell::remote_allowed` = lista modului automat + `help`, `exit`, `remote stare|opreste`): nimic care scrie pe placa video,
   fără `reboot`, fără alte programe. Fiecare comandă și fiecare refuz intră în jurnal (`log remote`).
-  Siguranță: cheia comparată în timp constant; 3 chei greșite la rând → pauză 60 s pentru orice conexiune; 10 greșite → serviciul
+  Siguranță: o cheie greșită = primul record nu se deschide (eticheta comparată în timp constant); 3 chei greșite la rând → pauză 60 s pentru orice conexiune; 10 greșite → serviciul
   se oprește singur; `remote.cheie` e fișier secret (`cat` nu-l arată, raportul îl ascunde); o singură sesiune odată; 30 min fără
-  taste → sesiunea se închide. **Fără criptare deocamdată** — doar pentru rețeaua de acasă (testul folosește portul redirecționat
-  pe 127.0.0.1); TLS mai târziu. Pornire automată la boot doar dacă există `remote.porneste` lângă cheie (conținutul: portul).
-  Clientul: `tools/remote-client.py` (doar biblioteca standard Python, merge pe Windows). Ghidul: `docs/REMOTE.md`.
+  taste → sesiunea se închide. Un record schimbat sau repetat închide sesiunea. Valori X25519 noi la fiecare conexiune
+  (ce s-a înregistrat rămâne secret chiar dacă cheia se află mai târziu). Pornire automată la boot doar dacă există `remote.porneste` lângă cheie (conținutul: portul).
+  Clientul: `tools/remote-client.py` (doar biblioteca standard Python, criptografia scrisă după RFC-uri; `--test` o verifică
+  pe vectorii oficiali; merge pe Windows). Ghidul: `docs/REMOTE.md`.
 
 **Abatere de la plan:** primirea se face printr-un fir care verifică placa des, nu prin întreruperi: rutarea întreruperilor
 PCI cere tabelele ACPI de rutare (AML) sau MSI; se va reveni la întreruperi când va conta consumul procesorului.
@@ -48,7 +51,9 @@ Scenariul `dns`: `tools/test.sh` pornește `tools/before-dns.sh` (serverul DNS d
 fără internet), la care nucleul ajunge ca 10.0.2.2:15353; verifică răspuns direct, CNAME, nume lipsă, memorie.
 Scenariul `remote` (P6-49): `tools/before-remote.sh` pune pe discul de test o cheie nouă, aleatoare, și `remote.porneste`, apoi
 `tools/remote-test.py` se conectează prin QEMU (`hostfwd` 127.0.0.1:12323 → 2323): fără cheie serviciul nu pornește; pornirea
-automată; 3 chei greșite refuzate, a 4-a conexiune refuzată (pauză), cheia bună → `uptime`, `help` răspund, `gpu i6 --scrie`,
+automată; criptarea verificată la pornire (`test: remote: criptarea OK`, vectorul comun cu clientul Python); 3 chei greșite
+refuzate, a 4-a conexiune refuzată (pauză), un record stricat închide sesiunea, salutul e `CYBER-REMOTE 2`, cheia bună → `uptime`,
+`log --sumar`, `timp uptime`, `help` răspund, `gpu i6 --scrie`,
 `reboot` refuzate, `cat` pe cheie = „fisier secret”, `remote opreste` din sesiune oprește serviciul; `tools/after-remote.sh`
 verifică jurnalul clientului și că cheia nu apare pe serial.
 Scenariul `tcp`: `tools/before-tcp.sh` pornește `python3 -m http.server` (10.0.2.2:18080): pagină mică, fișier de
