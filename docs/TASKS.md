@@ -357,6 +357,8 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 - [x] **P6-54** F2 pas 2 (C-68; „TLS = pas următor” din P6-49): consola remote criptată și autentificată cu cheia de pe stick (X25519 + HKDF + ChaCha20-Poly1305, protocol propriu mic după modelul PSK+DHE din TLS 1.3; clientul Python fără biblioteci). Plan: `docs/plans/P6-54.md`. Dep: P6-49
   Rezultat (2026-11-05): `CYBER-REMOTE 2` — salut X25519 nou la fiecare conexiune, primul record `AUTH` = proba cheii (cheia nu mai circulă), tot restul în recorduri ChaCha20-Poly1305; record schimbat/repetat → sesiunea se închide; regulile vechi (pauză, oprire, lista albă, jurnal) rămân. `remote-client.py` are criptografia în Python pur, `--test` pe vectorii RFC + vectorul comun cu nucleul. Scenariul `remote` (autotest + record stricat + salut) și `boot`, `log`, `shell`, `auto`, `raport`, `ghpush` trec.
 
+- [~] **P6-55** `gpu lant` pe lanțul complet al ferestrei (partea OS din C-71, pas 1): `WINDOW_CHAIN_FULL` cu pașii existenți + `i6-wpr2-citit`, oprire cinstită la I7 (fără scrieri noi). Plan: `docs/plans/P6-55.md`. Dep: P6-46
+
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
