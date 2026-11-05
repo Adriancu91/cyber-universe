@@ -158,17 +158,22 @@ fn fail(what: &'static str) -> GpuError {
 /// The I6 layout again, with the parameters `i6_check` used (the sizes of the official files from the manifest):
 /// `GspFwWprMeta` must describe the same regions FWSEC-FRTS was asked for.
 pub(super) fn layout(c: &I6Check) -> GpuResult<FbLayout> {
-    let size = |r: GspRole| GSP_570_144.iter().find(|f| f.role == r).map(|f| f.size).unwrap_or(0);
-    let l = FbLayout::compute(&FbParams {
-        fb_size: c.fb_size,
-        vga_workspace_reg: None,
-        bootloader_size: size(GspRole::Bootloader),
-        gsp_elf_size: size(GspRole::GspRm),
-    })?;
+    let l = layout_for(c.fb_size)?;
     if (l.frts.start, l.frts.end) != c.frts {
         return Err(fail("I7: harta memoriei placii difera de cea de la I6"));
     }
     Ok(l)
+}
+
+/// The GSP-RM 570.144 layout for `fb_size` bytes of VRAM (the file sizes of `GSP_570_144`).
+pub(super) fn layout_for(fb_size: u64) -> GpuResult<FbLayout> {
+    let size = |r: GspRole| GSP_570_144.iter().find(|f| f.role == r).map(|f| f.size).unwrap_or(0);
+    FbLayout::compute(&FbParams {
+        fb_size,
+        vga_workspace_reg: None,
+        bootloader_size: size(GspRole::Bootloader),
+        gsp_elf_size: size(GspRole::GspRm),
+    })
 }
 
 /// Builds everything I7 needs in RAM. `bar0` is read only (one fuse read). Nothing is written to the card.

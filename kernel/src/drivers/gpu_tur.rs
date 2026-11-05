@@ -330,9 +330,15 @@ pub fn chain() -> Vec<String> {
             let screen = crate::gfx::framebuffer::boot_info().zip(d.bar(1)).and_then(|((phys, size, ..), bar1)| {
                 nvidia_ga104::vram_window::screen_vram_range(phys, size, bar1, gpu_golden::BAR1_LEN)
             });
-            let zone = gpu_golden::zone(&gpu_i7::layout(c)?, c.fb_size, screen, gpu_golden::BAR1_LEN)?;
+            // P6-58: WPR2 read back (reads only) and checked against the layout before the zone is used.
+            let mut win = ReadOnlyBar0Window::with_len(bar0, nvidia_ga104::fuse::FUSE_WINDOW);
+            let wpr2 = gpu_golden::read_wpr2_after_i7(&mut win, j);
+            refused += win.refused;
+            let wpr2 = wpr2?;
+            lines.push(format!("{}: golden: WPR2 dupa I7 {:#x}..{:#x}", p, wpr2.0, wpr2.1));
+            let zone = gpu_golden::zone(&gpu_i7::layout(c)?, wpr2, c.fb_size, screen, gpu_golden::BAR1_LEN)?;
             lines.push(format!(
-                "{}: golden: ecranul in VRAM {:x?}; zona driverului {:#x}-{:#x} (restul protejat)",
+                "{}: golden: WPR2 = cel cerut de GspFwWprMeta; ecranul in VRAM {:x?}; zona driverului {:#x}-{:#x} (restul protejat)",
                 p, screen, zone.start, zone.end
             ));
             let st = gs.insert(gpu_golden::GpuState::new(zone)?);
@@ -439,6 +445,24 @@ pub fn tour_sim() -> Vec<String> {
     let mut clock = gpu_sim::clock::SimClock::default();
     if let Err(e) = tour_on(p, &mut cfg, None, &mut bar0, &mut clock, &mut j, &mut lines) {
         lines.push(format!("{}: tur de citire: {}", p, e));
+    }
+    // P6-58: the VRAM zone of golden on the WPR2 values the board gave on 5 nov: after I7 (widened) it is the zone,
+    // still the FRTS region (Booter did not widen it) or WPR2 down it is refused — before any VRAM write.
+    let screen = nvidia_ga104::vram_window::screen_vram_range(0xe000_0000, 8192 * 1080, 0xe000_0000, gpu_golden::BAR1_LEN);
+    match gpu_i7::layout_for(8 << 30) {
+        Ok(l) => {
+            for (what, wpr2) in [
+                ("WPR2 largit dupa I7 (placa, 5 nov)", (0x1_f410_0000u64, 0x1_ffee_0000u64)),
+                ("WPR2 doar FRTS (Booter nu l-a largit)", (0x1_ffe0_0000, 0x1_ffee_0000)),
+            ] {
+                let r = gpu_golden::zone(&l, wpr2, 8 << 30, screen, gpu_golden::BAR1_LEN);
+                lines.push(match r {
+                    Ok(z) => format!("{}: zona VRAM golden cu {}: {:#x}-{:#x}", p, what, z.start, z.end),
+                    Err(e) => format!("{}: zona VRAM golden cu {}: REFUZATA ({})", p, what, e),
+                });
+            }
+        }
+        Err(e) => lines.push(format!("{}: zona VRAM golden: aranjamentul: {}", p, e)),
     }
     // C-72: the fact `i6.trece` after I6, on the register values the board gave on 5 nov (os-242), on a cold board
     // and on a WPR2 that is not the FRTS region. Reads only, on throw-away models.
@@ -585,6 +609,16 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
                     Err(step_failed("GSP-RM a pornit fara adresa LibOS (C-75)"))
                 }
             });
+            // P6-58 (SIM): on the board Booter widened WPR2 down to the start `GspFwWprMeta` asked for (5 nov:
+            // 0x1f4100000..0x1ffee0000, HI unchanged); the library's model keeps the FRTS region. The model gets the
+            // board's LO here, and the write is taken off its log (it is the model's, not ours).
+            if r.is_ok() {
+                let l = gpu_i7::layout(c)?;
+                let n = g.writes.len();
+                g.write32_raw(0x1f_a824, ((l.wpr2.start >> 12) << 4) as u32);
+                g.writes.truncate(n);
+                lines.push(format!("{}: modelul: WPR2 largit de Booter ca pe placa (inceput {:#x})", p, l.wpr2.start));
+            }
             i7p = Some(prep);
             r
         }
@@ -604,7 +638,13 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
             };
             // The workstation's screen as read on the board (os-195 `hw`): framebuffer at the start of BAR1.
             let screen = nvidia_ga104::vram_window::screen_vram_range(0xe000_0000, 8192 * 1080, 0xe000_0000, gpu_golden::BAR1_LEN);
-            let zone = gpu_golden::zone(&gpu_i7::layout(c)?, c.fb_size, screen, gpu_golden::BAR1_LEN)?;
+            let wpr2 = gpu_golden::read_wpr2_after_i7(&mut g, j)?;
+            lines.push(format!("{}: golden: WPR2 dupa I7 {:#x}..{:#x}", p, wpr2.0, wpr2.1));
+            let zone = gpu_golden::zone(&gpu_i7::layout(c)?, wpr2, c.fb_size, screen, gpu_golden::BAR1_LEN)?;
+            lines.push(format!(
+                "{}: golden: WPR2 = cel cerut de GspFwWprMeta; zona driverului {:#x}-{:#x} (restul protejat)",
+                p, zone.start, zone.end
+            ));
             let st = gs.insert(gpu_golden::GpuState::new(zone)?);
             let r = gpu_golden::golden_step(p, &mut g, &mut vram, &mut clock, j, prep, st, None, &mut lines, |m| peer.serve(m, &mut rm));
             lines.push(format!(

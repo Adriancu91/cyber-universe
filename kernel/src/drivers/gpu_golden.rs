@@ -10,7 +10,8 @@
 //!
 //! The VRAM zone the driver may use (DEDUS, conservative): above the whole BAR1 aperture (256 MiB, everything the
 //! UEFI screen could show; the screen's own range from `vram_window::screen_vram_range` must be inside it) and below
-//! GSP-RM's regions (`FbLayout::free_below`, the same layout as I6/I7). Everything else is protected.
+//! GSP-RM's regions (`FbLayout::free_after_i7`: the I6/I7 layout, checked against WPR2 read back after I7, P6-58).
+//! Everything else is protected.
 //!
 //! I10 (`add64`, the launch cost) is in `gpu_i10.rs`: it adds the VRAM reads, the TLB invalidate and the work-channel
 //! doorbell on top of the memory kept here.
@@ -25,9 +26,9 @@
 
 use alloc::{format, rc::Rc, string::String, vec::Vec};
 use core::cell::RefCell;
-use gpu_core::diag::Journal;
+use gpu_core::diag::{Event, Journal};
 use gpu_core::error::{GpuError, GpuResult};
-use gpu_core::hal::{Clock, Mmio};
+use gpu_core::hal::{checked_read32, Clock, Mmio};
 use nvidia_ga104::fb_layout::FbLayout;
 use nvidia_ga104::gsp::falcon::{self, GuardedBar0};
 use nvidia_ga104::gsp::golden::{self, GoldenImage, QueueTransportBell, RmTransport, RM_REPLY_US};
@@ -36,6 +37,7 @@ use nvidia_ga104::gsp::user_space::{self, UserSpace, WorkChannel};
 use nvidia_ga104::gsp::work_queue::ChannelMemory;
 use nvidia_ga104::gsp::HardwareWritePermit;
 use nvidia_ga104::mmu::{GpuMemory, VramWrite};
+use nvidia_ga104::regs::is_priv_error;
 use nvidia_ga104::vram_window::VramWindow;
 
 use super::gpu_i7::I7Prep;
@@ -81,14 +83,47 @@ pub(super) struct VramZone {
     pub protected: Vec<(u64, u64)>,
 }
 
-/// The zone from the I6/I7 layout and the screen. `screen` = the screen's VRAM range (`screen_vram_range`); `None`
-/// (framebuffer not inside BAR1) stops the step before any write.
-pub(super) fn zone(fb: &FbLayout, vram_size: u64, screen: Option<(u64, u64)>, bar1_len: u64) -> GpuResult<VramZone> {
+/// `NV_PFB_PRI_MMU_WPR2_ADDR_LO/HI` (Cyber-GPU's `tu102_dev_fb`; the same two registers the tour and `i6-wpr2-citit`
+/// read).
+const WPR2_LO: u64 = 0x1f_a824;
+const WPR2_HI: u64 = 0x1f_a828;
+
+/// P6-58: WPR2 read back after I7 with reads only (no permit, each read journaled), as `(start, end)`. HI = 0 (WPR2
+/// down: Booter did not run, or the board was reset) stops golden before any VRAM write.
+pub(super) fn read_wpr2_after_i7<M: Mmio + ?Sized>(mmio: &mut M, journal: &mut Journal) -> GpuResult<(u64, u64)> {
+    let mut read = |off: u64| -> GpuResult<u32> {
+        let v = checked_read32(mmio, off)?;
+        journal.push(Event::MmioRead { bar: 0, offset: off, value: v });
+        if is_priv_error(v) {
+            return Err(GpuError::HardwareFault { code: v });
+        }
+        Ok(v)
+    };
+    let hi = read(WPR2_HI)?;
+    if hi == 0 {
+        return Err(GpuError::Blocked("WPR2 coborat dupa I7: zona VRAM necunoscuta, nimic scris"));
+    }
+    let lo = read(WPR2_LO)?;
+    let w = falcon::decode_wpr2(lo, hi);
+    Ok((w.start, w.end))
+}
+
+/// The zone from the I6/I7 layout, WPR2 as read after I7 and the screen. `wpr2` must be where `GspFwWprMeta` asked
+/// (`FbLayout::free_after_i7`, P6-58), `screen` = the screen's VRAM range (`screen_vram_range`); otherwise (or
+/// framebuffer not inside BAR1) the step stops before any write.
+pub(super) fn zone(
+    fb: &FbLayout,
+    wpr2: (u64, u64),
+    vram_size: u64,
+    screen: Option<(u64, u64)>,
+    bar1_len: u64,
+) -> GpuResult<VramZone> {
+    let free = fb.free_after_i7(wpr2)?;
     let Some((_, screen_end)) = screen else {
         return Err(GpuError::NotPermitted("ecranul nu e in BAR1: zona VRAM a ecranului necunoscuta, nimic scris"));
     };
     let start = screen_end.max(bar1_len).next_multiple_of(2 << 20);
-    let end = fb.free_below().end & !0xFFF;
+    let end = free.end & !0xFFF;
     if end <= start || end > vram_size {
         return Err(GpuError::InvalidArgument("zona VRAM pentru golden: goala sau in afara memoriei"));
     }
