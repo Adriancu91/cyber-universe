@@ -157,7 +157,7 @@ fn fail(what: &'static str) -> GpuError {
 
 /// The I6 layout again, with the parameters `i6_check` used (the sizes of the official files from the manifest):
 /// `GspFwWprMeta` must describe the same regions FWSEC-FRTS was asked for.
-fn layout(c: &I6Check) -> GpuResult<FbLayout> {
+pub(super) fn layout(c: &I6Check) -> GpuResult<FbLayout> {
     let size = |r: GspRole| GSP_570_144.iter().find(|f| f.role == r).map(|f| f.size).unwrap_or(0);
     let l = FbLayout::compute(&FbParams {
         fb_size: c.fb_size,

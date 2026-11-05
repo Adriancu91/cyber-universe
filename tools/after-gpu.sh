@@ -48,12 +48,20 @@ if [[ -n "$bad" ]]; then
     echo "[after-gpu] EȘUAT: scriere posibilă în gpu_i6.rs în afara build-ului gpu-scrie:"; echo "$bad"; exit 1
 fi
 hw="$(sed -nE '/^(pub\(super\) )?mod hw \{/,/^}/p' "$I6" | grep -v '^\s*//')"
-if [[ "$(echo "$hw" | grep -c 'write_volatile')" != 1 ]] || [[ "$(echo "$hw" | grep -c 'dev\.write32(')" != 1 ]] \
+# P6-56 step 2b: a second BAR0 fence, `VramFence` (golden, I9): only the VRAM window's control registers and PRAMIN.
+if [[ "$(echo "$hw" | grep -c 'write_volatile')" != 2 ]] || [[ "$(echo "$hw" | grep -c 'dev\.write32(')" != 1 ]] \
     || ! echo "$hw" | grep -q 'self.dev.write32(PCI_COMMAND, value)' \
-    || ! echo "$hw" | grep -q '(GSP_LO..=GSP_HI - 3).contains(&offset)'; then
-    echo "[after-gpu] EȘUAT: gardul scrierilor din gpu_i6.rs (Command / fereastra GSP) s-a schimbat"; exit 1
+    || ! echo "$hw" | grep -q '(GSP_LO..=GSP_HI - 3).contains(&offset)' \
+    || ! echo "$hw" | grep -q 'vram_window::CONTROL_REGISTERS.iter().any(|&r| u64::from(r) == offset)' \
+    || ! echo "$hw" | grep -q '(PRAMIN_LO..=PRAMIN_HI - 3).contains(&offset)' \
+    || ! echo "$hw" | grep -q 'pub(crate) const PRAMIN_LO: u64 = 0x70_0000;' \
+    || ! echo "$hw" | grep -q 'pub(crate) const PRAMIN_HI: u64 = 0x7F_FFFF;'; then
+    echo "[after-gpu] EȘUAT: gardul scrierilor din gpu_i6.rs (Command / fereastra GSP / fereastra VRAM) s-a schimbat"; exit 1
 fi
-echo "[after-gpu] ok: gpu_i6.rs scrie doar în build-ul gpu-scrie, doar Command (Bus Master) și fereastra GSP"
+if grep -v '^\s*//' "$ROOT/kernel/src/drivers/gpu_golden.rs" | grep -nE 'write_volatile|as \*mut|HardwareWritePermit::new|WRITABLE'; then
+    echo "[after-gpu] EȘUAT: gpu_golden.rs scrie direct (trebuie doar prin bibliotecă și gardurile din gpu_i6.rs)"; exit 1
+fi
+echo "[after-gpu] ok: gpu_i6.rs scrie doar în build-ul gpu-scrie, doar Command (Bus Master), fereastra GSP și fereastra VRAM"
 
 # P6-42 (C-55): kernel/src/drivers/gpu_tur.rs (`gpu tur`, `gpu lant`). Every item or match arm that can write (the `hw`
 # adapters, Bus Master, the falcon load, the write permit) must carry `#[cfg(feature = "gpu-scrie")]` (or be a test-only

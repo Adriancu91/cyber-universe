@@ -120,13 +120,28 @@ pub(super) struct SimPeer {
     stat: usize,
     done: bool,
     pub seen: Vec<u32>,
+    /// P6-56 step 2b: after GSP_INIT_DONE, the command-queue read slot, the status-queue write slot and sequence.
+    cmd_read: u32,
+    stat_write: u32,
+    stat_seq: u32,
+    /// RM messages answered by [`Self::serve`] (golden, I9).
+    pub served: u32,
 }
 
 #[cfg(feature = "test-gpu-sim")]
 impl SimPeer {
     pub(super) fn new(prep: &I7Prep) -> Self {
         let l = prep.queues.layout;
-        SimPeer { cmd: l.cmd_queue_offset, stat: l.stat_queue_offset, done: false, seen: Vec::new() }
+        SimPeer {
+            cmd: l.cmd_queue_offset,
+            stat: l.stat_queue_offset,
+            done: false,
+            seen: Vec::new(),
+            cmd_read: 0,
+            stat_write: 0,
+            stat_seq: 0,
+            served: 0,
+        }
     }
 
     pub(super) fn poll(&mut self, m: &mut dyn SharedMem) {
@@ -154,6 +169,7 @@ impl SimPeer {
             }
             slot += n;
         }
+        self.cmd_read = written;
         // GSP's read pointer of the command queue lives in the status queue's rx header (SWAP_RX).
         let count = QueueLayout::msg_count(QUEUE_SIZE);
         for (o, v) in [
@@ -179,5 +195,47 @@ impl SimPeer {
         m.fence();
         m.write_u32(self.stat + qoff::WRITE_PTR, 1);
         m.fence();
+        self.stat_write = 1;
+        self.stat_seq = 1;
+    }
+
+    /// P6-56 step 2b (golden, I9): consumes every new command and answers each with `rm` (`gpu_sim::fake_rm`, the
+    /// RM API model). A refused call (non-zero RM status) gets no answer here: the driver times out. SIMULARE.
+    pub(super) fn serve(&mut self, m: &mut dyn SharedMem, rm: &mut gpu_sim::fake_rm::FakeRm) {
+        use nvidia_ga104::gsp::msgq::{qoff, QueueLayout, ELEMENT_SIZE, QUEUE_SIZE};
+        use nvidia_ga104::gsp::rpc;
+        let count = QueueLayout::msg_count(QUEUE_SIZE);
+        let page_at = |base: usize, slot: u32| base + qoff::ENTRIES + (slot % count) as usize * ELEMENT_SIZE;
+        loop {
+            let w = m.read_u32(self.cmd + qoff::WRITE_PTR);
+            if w == self.cmd_read {
+                break;
+            }
+            let mut raw = alloc::vec![0u8; ELEMENT_SIZE];
+            m.read(page_at(self.cmd, self.cmd_read), &mut raw);
+            let n = rpc::element_count(&raw).max(1);
+            for k in 1..n {
+                let mut more = alloc::vec![0u8; ELEMENT_SIZE];
+                m.read(page_at(self.cmd, self.cmd_read + k), &mut more);
+                raw.extend_from_slice(&more);
+            }
+            self.cmd_read = (self.cmd_read + n) % count;
+            m.write_u32(self.stat + qoff::RX_HDR, self.cmd_read);
+            let Ok(msg) = rpc::decode(&raw) else { continue };
+            self.served += 1;
+            let Some((0, reply)) = rm.handle(msg.function, &msg.payload) else { continue };
+            let Ok(out) = rpc::encode(msg.function, self.stat_seq, msg.sequence, &reply) else { continue };
+            let pages = out.len().div_ceil(ELEMENT_SIZE);
+            let mut padded = alloc::vec![0u8; pages * ELEMENT_SIZE];
+            padded[..out.len()].copy_from_slice(&out);
+            for (i, page) in padded.chunks(ELEMENT_SIZE).enumerate() {
+                m.write(page_at(self.stat, self.stat_write + i as u32), page);
+            }
+            m.fence();
+            self.stat_write = (self.stat_write + pages as u32) % count;
+            self.stat_seq += 1;
+            m.write_u32(self.stat + qoff::WRITE_PTR, self.stat_write);
+            m.fence();
+        }
     }
 }

@@ -8,7 +8,7 @@
 //! - `gpu lant`: the window steps one after the other. P6-55 (C-71): the whole window chain of Cyber-GPU
 //!   (`run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, ..)`, I6 to the first computation). The OS has the I6
 //!   preparation, Bus Master on, FWSEC-FRTS, the WPR2 read after I6 (`i6-wpr2-citit`, reads only), Bus Master back and
-//!   the tour after; P6-56 (C-72): I7 (Booter on SEC2, `gpu_i7.rs`) and `i7-citit`; step 2: I8 (`gpu_i8.rs`: SetSystemInfo + SetRegistry, the doorbell, the wait for GSP_INIT_DONE); golden + I9-I10 are not in the OS yet, so the chain stops honestly at `i8e-golden`. The driver owns the order and the stop rules; this file only does each step. Writes are allowed
+//!   the tour after; P6-56 (C-72): I7 (Booter on SEC2, `gpu_i7.rs`) and `i7-citit`; step 2: I8 (`gpu_i8.rs`: SetSystemInfo + SetRegistry, the doorbell, the wait for GSP_INIT_DONE); step 2b: golden + I9 (`gpu_golden.rs`: RM messages with the GSP doorbell each, page tables in VRAM through the VRAM window); I10 is not in the OS yet, so the chain stops honestly at `i10-add64`. The driver owns the order and the stop rules; this file only does each step. Writes are allowed
 //!   only in the test-stick build (`gpu-scrie`) and only after `DA` (asked by the shell); in every other build the
 //!   chain runs read only (it stops before the first writing step, then the tour). Refused by the automatic loop.
 //!
@@ -25,6 +25,8 @@ use super::gpu_i6::{self, finish};
 use super::gpu_i7;
 #[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
 use super::gpu_i8;
+#[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
+use super::gpu_golden;
 use alloc::{format, string::String, vec::Vec};
 use gpu_core::diag::Journal;
 use gpu_core::error::{GpuError, GpuResult};
@@ -95,7 +97,7 @@ fn report_lines(p: &str, r: &ChainReport, lines: &mut Vec<String>) {
 }
 
 /// P6-55: the error of a step of the full chain that the OS does not have yet (I7-I10).
-const NOT_IN_OS: &str = "pas fara implementare in OS (golden, I9, I10 exista doar in SIMULAREA cyber-gpu, C-71; P6-56 pas 3)";
+const NOT_IN_OS: &str = "pas fara implementare in OS (I10 exista doar in SIMULAREA cyber-gpu, C-71: soneria canalului 0xBB0090 nu e inca pe lista permisa; P6-56 pas 3)";
 
 /// P6-55 (C-71): step `i6-wpr2-citit` — WPR2 read after I6 with reads only (`falcon::read_frts_after_i6`, no permit)
 /// and checked against the FRTS region asked for; the line names the form of the end the board wrote.
@@ -201,6 +203,8 @@ pub fn chain() -> Vec<String> {
     let bm = gpu_pci::bus_master::BusMasterPermit::new("C-55 gpu lant (P6-42)");
     #[cfg(feature = "gpu-scrie")]
     let mut i7: Vec<gpu_i7::I7Prep> = Vec::new();
+    #[cfg(feature = "gpu-scrie")]
+    let mut gs: Option<gpu_golden::GpuState> = None;
     let mut refused = 0usize;
     let report = run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, writes_allowed, &mut j, |s, j| match s.id {
         "pregatire-i6" => {
@@ -292,6 +296,37 @@ pub fn chain() -> Vec<String> {
             let mut rw = gpu_i6::hw::GspWriteWindow::with_sec2(bar0);
             let r = gpu_i8::init(p, &mut rw, &mut clock, j, prep, &sys, Some(&permit), &mut lines, |_| {});
             refused += rw.refused;
+            r
+        }
+        #[cfg(feature = "gpu-scrie")]
+        "i8e-golden" => {
+            // P6-56 step 2b: the VRAM zone from the I6/I7 layout and the screen (Limine's framebuffer inside BAR1);
+            // any doubt stops here, before the first VRAM write.
+            let (Some(prep), Some((_, c))) = (i7.last_mut(), prepared.as_ref()) else {
+                return Err(step_failed("lipseste pregatirea I7"));
+            };
+            let screen = crate::gfx::framebuffer::boot_info().zip(d.bar(1)).and_then(|((phys, size, ..), bar1)| {
+                nvidia_ga104::vram_window::screen_vram_range(phys, size, bar1, gpu_golden::BAR1_LEN)
+            });
+            let zone = gpu_golden::zone(&gpu_i7::layout(c)?, c.fb_size, screen, gpu_golden::BAR1_LEN)?;
+            lines.push(format!(
+                "{}: golden: ecranul in VRAM {:x?}; zona driverului {:#x}-{:#x} (restul protejat)",
+                p, screen, zone.start, zone.end
+            ));
+            let st = gs.insert(gpu_golden::GpuState::new(zone)?);
+            let mut rw = gpu_i6::hw::GspWriteWindow::new(bar0);
+            let mut vf = gpu_i6::hw::VramFence::new(bar0);
+            let r = gpu_golden::golden_step(p, &mut rw, &mut vf, &mut clock, j, prep, st, Some(&permit), &mut lines, |_| {});
+            refused += rw.refused + vf.refused;
+            r
+        }
+        #[cfg(feature = "gpu-scrie")]
+        "i9-canal-lucru" => {
+            let (Some(prep), Some(st)) = (i7.last_mut(), gs.as_mut()) else { return Err(step_failed("lipseste golden")) };
+            let mut rw = gpu_i6::hw::GspWriteWindow::new(bar0);
+            let mut vf = gpu_i6::hw::VramFence::new(bar0);
+            let r = gpu_golden::channel_step(p, &mut rw, &mut vf, &mut clock, j, prep, st, Some(&permit), &mut lines, |_| {});
+            refused += rw.refused + vf.refused;
             r
         }
         #[cfg(feature = "gpu-scrie")]
@@ -420,6 +455,10 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
     let mut i6c: Option<nvidia_ga104::i6_check::I6Check> = None;
     let mut g = FakeGsp::new();
     let mut i7p: Option<gpu_i7::I7Prep> = None;
+    let mut sim_peer: Option<gpu_i8::SimPeer> = None;
+    let mut gs: Option<gpu_golden::GpuState> = None;
+    let mut rm = gpu_sim::fake_rm::FakeRm::new();
+    let mut vram = gpu_sim::pramin::SimBar0Vram::new(gpu_sim::vram::SimVram::new(8 << 30), 0);
     let report = run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, writes_allowed, &mut j, |s, j| match s.id {
         "pregatire-i6" => match gpu_i6::prepare(p, &mut ro, j, &mut clock, &mut lines) {
             Some((_, c)) if c.passes() => {
@@ -489,6 +528,30 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
             let mut peer = gpu_i8::SimPeer::new(prep);
             let r = gpu_i8::init(p, &mut g, &mut clock, j, prep, &sys, None, &mut lines, |m| peer.poll(m));
             lines.push(format!("{}: modelul GSP-RM: mesaje primite {:?} (72 = SetSystemInfo, 73 = SetRegistry)", p, peer.seen));
+            sim_peer = Some(peer);
+            r
+        }
+        "i8e-golden" => {
+            let (Some(prep), Some(c), Some(peer)) = (i7p.as_mut(), i6c.as_ref(), sim_peer.as_mut()) else {
+                return Err(step_failed("lipseste I7/I8"));
+            };
+            // The workstation's screen as read on the board (os-195 `hw`): framebuffer at the start of BAR1.
+            let screen = nvidia_ga104::vram_window::screen_vram_range(0xe000_0000, 8192 * 1080, 0xe000_0000, gpu_golden::BAR1_LEN);
+            let zone = gpu_golden::zone(&gpu_i7::layout(c)?, c.fb_size, screen, gpu_golden::BAR1_LEN)?;
+            let st = gs.insert(gpu_golden::GpuState::new(zone)?);
+            let r = gpu_golden::golden_step(p, &mut g, &mut vram, &mut clock, j, prep, st, None, &mut lines, |m| peer.serve(m, &mut rm));
+            lines.push(format!(
+                "{}: modelul RM: {} mesaje servite; VRAM model: {} cuvinte prin fereastra, {} scrieri in alte registre",
+                p, peer.served, vram.words, vram.stray_writes.len()
+            ));
+            r
+        }
+        "i9-canal-lucru" => {
+            let (Some(prep), Some(peer), Some(st)) = (i7p.as_mut(), sim_peer.as_mut(), gs.as_mut()) else {
+                return Err(step_failed("lipseste golden"));
+            };
+            let r = gpu_golden::channel_step(p, &mut g, &mut vram, &mut clock, j, prep, st, None, &mut lines, |m| peer.serve(m, &mut rm));
+            lines.push(format!("{}: modelul RM: {} mesaje servite in total", p, peer.served));
             r
         }
         "bus-master-oprit" => match old {

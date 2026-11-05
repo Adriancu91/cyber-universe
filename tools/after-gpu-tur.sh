@@ -48,7 +48,8 @@ for k, ev, i6_ok in ((2, ok, True), (3, err, False)):
     assert ev[cfg[1]].endswith("<- 0x00000003 => 0x00100003"), ev[cfg[1]]
     off = lambda i: int(ev[i].split()[2].rstrip(":"), 16)
     sec2 = [i for i in gsp if 0x840000 <= off(i) <= 0x843FFF]
-    assert all(0x110000 <= off(i) <= 0x113FFF or i in sec2 for i in gsp), f"{k}: scriere in afara GSP/SEC2"
+    vwin = [i for i in gsp if off(i) == 0x1700]  # P6-56 step 2b: the VRAM window (golden, I9)
+    assert all(0x110000 <= off(i) <= 0x113FFF or i in sec2 or i in vwin for i in gsp), f"{k}: scriere in afara GSP/SEC2/fereastra VRAM"
     order = ["pregatire-i6", "bus-master-pornit", "i6-fwsec-frts", "bus-master-oprit", "tur-dupa"]
     at = [step(ev, n) for n in order]
     assert all(len(a) == 1 for a in at), f"{k}: pasi lipsa/dubli: {at}"
@@ -66,14 +67,23 @@ for k, ev, i6_ok in ((2, ok, True), (3, err, False)):
         assert i8 and ev[i8[0]].endswith("ok"), f"{k}: I8 nu a trecut"
         bell = [i for i in gsp if r7 < i < i8[0]]
         assert len(bell) == 1 and off(bell[0]) == 0x110C00, f"{k}: I8 trebuie sa scrie doar soneria GSP: {[ev[i] for i in bell]}"
-        assert ev[step(ev, "i8e-golden")[0]].endswith("ESEC"), f"{k}: golden nu e oprit"
-        assert not [i for i in gsp if i > i8[0]], f"{k}: scriere dupa I8"
+        # P6-56 step 2b: golden + I9 pass with only GSP doorbells (one per RM message) and VRAM-window moves, the
+        # window put back to its first value at the end; the chain stops at I10 (not in the OS) with no write after I9.
+        gold, i9, i10 = step(ev, "i8e-golden"), step(ev, "i9-canal-lucru"), step(ev, "i10-add64")
+        assert gold and ev[gold[0]].endswith("ok") and i9 and ev[i9[0]].endswith("ok"), f"{k}: golden/I9 nu au trecut"
+        assert i10 and ev[i10[0]].endswith("ESEC"), f"{k}: I10 nu e oprit"
+        after = [i for i in gsp if i8[0] < i < i9[0]]
+        bells = [i for i in after if off(i) == 0x110C00]
+        assert after and all(i in bells or i in vwin for i in after), f"{k}: golden/I9: alte scrieri decat soneria si fereastra VRAM"
+        assert len(bells) >= 20, f"{k}: prea putine sonerii RM: {len(bells)}"
+        assert vwin and ev[vwin[0]].split("=> ")[0] and ev[vwin[-1]].split("<- ")[1].startswith("0x00000000"), f"{k}: fereastra VRAM nu e pusa la loc"
+        assert not [i for i in gsp if i > i9[0]], f"{k}: scriere dupa I9"
     else:
         assert not sec2, f"{k}: SEC2 scris desi I6 a esuat"
     tour_reads = [i for i, b in enumerate(ev) if b.startswith("bar0 r 0x1fa828")]
     assert tour_reads and tour_reads[-1] > cfg[1], f"{k}: turul nu e dupa Bus Master oprit"
     assert not writes(ev[cfg[1] + 1:]), f"{k}: scriere dupa Bus Master oprit"
-    print(f"[after-gpu-tur] ok: lantul {k}: Bus Master pornit/oprit in jurul a {len(gsp)} scrieri GSP, I6 {'ok' if i6_ok else 'ESEC'}, turul dupa")
+    print(f"[after-gpu-tur] ok: lantul {k}: Bus Master pornit/oprit in jurul a {len(gsp)} scrieri GSP/SEC2/fereastra VRAM, I6 {'ok' if i6_ok else 'ESEC'}, turul dupa")
 
 assert not writes(ro), "lantul doar-citire a scris"
 assert step(ro, "pregatire-i6") and step(ro, "tur-dupa"), "lantul doar-citire: lipseste pregatirea sau turul"

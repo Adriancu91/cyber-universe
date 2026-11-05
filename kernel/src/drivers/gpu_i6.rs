@@ -655,6 +655,76 @@ pub(super) mod hw {
             }
         }
     }
+
+    /// P6-56 step 2b (golden, I9): the VRAM-window fence. Reads anywhere in BAR0; writes only to the four registers of
+    /// `vram_window::CONTROL_REGISTERS` (the window base, the TLB invalidate) and the PRAMIN range the window shows.
+    /// It maps its own page (`VRAM_FENCE_VA`, next to `gpu::WINDOW`), so it can live next to a `GspWriteWindow`.
+    pub(crate) struct VramFence {
+        phys: u64,
+        mapped: Option<u64>,
+        pub(crate) refused: usize,
+    }
+
+    /// The page this fence maps BAR0 at (one page after the GSP window's page, unused by anything else).
+    const VRAM_FENCE_VA: u64 = gpu::WINDOW + 0x1000;
+    /// `NV_PRAMIN`: the 1 MiB of BAR0 that shows VRAM at the window base.
+    pub(crate) const PRAMIN_LO: u64 = 0x70_0000;
+    pub(crate) const PRAMIN_HI: u64 = 0x7F_FFFF;
+
+    impl VramFence {
+        pub(crate) fn new(phys: u64) -> Self {
+            VramFence { phys, mapped: None, refused: 0 }
+        }
+        fn page(&mut self, offset: u64) -> Option<u64> {
+            let page = offset & !0xFFF;
+            if self.mapped != Some(page) {
+                if self.mapped.take().is_some() {
+                    paging::unmap(VRAM_FENCE_VA);
+                }
+                let flags = paging::NO_EXECUTE | paging::WRITABLE | gpu::UNCACHED;
+                paging::map(VRAM_FENCE_VA, self.phys + page, flags).ok()?;
+                self.mapped = Some(page);
+            }
+            Some(VRAM_FENCE_VA + (offset & 0xFFF))
+        }
+    }
+
+    impl gpu_core::hal::Mmio for VramFence {
+        fn len(&self) -> u64 {
+            nvidia_ga104::fuse::FUSE_WINDOW
+        }
+        fn read32_raw(&mut self, offset: u64) -> u32 {
+            let offset = offset.min(nvidia_ga104::fuse::FUSE_WINDOW - 4) & !3;
+            match self.page(offset) {
+                // SAFETY: `va` is the uncached mapping of the BAR0 page holding `offset` (4-byte aligned, inside BAR0).
+                Some(va) => unsafe { (va as *const u32).read_volatile() },
+                None => u32::MAX,
+            }
+        }
+        fn write32_raw(&mut self, offset: u64, value: u32) {
+            let control = nvidia_ga104::vram_window::CONTROL_REGISTERS.iter().any(|&r| u64::from(r) == offset);
+            if !(control || (PRAMIN_LO..=PRAMIN_HI - 3).contains(&offset)) || offset & 3 != 0 {
+                self.refused += 1;
+                crate::warn!("gpu: scriere refuzata in afara ferestrei VRAM: {:#x} <- {:#010x}", offset, value);
+                return;
+            }
+            match self.page(offset) {
+                // SAFETY: the uncached, writable mapping of the BAR0 page holding `offset`, which is one of the VRAM
+                // window's control registers or inside PRAMIN (checked above). Reached only in the gpu-scrie build,
+                // after `DA`, under a HardwareWritePermit (VramWindow refuses a real BAR without one).
+                Some(va) => unsafe { (va as *mut u32).write_volatile(value) },
+                None => self.refused += 1,
+            }
+        }
+    }
+
+    impl Drop for VramFence {
+        fn drop(&mut self) {
+            if self.mapped.take().is_some() {
+                paging::unmap(VRAM_FENCE_VA);
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
