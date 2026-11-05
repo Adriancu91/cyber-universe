@@ -109,6 +109,8 @@ pub fn remote_allowed(line: &str) -> Result<(), &'static str> {
     match words.as_slice() {
         ["help"] | ["exit"] | ["remote", "stare"] | ["remote", "opreste"] => Ok(()),
         ["remote", ..] => Err("prin remote merge doar `remote stare` si `remote opreste`"),
+        ["timp", "timp" | "exit", ..] => Err("timp masoara o singura comanda obisnuita"),
+        ["timp", rest @ ..] if !rest.is_empty() => remote_allowed(&rest.join(" ")),
         _ => auto::allowed(line),
     }
 }
@@ -149,6 +151,7 @@ fn dispatch(line: &str) -> bool {
         "gpu" => gpu(args),
         "cpu" => cpu(args),
         "log" => show_log(args),
+        "timp" => time_command(args),
         "uptime" => uptime(),
         "remote" => remote(args),
         "reboot" => reboot(args),
@@ -225,6 +228,8 @@ fn help() {
     out!("  hw lista [--detalii]  tot hardware-ul: procesor, memorie, PCI, Wi-Fi, USB, ACPI (doar citire)\n");
     out!("  raport           scrie pe stick /usb/raport/<data>-<nr>.txt: hw, lspci, net, jurnalele (fara chei)\n");
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
+    out!("  log --avertismente [n]  doar avertismentele si erorile; log --sumar = cate randuri pe nivel si pe modul\n");
+    out!("  timp <comanda>   cat a durat comanda (ms) si cum s-a schimbat memoria\n");
     out!("  uptime           de cat timp merge sistemul\n");
     out!("  compara <f1> <f2>  randurile care difera intre doua rapoarte sau jurnale\n");
     out!("  remote porneste [port]|opreste|stare  consola text prin retea (cheia din remote.cheie; implicit portul 2323)\n");
@@ -760,16 +765,23 @@ fn rtl(args: &[&str]) {
 
 /// The last lines of the kernel log, optionally only those containing a word (any case): `log`, `log rtl`, `log usb 50`.
 fn show_log(args: &[&str]) {
+    if args == ["--sumar"] {
+        out!("{}", log_summary(&crate::log::recent()));
+        return;
+    }
     let mut count = 30usize;
     let mut word: Option<String> = None;
+    let mut warnings_only = false;
     for a in args {
         match a.parse::<usize>() {
             Ok(n) => count = n.clamp(1, 500),
+            Err(_) if *a == "--avertismente" => warnings_only = true,
             Err(_) => word = Some(a.to_ascii_lowercase()),
         }
     }
     let lines: Vec<String> = crate::log::recent()
         .into_iter()
+        .filter(|l| !warnings_only || matches!(log_fields(l), Some(("WARN" | "ERR", _))))
         .filter(|l| word.as_ref().is_none_or(|w| l.to_ascii_lowercase().contains(w.as_str())))
         .collect();
     if lines.is_empty() {
@@ -778,6 +790,87 @@ fn show_log(args: &[&str]) {
     for l in &lines[lines.len().saturating_sub(count)..] {
         out!("{}\n", l);
     }
+}
+
+/// Level and module of one log line (`[  12.345] INFO  net: ...` -> `("INFO", "net")`); `None` if it has another shape.
+fn log_fields(line: &str) -> Option<(&str, &str)> {
+    let rest = line.split_once("] ")?.1;
+    let (level, rest) = rest.trim_start().split_once(' ')?;
+    if !matches!(level, "DEBUG" | "INFO" | "WARN" | "ERR") {
+        return None;
+    }
+    let module = rest.trim_start().split_once(':').map(|(m, _)| m).filter(|m| !m.is_empty() && !m.contains(' '));
+    Some((level, module.unwrap_or("(altele)")))
+}
+
+/// `log --sumar`: how many lines per level and the modules that wrote the most (F9, P6-52).
+fn log_summary(lines: &[String]) -> String {
+    let mut levels = [("ERR", 0usize), ("WARN", 0), ("INFO", 0), ("DEBUG", 0)];
+    let mut modules: Vec<(String, usize, usize)> = Vec::new(); // name, lines, warnings + errors
+    let mut other = 0usize;
+    for l in lines {
+        let Some((level, module)) = log_fields(l) else {
+            other += 1;
+            continue;
+        };
+        if let Some(e) = levels.iter_mut().find(|e| e.0 == level) {
+            e.1 += 1;
+        }
+        let bad = matches!(level, "WARN" | "ERR") as usize;
+        match modules.iter_mut().find(|m| m.0 == module) {
+            Some(m) => {
+                m.1 += 1;
+                m.2 += bad;
+            }
+            None => modules.push((String::from(module), 1, bad)),
+        }
+    }
+    modules.sort_by(|a, b| b.2.cmp(&a.2).then(b.1.cmp(&a.1)).then(a.0.cmp(&b.0)));
+    let mut s = format!("jurnal: {} randuri", lines.len());
+    for (name, n) in levels {
+        s += &format!(", {} {}", n, name);
+    }
+    if other > 0 {
+        s += &format!(", {} fara nivel", other);
+    }
+    s += "\nmodule (cele cu avertismente/erori primele):\n";
+    for (name, n, bad) in modules.iter().take(12) {
+        s += &format!("  {:<12} {:>4} randuri, {} avertismente/erori\n", name, n, bad);
+    }
+    if modules.len() > 12 {
+        s += &format!("  ... inca {} module\n", modules.len() - 12);
+    }
+    s
+}
+
+/// `timp <comanda>`: runs one command and says how long it took and how the memory changed (F9, P6-52).
+fn time_command(args: &[&str]) {
+    match args.first() {
+        None => {
+            out!("folosire: timp <comanda>   (de ex. timp run kronos --n 16 Buna ziua)\n");
+            return;
+        }
+        Some(&c @ ("timp" | "exit")) => {
+            out!("timp: `{}` nu se masoara\n", c);
+            return;
+        }
+        _ => {}
+    }
+    use crate::mem::{frame, heap, map::PAGE_SIZE};
+    let line = args.join(" ");
+    let free_before = frame::free_frames() * PAGE_SIZE / 1024;
+    let heap_before = heap::stats().0 / 1024;
+    let start = crate::time::uptime_ms();
+    dispatch(&line);
+    let end = crate::time::uptime_ms();
+    let free_after = frame::free_frames() * PAGE_SIZE / 1024;
+    let heap_after = heap::stats().0 / 1024;
+    match (start, end) {
+        (Some(a), Some(b)) => out!("timp: `{}` a durat {} ms", line, b.saturating_sub(a)),
+        _ => out!("timp: `{}` (ceasul nu merge inca)", line),
+    }
+    out!("; memorie libera {} -> {} KiB, heap {} -> {} KiB\n", free_before, free_after, heap_before, heap_after);
+    crate::info!("timp: {} = {} ms", line, match (start, end) { (Some(a), Some(b)) => b.saturating_sub(a), _ => 0 });
 }
 
 /// One-page hardware report: processor, memory, PCI devices with the driver that handles them, USB, disks, network.

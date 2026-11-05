@@ -35,7 +35,7 @@ pub fn diff(la: &[&str], lb: &[&str]) -> String {
     let (mut i, mut j) = (0, 0);
     let (mut shown, mut removed, mut added, mut same) = (0usize, 0usize, 0usize, 0usize);
     let mut out = String::new();
-    let mut emit = |out: &mut String, sign: char, n: usize, text: &str, shown: &mut usize| {
+    let emit = |out: &mut String, sign: char, n: usize, text: &str, shown: &mut usize| {
         if *shown < MAX_SHOWN {
             out.push_str(&format!("{} {}: {}\n", sign, n + 1, text));
         }

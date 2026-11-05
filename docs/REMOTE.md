@@ -21,7 +21,13 @@ Merge pe un calculator real din rețeaua de acasă (pornit de pe stick). Mașina
 ## Ce e permis prin remote
 Doar lista albă (aceeași ca la bucla automată, doar citire): `help`, `uptime`, `mem`, `hw`, `net`, `lspci`, `lsusb`, `log`,
 `ls`, `cat` (fără fișierele secrete), `cpu`, `raport`, `gpu` (identifica, tur, plan... — **niciodată `--scrie`**, `i6`, `lant`),
-`run kronos`, `run kronos-calcul`, `remote stare`, `remote opreste`, `exit`. Restul primește `REFUZAT`.
+`run kronos`, `run kronos-calcul`, `compara`, `timp <comanda permisa>`, `remote stare`, `remote opreste`, `exit`. Restul primește `REFUZAT`.
+
+Unelte de profil și jurnal (P6-52, F9), toate doar citire:
+- `log --sumar` — câte rânduri are jurnalul pe fiecare nivel (ERR, WARN, INFO) și ce module au scris cele mai multe avertismente/erori.
+- `log --avertismente [n]` — doar ultimele n avertismente și erori.
+- `timp <comanda>` — rulează o comandă de pe lista albă și spune cât a durat (ms) și cum s-a schimbat memoria (ex.: `timp run kronos --n 16 Buna ziua`).
+- `compara <f1> <f2>` — rândurile care diferă între două rapoarte.
 
 ## Siguranță
 - Fără cheie (sau cheie prea scurtă) serviciul nu pornește. Implicit e oprit.

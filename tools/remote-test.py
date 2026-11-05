@@ -51,10 +51,16 @@ def main():
     check(code == 0, f"cheia buna acceptata (cod {code})")
     if code == 0:
         text = rc.run_commands(sock, first.split(b"\n", 1)[1],
-                               ["uptime", "help", "gpu i6 --scrie", "reboot", "cat /disk/remote.cheie", "remote opreste"])
+                               ["uptime", "help", "log --sumar", "log --avertismente 5", "timp uptime", "timp reboot",
+                                "gpu i6 --scrie", "reboot", "cat /disk/remote.cheie", "remote opreste"])
         log.write("---- conversatia ----\n" + text + "\n---- sfarsit ----\n")
         check("pornit de" in text, "uptime a raspuns")
         check("comenzi:" in text, "help a raspuns")
+        check("jurnal: " in text and " randuri" in text and "module (cele cu" in text, "log --sumar a raspuns")
+        check("remote: " in text.split("log --avertismente 5", 1)[-1].split("timp uptime", 1)[0] or "(niciun rand)" in text,
+              "log --avertismente a raspuns")
+        check("timp: `uptime` a durat " in text and " ms; memorie libera " in text, "timp uptime a masurat")
+        check("REFUZAT: repornirea" in text.split("timp reboot", 1)[-1], "timp reboot refuzat")
         check("REFUZAT: scrierile in placa video" in text, "gpu i6 --scrie refuzat")
         check("REFUZAT: repornirea" in text, "reboot refuzat")
         check("fisier secret" in text, "cat pe cheie: fisier secret")

@@ -315,10 +315,10 @@ pub fn self_test() {
     assert!(!same_key(b"cheie-lunga-de-test", b"cheie-lunga-de-tes"));
     assert!(!same_key(b"", b"x"));
     use crate::shell::remote_allowed;
-    for ok in ["help", "uptime", "mem", "ls /disk", "log remote", "gpu identifica", "remote stare", "remote opreste", "exit"] {
+    for ok in ["help", "uptime", "mem", "ls /disk", "log remote", "gpu identifica", "remote stare", "remote opreste", "exit", "log --sumar", "log --avertismente", "timp uptime", "timp remote stare", "compara /usb/a /usb/b"] {
         assert!(remote_allowed(ok).is_ok(), "remote: `{}` trebuia permisa", ok);
     }
-    for bad in ["gpu i6 --scrie", "gpu lant", "reboot", "remote porneste", "run desktop", "mod install x", "tastatura us", "rtl porneste"] {
+    for bad in ["gpu i6 --scrie", "gpu lant", "reboot", "remote porneste", "run desktop", "mod install x", "tastatura us", "rtl porneste", "timp reboot", "timp gpu lant", "timp exit", "timp timp mem", "timp remote porneste"] {
         assert!(remote_allowed(bad).is_err(), "remote: `{}` trebuia refuzata", bad);
     }
     crate::info!("test: remote: cheia si lista alba OK");
