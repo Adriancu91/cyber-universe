@@ -283,7 +283,7 @@ pub fn identify() -> Vec<String> {
 // ---------------------------------------------------------------------------------------------------------------
 
 /// Pinned Cyber-GPU revision (kernel/Cargo.toml), shown in the report.
-pub const CYBER_GPU_REV: &str = "a2f9736";
+pub const CYBER_GPU_REV: &str = "20b4a3b";
 
 /// Configuration space of one function for the Cyber-GPU libraries: reads only.
 pub(super) struct ReadOnlyConfig<'a> {
@@ -715,7 +715,19 @@ pub(super) struct StickFirmware;
 impl nvidia_ga104::firmware::FirmwareSource for StickFirmware {
     fn read_file(&mut self, path: &str) -> gpu_core::error::GpuResult<Vec<u8>> {
         use crate::fs::FsError;
-        crate::fs::read_all(path).map_err(|e| match e {
+        // C-74: a file missing on the OS stick is looked for on the second stick (mounted read-only at /usb2).
+        let r = match crate::fs::read_all(path) {
+            Err(FsError::NotFound | FsError::NotADirectory | FsError::InvalidPath) if path.starts_with("/usb/") => {
+                let other = alloc::format!("/usb2/{}", &path["/usb/".len()..]);
+                let r = crate::fs::read_all(&other);
+                if r.is_ok() {
+                    crate::info!("gpu: firmware: {} citit de pe al doilea stick", other);
+                }
+                r
+            }
+            r => r,
+        };
+        r.map_err(|e| match e {
             // No stick mounted at /usb is the same, for the user, as the file not being there.
             FsError::NotFound | FsError::NotADirectory | FsError::InvalidPath => gpu_core::error::GpuError::NotPresent,
             _ => gpu_core::error::GpuError::InvalidArgument("citirea de pe stick a esuat"),

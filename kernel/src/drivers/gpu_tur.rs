@@ -77,8 +77,12 @@ fn i6_result_fact<M: Mmio + ?Sized>(facts: &mut Vec<nvidia_ga104::read_tour::Fac
             gsp_elf_size: size(GspRole::GspRm),
         })
         .map(|l| (l.frts.start, l.frts.end));
+        // C-75: after I7, Booter widens WPR2 for GSP-RM (board, 5 nov: 0x1f4100000..0x1ffee0000); the library's
+        // fact `i6.wpr2.etapa` names that stage, and it means I6 had passed before.
+        let stage = get(facts, "i6.wpr2.etapa").unwrap_or_default();
         match frts.and_then(|f| falcon::read_frts_after_i6(bar0, journal, f)) {
             Ok(c) => format!("da (WPR2 = regiunea FRTS ceruta, capat: {})", c.form.label()),
+            Err(_) if stage.starts_with("largit") => String::from("da (WPR2 largit de Booter pentru GSP-RM dupa I7: I6 trecuse)"),
             Err(e) => format!("nu (WPR2 ridicat, dar: {})", e),
         }
     };
@@ -395,10 +399,12 @@ pub fn tour_sim() -> Vec<String> {
     }
     // C-72: the fact `i6.trece` after I6, on the register values the board gave on 5 nov (os-242), on a cold board
     // and on a WPR2 that is not the FRTS region. Reads only, on throw-away models.
-    for (what, wpr2) in [
-        ("model dupa I6 (WPR2 ridicat ca pe placa, 5 nov)", Some((0x01ff_e000u32, 0x01ff_ee00u32))),
-        ("model fara I6", None),
-        ("model cu WPR2 gresit", Some((0x01ff_0000, 0x01ff_1000))),
+    // C-75: and after I7, WPR2 widened by Booter as on the board (0x1f4100000..0x1ffee0000).
+    for (what, wpr2, stage) in [
+        ("model dupa I6 (WPR2 ridicat ca pe placa, 5 nov)", Some((0x01ff_e000u32, 0x01ff_ee00u32)), "FRTS (dupa I6)"),
+        ("model dupa I7 (WPR2 largit ca pe placa, 5 nov)", Some((0x01f4_1000, 0x01ff_ee00)), "largit pentru GSP-RM (dupa I7)"),
+        ("model fara I6", None, "coborat (pornire rece)"),
+        ("model cu WPR2 gresit", Some((0x01ff_0000, 0x01ff_1000)), "alta forma (de analizat)"),
     ] {
         let mut m = gpu_sim::mmio::SimMmio::ga104_bar0();
         if let Some((lo, hi)) = wpr2 {
@@ -410,10 +416,11 @@ pub fn tour_sim() -> Vec<String> {
             nvidia_ga104::read_tour::Fact::new("i6.vram", "8192 MiB"),
             nvidia_ga104::read_tour::Fact::new("i6.wpr2", raised.unwrap_or_else(|| String::from("coborat"))),
             nvidia_ga104::read_tour::Fact::new("i6.trece", if wpr2.is_some() { "nu" } else { "da" }),
+            nvidia_ga104::read_tour::Fact::new("i6.wpr2.etapa", stage),
         ];
         let mut scratch = Journal::new(64);
         i6_result_fact(&mut facts, &mut m, &mut scratch);
-        for f in facts.iter().filter(|f| f.key != "i6.vram" && f.key != "i6.wpr2") {
+        for f in facts.iter().filter(|f| f.key != "i6.vram" && f.key != "i6.wpr2" && f.key != "i6.wpr2.etapa") {
             lines.push(format!("{}: {}", what, f));
         }
     }
@@ -518,6 +525,21 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
             let prep = gpu_i7::prepare(p, &mut ro, j, &fw, c, &mut lines)?;
             gpu_i7::sim_expect(&mut g, &prep);
             let r = gpu_i7::booter(p, &mut g, &mut clock, j, &prep, None, &mut lines);
+            // C-75: the model drops GSP mailbox writes after FWSEC (as the board did on 5 nov) until GSP is reset;
+            // GSP-RM finds its queues only if the LibOS address was there when Booter started it.
+            let seen = g.libos_at_booter;
+            lines.push(format!(
+                "{}: modelul: adresa LibOS vazuta de GSP-RM la pornire = {} (C-75)",
+                p,
+                seen.map_or_else(|| String::from("NIMIC"), |a| format!("{:#x}", a))
+            ));
+            let r = r.and_then(|()| {
+                if seen == Some(prep.libos) {
+                    Ok(())
+                } else {
+                    Err(step_failed("GSP-RM a pornit fara adresa LibOS (C-75)"))
+                }
+            });
             i7p = Some(prep);
             r
         }
