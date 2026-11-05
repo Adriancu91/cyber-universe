@@ -3,6 +3,12 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-05 05:27–~07:30 UTC (07:27–09:30 ora României) — sesiune programată, fără Adrian — **C-72 preluat; P6-56 pas 1 gata: I7 în `gpu lant`, testat în SIMULARE.**
+  - Hub: comanda nouă **C-72** (Adrian: „da i7-i10”) → `preluat`, sarcina P6-56 + plan. Adrian cerea Release cu I7–I10 până la 08:45: imposibil (scris + CI ~45 min) → în hub la 07:45 „folosește `os-242` la fereastra de acum” + notificare pe telefon.
+  - **Pas 1 (`ffd2a5e`):** `kernel/src/drivers/gpu_i7.rs` — fișierele GSP 570.144 de pe stick (`load_gsp_set`, SHA-256), zonă DMA fixată 16 MiB–4 GiB cu `.fwimage` + radix3, bootloader, semnătura, `GspFwWprMeta` (același `FbLayout` ca I6, verificat), Booter cu semnătura după siguranța SEC2; `i7-booter-gsp` prin fereastra GSP + SEC2 (adaptorul refuză restul), apoi mereu `read_after_i7`; `i7-citit`. În `--sim`: fișierele de probă gpu-sim + FakeGsp → I7 TRECE, oprire cinstită la I8. `after-gpu-tur.sh` verifică scrierile SEC2 doar în pasul I7 și cutia SEC2 0 = adresa `GspFwWprMeta`.
+  - Unelte de test: `tools/test.sh` acceptă `timeout=N` pe scenariu; `tools/qemutest.py` acceptă `pauza=N` în `--keys` (tastele nu mai vin cât rulează o comandă lungă) cu o singură conexiune la monitor (închiderea ei pierdea ultima tastă), apoi (`e0d1328`) cadența exactă de 0,15 s și captura pe aceeași conexiune.
+  - Pasul 2 (I8) l-a făcut sesiunea paralelă de la 06:41 (mai sus). Întrebarea despre cutiile LibOS (scrise înainte de Booter) e la cyber-gpu.
+  - CI: run 41978086750 (doar pas 1) anulat de push-ul următor; în el, gazda CI era lentă — testul temporizatorului cu un procesor a văzut [87, 87, 87] (prag 90) și au picat 16 scenarii la pornire, fără legătură cu codul (ca B-006). De urmărit în run-ul 41984360141.
 - 2026-11-05 06:41–~07:30 UTC (08:41–09:30 ora României) — sesiune programată, fără Adrian (el e la workstation cu `os-242`, C-73) — **P6-56 pas 2 gata: I8 în `gpu lant` (C-72), testat în SIMULARE.**
   - Hub: nicio comandă nouă pentru `cyber-universe` după C-72 (preluat). Copiile locale (OS și hub) erau iar divergente (50/69 și 50/50) → păstrate pe ramura locală `vechi-local-2026-11-05`, `main` din `origin/main`, nimic forțat.
   - Pas 1 (I7) îl făcuse sesiunea de la 05:27 (`ffd2a5e`); **altă sesiune OS e activă în paralel** (`e0d1328`, `tools/qemutest.py`: tastele + captura pe aceeași conexiune). N-am atins fișierele ei.
