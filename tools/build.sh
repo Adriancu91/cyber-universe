@@ -139,6 +139,14 @@ cp "$FLOPPY" "$PICK"
 echo "scriere permisa" > "$BUILD/cyber.rw.pick" && echo "test usb-pick" > "$BUILD/VERSIUNE.pick"
 MTOOLS_SKIP_CHECK=1 mcopy -o -i "$PICK" "$BUILD/cyber.rw.pick" ::/cyber.rw
 MTOOLS_SKIP_CHECK=1 mcopy -o -i "$PICK" "$BUILD/VERSIUNE.pick" ::/VERSIUNE
+# C-74: a "normal stick" next to the test stick, with the NVIDIA firmware folder (here one stand-in file, NOT an NVIDIA
+# file) and cyber.rw: the OS mounts it read-only at /usb2 and reads the firmware from it (scenario usb-fw).
+FWSTICK="$BUILD/stick-fw.img"
+cp "$FLOPPY" "$FWSTICK"
+MTOOLS_SKIP_CHECK=1 mcopy -o -i "$FWSTICK" "$BUILD/cyber.rw.pick" ::/cyber.rw
+MTOOLS_SKIP_CHECK=1 mmd -i "$FWSTICK" ::/firmware ::/firmware/nvidia ::/firmware/nvidia/ga102 ::/firmware/nvidia/ga102/gsp
+echo "proba C-74, NU fisierul NVIDIA" > "$BUILD/booter_load.proba"
+MTOOLS_SKIP_CHECK=1 mcopy -o -i "$FWSTICK" "$BUILD/booter_load.proba" ::/firmware/nvidia/ga102/gsp/booter_load-570.144.bin
 if [[ ",$EXTRA_FEATURES," == *",test-disk,"* ]]; then
     cp "$DISK" "$ISO_ROOT/boot/disk.img"
     echo "    module_path: boot():/boot/disk.img" >> "$ISO_ROOT/boot/limine/limine.conf"

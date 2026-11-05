@@ -104,8 +104,22 @@ pub fn mount_best(disks: Vec<Box<dyn crate::block::BlockDevice>>, at: &str) -> b
         }
     }
     let (fat, p) = opened.swap_remove(pick.unwrap_or(0));
-    mount_fat(fat, p, at)
+    let ok = mount_fat(fat, p, at);
+    // C-74: the test stick (written as an image) has no room for the NVIDIA firmware, so Adrian keeps both sticks in:
+    // the first other disk that has the firmware folder is mounted read-only at `<at>2` (e.g. /usb2).
+    if let Some(i) = opened.iter().position(|(f, _)| f.kind(&FIRMWARE_DIR).is_ok_and(|k| k == Kind::Dir)) {
+        let (mut fat, p) = opened.swap_remove(i);
+        fat.set_read_only();
+        let second = alloc::format!("{}2", at);
+        if mount_fat(fat, p, &second) {
+            crate::info!("fs: {}: al doilea stick, cu dosarul firmware/nvidia/ga102/gsp (doar citire)", second);
+        }
+    }
+    ok
 }
+
+/// C-74: the folder of the NVIDIA GSP files on a stick (`nvidia_ga104::firmware::STICK_DIR` without `/usb/`).
+const FIRMWARE_DIR: [&str; 4] = ["firmware", "nvidia", "ga102", "gsp"];
 
 fn mount_fat(fat: fat32::Fat32, p: part::Found, at: &str) -> bool {
     let rw = if fat.writable() { " (scriere permisa)" } else { "" };

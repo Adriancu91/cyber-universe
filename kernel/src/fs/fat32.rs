@@ -147,6 +147,11 @@ impl Fat32 {
         self.writable
     }
 
+    /// C-74: a second stick mounted only to read files from it (the NVIDIA firmware) stays read-only, marker or not.
+    pub fn set_read_only(&mut self) {
+        self.writable = false;
+    }
+
     fn cluster_bytes(&self) -> usize {
         self.sectors_per_cluster as usize * SECTOR
     }

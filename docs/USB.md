@@ -101,3 +101,14 @@ Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet 
   `port 26.3` = portul 3 al hub-ului de pe portul 26. `log usb` arată fiecare hub („hub 26: …, N porturi”) și fiecare port conectat.
 - `/usb` = stick-ul de pe care a pornit OS-ul: dintre toate stick-urile, cel care are `cyber.rw` și `VERSIUNE` (orice stick
   scris din Release le are). Cititoarele de carduri fără card („fara mediu”) sunt sărite.
+
+## 8. Stick-ul de test GPU + firmware-ul NVIDIA (C-74, 5 nov 2026)
+Stick-ul de test (`cyber-universe-gpu-scrie-usb.img`, scris cu Rufus) nu are loc pentru firmware-ul NVIDIA (fișierul mare are ~64 MB,
+partiția are ~62 MB) și Windows nu-i dă literă. Nu mai e nevoie să copiezi nimic pe el:
+1. Bagă **amândouă** stick-urile: stick-ul de test **și** stick-ul normal pe care ai deja `firmware\nvidia\ga102\gsp\` (cele 4 fișiere).
+2. Pornește de pe stick-ul de test (F8 / meniul de pornire). Sistemul alege singur stick-ul de pe care a pornit (`/usb`, are `cyber.rw` și
+   `VERSIUNE`) și îl montează pe celălalt la `/usb2`, **doar citire**. Pe ecran (și în `log`) apare:
+   `fs: /usb2: al doilea stick, cu dosarul firmware/nvidia/ga102/gsp (doar citire)`.
+3. `gpu firmware` verifică fișierele; dacă vin de pe al doilea stick, scrie `gpu: firmware: /usb2/... citit de pe al doilea stick`.
+   `gpu lant` (I7) le citește la fel. Firmware-ul nu intră niciodată în repo sau în imagini.
+Dacă `ls /usb2` nu arată nimic: stick-ul normal nu are dosarul `firmware` în rădăcină → copiază-l din Windows pe stick-ul normal.
