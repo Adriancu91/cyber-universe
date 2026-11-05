@@ -283,7 +283,7 @@ pub fn identify() -> Vec<String> {
 // ---------------------------------------------------------------------------------------------------------------
 
 /// Pinned Cyber-GPU revision (kernel/Cargo.toml), shown in the report.
-pub const CYBER_GPU_REV: &str = "9ac89b8";
+pub const CYBER_GPU_REV: &str = "a2f9736";
 
 /// Configuration space of one function for the Cyber-GPU libraries: reads only.
 pub(super) struct ReadOnlyConfig<'a> {
@@ -787,7 +787,8 @@ pub const PLAN: &[&str] = &[
 pub const LANT_WARNING: &[&str] = &[
     "ATENTIE: gpu lant face pasii ferestrei unul dupa altul si SCRIE in placa video (doar stick-ul de test):",
     " 1. pregatire-i6 (doar citire)  2. Bus Master pornit  3. I6 FWSEC-FRTS (aceleasi scrieri ca gpu i6 --scrie)",
-    " 4. I7 nu se incearca (nu e gata): lantul se opreste singur acolo  5. Bus Master oprit la loc  6. turul de citire dupa",
+    " 4. WPR2 citit dupa I6 (doar citire)  5. I7-I10 nu sunt inca in OS (doar SIMULARE cyber-gpu): lantul se opreste acolo",
+    " 6. Bus Master oprit la loc  7. turul de citire dupa",
     "Se opreste la primul esec; Bus Master se pune la loc si dupa o eroare. Fiecare acces merge pe loc in",
     "/usb/raport/gpu-jurnal-NNN.txt. Totul dispare la oprirea completa (cablul scos 30 s). Doar cu Adrian de fata.",
 ];

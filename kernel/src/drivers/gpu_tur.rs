@@ -5,9 +5,10 @@
 //!   read-only 16 MiB BAR0 window: PCI identity, BOOT_0/42, GFW, the VBIOS layout, FWSEC, the I6 preparation. One line
 //!   `fapt <key> = <value>` per fact (the format `compara_raport` of Cyber-GPU reads back), then the write count, which
 //!   must be 0. On the allow-list of the automatic loop (C-53).
-//! - `gpu lant`: the window steps one after the other (`nvidia_ga104::chain::run_chain(WINDOW_CHAIN, ..)`): I6
-//!   preparation, Bus Master on, FWSEC-FRTS, I7 (blocked in the plan: the chain stops there by itself), Bus Master back,
-//!   the tour after. The driver owns the order and the stop rules; this file only does each step. Writes are allowed
+//! - `gpu lant`: the window steps one after the other. P6-55 (C-71): the whole window chain of Cyber-GPU
+//!   (`run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, ..)`, I6 to the first computation). The OS has the I6
+//!   preparation, Bus Master on, FWSEC-FRTS, the WPR2 read after I6 (`i6-wpr2-citit`, reads only), Bus Master back and
+//!   the tour after; I7-I10 are not in the OS yet, so the chain stops honestly at `i7-booter-gsp` (no new write). The driver owns the order and the stop rules; this file only does each step. Writes are allowed
 //!   only in the test-stick build (`gpu-scrie`) and only after `DA` (asked by the shell); in every other build the
 //!   chain runs read only (it stops before the first writing step, then the tour). Refused by the automatic loop.
 //!
@@ -25,7 +26,8 @@ use gpu_core::diag::Journal;
 use gpu_core::error::{GpuError, GpuResult};
 use gpu_core::hal::{Clock, ConfigSpace, Mmio};
 use gpu_core::PciAddress;
-use nvidia_ga104::chain::{run_chain, ChainReport, WINDOW_CHAIN};
+use nvidia_ga104::chain::{run_chain_ready, ChainReport, READY_FOR_WINDOW, WINDOW_CHAIN_FULL};
+use nvidia_ga104::gsp::falcon;
 use nvidia_ga104::read_tour::run_tour;
 
 /// The tour on any board (real or model): one line per fact, then a summary. Errors are returned as they are.
@@ -52,6 +54,30 @@ fn report_lines(p: &str, r: &ChainReport, lines: &mut Vec<String>) {
     for l in format!("{}", r).lines() {
         lines.push(format!("{}: {}", p, l.trim_start()));
     }
+}
+
+/// P6-55: the error of a step of the full chain that the OS does not have yet (I7-I10).
+const NOT_IN_OS: &str = "pas fara implementare in OS (I7-I10 exista doar in SIMULAREA cyber-gpu, C-71)";
+
+/// P6-55 (C-71): step `i6-wpr2-citit` — WPR2 read after I6 with reads only (`falcon::read_frts_after_i6`, no permit)
+/// and checked against the FRTS region asked for; the line names the form of the end the board wrote.
+#[cfg_attr(not(any(feature = "gpu-scrie", feature = "test-gpu-sim")), allow(dead_code))]
+fn wpr2_step<M: Mmio + ?Sized>(
+    p: &str,
+    mmio: &mut M,
+    j: &mut Journal,
+    frts: (u64, u64),
+    lines: &mut Vec<String>,
+) -> GpuResult<()> {
+    let c = falcon::read_frts_after_i6(mmio, j, frts)?;
+    lines.push(format!(
+        "{}: pas i6-wpr2-citit: WPR2 {:#x}..{:#x} = regiunea FRTS ceruta (capat: {})",
+        p,
+        c.wpr2.start,
+        c.wpr2.end,
+        c.form.label()
+    ));
+    Ok(())
 }
 
 /// The chain's error for a step whose detail is already in `lines` (the library's errors carry only static text).
@@ -136,7 +162,7 @@ pub fn chain() -> Vec<String> {
     #[cfg(feature = "gpu-scrie")]
     let bm = gpu_pci::bus_master::BusMasterPermit::new("C-55 gpu lant (P6-42)");
     let mut refused = 0usize;
-    let report = run_chain(WINDOW_CHAIN, writes_allowed, &mut j, |s, j| match s.id {
+    let report = run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, writes_allowed, &mut j, |s, j| match s.id {
         "pregatire-i6" => {
             let mut win = ReadOnlyBar0Window::with_len(bar0, nvidia_ga104::fuse::FUSE_WINDOW);
             let r = gpu_i6::prepare(p, &mut win, j, &mut clock, &mut lines);
@@ -184,6 +210,14 @@ pub fn chain() -> Vec<String> {
             if ok { Ok(()) } else { Err(step_failed("FWSEC-FRTS a esuat (vezi randul pasului I6)")) }
         }
         #[cfg(feature = "gpu-scrie")]
+        "i6-wpr2-citit" => {
+            let Some((_, c)) = prepared.as_ref() else { return Err(step_failed("lipseste pregatirea I6")) };
+            let mut win = ReadOnlyBar0Window::with_len(bar0, nvidia_ga104::fuse::FUSE_WINDOW);
+            let r = wpr2_step(p, &mut win, j, c.frts, &mut lines);
+            refused += win.refused;
+            r
+        }
+        #[cfg(feature = "gpu-scrie")]
         "bus-master-oprit" => match old {
             None => Ok(()),
             Some(o) => {
@@ -207,8 +241,9 @@ pub fn chain() -> Vec<String> {
             refused += cfg.refused + win.refused;
             r
         }
-        // Writing steps in a build that cannot write never get here (the chain stops before them); I7 is blocked.
-        _ => Err(GpuError::NotPermitted("pas fara implementare in OS")),
+        // Writing steps in a build that cannot write never get here (the chain stops before them). I7-I10 (C-71) are
+        // written and tested only in Cyber-GPU's simulation: not in the OS yet, so the chain stops here honestly.
+        _ => Err(GpuError::NotPermitted(NOT_IN_OS)),
     });
     drop(_guard);
     report_lines(p, &report, &mut lines);
@@ -281,7 +316,7 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
     let mut old: Option<u16> = None;
     let mut frts = (0u64, 0u64);
     let mut g = FakeGsp::new();
-    let report = run_chain(WINDOW_CHAIN, writes_allowed, &mut j, |s, j| match s.id {
+    let report = run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, writes_allowed, &mut j, |s, j| match s.id {
         "pregatire-i6" => match gpu_i6::prepare(p, &mut ro, j, &mut clock, &mut lines) {
             Some((_, c)) if c.passes() => {
                 frts = c.frts;
@@ -331,6 +366,7 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
                 Err(step_failed("FWSEC-FRTS a esuat (vezi randul pasului I6)"))
             }
         }
+        "i6-wpr2-citit" => wpr2_step(p, &mut g, j, frts, &mut lines),
         "bus-master-oprit" => match old {
             None => Ok(()),
             Some(o) => {
@@ -343,7 +379,7 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
             let mut bar0 = gpu_sim::observed::observed_bar0();
             tour_on(p, &mut cfg, None, &mut bar0, &mut clock, j, &mut lines)
         }
-        _ => Err(GpuError::NotPermitted("pas fara implementare in OS")),
+        _ => Err(GpuError::NotPermitted(NOT_IN_OS)),
     });
     report_lines(p, &report, &mut lines);
     let outside = g.writes.iter().filter(|&&(o, _)| !(gpu_i6::GSP_LO..=gpu_i6::GSP_HI).contains(&u64::from(o))).count();

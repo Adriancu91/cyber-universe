@@ -120,6 +120,11 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
     (aceleași funcții ca `gpu i6 --scrie`, `i6_falcon` fără partea de Bus Master), I7 (blocat în plan: lanțul se oprește singur), Bus Master
     pus la loc, turul după. Ordinea și regulile de oprire sunt ale driverului. Scrierile: doar în build-ul `gpu-scrie`; în rest lanțul rulează
     doar citire (se oprește înainte de Bus Master, apoi turul).
+  - **P6-55 (C-71, cyber-gpu `a2f9736`):** `gpu lant` folosește lanțul complet al ferestrei, `run_chain_ready(WINDOW_CHAIN_FULL,
+    READY_FOR_WINDOW, ..)` (13 pași, I6 → primul calcul). OS-ul are pașii până la `i6-wpr2-citit` (WPR2 citit după I6 doar cu citiri,
+    `falcon::read_frts_after_i6`, verificat față de regiunea FRTS cerută) plus Bus Master la loc și turul; I7–I10 nu sunt încă în OS, deci
+    lanțul se oprește cinstit la `i7-booter-gsp` („pas fara implementare in OS”). Nicio scriere nouă. Liniile `pas <id>: ok|ESEC` ajung în
+    jurnalul de pe stick după accesele pasului (cum cere `chain_log` din cyber-gpu).
   - Test: `gpu-tur` (`gpu tur --sim` pe modelul plăcii din workstation; `gpu lant --sim` cu `DA` oprit la I7 cu Bus Master înapoi;
     `--eroare` oprit la I6, Bus Master tot înapoi; `--doar-citire` 0 scrieri; `tools/after-gpu-tur.sh` verifică jurnalele de pe disc),
     `gpu-scrie` (`gpu lant` → „nicio placa NVIDIA”), `tools/after-gpu.sh` (în `gpu_tur.rs` tot ce poate scrie e doar în build-ul `gpu-scrie`).
