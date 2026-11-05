@@ -99,6 +99,7 @@ def main():
     keys_sent = not (a.keys or a.monitor)
     pending = []
     next_at = 0.0
+    mon_sock = None
     screen_msg = None
     screen_ok = True
     shot = False
@@ -124,23 +125,28 @@ def main():
         if pending and time.time() >= next_at:
             c = pending.pop(0)
             if c.startswith("pauza="):
-                next_at = time.time() + float(c.split("=", 1)[1])
+                next_at = max(next_at, time.time()) + float(c.split("=", 1)[1])
                 deadline += float(c.split("=", 1)[1])
             else:
                 mon_sock.sendall(f"{c}\n".encode())
-                next_at = time.time() + 0.15
+                next_at += 0.15  # the same cadence as before (one key every 0.15 s), not slowed by the read loop
 
         if a.screenshot and not shot and (a.screenshot_when or READY) in text:
             shot = True
             ppm = os.path.join(tmp, "screen.ppm")
-            with socket.socket(socket.AF_UNIX) as s:
+            # QEMU serves one monitor client at a time: reuse the key connection when it is open.
+            s = mon_sock
+            if s is None:
+                s = socket.socket(socket.AF_UNIX)
                 s.connect(mon_path)
-                s.sendall(f"screendump {ppm}\n".encode())
-                for _ in range(100):
-                    if os.path.exists(ppm) and os.path.getsize(ppm) > 0:
-                        time.sleep(0.2)
-                        break
-                    time.sleep(0.05)
+            s.sendall(f"screendump {ppm}\n".encode())
+            for _ in range(100):
+                if os.path.exists(ppm) and os.path.getsize(ppm) > 0:
+                    time.sleep(0.2)
+                    break
+                time.sleep(0.05)
+            if s is not mon_sock:
+                s.close()
             screen_ok, screen_msg = check_screen(ppm, a.screenshot)
         if not acked and READY in text:
             proc.stdin.write(b"k")  # acknowledge -> kernel exits QEMU
