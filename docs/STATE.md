@@ -3,6 +3,13 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-05 00:42–01:45 UTC (02:42–03:45 ora României) — sesiune programată, fără Adrian — **P6-52 încheiat (unelte de profil/jurnal) și P6-54 gata (remote criptat), CI verde, Release `os-241`.**
+  - Hub: nicio comandă nouă pentru `cyber-universe` (C-68 și C-71 deja preluate; C-7, C-11 așteaptă întoarcerea lui Adrian). Hub-ul local era iar divergent (50/50) → copia veche pe ramura locală `vechi-local-backup`, `main` nou din `origin/main`, nimic forțat.
+  - **P6-52 pas 3 (F9):** `log --sumar` (rânduri pe nivel și pe modul, cele cu avertismente/erori primele), `log --avertismente [n]`, `timp <comanda>` (ms + memoria liberă/heap înainte și după, rând `timp: ... = N ms` în jurnal). Pe lista albă a remote-ului și a buclei automate doar dacă și comanda măsurată e permisă (`timp reboot`, `timp gpu i6 --scrie`, `timp timp`, `timp exit` refuzate). **P6-52 bifat.**
+  - **P6-54 (F2 pas 2, D-016):** remote-ul e criptat: `CYBER-REMOTE 2`, X25519 nou la fiecare conexiune, cheile recordurilor din HKDF-SHA256 peste cheia de pe stick (cheia nu mai circulă), recorduri ChaCha20-Poly1305; un record schimbat/repetat închide sesiunea. `tools/remote-client.py` are aceeași criptografie în Python pur (`--test`: vectorii RFC 7748/8439/5869 + vectorul comun cu nucleul). Clientul vechi nu mai merge (mesaj clar).
+  - Teste locale: `remote` (autotest criptare, record stricat, salut, sesiune cu `log --sumar`/`timp`), `boot`, `log`, `shell`, `auto`, `raport`, `desktop`, `ghpush` trec. CI run 41945782058 **verde** (31m52s) → **Release `os-241`**.
+  - **Următoarea:** coada nu mai are sarcini libere fără hardware (C-68 făcut în întregime pentru OS: F2 cu criptare, F3, F4, F8/F9, F6a). Rămân P6-10, P6-12 p.2 (hardware); P3-10 (Adrian); P5-07 BLOCAT; C-7, C-11 după Adrian; C-41 amânat. Sesiunile următoare: oprire scurtă dacă nu e comandă nouă (OPRIT abia după 3 sesiuni fără sarcină).
+  - Avertisment: la fereastra pe workstation, remote-ul cere clientul nou din `os-241` (`py tools\remote-client.py --test` → „criptografia OK”).
 - 2026-11-04 23:35 – 2026-11-05 ~00:25 UTC (01:35–02:25 ora României) — sesiune pornită de centrul de comandă — **P6-52 pas 2 gata (git simplu `gh-ia`), CI verde, Release `os-239`.**
   - Mesajul de pornire (scris la 23:00, înainte de schimbarea lui Adrian de la 23:10) cerea F1; F1 rămâne **anulat** (DECIZII 23:10), deci nu l-am refăcut. F3, F2, F4, F6a erau deja gata și în `main`.
   - Hub: nicio comandă nouă pentru `cyber-universe` (C-7, C-11 așteaptă tot întoarcerea lui Adrian).
