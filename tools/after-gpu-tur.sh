@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # After scenario `gpu-tur` (P6-42, C-55): the live journals on the written test disk.
 #   001 = `gpu tur --sim`: no write at all.
-#   002 = `gpu lant --sim`: Bus Master on before the first GSP write, back after the last one, every GSP write inside
-#         0x110000..0x113FFF, the step lines in chain order, I7 never run, the tour after the Bus Master restore.
+#   002 = `gpu lant --sim`: Bus Master on before the first GSP write, back after the last one, every write inside the
+#         GSP window 0x110000..0x113FFF or (P6-56, I7 only) the SEC2 window 0x840000..0x843FFF, the step lines in
+#         chain order, I7 passed (SEC2 mailbox 0 = the GspFwWprMeta address), I8 stopped honestly, the tour after.
 #   003 = `gpu lant --sim --eroare`: the same shape, I6 failed, Bus Master still back, the tour still after it.
 #   004 = `gpu lant --sim --doar-citire`: no write at all, the chain stopped before Bus Master, the tour still ran.
 set -uo pipefail
@@ -44,14 +45,24 @@ for k, ev, i6_ok in ((2, ok, True), (3, err, False)):
     assert len(cfg) == 2 and gsp and cfg[0] < gsp[0] and cfg[1] > gsp[-1], f"{k}: Bus Master nu inconjoara I6"
     assert ev[cfg[0]].endswith("<- 0x00000007 => 0x00100007"), ev[cfg[0]]
     assert ev[cfg[1]].endswith("<- 0x00000003 => 0x00100003"), ev[cfg[1]]
-    assert all(0x110000 <= int(ev[i].split()[2].rstrip(":"), 16) <= 0x113FFF for i in gsp), f"{k}: scriere in afara GSP"
+    off = lambda i: int(ev[i].split()[2].rstrip(":"), 16)
+    sec2 = [i for i in gsp if 0x840000 <= off(i) <= 0x843FFF]
+    assert all(0x110000 <= off(i) <= 0x113FFF or i in sec2 for i in gsp), f"{k}: scriere in afara GSP/SEC2"
     order = ["pregatire-i6", "bus-master-pornit", "i6-fwsec-frts", "bus-master-oprit", "tur-dupa"]
     at = [step(ev, n) for n in order]
     assert all(len(a) == 1 for a in at), f"{k}: pasi lipsa/dubli: {at}"
     assert [a[0] for a in at] == sorted(a[0] for a in at), f"{k}: pasii nu sunt in ordine"
     assert ev[at[2][0]].endswith("ok" if i6_ok else "ESEC"), ev[at[2][0]]
     if i6_ok:
-        assert step(ev, "i7-booter-gsp") and ev[step(ev, "i7-booter-gsp")[0]].endswith("ESEC"), f"{k}: I7 nu e oprit"
+        i7 = step(ev, "i7-booter-gsp")
+        assert i7 and ev[i7[0]].endswith("ok"), f"{k}: I7 nu a trecut"
+        assert sec2 and sec2[0] > step(ev, "i6-wpr2-citit")[0] and sec2[-1] < i7[0], f"{k}: scrieri SEC2 in afara pasului I7"
+        mb0 = [i for i in sec2 if off(i) == 0x840040]
+        assert mb0 and not ev[mb0[0]].split("<- ")[1].startswith("0x00000000"), f"{k}: cutia SEC2 0 fara GspFwWprMeta"
+        assert ev[step(ev, "i7-citit")[0]].endswith("ok"), f"{k}: i7-citit"
+        assert ev[step(ev, "i8-gsp-init")[0]].endswith("ESEC"), f"{k}: I8 nu e oprit"
+    else:
+        assert not sec2, f"{k}: SEC2 scris desi I6 a esuat"
     tour_reads = [i for i, b in enumerate(ev) if b.startswith("bar0 r 0x1fa828")]
     assert tour_reads and tour_reads[-1] > cfg[1], f"{k}: turul nu e dupa Bus Master oprit"
     assert not writes(ev[cfg[1] + 1:]), f"{k}: scriere dupa Bus Master oprit"

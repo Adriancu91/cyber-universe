@@ -8,7 +8,7 @@
 //! - `gpu lant`: the window steps one after the other. P6-55 (C-71): the whole window chain of Cyber-GPU
 //!   (`run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, ..)`, I6 to the first computation). The OS has the I6
 //!   preparation, Bus Master on, FWSEC-FRTS, the WPR2 read after I6 (`i6-wpr2-citit`, reads only), Bus Master back and
-//!   the tour after; I7-I10 are not in the OS yet, so the chain stops honestly at `i7-booter-gsp` (no new write). The driver owns the order and the stop rules; this file only does each step. Writes are allowed
+//!   the tour after; P6-56 (C-72): I7 (Booter on SEC2, `gpu_i7.rs`) and `i7-citit`; I8-I10 are not in the OS yet, so the chain stops honestly at `i8-gsp-init`. The driver owns the order and the stop rules; this file only does each step. Writes are allowed
 //!   only in the test-stick build (`gpu-scrie`) and only after `DA` (asked by the shell); in every other build the
 //!   chain runs read only (it stops before the first writing step, then the tour). Refused by the automatic loop.
 //!
@@ -21,6 +21,8 @@
 
 use super::gpu::{self, ReadOnlyBar0Window, ReadOnlyConfig, TscClock, WINDOW_LOCK};
 use super::gpu_i6::{self, finish};
+#[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
+use super::gpu_i7;
 use alloc::{format, string::String, vec::Vec};
 use gpu_core::diag::Journal;
 use gpu_core::error::{GpuError, GpuResult};
@@ -57,7 +59,7 @@ fn report_lines(p: &str, r: &ChainReport, lines: &mut Vec<String>) {
 }
 
 /// P6-55: the error of a step of the full chain that the OS does not have yet (I7-I10).
-const NOT_IN_OS: &str = "pas fara implementare in OS (I7-I10 exista doar in SIMULAREA cyber-gpu, C-71)";
+const NOT_IN_OS: &str = "pas fara implementare in OS (I8-I10 exista doar in SIMULAREA cyber-gpu, C-71; P6-56 pas 2-3)";
 
 /// P6-55 (C-71): step `i6-wpr2-citit` — WPR2 read after I6 with reads only (`falcon::read_frts_after_i6`, no permit)
 /// and checked against the FRTS region asked for; the line names the form of the end the board wrote.
@@ -161,6 +163,8 @@ pub fn chain() -> Vec<String> {
     let mut old: Option<u16> = None;
     #[cfg(feature = "gpu-scrie")]
     let bm = gpu_pci::bus_master::BusMasterPermit::new("C-55 gpu lant (P6-42)");
+    #[cfg(feature = "gpu-scrie")]
+    let mut i7: Vec<gpu_i7::I7Prep> = Vec::new();
     let mut refused = 0usize;
     let report = run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, writes_allowed, &mut j, |s, j| match s.id {
         "pregatire-i6" => {
@@ -218,6 +222,32 @@ pub fn chain() -> Vec<String> {
             r
         }
         #[cfg(feature = "gpu-scrie")]
+        "i7-booter-gsp" => {
+            // P6-56 (C-72): everything in RAM first (files from the stick, the DMA area, GspFwWprMeta, Booter); any
+            // failure there stops the chain before the first SEC2 write.
+            let Some((_, c)) = prepared.as_ref() else { return Err(step_failed("lipseste pregatirea I6")) };
+            let fw = gpu_i7::stick_firmware(p, j, &mut lines)?;
+            let prep = {
+                let mut win = ReadOnlyBar0Window::with_len(bar0, nvidia_ga104::fuse::FUSE_WINDOW);
+                let r = gpu_i7::prepare(p, &mut win, j, &fw, c, &mut lines);
+                refused += win.refused;
+                r?
+            };
+            drop(fw);
+            let mut rw = gpu_i6::hw::GspWriteWindow::with_sec2(bar0);
+            let r = gpu_i7::booter(p, &mut rw, &mut clock, j, &prep, Some(&permit), &mut lines);
+            refused += rw.refused;
+            i7.push(prep); // the area stays pinned: GSP-RM reads it after I7
+            r
+        }
+        #[cfg(feature = "gpu-scrie")]
+        "i7-citit" => {
+            let mut win = ReadOnlyBar0Window::with_len(bar0, nvidia_ga104::fuse::FUSE_WINDOW);
+            let r = gpu_i7::after(p, &mut win, j, &mut lines);
+            refused += win.refused;
+            r
+        }
+        #[cfg(feature = "gpu-scrie")]
         "bus-master-oprit" => match old {
             None => Ok(()),
             Some(o) => {
@@ -241,8 +271,9 @@ pub fn chain() -> Vec<String> {
             refused += cfg.refused + win.refused;
             r
         }
-        // Writing steps in a build that cannot write never get here (the chain stops before them). I7-I10 (C-71) are
-        // written and tested only in Cyber-GPU's simulation: not in the OS yet, so the chain stops here honestly.
+        // Writing steps in a build that cannot write never get here (the chain stops before them). I8-I10 (C-71) are
+        // written and tested only in Cyber-GPU's simulation: not in the OS yet (P6-56 steps 2-3), so the chain stops
+        // here honestly.
         _ => Err(GpuError::NotPermitted(NOT_IN_OS)),
     });
     drop(_guard);
@@ -315,11 +346,13 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
     let bm = BusMasterPermit::new("C-55 gpu lant --sim (P6-42)");
     let mut old: Option<u16> = None;
     let mut frts = (0u64, 0u64);
+    let mut i6c: Option<nvidia_ga104::i6_check::I6Check> = None;
     let mut g = FakeGsp::new();
     let report = run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, writes_allowed, &mut j, |s, j| match s.id {
         "pregatire-i6" => match gpu_i6::prepare(p, &mut ro, j, &mut clock, &mut lines) {
             Some((_, c)) if c.passes() => {
                 frts = c.frts;
+                i6c = Some(c);
                 Ok(())
             }
             _ => Err(step_failed("pregatirea I6 nu trece")),
@@ -367,6 +400,15 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
             }
         }
         "i6-wpr2-citit" => wpr2_step(p, &mut g, j, frts, &mut lines),
+        "i7-booter-gsp" => {
+            let Some(c) = i6c.as_ref() else { return Err(step_failed("lipseste pregatirea I6")) };
+            let fw = gpu_i7::sim_firmware(j)?;
+            lines.push(format!("{}: I7: fisierele de proba gpu-sim (NU fisierele NVIDIA) verificate", p));
+            let prep = gpu_i7::prepare(p, &mut ro, j, &fw, c, &mut lines)?;
+            gpu_i7::sim_expect(&mut g, &prep);
+            gpu_i7::booter(p, &mut g, &mut clock, j, &prep, None, &mut lines)
+        }
+        "i7-citit" => gpu_i7::after(p, &mut g, j, &mut lines),
         "bus-master-oprit" => match old {
             None => Ok(()),
             Some(o) => {

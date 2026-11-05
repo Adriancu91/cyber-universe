@@ -710,7 +710,7 @@ pub fn init_step_sim(step: InitStep) -> Vec<String> {
 // is ~64 MB, dropped as soon as it is checked). The NVIDIA files are never in the repo, the tests or the stick archive.
 
 /// `FirmwareSource` over the kernel VFS (`/usb/firmware/...`).
-struct StickFirmware;
+pub(super) struct StickFirmware;
 
 impl nvidia_ga104::firmware::FirmwareSource for StickFirmware {
     fn read_file(&mut self, path: &str) -> gpu_core::error::GpuResult<Vec<u8>> {
@@ -787,8 +787,11 @@ pub const PLAN: &[&str] = &[
 pub const LANT_WARNING: &[&str] = &[
     "ATENTIE: gpu lant face pasii ferestrei unul dupa altul si SCRIE in placa video (doar stick-ul de test):",
     " 1. pregatire-i6 (doar citire)  2. Bus Master pornit  3. I6 FWSEC-FRTS (aceleasi scrieri ca gpu i6 --scrie)",
-    " 4. WPR2 citit dupa I6 (doar citire)  5. I7-I10 nu sunt inca in OS (doar SIMULARE cyber-gpu): lantul se opreste acolo",
-    " 6. Bus Master oprit la loc  7. turul de citire dupa",
+    " 4. WPR2 citit dupa I6 (doar citire)",
+    " 5. I7 (NOU, P6-56): fisierele GSP 570.144 de pe stick in RAM, apoi Booter pe SEC2 porneste GSP-RM",
+    "    (~750 de scrieri noi, in fereastra SEC2 0x840000-0x843FFF)  6. I7 citit (doar citire)",
+    " 7. I8-I10 nu sunt inca in OS (doar SIMULARE cyber-gpu): lantul se opreste acolo",
+    " 8. Bus Master oprit la loc  9. turul de citire dupa",
     "Se opreste la primul esec; Bus Master se pune la loc si dupa o eroare. Fiecare acces merge pe loc in",
     "/usb/raport/gpu-jurnal-NNN.txt. Totul dispare la oprirea completa (cablul scos 30 s). Doar cu Adrian de fata.",
 ];

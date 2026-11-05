@@ -97,6 +97,8 @@ def main():
     deadline = time.time() + a.timeout
     acked = False
     keys_sent = not (a.keys or a.monitor)
+    pending = []
+    next_at = 0.0
     screen_msg = None
     screen_ok = True
     shot = False
@@ -111,14 +113,23 @@ def main():
             time.sleep(0.05)
         text = out.decode("utf-8", "replace").replace("\r", "")
         if not keys_sent and a.keys_when in text:
-            commands = [f"sendkey {k}" for k in (a.keys or "").split()]
-            commands += [c.replace(":", " ") for c in (a.monitor or "").split(",") if c]
-            with socket.socket(socket.AF_UNIX) as s:
-                s.connect(mon_path)
-                for c in commands:
-                    s.sendall(f"{c}\n".encode())
-                    time.sleep(0.15)
+            # `pauza=N` in --keys (P6-56): wait N seconds before the next key, still reading the serial port, so a
+            # long command does not get the following keys while it runs (the kernel's key buffer is small).
+            pending = [k if k.startswith("pauza=") else f"sendkey {k}" for k in (a.keys or "").split()]
+            pending += [c.replace(":", " ") for c in (a.monitor or "").split(",") if c]
+            next_at = time.time()
             keys_sent = True
+            mon_sock = socket.socket(socket.AF_UNIX)  # kept open until the end (closing it early drops the last key)
+            mon_sock.connect(mon_path)
+        if pending and time.time() >= next_at:
+            c = pending.pop(0)
+            if c.startswith("pauza="):
+                next_at = time.time() + float(c.split("=", 1)[1])
+                deadline += float(c.split("=", 1)[1])
+            else:
+                mon_sock.sendall(f"{c}\n".encode())
+                next_at = time.time() + 0.15
+
         if a.screenshot and not shot and (a.screenshot_when or READY) in text:
             shot = True
             ppm = os.path.join(tmp, "screen.ppm")

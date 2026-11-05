@@ -68,6 +68,12 @@ while IFS='|' read -r name features ending expects screenshot qextra; do
         fi
     fi
     export DISK_IMG
+    # timeout=N: this scenario needs longer than the default (e.g. the whole simulated GPU chain, P6-56).
+    stimeout="$TIMEOUT"
+    if [[ "$qextra" =~ (^|[[:space:]])timeout=([0-9]+) ]]; then
+        stimeout="${BASH_REMATCH[2]}"
+        qextra="${qextra/timeout=${BASH_REMATCH[2]}/}"
+    fi
     mapfile -t ARGS < <(qemu_args "$iso")
     QARGS=(); skip=0
     for a in "${ARGS[@]}"; do
@@ -82,7 +88,7 @@ while IFS='|' read -r name features ending expects screenshot qextra; do
     qextra="${qextra//\{BUILD\}/$BUILD}"   # {BUILD} = the build directory (for disk images)
     # shellcheck disable=SC2206
     [[ -n "$qextra" ]] && QARGS+=($qextra)
-    PY=(--iso "$iso" --log "$BUILD/serial-$name.log" --timeout "$TIMEOUT" --expect-exit "$ending")
+    PY=(--iso "$iso" --log "$BUILD/serial-$name.log" --timeout "$stimeout" --expect-exit "$ending")
     IFS=$'\n' read -r -d '' -a lines < <(echo "$expects" | sed 's/;;/\n/g' && printf '\0')
     for l in "${lines[@]}"; do l="$(trim "$l")"; [[ -n "$l" ]] && PY+=(--expect "$l"); done
     if [[ "$screenshot" == *@* ]]; then   # file@line: take it when the kernel prints that line

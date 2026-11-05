@@ -588,12 +588,23 @@ pub(super) mod hw {
     pub(crate) struct GspWriteWindow {
         phys: u64,
         mapped: Option<u64>,
+        /// P6-56 (I7): the SEC2 window (0x840000-0x843FFF) is writable too (Booter runs on SEC2).
+        sec2: bool,
         pub(crate) refused: usize,
     }
 
+    /// The SEC2 falcon window (P6-56, I7 only).
+    pub(crate) const SEC2_LO: u64 = 0x84_0000;
+    pub(crate) const SEC2_HI: u64 = 0x84_3FFF;
+
     impl GspWriteWindow {
         pub(crate) fn new(phys: u64) -> Self {
-            GspWriteWindow { phys, mapped: None, refused: 0 }
+            GspWriteWindow { phys, mapped: None, sec2: false, refused: 0 }
+        }
+        /// I7: writes inside the GSP or the SEC2 window, nothing else.
+        #[cfg_attr(not(feature = "gpu-scrie"), allow(dead_code))]
+        pub(crate) fn with_sec2(phys: u64) -> Self {
+            GspWriteWindow { phys, mapped: None, sec2: true, refused: 0 }
         }
         fn page(&mut self, offset: u64) -> Option<u64> {
             let page = offset & !0xFFF;
@@ -622,14 +633,15 @@ pub(super) mod hw {
             }
         }
         fn write32_raw(&mut self, offset: u64, value: u32) {
-            if !(GSP_LO..=GSP_HI - 3).contains(&offset) || offset & 3 != 0 {
+            let in_sec2 = self.sec2 && (SEC2_LO..=SEC2_HI - 3).contains(&offset);
+            if !((GSP_LO..=GSP_HI - 3).contains(&offset) || in_sec2) || offset & 3 != 0 {
                 self.refused += 1;
-                crate::warn!("gpu: scriere refuzata in afara ferestrei GSP: {:#x} <- {:#010x}", offset, value);
+                crate::warn!("gpu: scriere refuzata in afara ferestrelor GSP/SEC2: {:#x} <- {:#010x}", offset, value);
                 return;
             }
             match self.page(offset) {
                 // SAFETY: the uncached, writable mapping of the BAR0 page holding `offset`, which is inside the GSP
-                // window (checked above). Reached only in the gpu-scrie build, after `DA`, under a HardwareWritePermit.
+                // window, or the SEC2 window when `sec2` (checked above). Reached only in the gpu-scrie build, after `DA`, under a HardwareWritePermit.
                 Some(va) => unsafe { (va as *mut u32).write_volatile(value) },
                 None => self.refused += 1,
             }
