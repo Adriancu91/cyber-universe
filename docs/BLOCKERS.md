@@ -21,6 +21,8 @@
 - **Am încercat:** 1) 3 măsurători în loc de una (P6-43); 2) pragul de jos 80 cu mai multe procesoare (P6-43); 3) reparația lacătului
   `try_lock` (P6-43, altă cauză a aceluiași scenariu); 4) acum pragul 60 cu mai multe procesoare (P6-47) — tot departe de un ceas
   stricat (0 bătăi, sau 50 = calibrare pe jumătate). Scenariile cu un procesor păstrează 90–110.
+- **2026-11-05 (P6-56):** și cu un singur procesor, pe o gazdă ocupată: [87, 87, 87] în CI (run 41978086750, 16 scenarii picate la pornire)
+  și [85, 85, 85] local → pragul de jos 80 și cu un procesor (tot departe de 50 sau 0).
 - **Eroarea exactă:** `PANIC: temporizator: [74, 75, 74] intreruperi intr-o secunda la 3 masuratori (asteptat 100)`
 - **Ce ar debloca:** dacă pică și sub 60: măsurarea ceasului față de TSC în loc de PIT, sau testul cu `-smp 4` pe o gazdă mai liberă.
 - **Nevoie de Adrian:** nu.

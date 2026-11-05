@@ -44,12 +44,46 @@ fn tour_on<C: ConfigSpace + ?Sized, M: Mmio + ?Sized, K: Clock + ?Sized>(
     journal: &mut Journal,
     lines: &mut Vec<String>,
 ) -> GpuResult<()> {
-    let t = run_tour(cfg, addr, bar0, clock, journal)?;
+    let mut t = run_tour(cfg, addr, bar0, clock, journal)?;
+    i6_result_fact(&mut t.facts, bar0, journal);
     for f in &t.facts {
         lines.push(format!("{}", f));
     }
     lines.push(format!("{}: tur de citire (C-54): {} fapte, {} citiri jurnalizate", p, t.facts.len(), t.reads));
     Ok(())
+}
+
+/// C-72 (Adrian, 5 nov): the library's fact `i6.trece` is the I6 *pre-check* ("WPR2 down, I6 may run"), so after a
+/// successful I6 on the board it said `nu`. In the OS tour it now means the I6 *result*: with WPR2 raised, the three
+/// status reads of `read_frts_after_i6` against the FRTS region of the same layout `i6_check` uses (VRAM from the fact
+/// `i6.vram`, sizes of the official files) decide `da`/`nu`; with WPR2 down it is `nu (inca nefacut ...)`. The
+/// pre-check keeps its own fact, `i6.pregatire`. Reads only.
+fn i6_result_fact<M: Mmio + ?Sized>(facts: &mut Vec<nvidia_ga104::read_tour::Fact>, bar0: &mut M, journal: &mut Journal) {
+    use nvidia_ga104::fb_layout::{FbLayout, FbParams};
+    use nvidia_ga104::firmware::{GspRole, GSP_570_144};
+    let get = |facts: &[nvidia_ga104::read_tour::Fact], k: &str| facts.iter().find(|f| f.key == k).map(|f| f.value.clone());
+    let (Some(wpr2), Some(vram)) = (get(facts, "i6.wpr2"), get(facts, "i6.vram")) else { return };
+    let value = if !wpr2.starts_with("RIDICAT") {
+        String::from("nu (inca nefacut: WPR2 coborat)")
+    } else {
+        let size = |r: GspRole| GSP_570_144.iter().find(|f| f.role == r).map(|f| f.size).unwrap_or(0);
+        let mib: u64 = vram.trim_end_matches(" MiB").parse().unwrap_or(0);
+        let frts = FbLayout::compute(&FbParams {
+            fb_size: mib << 20,
+            vga_workspace_reg: None,
+            bootloader_size: size(GspRole::Bootloader),
+            gsp_elf_size: size(GspRole::GspRm),
+        })
+        .map(|l| (l.frts.start, l.frts.end));
+        match frts.and_then(|f| falcon::read_frts_after_i6(bar0, journal, f)) {
+            Ok(c) => format!("da (WPR2 = regiunea FRTS ceruta, capat: {})", c.form.label()),
+            Err(e) => format!("nu (WPR2 ridicat, dar: {})", e),
+        }
+    };
+    if let Some(i) = facts.iter().position(|f| f.key == "i6.trece") {
+        let pre = core::mem::replace(&mut facts[i].value, value);
+        facts.insert(i, nvidia_ga104::read_tour::Fact::new("i6.pregatire", pre));
+    }
 }
 
 /// The chain report, one line per step, with the board name in front.
@@ -323,6 +357,30 @@ pub fn tour_sim() -> Vec<String> {
     let mut clock = gpu_sim::clock::SimClock::default();
     if let Err(e) = tour_on(p, &mut cfg, None, &mut bar0, &mut clock, &mut j, &mut lines) {
         lines.push(format!("{}: tur de citire: {}", p, e));
+    }
+    // C-72: the fact `i6.trece` after I6, on the register values the board gave on 5 nov (os-242), on a cold board
+    // and on a WPR2 that is not the FRTS region. Reads only, on throw-away models.
+    for (what, wpr2) in [
+        ("model dupa I6 (WPR2 ridicat ca pe placa, 5 nov)", Some((0x01ff_e000u32, 0x01ff_ee00u32))),
+        ("model fara I6", None),
+        ("model cu WPR2 gresit", Some((0x01ff_0000, 0x01ff_1000))),
+    ] {
+        let mut m = gpu_sim::mmio::SimMmio::ga104_bar0();
+        if let Some((lo, hi)) = wpr2 {
+            m.set(0x1fa824, lo);
+            m.set(0x1fa828, hi);
+        }
+        let raised = wpr2.map(|_| String::from("RIDICAT"));
+        let mut facts = alloc::vec![
+            nvidia_ga104::read_tour::Fact::new("i6.vram", "8192 MiB"),
+            nvidia_ga104::read_tour::Fact::new("i6.wpr2", raised.unwrap_or_else(|| String::from("coborat"))),
+            nvidia_ga104::read_tour::Fact::new("i6.trece", if wpr2.is_some() { "nu" } else { "da" }),
+        ];
+        let mut scratch = Journal::new(64);
+        i6_result_fact(&mut facts, &mut m, &mut scratch);
+        for f in facts.iter().filter(|f| f.key != "i6.vram" && f.key != "i6.wpr2") {
+            lines.push(format!("{}: {}", what, f));
+        }
     }
     gpu_i6::close_and_check(p, false, &mut lines);
     lines.push(gpu::writes_line(cfg.writes + bar0.writes.len() + j.writes()));

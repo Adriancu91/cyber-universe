@@ -281,6 +281,12 @@ pub(super) fn prepare<M: Mmio + ?Sized>(
     Ok(I7Prep { ucode, image, wpr_meta: at(pl.meta), libos: at(pl.libos), shared, queues })
 }
 
+/// Falcon registers (offsets inside the falcon window), as `nvidia_rm570::regs` names them: `NV_PFALCON_FALCON_MAILBOX0/1`
+/// and `NV_PFALCON_FALCON_OS`.
+const MAILBOX0: u32 = 0x40;
+const MAILBOX1: u32 = 0x44;
+const FALCON_OS: u32 = 0x80;
+
 /// The `I7: ...` line from the three status reads.
 fn status_line(p: &str, s: &GpuResult<I7Status>) -> String {
     match s {
@@ -308,10 +314,22 @@ pub(super) fn booter<W: Mmio + ?Sized, K: Clock + ?Sized>(
     permit: Option<&HardwareWritePermit>,
     lines: &mut Vec<String>,
 ) -> GpuResult<()> {
-    let r = GuardedBar0::new(rw, journal, permit)
-        .and_then(|mut b| falcon::booter_load_dma(&mut b, clock, &prep.ucode, &prep.image, prep.wpr_meta));
+    // C-72 (5 nov): GSP-RM finds its queues only through the LibOS page whose address is in the GSP mailboxes when it
+    // starts, and checks the falcon OS register for the app version: the same writes, in the same order, as the
+    // CORE_RESUME step of Cyber-GPU's sequencer (`gsp::sequencer`, "GSP mailboxes = LibOS args, start SEC2, ...,
+    // GSP OS = app version"), here around the first Booter run. Through the same guard (GSP window only).
+    let gsp = falcon::Engine::Gsp.base();
+    let r = GuardedBar0::new(rw, journal, permit).and_then(|mut b| {
+        b.write(gsp + MAILBOX0, prep.libos as u32)?;
+        b.write(gsp + MAILBOX1, (prep.libos >> 32) as u32)?;
+        falcon::booter_load_dma(&mut b, clock, &prep.ucode, &prep.image, prep.wpr_meta)?;
+        b.write(gsp + FALCON_OS, super::gpu_i8::APP_VERSION)
+    });
     match &r {
-        Ok(()) => lines.push(format!("{}: pas I7 Booter + GSP RISC-V: ok (GspFwWprMeta {:#x})", p, prep.wpr_meta)),
+        Ok(()) => lines.push(format!(
+            "{}: pas I7 Booter + GSP RISC-V: ok (GspFwWprMeta {:#x}; cutiile GSP = pagina LibOS {:#x}; versiunea {})",
+            p, prep.wpr_meta, prep.libos, super::gpu_i8::APP_VERSION
+        )),
         Err(e) => lines.push(format!("{}: pas I7 Booter + GSP RISC-V: ESEC: {} (oprit la prima eroare)", p, e)),
     }
     lines.push(status_line(p, &falcon::read_after_i7(rw, journal)));

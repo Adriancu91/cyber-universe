@@ -28,7 +28,7 @@ use nvidia_ga104::gsp::{registry, HardwareWritePermit};
 use super::gpu_i7::I7Prep;
 
 /// GSP-RM 570.144 (the only firmware `firmware::load_gsp_set` accepts): CORE_RESUME writes it back.
-const APP_VERSION: u32 = 570_144;
+pub(super) const APP_VERSION: u32 = 570_144;
 /// How long GSP-RM may take to write the status-queue header after the doorbell (DEDUS; the whole wait is bounded by
 /// `sequencer::INIT_DONE_US` anyway).
 const STAT_HEADER_US: u64 = 2_000_000;
