@@ -346,7 +346,7 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 - [x] **P6-51** F4 (C-68; făcut pe ramura `wip/P7-F4-hardware` de sesiunea paralelă F4, integrat în `main` pe 4 nov): citirea completă a hardware-ului — PCI/USB/ACPI cu nume și stare; placa Wi-Fi doar identificată și citită (fără scriere). Dep: —
   Rezultat (2026-11-04): `hw lista` / `hw lista --detalii` — procesor, memorie, PCI cu nume (tabel propriu), clasă, driver, BAR-uri, PCIe, D0–D3; USB găsit; tabelele ACPI; placa Wi-Fi doar identificată și citită; ultimul rând „0 scrieri in dispozitive”. Scenariul `hw-lista` trece în `main` (și `boot`, `log`, `shell`, `auto`, `desktop`, `web`). Pe placa reală: o poză cu `hw lista --detalii` completează tabelul de nume.
 
-- [ ] **P6-52** F8/F9 (C-68): editor de text + terminal + git simplu în OS; unelte de test/profil/jurnal (comparare rapoarte), toate pe lista albă. Dep: P6-49
+- [~] **P6-52** F8/F9 (C-68): editor de text + terminal + git simplu în OS; unelte de test/profil/jurnal (comparare rapoarte), toate pe lista albă. Dep: P6-49
   Pas 1 gata (2026-11-04): `compara <f1> <f2>` (F9: compararea rapoartelor), pe lista albă. Rămân: editorul / terminalul / git simplu (după ce F2 de pe ramura paralelă intră în `main`).
   Pas 2 gata (2026-11-04): „git simplu” — `/bin/gh-ia <depozit> <cale> <fișier>` ia un fișier de pe GitHub (perechea lui `gh-trimite`), scris lângă cel vechi și citit înapoi; testat în `ghpush` (300 KB, nume cu spațiu, la fel, lipsă, `..`). Editorul (`/bin/editor`) și terminalul (`/bin/terminal`) există din Faza 4. Rămâne: unelte de profil/jurnal pe lista albă a remote-ului.
 
