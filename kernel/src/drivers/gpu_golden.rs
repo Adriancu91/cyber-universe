@@ -12,8 +12,8 @@
 //! UEFI screen could show; the screen's own range from `vram_window::screen_vram_range` must be inside it) and below
 //! GSP-RM's regions (`FbLayout::free_below`, the same layout as I6/I7). Everything else is protected.
 //!
-//! Not here (yet): I10 (`add64`, the launch cost) needs VRAM reads and the work-channel doorbell `0xBB0090`, which
-//! Cyber-GPU has not put on its permitted list; the chain stops honestly at `i10-add64`.
+//! I10 (`add64`, the launch cost) is in `gpu_i10.rs`: it adds the VRAM reads, the TLB invalidate and the work-channel
+//! doorbell on top of the memory kept here.
 //!
 //! Written and tested by Cyber-GPU only in SIMULATION; in the OS tested in QEMU against `gpu_sim::fake_rm::FakeRm`
 //! behind a small queue peer (test builds). On the board it is a first try.
@@ -44,7 +44,7 @@ use super::gpu_i7::I7Prep;
 pub(super) const BAR1_LEN: u64 = 256 << 20;
 
 /// 32-bit VRAM words waiting to be written (address, value), shared by the memory manager and the transport.
-type Pending = Rc<RefCell<Vec<(u64, u32)>>>;
+pub(super) type Pending = Rc<RefCell<Vec<(u64, u32)>>>;
 
 /// The memory manager's sink: it only collects the words; [`flush`] writes them through the VRAM window.
 pub(super) struct PendingVram(Pending);
@@ -66,9 +66,9 @@ impl ChannelMemory for PendingVram {
         self.0.borrow_mut().push((pa, v));
         Ok(())
     }
-    /// Only I10 reads VRAM back (the semaphore, `add64`'s result); not in the OS yet.
+    /// The collector never reads: I10 reads VRAM back through the window itself (`gpu_i10.rs`).
     fn read_u32(&mut self, _pa: u64) -> GpuResult<u32> {
-        Err(GpuError::NotPermitted("citirea VRAM vine abia la I10 (nu e in OS inca)"))
+        Err(GpuError::NotPermitted("citirea VRAM doar prin fereastra VRAM (I10)"))
     }
 }
 
@@ -98,7 +98,7 @@ pub(super) fn zone(fb: &FbLayout, vram_size: u64, screen: Option<(u64, u64)>, ba
 /// What golden + I9 keep between steps.
 pub(super) struct GpuState {
     pub mem: GpuMemory<PendingVram>,
-    pending: Pending,
+    pub(super) pending: Pending,
     pub zone: VramZone,
     pub golden: Option<GoldenImage>,
     pub space: Option<(UserSpace, WorkChannel)>,
@@ -117,7 +117,7 @@ impl GpuState {
 }
 
 /// Writes every collected word through the VRAM window (each read back), then puts the window register back.
-fn flush<V: Mmio + ?Sized>(
+pub(super) fn flush<V: Mmio + ?Sized>(
     vbar: &mut V,
     journal: &mut Journal,
     permit: Option<&HardwareWritePermit>,

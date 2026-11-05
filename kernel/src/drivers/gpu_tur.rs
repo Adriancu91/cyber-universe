@@ -8,7 +8,7 @@
 //! - `gpu lant`: the window steps one after the other. P6-55 (C-71): the whole window chain of Cyber-GPU
 //!   (`run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, ..)`, I6 to the first computation). The OS has the I6
 //!   preparation, Bus Master on, FWSEC-FRTS, the WPR2 read after I6 (`i6-wpr2-citit`, reads only), Bus Master back and
-//!   the tour after; P6-56 (C-72): I7 (Booter on SEC2, `gpu_i7.rs`) and `i7-citit`; step 2: I8 (`gpu_i8.rs`: SetSystemInfo + SetRegistry, the doorbell, the wait for GSP_INIT_DONE); step 2b: golden + I9 (`gpu_golden.rs`: RM messages with the GSP doorbell each, page tables in VRAM through the VRAM window); I10 is not in the OS yet, so the chain stops honestly at `i10-add64`. The driver owns the order and the stop rules; this file only does each step. Writes are allowed
+//!   the tour after; P6-56 (C-72): I7 (Booter on SEC2, `gpu_i7.rs`) and `i7-citit`; step 2: I8 (`gpu_i8.rs`: SetSystemInfo + SetRegistry, the doorbell, the wait for GSP_INIT_DONE); step 2b: golden + I9 (`gpu_golden.rs`: RM messages with the GSP doorbell each, page tables in VRAM through the VRAM window); step 3: I10 (`gpu_i10.rs`: `add64` on the work channel, the TLB invalidate, the work-channel doorbell, the result bit for bit; the launch cost). The driver owns the order and the stop rules; this file only does each step. Writes are allowed
 //!   only in the test-stick build (`gpu-scrie`) and only after `DA` (asked by the shell); in every other build the
 //!   chain runs read only (it stops before the first writing step, then the tour). Refused by the automatic loop.
 //!
@@ -27,6 +27,8 @@ use super::gpu_i7;
 use super::gpu_i8;
 #[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
 use super::gpu_golden;
+#[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
+use super::gpu_i10;
 use alloc::{format, string::String, vec::Vec};
 use gpu_core::diag::Journal;
 use gpu_core::error::{GpuError, GpuResult};
@@ -101,7 +103,21 @@ fn report_lines(p: &str, r: &ChainReport, lines: &mut Vec<String>) {
 }
 
 /// P6-55: the error of a step of the full chain that the OS does not have yet (I7-I10).
-const NOT_IN_OS: &str = "pas fara implementare in OS (I10 exista doar in SIMULAREA cyber-gpu, C-71: soneria canalului 0xBB0090 nu e inca pe lista permisa; P6-56 pas 3)";
+const NOT_IN_OS: &str = "pas fara implementare in OS";
+
+/// P6-56 step 3 (I10): one write of the work-channel doorbell through its fence, journaled. The register is not read
+/// (before/after in the journal are 0, with a note): RM only writes it.
+#[cfg(feature = "gpu-scrie")]
+fn ring_work_doorbell(db: &mut gpu_i6::hw::DoorbellFence, j: &mut Journal, off: u64, v: u32) -> GpuResult<()> {
+    let before = db.rung;
+    gpu_core::hal::checked_write32(db, off, v)?;
+    if db.rung != before + 1 {
+        return Err(GpuError::NotPermitted("soneria canalului refuzata de gard"));
+    }
+    j.push(gpu_core::diag::Event::Note("soneria canalului de lucru (I10): scriere fara recitire"));
+    j.push(gpu_core::diag::Event::MmioWrite { bar: 0, offset: off, before: 0, written: v, after: 0 });
+    Ok(())
+}
 
 /// P6-55 (C-71): step `i6-wpr2-citit` — WPR2 read after I6 with reads only (`falcon::read_frts_after_i6`, no permit)
 /// and checked against the FRTS region asked for; the line names the form of the end the board wrote.
@@ -209,6 +225,8 @@ pub fn chain() -> Vec<String> {
     let mut i7: Vec<gpu_i7::I7Prep> = Vec::new();
     #[cfg(feature = "gpu-scrie")]
     let mut gs: Option<gpu_golden::GpuState> = None;
+    #[cfg(feature = "gpu-scrie")]
+    let mut launched: Option<gpu_i10::Launched> = None;
     let mut refused = 0usize;
     let report = run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, writes_allowed, &mut j, |s, j| match s.id {
         "pregatire-i6" => {
@@ -334,6 +352,33 @@ pub fn chain() -> Vec<String> {
             r
         }
         #[cfg(feature = "gpu-scrie")]
+        "i10-add64" => {
+            // P6-56 step 3: the work-channel doorbell is written only here (and in the cost step), through its own
+            // fence (that offset, that token), after golden and I9 passed in this chain.
+            let Some(st) = gs.as_mut() else { return Err(step_failed("lipseste I9")) };
+            let Some(token) = st.space.as_ref().map(|(_, w)| w.doorbell_token) else { return Err(step_failed("lipseste I9")) };
+            let mut vf = gpu_i6::hw::VramFence::new(bar0);
+            let mut db = gpu_i6::hw::DoorbellFence::new(bar0, token);
+            let r = gpu_i10::add64_step(p, &mut vf, &mut clock, j, st, Some(&permit), &mut lines, &mut |_, j, off, v, _| {
+                ring_work_doorbell(&mut db, j, off, v)
+            });
+            refused += vf.refused + db.refused;
+            launched = Some(r?);
+            Ok(())
+        }
+        #[cfg(feature = "gpu-scrie")]
+        "i10-cost-lansare" => {
+            let (Some(st), Some(l)) = (gs.as_mut(), launched.as_mut()) else { return Err(step_failed("lipseste add64")) };
+            let Some(token) = st.space.as_ref().map(|(_, w)| w.doorbell_token) else { return Err(step_failed("lipseste I9")) };
+            let mut vf = gpu_i6::hw::VramFence::new(bar0);
+            let mut db = gpu_i6::hw::DoorbellFence::new(bar0, token);
+            let r = gpu_i10::cost_step(p, &mut vf, &mut clock, j, st, l, Some(&permit), &mut lines, &mut |_, j, off, v, _| {
+                ring_work_doorbell(&mut db, j, off, v)
+            });
+            refused += vf.refused + db.refused;
+            r.map(|_| ())
+        }
+        #[cfg(feature = "gpu-scrie")]
         "bus-master-oprit" => match old {
             None => Ok(()),
             Some(o) => {
@@ -357,9 +402,7 @@ pub fn chain() -> Vec<String> {
             refused += cfg.refused + win.refused;
             r
         }
-        // Writing steps in a build that cannot write never get here (the chain stops before them). I8-I10 (C-71) are
-        // written and tested only in Cyber-GPU's simulation: not in the OS yet (P6-56 steps 2-3), so the chain stops
-        // here honestly.
+        // Writing steps in a build that cannot write never get here (the chain stops before them).
         _ => Err(GpuError::NotPermitted(NOT_IN_OS)),
     });
     drop(_guard);
@@ -466,6 +509,8 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
     let mut gs: Option<gpu_golden::GpuState> = None;
     let mut rm = gpu_sim::fake_rm::FakeRm::new();
     let mut vram = gpu_sim::pramin::SimBar0Vram::new(gpu_sim::vram::SimVram::new(8 << 30), 0);
+    let mut sim_gpu: Option<gpu_i10::SimGpu> = None;
+    let mut launched: Option<gpu_i10::Launched> = None;
     let report = run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, writes_allowed, &mut j, |s, j| match s.id {
         "pregatire-i6" => match gpu_i6::prepare(p, &mut ro, j, &mut clock, &mut lines) {
             Some((_, c)) if c.passes() => {
@@ -576,6 +621,35 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
             lines.push(format!("{}: modelul RM: {} mesaje servite in total", p, peer.served));
             r
         }
+        "i10-add64" => {
+            let Some(st) = gs.as_mut() else { return Err(step_failed("lipseste I9")) };
+            let Some(token) = st.space.as_ref().map(|(_, w)| w.doorbell_token) else { return Err(step_failed("lipseste I9")) };
+            let gpu = sim_gpu.insert(gpu_i10::SimGpu::new(token));
+            let stray = vram.stray_writes.len();
+            let r = gpu_i10::add64_step(p, &mut vram, &mut clock, j, st, None, &mut lines, &mut |v, j, off, val, ring| {
+                gpu.ring(v, off, val, ring)?;
+                sim_journal_doorbell(j, off, val);
+                Ok(())
+            });
+            lines.push(format!(
+                "{}: modelul GPU: {} sonerie(i) cu jetonul {:#x}, {} lansari, {} invalidari TLB, {} scrieri in alte registre",
+                p, gpu.rung, gpu.token, gpu.launches, vram.invalidates.len(), vram.stray_writes.len() - stray
+            ));
+            launched = Some(r?);
+            Ok(())
+        }
+        "i10-cost-lansare" => {
+            let (Some(st), Some(l), Some(gpu)) = (gs.as_mut(), launched.as_mut(), sim_gpu.as_mut()) else {
+                return Err(step_failed("lipseste add64"));
+            };
+            let r = gpu_i10::cost_step(p, &mut vram, &mut clock, j, st, l, None, &mut lines, &mut |v, j, off, val, ring| {
+                gpu.ring(v, off, val, ring)?;
+                sim_journal_doorbell(j, off, val);
+                Ok(())
+            });
+            lines.push(format!("{}: modelul GPU: {} sonerii in total, {} lansari (ceasul modelului: 4000 ns pe lansare)", p, gpu.rung, gpu.launches));
+            r.map(|_| ())
+        }
         "bus-master-oprit" => match old {
             None => Ok(()),
             Some(o) => {
@@ -607,6 +681,13 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
         report.writes
     ));
     gpu_i6::sim_lines(lines, "gpu lant")
+}
+
+/// SIMULATION: the doorbell journaled as on the board (`ring_work_doorbell`), so the journal check sees it.
+#[cfg(feature = "test-gpu-sim")]
+fn sim_journal_doorbell(j: &mut Journal, off: u64, v: u32) {
+    j.push(gpu_core::diag::Event::Note("soneria canalului de lucru (I10): scriere fara recitire"));
+    j.push(gpu_core::diag::Event::MmioWrite { bar: 0, offset: off, before: 0, written: v, after: 0 });
 }
 
 /// SIMULATION: the PCI facts of the workstation model (gpu-sim), as `gpu_i8::system_info` reads them on the board.

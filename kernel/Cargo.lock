@@ -23,6 +23,7 @@ dependencies = [
  "cyber_crypto",
  "cyber_e1000e",
  "cyber_rtl8168",
+ "gpu-compute",
  "gpu-core",
  "gpu-pci",
  "gpu-sim",

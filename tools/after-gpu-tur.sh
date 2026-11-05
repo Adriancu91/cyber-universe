@@ -3,8 +3,9 @@
 #   001 = `gpu tur --sim`: no write at all.
 #   002 = `gpu lant --sim`: Bus Master on before the first GSP write, back after the last one, every write inside the
 #         GSP window 0x110000..0x113FFF or (P6-56, I7 only) the SEC2 window 0x840000..0x843FFF, the step lines in
-#         chain order, I7 passed (SEC2 mailbox 0 = the GspFwWprMeta address), I8 passed with only the GSP doorbell, golden stopped
-#         honestly, the tour after.
+#         chain order, I7 passed (SEC2 mailbox 0 = the GspFwWprMeta address), I8 passed with only the GSP doorbell, golden + I9
+#         passed, I10 (P6-56 step 3) passed with only the VRAM window, the TLB invalidate and one work-channel doorbell
+#         (0xBB0090) per I10 step, the tour after.
 #   003 = `gpu lant --sim --eroare`: the same shape, I6 failed, Bus Master still back, the tour still after it.
 #   004 = `gpu lant --sim --doar-citire`: no write at all, the chain stopped before Bus Master, the tour still ran.
 set -uo pipefail
@@ -49,7 +50,9 @@ for k, ev, i6_ok in ((2, ok, True), (3, err, False)):
     off = lambda i: int(ev[i].split()[2].rstrip(":"), 16)
     sec2 = [i for i in gsp if 0x840000 <= off(i) <= 0x843FFF]
     vwin = [i for i in gsp if off(i) == 0x1700]  # P6-56 step 2b: the VRAM window (golden, I9)
-    assert all(0x110000 <= off(i) <= 0x113FFF or i in sec2 or i in vwin for i in gsp), f"{k}: scriere in afara GSP/SEC2/fereastra VRAM"
+    tlb = [i for i in gsp if off(i) in (0xB830A0, 0xB830A4, 0xB830B0)]  # P6-56 step 3: the TLB invalidate (I10)
+    wbell = [i for i in gsp if off(i) == 0xBB0090]  # P6-56 step 3: the work-channel doorbell (I10)
+    assert all(0x110000 <= off(i) <= 0x113FFF or i in sec2 or i in vwin or i in tlb or i in wbell for i in gsp), f"{k}: scriere in afara GSP/SEC2/fereastra VRAM/I10"
     order = ["pregatire-i6", "bus-master-pornit", "i6-fwsec-frts", "bus-master-oprit", "tur-dupa"]
     at = [step(ev, n) for n in order]
     assert all(len(a) == 1 for a in at), f"{k}: pasi lipsa/dubli: {at}"
@@ -68,16 +71,28 @@ for k, ev, i6_ok in ((2, ok, True), (3, err, False)):
         bell = [i for i in gsp if r7 < i < i8[0]]
         assert len(bell) == 1 and off(bell[0]) == 0x110C00, f"{k}: I8 trebuie sa scrie doar soneria GSP: {[ev[i] for i in bell]}"
         # P6-56 step 2b: golden + I9 pass with only GSP doorbells (one per RM message) and VRAM-window moves, the
-        # window put back to its first value at the end; the chain stops at I10 (not in the OS) with no write after I9.
+        # window put back to its first value at the end.
         gold, i9, i10 = step(ev, "i8e-golden"), step(ev, "i9-canal-lucru"), step(ev, "i10-add64")
         assert gold and ev[gold[0]].endswith("ok") and i9 and ev[i9[0]].endswith("ok"), f"{k}: golden/I9 nu au trecut"
-        assert i10 and ev[i10[0]].endswith("ESEC"), f"{k}: I10 nu e oprit"
+        # P6-56 step 3: I10 passes; between I9 and each I10 step: VRAM window moves, the TLB invalidate (3 registers)
+        # before the doorbell, exactly one work-channel doorbell with the token, nothing else; no doorbell before I10.
+        cost = step(ev, "i10-cost-lansare")
+        assert i10 and ev[i10[0]].endswith("ok") and cost and ev[cost[0]].endswith("ok"), f"{k}: I10 nu a trecut"
+        assert not [i for i in wbell + tlb if i < i9[0]], f"{k}: sonerie de canal/TLB inainte de I10"
+        for lo, hi in ((i9[0], i10[0]), (i10[0], cost[0])):
+            seg = [i for i in gsp if lo < i < hi]
+            b = [i for i in seg if i in wbell]
+            assert len(b) == 1, f"{k}: I10: {len(b)} sonerii de canal (trebuie 1)"
+            assert all(i in vwin or i in tlb or i in wbell for i in seg), f"{k}: I10: alte scrieri: {[ev[i] for i in seg if i not in vwin + tlb + wbell]}"
+            inv = [i for i in seg if i in tlb and off(i) == 0xB830B0]
+            assert inv and inv[-1] < b[0], f"{k}: I10: invalidarea TLB nu e inainte de sonerie"
+            assert ev[b[0] - 1].endswith("scriere fara recitire"), f"{k}: I10: soneria fara nota"
+        assert not [i for i in gsp if cost[0] < i < cfg[1]], f"{k}: scriere dupa I10"
         after = [i for i in gsp if i8[0] < i < i9[0]]
         bells = [i for i in after if off(i) == 0x110C00]
         assert after and all(i in bells or i in vwin for i in after), f"{k}: golden/I9: alte scrieri decat soneria si fereastra VRAM"
         assert len(bells) >= 20, f"{k}: prea putine sonerii RM: {len(bells)}"
         assert vwin and ev[vwin[0]].split("=> ")[0] and ev[vwin[-1]].split("<- ")[1].startswith("0x00000000"), f"{k}: fereastra VRAM nu e pusa la loc"
-        assert not [i for i in gsp if i > i9[0]], f"{k}: scriere dupa I9"
     else:
         assert not sec2, f"{k}: SEC2 scris desi I6 a esuat"
     tour_reads = [i for i, b in enumerate(ev) if b.startswith("bar0 r 0x1fa828")]

@@ -49,19 +49,36 @@ if [[ -n "$bad" ]]; then
 fi
 hw="$(sed -nE '/^(pub\(super\) )?mod hw \{/,/^}/p' "$I6" | grep -v '^\s*//')"
 # P6-56 step 2b: a second BAR0 fence, `VramFence` (golden, I9): only the VRAM window's control registers and PRAMIN.
-if [[ "$(echo "$hw" | grep -c 'write_volatile')" != 2 ]] || [[ "$(echo "$hw" | grep -c 'dev\.write32(')" != 1 ]] \
+if [[ "$(echo "$hw" | grep -c 'write_volatile')" != 3 ]] || [[ "$(echo "$hw" | grep -c 'dev\.write32(')" != 1 ]] \
     || ! echo "$hw" | grep -q 'self.dev.write32(PCI_COMMAND, value)' \
     || ! echo "$hw" | grep -q '(GSP_LO..=GSP_HI - 3).contains(&offset)' \
     || ! echo "$hw" | grep -q 'vram_window::CONTROL_REGISTERS.iter().any(|&r| u64::from(r) == offset)' \
     || ! echo "$hw" | grep -q '(PRAMIN_LO..=PRAMIN_HI - 3).contains(&offset)' \
     || ! echo "$hw" | grep -q 'pub(crate) const PRAMIN_LO: u64 = 0x70_0000;' \
-    || ! echo "$hw" | grep -q 'pub(crate) const PRAMIN_HI: u64 = 0x7F_FFFF;'; then
+    || ! echo "$hw" | grep -q 'pub(crate) const PRAMIN_HI: u64 = 0x7F_FFFF;' \
+    || ! echo "$hw" | grep -q 'if offset != nvidia_ga104::push::DOORBELL || value != self.token {'; then
     echo "[after-gpu] EȘUAT: gardul scrierilor din gpu_i6.rs (Command / fereastra GSP / fereastra VRAM) s-a schimbat"; exit 1
 fi
 if grep -v '^\s*//' "$ROOT/kernel/src/drivers/gpu_golden.rs" | grep -nE 'write_volatile|as \*mut|HardwareWritePermit::new|WRITABLE'; then
     echo "[after-gpu] EȘUAT: gpu_golden.rs scrie direct (trebuie doar prin bibliotecă și gardurile din gpu_i6.rs)"; exit 1
 fi
-echo "[after-gpu] ok: gpu_i6.rs scrie doar în build-ul gpu-scrie, doar Command (Bus Master), fereastra GSP și fereastra VRAM"
+# P6-56 step 3 (I10): gpu_i10.rs writes nothing itself (only through the library, the VRAM fence and the doorbell fence),
+# and its program `add64` is the file Cyber-GPU compiled (same bytes as their tools/nak/out/add64.sm86.sass).
+if grep -v '^\s*//' "$ROOT/kernel/src/drivers/gpu_i10.rs" | grep -nE 'write_volatile|as \*mut|HardwareWritePermit::new|WRITABLE|checked_write32'; then
+    echo "[after-gpu] EȘUAT: gpu_i10.rs scrie direct (trebuie doar prin bibliotecă și gardurile din gpu_i6.rs)"; exit 1
+fi
+ADD64="$ROOT/kernel/src/drivers/gpu_prog/add64.sm86.sass"
+ADD64_SHA256="a890b75c4207b216c2f959da3b59745dbb43f3cbd58490b37b7b4c1dd12698ce"  # cyber-gpu 20b4a3b
+if [[ "$(sha256sum "$ADD64" | cut -d' ' -f1)" != "$ADD64_SHA256" ]]; then
+    echo "[after-gpu] EȘUAT: add64.sm86.sass nu e fișierul cyber-gpu (SHA-256 diferit)"; exit 1
+fi
+rev="$(grep -oE 'nvidia-ga104 = \{ git = "[^"]+", rev = "[0-9a-f]+"' "$ROOT/kernel/Cargo.toml" | grep -oE '[0-9a-f]{7,}"$' | tr -d '"')"
+for d in "${CARGO_HOME:-$HOME/.cargo}"/git/checkouts/cyber-gpu-*/"$rev"*/; do
+    if [[ -f "$d/tools/nak/out/add64.sm86.sass" ]] && ! cmp -s "$d/tools/nak/out/add64.sm86.sass" "$ADD64"; then
+        echo "[after-gpu] EȘUAT: add64.sm86.sass diferă de cel din cyber-gpu $rev ($d)"; exit 1
+    fi
+done
+echo "[after-gpu] ok: gpu_i6.rs scrie doar în build-ul gpu-scrie, doar Command (Bus Master), fereastra GSP, fereastra VRAM și soneria canalului (I10)"
 
 # P6-42 (C-55): kernel/src/drivers/gpu_tur.rs (`gpu tur`, `gpu lant`). Every item or match arm that can write (the `hw`
 # adapters, Bus Master, the falcon load, the write permit) must carry `#[cfg(feature = "gpu-scrie")]` (or be a test-only

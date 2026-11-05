@@ -125,6 +125,12 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
     `falcon::read_frts_after_i6`, verificat față de regiunea FRTS cerută) plus Bus Master la loc și turul; I7–I10 nu sunt încă în OS, deci
     lanțul se oprește cinstit la `i7-booter-gsp` („pas fara implementare in OS”). Nicio scriere nouă. Liniile `pas <id>: ok|ESEC` ajung în
     jurnalul de pe stick după accesele pasului (cum cere `chain_log` din cyber-gpu).
+  - **P6-56 (C-72, cyber-gpu `20b4a3b`):** I7 (`gpu_i7.rs`), I8 (`gpu_i8.rs`), golden + I9 (`gpu_golden.rs`) și **I10 (`gpu_i10.rs`)**:
+    `add64` (programul compilat de cyber-gpu cu NAK, copiat în `gpu_prog/add64.sm86.sass`, verificat de `tools/after-gpu.sh` că e
+    același fișier) pe canalul de lucru: bufferele în VRAM, tabelele, invalidarea TLB, apoi **soneria canalului `0xBB0090`** o singură dată
+    prin gardul ei (`gpu_i6::hw::DoorbellFence`: doar acel registru, doar jetonul primit de la GSP-RM), semaforul și rezultatul citite prin
+    fereastra VRAM și comparate bit cu bit cu procesorul; apoi costul unei lansări (16 lansări cu marcă de timp, `launch_cost`).
+    În `--sim` placa e modelul `gpu-sim` (procesorul de comenzi rulează canalul la sonerie): lanțul trece tot. **Pe placă: neîncercat.**
   - Test: `gpu-tur` (`gpu tur --sim` pe modelul plăcii din workstation; `gpu lant --sim` cu `DA` oprit la I7 cu Bus Master înapoi;
     `--eroare` oprit la I6, Bus Master tot înapoi; `--doar-citire` 0 scrieri; `tools/after-gpu-tur.sh` verifică jurnalele de pe disc),
     `gpu-scrie` (`gpu lant` → „nicio placa NVIDIA”), `tools/after-gpu.sh` (în `gpu_tur.rs` tot ce poate scrie e doar în build-ul `gpu-scrie`).

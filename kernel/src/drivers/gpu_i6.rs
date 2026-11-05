@@ -725,6 +725,64 @@ pub(super) mod hw {
             }
         }
     }
+
+    /// P6-56 step 3 (I10): the work-channel doorbell fence. Exactly one write is possible: `push::DOORBELL` (0xBB0090)
+    /// with the token GSP-RM gave at I9; everything else is refused and counted. It never reads (the doorbell is a
+    /// write-only register in RM's use; reading it is not documented), so reads give `u32::MAX`.
+    pub(crate) struct DoorbellFence {
+        phys: u64,
+        token: u32,
+        mapped: bool,
+        pub(crate) refused: usize,
+        pub(crate) rung: u32,
+    }
+
+    /// Its own page, two pages after the GSP window's page (unused by anything else).
+    const DOORBELL_FENCE_VA: u64 = gpu::WINDOW + 0x2000;
+
+    impl DoorbellFence {
+        #[cfg_attr(not(feature = "gpu-scrie"), allow(dead_code))]
+        pub(crate) fn new(phys: u64, token: u32) -> Self {
+            DoorbellFence { phys, token, mapped: false, refused: 0, rung: 0 }
+        }
+    }
+
+    impl gpu_core::hal::Mmio for DoorbellFence {
+        fn len(&self) -> u64 {
+            nvidia_ga104::fuse::FUSE_WINDOW
+        }
+        fn read32_raw(&mut self, _offset: u64) -> u32 {
+            u32::MAX
+        }
+        fn write32_raw(&mut self, offset: u64, value: u32) {
+            if offset != nvidia_ga104::push::DOORBELL || value != self.token {
+                self.refused += 1;
+                crate::warn!("gpu: scriere refuzata (nu e soneria canalului cu jetonul lui): {:#x} <- {:#010x}", offset, value);
+                return;
+            }
+            if !self.mapped {
+                let flags = paging::NO_EXECUTE | paging::WRITABLE | gpu::UNCACHED;
+                if paging::map(DOORBELL_FENCE_VA, self.phys + (offset & !0xFFF), flags).is_err() {
+                    self.refused += 1;
+                    return;
+                }
+                self.mapped = true;
+            }
+            // SAFETY: the uncached, writable mapping of the BAR0 page holding the work-channel doorbell; the offset and
+            // the value are exactly the documented doorbell and GSP-RM's token (checked above). Reached only in the
+            // gpu-scrie build, in the I10 step of `gpu lant`, after `DA`, golden and I9 passed in the same chain.
+            unsafe { ((DOORBELL_FENCE_VA + (offset & 0xFFF)) as *mut u32).write_volatile(value) };
+            self.rung += 1;
+        }
+    }
+
+    impl Drop for DoorbellFence {
+        fn drop(&mut self) {
+            if self.mapped {
+                paging::unmap(DOORBELL_FENCE_VA);
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------

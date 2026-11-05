@@ -806,8 +806,10 @@ pub const LANT_WARNING: &[&str] = &[
     "    (cererile secventiatorului GSP-RM doar in ferestrele GSP/SEC2)",
     " 8. golden + I9 (NOU, P6-56): mesaje RM catre GSP-RM, fiecare cu o sonerie GSP (0x110C00); tabelele de pagini",
     "    in VRAM prin fereastra VRAM (0x1700 + 0x700000-0x7FFFFF), doar peste 256 MiB si sub zonele GSP-RM",
-    "    (ecranul si GSP-RM protejate); I10 nu e inca in OS: lantul se opreste acolo",
-    " 9. Bus Master oprit la loc  10. turul de citire dupa",
+    "    (ecranul si GSP-RM protejate)",
+    " 9. I10 (NOU, P6-56): add64 pe canalul de lucru: invalidarea TLB (0xB8xxxx), SONERIA CANALULUI 0xBB0090 o data",
+    "    (prima data pe placa), rezultatul citit din VRAM si comparat bit cu bit; apoi 16 lansari cu marca de timp",
+    "10. Bus Master oprit la loc  11. turul de citire dupa",
     "Se opreste la primul esec; Bus Master se pune la loc si dupa o eroare. Fiecare acces merge pe loc in",
     "/usb/raport/gpu-jurnal-NNN.txt. Totul dispare la oprirea completa (cablul scos 30 s). Doar cu Adrian de fata.",
 ];
