@@ -3,6 +3,10 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-05 21:40–21:50 UTC (23:40–23:50 ora României) — sesiune programată, fără Adrian — **nicio sarcină nouă: coada nu are sarcini libere fără hardware.**
+  - Hub: nicio comandă nouă pentru `cyber-universe` (C-7, C-11 rămân după Adrian); cyber-gpu nu are nimic nou după sesiunea 53 (deja preluat în P6-58).
+  - Coada: P3-10 (Adrian), P6-10 și P6-12 (după testul pe hardware), P5-07 BLOCAT, P5-08 după P5-07. Nicio schimbare de cod; CI rămâne verde pe `os-250`.
+  - **Următoarea:** fereastra lui Adrian pe workstation cu `os-250` (pașii în hub, `stare/cyber-universe.md`); apoi `verifica_jurnal_lant` pe jurnale.
 - 2026-11-05 18:45–~19:50 UTC (20:45–21:50 ora României) — sesiune programată, fără Adrian — **P6-58 gata: zona VRAM verificată după I7 (propunerea cyber-gpu); CI verde, Release `os-250`.**
   - Hub: nicio comandă nouă pentru `cyber-universe` (C-7, C-11 rămân după Adrian). Cyber-gpu (sesiunea 53) a confirmat zona VRAM pe WPR2-ul real din 5 nov și a propus `FbLayout::free_after_i7`.
   - **`514508d` (P6-58):** cyber-gpu fixat pe `60740a3` (față de `20b4a3b` doar adăugări; `add64.sm86.sass` identic). La `i8e-golden`, WPR2 e recitit (0x1fa828/0x1fa824, doar citiri, prin fereastra doar-citire) și zona vine din `free_after_i7`: dacă WPR2 nu e unde a cerut `GspFwWprMeta` → oprire înainte de prima scriere în VRAM. Nicio scriere nouă în placă.
