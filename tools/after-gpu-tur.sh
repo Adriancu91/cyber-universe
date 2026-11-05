@@ -3,7 +3,8 @@
 #   001 = `gpu tur --sim`: no write at all.
 #   002 = `gpu lant --sim`: Bus Master on before the first GSP write, back after the last one, every write inside the
 #         GSP window 0x110000..0x113FFF or (P6-56, I7 only) the SEC2 window 0x840000..0x843FFF, the step lines in
-#         chain order, I7 passed (SEC2 mailbox 0 = the GspFwWprMeta address), I8 stopped honestly, the tour after.
+#         chain order, I7 passed (SEC2 mailbox 0 = the GspFwWprMeta address), I8 passed with only the GSP doorbell, golden stopped
+#         honestly, the tour after.
 #   003 = `gpu lant --sim --eroare`: the same shape, I6 failed, Bus Master still back, the tour still after it.
 #   004 = `gpu lant --sim --doar-citire`: no write at all, the chain stopped before Bus Master, the tour still ran.
 set -uo pipefail
@@ -60,7 +61,13 @@ for k, ev, i6_ok in ((2, ok, True), (3, err, False)):
         mb0 = [i for i in sec2 if off(i) == 0x840040]
         assert mb0 and not ev[mb0[0]].split("<- ")[1].startswith("0x00000000"), f"{k}: cutia SEC2 0 fara GspFwWprMeta"
         assert ev[step(ev, "i7-citit")[0]].endswith("ok"), f"{k}: i7-citit"
-        assert ev[step(ev, "i8-gsp-init")[0]].endswith("ESEC"), f"{k}: I8 nu e oprit"
+        # P6-56 step 2: I8 passed with exactly one write, the GSP doorbell 0x110C00, then the chain stops at golden.
+        r7, i8 = step(ev, "i7-citit")[0], step(ev, "i8-gsp-init")
+        assert i8 and ev[i8[0]].endswith("ok"), f"{k}: I8 nu a trecut"
+        bell = [i for i in gsp if r7 < i < i8[0]]
+        assert len(bell) == 1 and off(bell[0]) == 0x110C00, f"{k}: I8 trebuie sa scrie doar soneria GSP: {[ev[i] for i in bell]}"
+        assert ev[step(ev, "i8e-golden")[0]].endswith("ESEC"), f"{k}: golden nu e oprit"
+        assert not [i for i in gsp if i > i8[0]], f"{k}: scriere dupa I8"
     else:
         assert not sec2, f"{k}: SEC2 scris desi I6 a esuat"
     tour_reads = [i for i, b in enumerate(ev) if b.startswith("bar0 r 0x1fa828")]

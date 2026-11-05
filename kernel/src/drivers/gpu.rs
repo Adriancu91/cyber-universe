@@ -790,8 +790,10 @@ pub const LANT_WARNING: &[&str] = &[
     " 4. WPR2 citit dupa I6 (doar citire)",
     " 5. I7 (NOU, P6-56): fisierele GSP 570.144 de pe stick in RAM, apoi Booter pe SEC2 porneste GSP-RM",
     "    (~750 de scrieri noi, in fereastra SEC2 0x840000-0x843FFF)  6. I7 citit (doar citire)",
-    " 7. I8-I10 nu sunt inca in OS (doar SIMULARE cyber-gpu): lantul se opreste acolo",
-    " 8. Bus Master oprit la loc  9. turul de citire dupa",
+    " 7. I8 (NOU, P6-56): SetSystemInfo + SetRegistry in coada din RAM, o sonerie GSP (0x110C00), asteptare GSP_INIT_DONE",
+    "    (cererile secventiatorului GSP-RM doar in ferestrele GSP/SEC2)",
+    " 8. golden, I9, I10 nu sunt inca in OS (doar SIMULARE cyber-gpu): lantul se opreste acolo",
+    " 9. Bus Master oprit la loc  10. turul de citire dupa",
     "Se opreste la primul esec; Bus Master se pune la loc si dupa o eroare. Fiecare acces merge pe loc in",
     "/usb/raport/gpu-jurnal-NNN.txt. Totul dispare la oprirea completa (cablul scos 30 s). Doar cu Adrian de fata.",
 ];

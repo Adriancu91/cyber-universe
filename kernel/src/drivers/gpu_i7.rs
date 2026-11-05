@@ -29,6 +29,8 @@ use nvidia_ga104::fw_hdr::{HsV2, RiscvBootloader};
 use nvidia_ga104::gsp::falcon::{self, GuardedBar0, I7Status};
 use nvidia_ga104::gsp::HardwareWritePermit;
 use nvidia_ga104::gsp::hs_load::{self, BooterMeta, DmaImage, HsUcode};
+use nvidia_ga104::gsp::libos;
+use nvidia_ga104::gsp::msgq::{CpuQueues, QueueLayout, SharedMem};
 use nvidia_ga104::gsp::{elf, wpr_meta};
 use nvidia_ga104::i6_check::I6Check;
 use nvidia_ga104::radix3::{Radix3, Radix3Shape, PAGE};
@@ -40,6 +42,46 @@ pub(super) struct I7Prep {
     pub ucode: HsUcode,
     pub image: DmaImage,
     pub wpr_meta: u64,
+    /// P6-56 step 2: the LibOS argument page (LOGINIT, LOGINTR, LOGRM, RMARGS) GSP-RM looks for at boot.
+    pub libos: u64,
+    /// P6-56 step 2: the shared area with the command/status queues (inside the pinned area) and its driver side.
+    pub shared: DmaShared,
+    pub queues: CpuQueues,
+}
+
+/// The queue area inside the pinned DMA area, seen by `msgq` (volatile accesses through the HHDM).
+pub(super) struct DmaShared {
+    phys: u64,
+    len: usize,
+}
+
+impl DmaShared {
+    fn mem(&self) -> *mut u8 {
+        crate::mem::map::phys_to_virt(self.phys)
+    }
+}
+
+impl SharedMem for DmaShared {
+    fn size(&self) -> usize {
+        self.len
+    }
+    fn read(&self, off: usize, buf: &mut [u8]) {
+        assert!(off + buf.len() <= self.len, "DmaShared: citire in afara zonei");
+        for (i, b) in buf.iter_mut().enumerate() {
+            // SAFETY: inside the pinned area (checked above); volatile because GSP-RM writes it by DMA.
+            *b = unsafe { self.mem().add(off + i).read_volatile() };
+        }
+    }
+    fn write(&mut self, off: usize, data: &[u8]) {
+        assert!(off + data.len() <= self.len, "DmaShared: scriere in afara zonei");
+        for (i, b) in data.iter().enumerate() {
+            // SAFETY: inside the pinned area (checked above); volatile because GSP-RM reads it by DMA.
+            unsafe { self.mem().add(off + i).write_volatile(*b) };
+        }
+    }
+    fn fence(&mut self) {
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 /// The pinned area: (physical start, pages). Reused when a later run fits in it (never freed).
@@ -77,8 +119,15 @@ struct Plan {
     signature: usize,
     meta: usize,
     booter: usize,
+    libos: usize,
+    logs: [usize; 3],
+    rmargs: usize,
+    queues: usize,
     total: usize,
 }
+
+/// One LibOS log buffer (64 KiB, `libos::standard_regions`).
+const LOG_PAGES: usize = 0x10000 / PAGE_US;
 
 fn pages_of(n: usize) -> usize {
     n.div_ceil(PAGE_US).max(1)
@@ -94,7 +143,12 @@ fn plan(fwimage: usize, bl: usize, sig: usize, booter: usize) -> GpuResult<Plan>
     let signature = bootloader + pages_of(bl);
     let meta = signature + pages_of(sig);
     let booter_at = meta + 1;
-    Ok(Plan { data, l0, l1, l2, bootloader, signature, meta, booter: booter_at, total: booter_at + pages_of(booter) })
+    let libos = booter_at + pages_of(booter);
+    let logs = [libos + 1, libos + 1 + LOG_PAGES, libos + 1 + 2 * LOG_PAGES];
+    let rmargs = libos + 1 + 3 * LOG_PAGES;
+    let queues = rmargs + 1;
+    let total = queues + pages_of(QueueLayout::standard().total_size);
+    Ok(Plan { data, l0, l1, l2, bootloader, signature, meta, booter: booter_at, libos, logs, rmargs, queues, total })
 }
 
 fn fail(what: &'static str) -> GpuError {
@@ -186,6 +240,19 @@ pub(super) fn prepare<M: Mmio + ?Sized>(
     let m = wpr_meta::encode(&fb, &inputs)?;
     put(pl.meta, &m);
 
+    // 4b. P6-56 step 2: the message queues (page table + command-queue header) and the LibOS arguments that tell
+    // GSP-RM where they are (RMARGS = GSP_ARGUMENTS_CACHED). RAM only.
+    let ql = QueueLayout::standard();
+    let qpages: Vec<u64> = (0..ql.page_table_entries).map(|k| at(pl.queues + k)).collect();
+    let args = libos::encode_gsp_args(&ql, at(pl.queues))?;
+    put(pl.rmargs, &args);
+    let regions = libos::standard_regions(at(pl.logs[0]), at(pl.logs[1]), at(pl.logs[2]), at(pl.rmargs));
+    let libos_page = libos::encode_region_args(&regions)?;
+    put(pl.libos, &libos_page);
+    // (the slice above is not used again; the queue area is written through its own volatile view)
+    let mut shared = DmaShared { phys: at(pl.queues), len: ql.total_size };
+    let queues = CpuQueues::init(&mut shared, ql, &qpages)?;
+
     // 5. Read back: the area must hold exactly what was put there (and the table must lead to the image).
     let all = bytes(base, pl.total * PAGE_US);
     let o = |page: usize| page * PAGE_US;
@@ -193,7 +260,9 @@ pub(super) fn prepare<M: Mmio + ?Sized>(
         && all[o(pl.bootloader)..o(pl.bootloader) + bl_blob.len()] == *bl_blob
         && all[o(pl.signature)..o(pl.signature) + signature.len()] == *signature
         && all[o(pl.meta)..o(pl.meta) + m.len()] == m[..]
-        && all[o(pl.booter)..o(pl.booter) + booter_img.len()] == booter_img[..];
+        && all[o(pl.booter)..o(pl.booter) + booter_img.len()] == booter_img[..]
+        && all[o(pl.libos)..o(pl.libos) + libos_page.len()] == libos_page[..]
+        && all[o(pl.rmargs)..o(pl.rmargs) + args.len()] == args[..];
     let last = fwimage.len() as u64 - 1;
     let walks = r.translate(&l2_pages, last) == Some(at(pl.data) + last);
     if !same || !walks {
@@ -205,7 +274,11 @@ pub(super) fn prepare<M: Mmio + ?Sized>(
         "{}: I7 pregatire: zona DMA {} KiB la {:#x} (recitita); radix3 nivelul 0 la {:#x}; GspFwWprMeta la {:#x}; Booter la {:#x}; nimic scris in placa",
         p, pl.total * 4, base, inputs.radix3_elf_addr, at(pl.meta), image.phys
     ));
-    Ok(I7Prep { ucode, image, wpr_meta: at(pl.meta) })
+    lines.push(format!(
+        "{}: I7 pregatire: cozile GSP ({} KiB) la {:#x}, argumentele LibOS la {:#x} (RMARGS {:#x}); nimic scris in placa",
+        p, ql.total_size >> 10, at(pl.queues), at(pl.libos), at(pl.rmargs)
+    ));
+    Ok(I7Prep { ucode, image, wpr_meta: at(pl.meta), libos: at(pl.libos), shared, queues })
 }
 
 /// The `I7: ...` line from the three status reads.

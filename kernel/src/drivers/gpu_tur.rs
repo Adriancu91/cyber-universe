@@ -8,7 +8,7 @@
 //! - `gpu lant`: the window steps one after the other. P6-55 (C-71): the whole window chain of Cyber-GPU
 //!   (`run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, ..)`, I6 to the first computation). The OS has the I6
 //!   preparation, Bus Master on, FWSEC-FRTS, the WPR2 read after I6 (`i6-wpr2-citit`, reads only), Bus Master back and
-//!   the tour after; P6-56 (C-72): I7 (Booter on SEC2, `gpu_i7.rs`) and `i7-citit`; I8-I10 are not in the OS yet, so the chain stops honestly at `i8-gsp-init`. The driver owns the order and the stop rules; this file only does each step. Writes are allowed
+//!   the tour after; P6-56 (C-72): I7 (Booter on SEC2, `gpu_i7.rs`) and `i7-citit`; step 2: I8 (`gpu_i8.rs`: SetSystemInfo + SetRegistry, the doorbell, the wait for GSP_INIT_DONE); golden + I9-I10 are not in the OS yet, so the chain stops honestly at `i8e-golden`. The driver owns the order and the stop rules; this file only does each step. Writes are allowed
 //!   only in the test-stick build (`gpu-scrie`) and only after `DA` (asked by the shell); in every other build the
 //!   chain runs read only (it stops before the first writing step, then the tour). Refused by the automatic loop.
 //!
@@ -23,6 +23,8 @@ use super::gpu::{self, ReadOnlyBar0Window, ReadOnlyConfig, TscClock, WINDOW_LOCK
 use super::gpu_i6::{self, finish};
 #[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
 use super::gpu_i7;
+#[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
+use super::gpu_i8;
 use alloc::{format, string::String, vec::Vec};
 use gpu_core::diag::Journal;
 use gpu_core::error::{GpuError, GpuResult};
@@ -59,7 +61,7 @@ fn report_lines(p: &str, r: &ChainReport, lines: &mut Vec<String>) {
 }
 
 /// P6-55: the error of a step of the full chain that the OS does not have yet (I7-I10).
-const NOT_IN_OS: &str = "pas fara implementare in OS (I8-I10 exista doar in SIMULAREA cyber-gpu, C-71; P6-56 pas 2-3)";
+const NOT_IN_OS: &str = "pas fara implementare in OS (golden, I9, I10 exista doar in SIMULAREA cyber-gpu, C-71; P6-56 pas 3)";
 
 /// P6-55 (C-71): step `i6-wpr2-citit` — WPR2 read after I6 with reads only (`falcon::read_frts_after_i6`, no permit)
 /// and checked against the FRTS region asked for; the line names the form of the end the board wrote.
@@ -248,6 +250,17 @@ pub fn chain() -> Vec<String> {
             r
         }
         #[cfg(feature = "gpu-scrie")]
+        "i8-gsp-init" => {
+            // P6-56 step 2: the queues and the LibOS arguments were prepared at I7 (RAM); here 2 messages, the doorbell
+            // (GSP window) and the wait for GSP_INIT_DONE with the sequencer through the same fence.
+            let Some(prep) = i7.last_mut() else { return Err(step_failed("lipseste pregatirea I7")) };
+            let sys = gpu_i8::system_info(&d)?;
+            let mut rw = gpu_i6::hw::GspWriteWindow::with_sec2(bar0);
+            let r = gpu_i8::init(p, &mut rw, &mut clock, j, prep, &sys, Some(&permit), &mut lines, |_| {});
+            refused += rw.refused;
+            r
+        }
+        #[cfg(feature = "gpu-scrie")]
         "bus-master-oprit" => match old {
             None => Ok(()),
             Some(o) => {
@@ -348,6 +361,7 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
     let mut frts = (0u64, 0u64);
     let mut i6c: Option<nvidia_ga104::i6_check::I6Check> = None;
     let mut g = FakeGsp::new();
+    let mut i7p: Option<gpu_i7::I7Prep> = None;
     let report = run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, writes_allowed, &mut j, |s, j| match s.id {
         "pregatire-i6" => match gpu_i6::prepare(p, &mut ro, j, &mut clock, &mut lines) {
             Some((_, c)) if c.passes() => {
@@ -406,9 +420,19 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
             lines.push(format!("{}: I7: fisierele de proba gpu-sim (NU fisierele NVIDIA) verificate", p));
             let prep = gpu_i7::prepare(p, &mut ro, j, &fw, c, &mut lines)?;
             gpu_i7::sim_expect(&mut g, &prep);
-            gpu_i7::booter(p, &mut g, &mut clock, j, &prep, None, &mut lines)
+            let r = gpu_i7::booter(p, &mut g, &mut clock, j, &prep, None, &mut lines);
+            i7p = Some(prep);
+            r
         }
         "i7-citit" => gpu_i7::after(p, &mut g, j, &mut lines),
+        "i8-gsp-init" => {
+            let Some(prep) = i7p.as_mut() else { return Err(step_failed("lipseste pregatirea I7")) };
+            let sys = sim_system_info();
+            let mut peer = gpu_i8::SimPeer::new(prep);
+            let r = gpu_i8::init(p, &mut g, &mut clock, j, prep, &sys, None, &mut lines, |m| peer.poll(m));
+            lines.push(format!("{}: modelul GSP-RM: mesaje primite {:?} (72 = SetSystemInfo, 73 = SetRegistry)", p, peer.seen));
+            r
+        }
         "bus-master-oprit" => match old {
             None => Ok(()),
             Some(o) => {
@@ -440,4 +464,24 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
         report.writes
     ));
     gpu_i6::sim_lines(lines, "gpu lant")
+}
+
+/// SIMULATION: the PCI facts of the workstation model (gpu-sim), as `gpu_i8::system_info` reads them on the board.
+#[cfg(feature = "test-gpu-sim")]
+fn sim_system_info() -> nvidia_ga104::gsp::sysinfo::SystemInfoInput {
+    use gpu_sim::workstation as w;
+    nvidia_ga104::gsp::sysinfo::SystemInfoInput {
+        bar0: w::BAR0_BASE,
+        bar1: w::BAR1_BASE,
+        bar3: w::BAR3_BASE,
+        domain: 0,
+        bus: w::BUS,
+        slot: 0,
+        vendor: w::VENDOR,
+        device: w::DEVICE,
+        subsys_vendor: w::SUBSYS_VENDOR,
+        subsys_device: w::SUBSYS_DEVICE,
+        revision: w::REVISION,
+        is_primary: true,
+    }
 }
