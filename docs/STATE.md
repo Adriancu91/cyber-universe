@@ -3,6 +3,13 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-05 18:45–~19:50 UTC (20:45–21:50 ora României) — sesiune programată, fără Adrian — **P6-58 gata: zona VRAM verificată după I7 (propunerea cyber-gpu); CI verde, Release `os-250`.**
+  - Hub: nicio comandă nouă pentru `cyber-universe` (C-7, C-11 rămân după Adrian). Cyber-gpu (sesiunea 53) a confirmat zona VRAM pe WPR2-ul real din 5 nov și a propus `FbLayout::free_after_i7`.
+  - **`514508d` (P6-58):** cyber-gpu fixat pe `60740a3` (față de `20b4a3b` doar adăugări; `add64.sm86.sass` identic). La `i8e-golden`, WPR2 e recitit (0x1fa828/0x1fa824, doar citiri, prin fereastra doar-citire) și zona vine din `free_after_i7`: dacă WPR2 nu e unde a cerut `GspFwWprMeta` → oprire înainte de prima scriere în VRAM. Nicio scriere nouă în placă.
+  - `--sim`: modelul bibliotecii nu lărgea WPR2 după Booter (placa da) → OS-ul pune în model LO-ul plăcii (`0x1f4100000`, HI neschimbat), scrierea modelului scoasă din jurnalul lui; tot lanțul trece (882 scrieri). `gpu tur --sim`: zona bună pe valorile plăcii (`0x10000000-0x1f4000000`) și REFUZATĂ pe WPR2 nelărgit. `gpu_i7::layout_for` (aranjamentul pentru o mărime de VRAM).
+  - Teste locale: `gpu-tur`, `gpu-sim`, `gpu`, `gpu-ro`, `gpu-i6`, `gpu-scrie`, `boot`, `shell`, `kronos-calcul-1`, `usb-fw` trec; `after-gpu.sh` ok; build normal și `--gpu-scrie` fără avertismente noi (avertismentele „unnecessary unsafe” din `fpu.rs`/`smp.rs` vin de la nightly-ul nou, nu din P6-58).
+  - CI run 42090906709 **verde** (45 min) → **Release `os-250`** (cuprinde `os-249` + verificarea zonei VRAM).
+  - **Următoarea:** fereastra lui Adrian pe workstation cu `os-250` (aceiași pași ca pentru `os-249`, hub `stare/cyber-universe.md`); apoi `verifica_jurnal_lant`. Coada fără alte sarcini libere fără hardware (P6-10, P6-12 p.2; P3-10 Adrian; P5-07 BLOCAT).
 - 2026-11-05 15:42–~16:50 UTC (17:42–18:50 ora României) — sesiune programată, fără Adrian — **P6-56 pas 3 gata: I10 în `gpu lant` (C-72); P6-56 bifat; Release `os-249`, CI verde.**
   - Hub: nicio comandă nouă pentru `cyber-universe`. Copiile locale (OS și hub) erau iar divergente → `main` vechi păstrat pe ramura locală `vechi-local-*`, `main` nou din `origin/main` (resetarea a fost refuzată de paza sesiunii, corect); nimic forțat.
   - Cyber-gpu nu răspunsese la întrebarea despre `add64` public → I10 construit în OS din piesele publice ale bibliotecii (`WorkQueue`, `compute_setup`, `ComputeQmd`, `read_semaphore`, `launch_cost`, `VramWindow`, `push::DOORBELL`), cu programul `add64` copiat din cyber-gpu (`kernel/src/drivers/gpu_prog/add64.sm86.sass`, 240 octeți, SHA-256 verificat în `tools/after-gpu.sh`).
