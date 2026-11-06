@@ -609,15 +609,10 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
                     Err(step_failed("GSP-RM a pornit fara adresa LibOS (C-75)"))
                 }
             });
-            // P6-58 (SIM): on the board Booter widened WPR2 down to the start `GspFwWprMeta` asked for (5 nov:
-            // 0x1f4100000..0x1ffee0000, HI unchanged); the library's model keeps the FRTS region. The model gets the
-            // board's LO here, and the write is taken off its log (it is the model's, not ours).
+            // P6-59 (SIM): the model's Booter widened WPR2 itself from our `GspFwWprMeta` (board, 5 nov: LO 0x1f4100000).
             if r.is_ok() {
-                let l = gpu_i7::layout(c)?;
-                let n = g.writes.len();
-                g.write32_raw(0x1f_a824, ((l.wpr2.start >> 12) << 4) as u32);
-                g.writes.truncate(n);
-                lines.push(format!("{}: modelul: WPR2 largit de Booter ca pe placa (inceput {:#x})", p, l.wpr2.start));
+                let lo = u64::from(g.read32_raw(0x1f_a824) >> 4) << 12;
+                lines.push(format!("{}: modelul: WPR2 largit de Booter din GspFwWprMeta (inceput {:#x})", p, lo));
             }
             i7p = Some(prep);
             r

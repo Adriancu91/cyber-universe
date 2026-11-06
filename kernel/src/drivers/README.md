@@ -133,7 +133,7 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
     În `--sim` placa e modelul `gpu-sim` (procesorul de comenzi rulează canalul la sonerie): lanțul trece tot. **Pe placă: neîncercat.**
   - **P6-58 (cyber-gpu `60740a3`):** înainte de golden, WPR2 e recitit (2 citiri, fără scrieri) și zona VRAM vine din
     `FbLayout::free_after_i7`: dacă Booter a pus WPR2 altundeva decât a cerut `GspFwWprMeta`, golden se oprește înainte de prima scriere în VRAM.
-    În `--sim`, modelul lărgește WPR2 după Booter ca placa din 5 nov (`0x1f4100000..0x1ffee0000`); `gpu tur --sim` arată și refuzul pe un WPR2 nelărgit.
+    În `--sim`, Booter-ul modelului lărgește singur WPR2 din `GspFwWprMeta`-ul nostru (P6-59, cyber-gpu `657e209`), ca placa din 5 nov (`0x1f4100000..0x1ffee0000`); `gpu tur --sim` arată și refuzul pe un WPR2 nelărgit.
   - Test: `gpu-tur` (`gpu tur --sim` pe modelul plăcii din workstation; `gpu lant --sim` cu `DA` oprit la I7 cu Bus Master înapoi;
     `--eroare` oprit la I6, Bus Master tot înapoi; `--doar-citire` 0 scrieri; `tools/after-gpu-tur.sh` verifică jurnalele de pe disc),
     `gpu-scrie` (`gpu lant` → „nicio placa NVIDIA”), `tools/after-gpu.sh` (în `gpu_tur.rs` tot ce poate scrie e doar în build-ul `gpu-scrie`).

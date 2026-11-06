@@ -388,4 +388,6 @@ pub(super) fn sim_expect(g: &mut gpu_sim::fake_gsp::FakeGsp, prep: &I7Prep) {
         bootvec: u.imem_va,
     });
     g.sysmem = Some((prep.image.phys, img.to_vec()));
+    // P6-59: the model's Booter reads our `GspFwWprMeta` (read back from RAM) and widens WPR2 from it, as the board did.
+    g.wpr_meta_mem = Some((prep.wpr_meta, bytes(prep.wpr_meta, wpr_meta::SIZE).to_vec()));
 }

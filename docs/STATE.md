@@ -3,6 +3,11 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-06 ~00:45–01:30 UTC (02:45–03:30 ora României) — sesiune programată, fără Adrian — **P6-59 gata: simularea I7 ca placa, fără valoare pusă de mână (propunerea cyber-gpu, sesiunea 54).**
+  - Hub: nicio comandă nouă pentru `cyber-universe` (C-7, C-11 rămân după Adrian); niciun jurnal nou în `rezultate/` (fereastra cu `os-250` nu a avut loc încă). Oprirea de siguranță nu se aplică (P6-58 terminat în ultimele 3 sesiuni).
+  - **P6-59:** cyber-gpu fixat pe `657e209` (față de `60740a3` doar adăugări; `add64.sm86.sass` identic). În `--sim`, `gpu_i7::sim_expect` dă modelului `GspFwWprMeta` recitit din RAM (`FakeGsp::wpr_meta_mem`), iar Booter-ul simulat lărgește singur WPR2 (LO `0x1f4100000`, ca placa) → scoasă scrierea de mână a LO-ului din P6-58. Simularea verifică acum și că meta-ul nostru e citibil și are forma bună. Nimic schimbat pe placă.
+  - Teste locale: `gpu-sim`, `gpu-tur` (107 verificări, cu `after-gpu-tur.sh`), `gpu`, `gpu-ro`, `gpu-i6`, `gpu-scrie`, `boot`, `shell`, `usb-fw` trec; `after-gpu.sh` ok; build normal și `--gpu-scrie` fără avertismente noi (aceleași 14 vechi).
+  - **Următoarea:** fereastra lui Adrian pe workstation cu Release-ul nou (sau `os-250`), pașii din hub `stare/cyber-universe.md`; apoi `verifica_jurnal_lant` pe jurnale. Coada fără alte sarcini libere fără hardware (P6-10, P6-12 p.2; P3-10 Adrian; P5-07 BLOCAT).
 - 2026-11-05 21:40–21:50 UTC (23:40–23:50 ora României) — sesiune programată, fără Adrian — **nicio sarcină nouă: coada nu are sarcini libere fără hardware.**
   - Hub: nicio comandă nouă pentru `cyber-universe` (C-7, C-11 rămân după Adrian); cyber-gpu nu are nimic nou după sesiunea 53 (deja preluat în P6-58).
   - Coada: P3-10 (Adrian), P6-10 și P6-12 (după testul pe hardware), P5-07 BLOCAT, P5-08 după P5-07. Nicio schimbare de cod; CI rămâne verde pe `os-250`.
