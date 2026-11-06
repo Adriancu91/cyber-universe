@@ -7,7 +7,7 @@ use alloc::{format, string::String, vec::Vec};
 
 pub mod auto;
 pub mod compara;
-mod raport;
+pub mod raport;
 #[cfg(feature = "qemu-test")]
 pub use raport::self_test as raport_self_test;
 
@@ -144,6 +144,7 @@ fn dispatch(line: &str) -> bool {
             _ => out!("folosire: hw sau hw lista [--detalii]\n"),
         },
         "raport" => raport::manual(),
+        "trimite" => raport::send_to_hub(),
         "compara" => match args {
             [a, b] => out!("{}", compara::compare_files(a, b)),
             _ => out!("folosire: compara <fisier1> <fisier2>\n"),
@@ -227,6 +228,7 @@ fn help() {
     out!("  hw               raport hardware pe o pagina (pentru o singura poza)\n");
     out!("  hw lista [--detalii]  tot hardware-ul: procesor, memorie, PCI, Wi-Fi, USB, ACPI (doar citire)\n");
     out!("  raport           scrie pe stick /usb/raport/<data>-<nr>.txt: hw, lspci, net, jurnalele (fara chei)\n");
+    out!("  trimite          rapoartele noi din /usb/raport -> hub (rezultate/os-automat/<data>/), doar cu /usb/github.token\n");
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
     out!("  log --avertismente [n]  doar avertismentele si erorile; log --sumar = cate randuri pe nivel si pe modul\n");
     out!("  timp <comanda>   cat a durat comanda (ms) si cum s-a schimbat memoria\n");
@@ -641,6 +643,8 @@ fn lant(rest: &[&str]) {
     for l in crate::drivers::gpu_tur::chain() {
         out!("{}\n", l);
     }
+    // C-84 item 1: the chain's journal (/usb/raport/gpu-jurnal-NNN.txt) goes to the hub when there is a token.
+    raport::send_to_hub();
 }
 
 /// P6-40 (C-52): `gpu i6 --scrie [--sim]` — the first writes to the card (step I6). Asks for `DA` before anything.

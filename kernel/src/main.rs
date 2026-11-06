@@ -1731,6 +1731,33 @@ fn test_ghpush() {
     assert!(take(&[R, "note/lipsa.txt", "/etc/lipsa.txt"], "fisier lipsa") == 1 && fs::kind("/etc/lipsa.txt").is_err());
     assert!(take(&[R, "../afara.txt", "/etc/x.txt"], "cale cu ..") == 1);
     info!("test: luarea de pe GitHub OK");
+    // P6-61 (C-84 item 1): the reports go to the hub by themselves, each once (list `trimise.txt` next to them).
+    put("/etc/github.conf", b"host = test.cyber.local\nport = 18447\naddress = 10.0.2.2\ntoken = /etc/github.token\nhub = Adriancu91/note-test\n");
+    let _ = fs::create("/etc/raport", fs::Kind::Dir);
+    put("/etc/raport/gpu-jurnal-001.txt", b"gpu: lant: jurnal de proba\n");
+    put("/etc/raport/20261106-1.txt", b"== raport de proba ==\n");
+    let reports = |what: &str| {
+        let id = proc::spawn_path("/bin/gh-trimite", &["gh-trimite", "--rapoarte", "/etc/raport"]).expect("test: /bin/gh-trimite");
+        let code = proc::wait_child(id);
+        info!("test: gh-trimite --rapoarte ({}) a iesit cu codul {}", what, code);
+        code
+    };
+    let _ = fs::remove("/etc/github.token");
+    shell::raport::send_to_hub(); // the kernel's path: no token -> says so, nothing sent
+    assert!(reports("fara token") == 2 && fs::kind("/etc/raport/trimise.txt").is_err(), "test: --rapoarte fara token");
+    put("/etc/github.token", b"tok-gh\n");
+    assert!(reports("doua noi") == 0);
+    let ledger = || alloc::string::String::from_utf8(fs::read_all("/etc/raport/trimise.txt").unwrap_or_default()).unwrap_or_default();
+    assert!(ledger().lines().count() == 2, "test: trimise.txt trebuie sa aiba 2 randuri: {:?}", ledger());
+    assert!(reports("nimic nou") == 0 && ledger().lines().count() == 2);
+    put("/etc/raport/gpu-jurnal-002.txt", b"gpu: lant: al doilea jurnal\n");
+    shell::raport::send_to_hub(); // the kernel's path with a token: only the new one
+    let l = ledger();
+    assert!(l.lines().count() == 3, "test: trimise.txt trebuie sa aiba 3 randuri: {:?}", l);
+    let dest = l.lines().find(|x| x.starts_with("gpu-jurnal-002.txt -> rezultate/os-automat/")).and_then(|x| x.split(" -> ").nth(1)).expect("test: rand in trimise.txt");
+    assert!(take(&[R, dest, "/etc/jurnal-inapoi.txt"], "raport trimis") == 0);
+    assert!(fs::read_all("/etc/jurnal-inapoi.txt").ok().as_deref() == Some(&b"gpu: lant: al doilea jurnal\n"[..]), "test: raportul din hub difera");
+    info!("test: rapoartele pleaca singure in hub OK");
 }
 
 /// HTTPS with real web sites (P6-02): /bin/fetch resolves the name, connects through QEMU's network to the

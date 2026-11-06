@@ -28,6 +28,9 @@
   **Fără chei:** conținutul fișierelor `claude.key`/`github.token` (din `/usb`, `/disk`, `/etc`) și orice cuvânt care arată a cheie
   (`sk-ant-`, `ghp_`, `github_pat_`, `Bearer`, `Authorization:`, `x-api-key:`) devine `[ascuns]`. Captura comenzilor: `emit` scrie
   în raport în loc de ecran cât timp `raport` rulează o comandă pe același fir.
+- **`trimite` (P6-61, comanda C-84):** rapoartele noi din `/usb/raport` pleacă în hub (`rezultate/os-automat/<data>/`) cu
+  `/bin/gh-trimite --rapoarte`; se face singur și după `raport` și după `gpu lant`. Doar dacă există `/usb/github.token` și rețea;
+  altfel mesaj clar și rapoartele rămân pe stick. Lista celor trimise: `/usb/raport/trimise.txt`. Test: `ghpush`.
   Test: scenariul `raport` (build `test-raport`: în QEMU raportul merge pe `/disk`): raportul automat (eroarea de test de la pornire)
   și cel manual, `tools/after-raport.sh` le citește cu `mtools` (fsck curat, secțiunile, niciun token); filtrul are și un test la pornire.
 - **`cat` și fișierele secrete (P6-23):** `cat /usb/claude.key` (sau `github.token`) nu afișează nimic: „fisier secret”.

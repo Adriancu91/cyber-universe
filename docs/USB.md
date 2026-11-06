@@ -84,6 +84,11 @@ Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet 
 5. **Git simplu (P6-52):** `run gh-ia <proprietar/depozit> <cale> <fișier>` ia un fișier de pe GitHub pe stick (ex.
    `run gh-ia Adriancu91/cyber-universe docs/STATE.md /usb/STATE.md`); `run gh-trimite <fișier> <proprietar/depozit> <cale>`
    îl trimite înapoi. Pentru depozitele publice `gh-ia` nu are nevoie de token.
+6. **Rapoartele pleacă singure în hub (P6-61, comanda C-84):** dacă pe stick e `github.token` cu drept de scriere pe
+   **`Cyber-hub`** (la pasul 1: *Only select repositories* → `Cyber-hub`, *Contents*: **Read and write**, nimic altceva), după
+   `raport` și după `gpu lant` sistemul trimite singur rapoartele noi din `/usb/raport` în hub, la
+   `rezultate/os-automat/<data>/`. Comanda `trimite` le trimite oricând. Ce s-a trimis e scris în `/usb/raport/trimise.txt`
+   (fiecare raport pleacă o singură dată). Fără token sau fără rețea apare un mesaj, iar rapoartele rămân pe stick, ca până acum.
 
 ## Pentru Claude (tehnic)
 - Varianta B merge pentru că firmware-ul UEFI caută `EFI/BOOT/BOOTX64.EFI` pe orice partiție FAT32, iar Limine își citește

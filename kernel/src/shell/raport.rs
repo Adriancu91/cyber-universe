@@ -44,11 +44,50 @@ fn destinations() -> &'static [&'static str] {
     return &["/usb"];
 }
 
-/// `raport`: writes a report now; prints where.
+/// `raport`: writes a report now; prints where; then sends the new reports to the hub (when there is a token).
 pub fn manual() {
     match write_report("manual (comanda raport)") {
-        Ok((path, bytes)) => super::emit(&format!("raport: scris {} ({} octeti); cheile si tokenurile sunt ascunse\n", path, bytes)),
+        Ok((path, bytes)) => {
+            super::emit(&format!("raport: scris {} ({} octeti); cheile si tokenurile sunt ascunse\n", path, bytes));
+            send_to_hub();
+        }
         Err(why) => super::emit(&format!("raport: nu s-a scris: {}\n", why)),
+    }
+}
+
+/// The reports folder and the token file `send_to_hub` looks at (the `ghpush` test build has no stick: /etc).
+fn hub_paths() -> (&'static str, &'static str) {
+    #[cfg(feature = "test-ghpush")]
+    return ("/etc/raport", "/etc/github.token");
+    #[cfg(not(feature = "test-ghpush"))]
+    return ("/usb/raport", "/usb/github.token");
+}
+
+/// C-84 item 1 (P6-61): the reports on the stick not yet sent go to the hub (`rezultate/os-automat/<date>/`) with
+/// `/bin/gh-trimite --rapoarte`, so Adrian does not copy them in Windows. Only with a token on the stick (made by Adrian,
+/// minimal rights); without one, or without network, it says so and the reports stay on the stick. Called after
+/// `raport`, after `gpu lant`, and by the command `trimite`.
+pub fn send_to_hub() {
+    let (dir, token) = hub_paths();
+    if fs::kind(dir).is_err() {
+        super::emit(&format!("trimite: {} nu exista: niciun raport de trimis\n", dir));
+        return;
+    }
+    if fs::kind(token).is_err() {
+        super::emit(&format!("trimite: fara {}: rapoartele raman pe stick in {} (pasii pentru token: docs/USB.md)\n", token, dir));
+        return;
+    }
+    if crate::net::config().is_none() || !crate::net::wait_ready(10_000) {
+        super::emit("trimite: reteaua nu are adresa: rapoartele raman pe stick (mai tarziu: comanda `trimite`)\n");
+        return;
+    }
+    super::emit(&format!("trimite: trimit rapoartele noi din {} in hub...\n", dir));
+    match crate::proc::spawn_path("/bin/gh-trimite", &["gh-trimite", "--rapoarte", dir]) {
+        Ok(id) => {
+            let code = crate::proc::wait(id);
+            crate::info!("trimite: gh-trimite --rapoarte a iesit cu codul {}", code);
+        }
+        Err(e) => super::emit(&format!("trimite: /bin/gh-trimite nu porneste: {}\n", e.message())),
     }
 }
 

@@ -194,3 +194,6 @@
   `github_push` (cu confirmarea lui Adrian pe ecran, ca la scriere și rulare). Clientul HTTPS comun cu `actualizeaza`:
   `src/http_client.rs`. Test: scenariul `ghpush` față de `tools/ghpush-test-server.py` (fără token, token greșit, fișier
   nou cu diacritice, „deja la fel”, fișier existent cu `sha`, nume cu spațiu, 300 KB, cale cu `..`); unealta: `claude-tools`.
+  `gh-trimite --rapoarte [dosar]` (P6-61, C-84): rapoartele din `/usb/raport` care nu sunt în `trimise.txt` → hub
+  (`hub =` în `/etc/github.conf`, implicit `Adriancu91/Cyber-hub`), la `rezultate/os-automat/<data>/<nume>`; fără token cod 2.
+  Nucleul îl pornește după `raport`, `gpu lant` și la comanda `trimite`. Test: tot în `ghpush`.

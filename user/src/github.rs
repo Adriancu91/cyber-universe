@@ -9,10 +9,12 @@ pub struct Config {
     pub port: u16,
     pub address: Option<String>,
     pub token: String,
+    /// Where `gh-trimite --rapoarte` sends the stick's reports (C-84).
+    pub hub: String,
 }
 
 pub fn config() -> Config {
-    let mut c = Config { host: "api.github.com".to_string(), port: 443, address: None, token: "/usb/github.token".to_string() };
+    let mut c = Config { host: "api.github.com".to_string(), port: 443, address: None, token: "/usb/github.token".to_string(), hub: "Adriancu91/Cyber-hub".to_string() };
     let Some(text) = read_file("/etc/github.conf", 4096) else { return c };
     for line in core::str::from_utf8(&text).unwrap_or("").lines() {
         let line = line.trim();
@@ -26,6 +28,7 @@ pub fn config() -> Config {
             "port" => c.port = value.parse().unwrap_or(c.port),
             "address" => c.address = Some(value),
             "token" => c.token = value,
+            "hub" => c.hub = value,
             _ => println!("github: /etc/github.conf: nume necunoscut: {}", name),
         }
     }
