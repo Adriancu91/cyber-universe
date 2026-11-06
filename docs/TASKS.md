@@ -375,7 +375,7 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
   Pas 7a gata (2026-11-06): `ora [server [port]]` — ora din rețea (SNTP, RFC 4330, `kernel/src/net/sntp.rs`) în UTC și ora României (EET/EEST), cât de departe e ceasul calculatorului (doar citit, nu se schimbă); scenariu nou `ora` cu server SNTP de test. Rămân: 6 (browser b), 7c (manager de fișiere pentru stick; tastatura românească există deja din Faza 4).
   Pas 6a gata (2026-11-06): F6b — formulare în `web`: `[formular F1]`, câmpuri `[F1.nume: valoare]` (text, parolă cu `*`, ascunse, bife, alegeri, textarea, butoane), `web --formular <F> camp=valoare …` trimite GET sau POST (`application/x-www-form-urlencoded`); testat în `web`. Imaginile (doar `alt`) și CSS-ul rămân pentru pasul 6b.
   Pas 7b gata (2026-11-06): setările (fus orar, tastatură) se salvează pe stick (`/usb/config/settings.toml`) și se citesc de acolo la pornire; `/disk/config/` rămâne rezerva; scenariu nou `layout-boot-usb`.
-- [ ] **P6-62** Pașii GPU după I10 în `gpu lant` + `kronos --gpu` cu întoarcere pe procesor (partea OS din C-83). **Așteaptă** I11–I14 din cyber-gpu (la `657e209` nu există). Plan: `docs/plans/P6-62.md`.
+- [~] **P6-62** Pașii GPU după I10 în `gpu lant` + `kronos --gpu` cu întoarcere pe procesor (partea OS din C-83). **Așteaptă** I11–I14 din cyber-gpu (la `657e209` nu există). Plan: `docs/plans/P6-62.md`.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
