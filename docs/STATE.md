@@ -3,6 +3,7 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-06 ~17:26 UTC (19:26 ora României) — pornire manuală (aceleași comenzi C-82…C-84, deja preluate) — **nicio schimbare de cod.** Cyber-gpu are I11–I14 în SIMULARE (`e681bea`), dar copia din hub (`integrare/cyber-gpu/snapshot/cyber-gpu.bundle`) e tot la `657e209` → P6-62 nu poate începe (B-005: repo-ul privat nu se poate clona). Cerut în hub reîmprospătarea copiei. `kronos-kgr1-513` tot lipsește (P6-60). **Următoarea:** când bundle-ul are `e681bea`: P6-62 (fixare cyber-gpu, `WINDOW_CHAIN_C83` în `gpu lant`, notele `C-83_i11-i12.md`, `C-83_i13.md`, `C-83_i14.md`).
 - 2026-11-06 ~15:45–16:45 UTC (17:45–18:45 ora României) — sesiune programată, fără Adrian — **C-83 și C-84 preluate; P6-61 (C-84, unelte spre independența de Windows) pașii 1–5, 6a, 7a, 7b gata, testate în QEMU.**
   - Hub: comenzi noi **C-83** (pașii GPU după I10, cu cyber-gpu) → sarcina **P6-62** (așteaptă I11–I14 din cyber-gpu; la `657e209` nu există — sesiunea Cyber-GPU 57 lucrează la ele) și **C-84** → sarcina **P6-61**. C-82/P6-60: Release-ul `kronos-kgr1-513` tot nu există.
   - **P6-61, ce merge acum (toate în QEMU, nimic încercat pe hardware):**
