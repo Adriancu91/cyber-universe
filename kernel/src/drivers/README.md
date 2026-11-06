@@ -138,7 +138,9 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
     RAM → VRAM → RAM (8 MiB pe placă; 1 MiB în `--sim`, același cod) prin `copy_b128`, cu PTE-uri spre paginile DMA ale OS-ului
     (o arenă fixată `gpu-i11`, ~19 MiB sub 4 GiB, folosită doar de acești pași), verificată bit cu bit + 3 cuvinte VRAM prin fereastră +
     viteza din ceasul plăcii. I12: y = W·x (Q8_0 3072×768) sus/`q8_matvec`/jos, judecat de `q8_matvec::judge`. Niciun registru nou
-    (fereastra VRAM + soneria canalului, ca I10). I13/I14 nu sunt încă în OS: lanțul se oprește cinstit la `i13-strat` și face curățarea.
+    (fereastra VRAM + soneria canalului, ca I10). I13: un strat Kronos (E 768 / 12 capete pe placă; E 128 / 4 în `--sim`, același cod) —
+    greutățile + spațiul de lucru urcate cu o singură copiere I11, apoi 4 poziții × 16 lansări (`kronos_layer::token_launches`), x comparat cu
+    `gpu_compute::layer::step_cpu`. I14 nu e încă în OS: lanțul se oprește cinstit la `i14-simbol` și face curățarea.
     Programele vin direct din biblioteca fixată (`transfer::COPY_B128`, `q8_matvec::Q8_MATVEC`). **Pe placă: neîncercat.**
   - Test: `gpu-tur` (`gpu tur --sim` pe modelul plăcii din workstation; `gpu lant --sim` cu `DA` oprit la I7 cu Bus Master înapoi;
     `--eroare` oprit la I6, Bus Master tot înapoi; `--doar-citire` 0 scrieri; `tools/after-gpu-tur.sh` verifică jurnalele de pe disc),

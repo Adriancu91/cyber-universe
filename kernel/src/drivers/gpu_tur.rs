@@ -38,9 +38,9 @@ use gpu_core::hal::{Clock, ConfigSpace, Mmio};
 use gpu_core::PciAddress;
 use nvidia_ga104::chain::{run_chain_ready, ChainReport, WINDOW_CHAIN_C83};
 
-/// P6-62 (C-83): the plan steps the OS runs in the window chain. I11 and I12 are in the OS; I13 and I14 are not yet,
-/// so the chain stops honestly before `i13-strat` ("blocat in plan") and still runs the cleanup.
-const READY_IN_OS: &[&str] = &["I5", "I6", "I7", "I8", "I9", "I10", "I11", "I12"];
+/// P6-62 (C-83): the plan steps the OS runs in the window chain. I11–I13 are in the OS; I14 is not yet, so the chain
+/// stops honestly before `i14-simbol` ("blocat in plan") and still runs the cleanup.
+const READY_IN_OS: &[&str] = &["I5", "I6", "I7", "I8", "I9", "I10", "I11", "I12", "I13"];
 use nvidia_ga104::gsp::falcon;
 use nvidia_ga104::read_tour::run_tour;
 
@@ -391,7 +391,7 @@ pub fn chain() -> Vec<String> {
             r.map(|_| ())
         }
         #[cfg(feature = "gpu-scrie")]
-        "i11-copiere" | "i12-q8-matvec" => {
+        "i11-copiere" | "i12-q8-matvec" | "i13-strat" => {
             // P6-62 (C-83): no new register: the VRAM window and the work-channel doorbell, as in I10.
             let (Some(st), Some(l)) = (gs.as_mut(), launched.as_mut()) else { return Err(step_failed("lipseste I10")) };
             let Some(token) = st.space.as_ref().map(|(_, w)| w.doorbell_token) else { return Err(step_failed("lipseste I9")) };
@@ -400,10 +400,12 @@ pub fn chain() -> Vec<String> {
             let mut bell = |_: &mut gpu_i6::hw::VramFence, j: &mut Journal, off: u64, v: u32, _: &gpu_i10::Ring<'_>| {
                 ring_work_doorbell(&mut db, j, off, v)
             };
-            let r = if s.id == "i11-copiere" {
-                gpu_i11::copy_step(p, &mut vf, &mut clock, j, st, l, gpu_i11::I11_BOARD_BYTES, Some(&permit), &mut lines, &mut bell)
-            } else {
-                gpu_i11::matvec_step(p, &mut vf, &mut clock, j, st, l, Some(&permit), &mut lines, &mut bell)
+            let r = match s.id {
+                "i11-copiere" => {
+                    gpu_i11::copy_step(p, &mut vf, &mut clock, j, st, l, gpu_i11::I11_BOARD_BYTES, Some(&permit), &mut lines, &mut bell)
+                }
+                "i12-q8-matvec" => gpu_i11::matvec_step(p, &mut vf, &mut clock, j, st, l, Some(&permit), &mut lines, &mut bell),
+                _ => gpu_i11::layer_step(p, &mut vf, &mut clock, j, st, l, gpu_i11::I13_BOARD, Some(&permit), &mut lines, &mut bell),
             };
             refused += vf.refused + db.refused;
             r
@@ -709,7 +711,7 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
             lines.push(format!("{}: modelul GPU: {} sonerii in total, {} lansari (ceasul modelului: 4000 ns pe lansare)", p, gpu.rung, gpu.launches));
             r.map(|_| ())
         }
-        "i11-copiere" | "i12-q8-matvec" => {
+        "i11-copiere" | "i12-q8-matvec" | "i13-strat" => {
             let (Some(st), Some(l), Some(gpu)) = (gs.as_mut(), launched.as_mut(), sim_gpu.as_mut()) else {
                 return Err(step_failed("lipseste I10"));
             };
@@ -719,11 +721,19 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
                 sim_journal_doorbell(j, off, val);
                 Ok(())
             };
-            let r = if s.id == "i11-copiere" {
-                lines.push(format!("{}: I11 in SIMULARE: {} octeti (pe placa {}; acelasi cod)", p, gpu_i11::I11_SIM_BYTES, gpu_i11::I11_BOARD_BYTES));
-                gpu_i11::copy_step(p, &mut vram, &mut clock, j, st, l, gpu_i11::I11_SIM_BYTES, None, &mut lines, &mut bell)
-            } else {
-                gpu_i11::matvec_step(p, &mut vram, &mut clock, j, st, l, None, &mut lines, &mut bell)
+            let r = match s.id {
+                "i11-copiere" => {
+                    lines.push(format!("{}: I11 in SIMULARE: {} octeti (pe placa {}; acelasi cod)", p, gpu_i11::I11_SIM_BYTES, gpu_i11::I11_BOARD_BYTES));
+                    gpu_i11::copy_step(p, &mut vram, &mut clock, j, st, l, gpu_i11::I11_SIM_BYTES, None, &mut lines, &mut bell)
+                }
+                "i12-q8-matvec" => gpu_i11::matvec_step(p, &mut vram, &mut clock, j, st, l, None, &mut lines, &mut bell),
+                _ => {
+                    lines.push(format!(
+                        "{}: I13 in SIMULARE: strat E {} / {} capete (pe placa E {} / {}; acelasi cod)",
+                        p, gpu_i11::I13_SIM.0, gpu_i11::I13_SIM.1, gpu_i11::I13_BOARD.0, gpu_i11::I13_BOARD.1
+                    ));
+                    gpu_i11::layer_step(p, &mut vram, &mut clock, j, st, l, gpu_i11::I13_SIM, None, &mut lines, &mut bell)
+                }
             };
             lines.push(format!(
                 "{}: modelul GPU: {} sonerii in total, {} lansari, {} scrieri in alte registre",

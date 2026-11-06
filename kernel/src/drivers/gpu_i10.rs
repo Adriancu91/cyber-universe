@@ -364,6 +364,13 @@ impl SimGpu {
         // P6-62 (C-83): the programs of I11/I12 (Cyber-GPU's NAK builds) and their CPU stand-ins.
         cp.register_program(nvidia_ga104::transfer::COPY_B128, c::copy_b128_on_cpu);
         cp.register_program_with_needs(nvidia_ga104::q8_matvec::Q8_MATVEC, c::q8_matvec_on_cpu, c::Q8_MATVEC_NEEDS);
+        {
+            use nvidia_ga104::kronos_layer as kl;
+            cp.register_program(kl::VADD, c::vadd_on_cpu);
+            cp.register_program_with_needs(kl::LAYERNORM, c::layernorm_on_cpu, c::LAYERNORM_NEEDS);
+            cp.register_program_with_needs(kl::ATTENTION, c::attention_on_cpu, c::ATTENTION_NEEDS);
+            cp.register_program(kl::GELU, c::gelu_on_cpu);
+        }
         cp.sim_launch_ns = 4000;
         let sys = gpu_sim::vram::SimVram::new(crate::mem::frame::top_of_ram().next_multiple_of(0x1000));
         SimGpu { cp, token, rung: 0, launches: 0, invalidates_seen: 0, sys }

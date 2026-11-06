@@ -357,3 +357,190 @@ pub(super) fn matvec_step<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
     }
 }
+
+/// I13 on the board: one Kronos-sized layer (E 768, 12 heads), 4 positions.
+pub(super) const I13_BOARD: (usize, usize) = (768, 12);
+/// SIMULATION: the model moves every word of the ~7.6 MB of weights through its page walker at each doorbell, so the
+/// QEMU test uses a small layer (E 128, 4 heads); the same code and the same launches.
+#[cfg(feature = "test-gpu-sim")]
+pub(super) const I13_SIM: (usize, usize) = (128, 4);
+const I13_POSITIONS: usize = 4;
+const I13_SEED: u32 = 0x13;
+const I13_FIRST: u32 = 0x900;
+
+fn f32_bytes(v: &[f32]) -> Vec<u8> {
+    v.iter().flat_map(|x| x.to_le_bytes()).collect()
+}
+
+/// Step `i13-strat`: the layer's weights and a NaN scratch packed into one blob in the DMA arena, copied up with one
+/// `copy_b128` launch (I11), then for each position: x written, the 16 launches of `kronos_layer::token_launches`
+/// (one record after each), x read back through the window and judged against `gpu_compute::layer::step_cpu`.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn layer_step<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    shape: (usize, usize),
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    doorbell: &mut Bell<'_, V>,
+) -> GpuResult<()> {
+    use gpu_compute::layer::{self as cl, Shape};
+    use nvidia_ga104::kronos_layer::{self as kl, LayerVas, Prog, WeightVas, LAUNCHES_PER_TOKEN};
+    let s = Shape { e: shape.0, heads: shape.1, eps: 1e-5 };
+    let e = s.e;
+    let r = (|| {
+        let lw = kl::test_layer(e, I13_SEED)?;
+        // The blob: the 12 weight parts then the scratch (NaN: anything not computed cannot pass), each 16-aligned.
+        let parts: [Vec<u8>; 12] = [
+            f32_bytes(&lw.ln1_g),
+            f32_bytes(&lw.ln1_b),
+            lw.wqkv.clone(),
+            f32_bytes(&lw.bqkv),
+            lw.wout.clone(),
+            f32_bytes(&lw.bout),
+            f32_bytes(&lw.ln2_g),
+            f32_bytes(&lw.ln2_b),
+            lw.wfc.clone(),
+            f32_bytes(&lw.bfc),
+            lw.wproj.clone(),
+            f32_bytes(&lw.bproj),
+        ];
+        let mut blob = Vec::new();
+        let mut offs = [0u64; 12];
+        for (o, part) in offs.iter_mut().zip(&parts) {
+            *o = blob.len() as u64;
+            blob.extend_from_slice(part);
+            blob.resize(blob.len().next_multiple_of(16), 0);
+        }
+        drop(parts);
+        let scratch_off = blob.len() as u64;
+        blob.resize((scratch_off + kl::scratch_bytes(e)) as usize, 0xff);
+        let bytes = blob.len() as u64;
+        // The arena pages of I11's source (I11 is done with them; the chain stops before I13 if I11 failed).
+        if bytes > I11_BOARD_BYTES {
+            return Err(GpuError::OutOfMemory { requested: bytes });
+        }
+        let host = st.mem.alloc_sys_mapped(&arena_pages(0, bytes.div_ceil(PAGE))?)?;
+        ram_write(&host, &blob);
+        drop(blob);
+        let vblob = map_vram(st, bytes)?;
+        let kc = map_vram(st, kl::cache_bytes(e))?;
+        let vc = map_vram(st, kl::cache_bytes(e))?;
+        let mut progs: Vec<(Prog, Mapping)> = Vec::new();
+        for prog in [Prog::Copy, Prog::Q8Matvec, Prog::Vadd, Prog::LayerNorm, Prog::Attention, Prog::Gelu] {
+            let m = map_vram(st, prog.code().len() as u64)?;
+            put_bytes(st.mem.writer_mut(), m.pa, prog.code())?;
+            progs.push((prog, m));
+        }
+        let prog_va = |want: Prog| progs.iter().find(|(q, _)| *q == want).map(|(_, m)| m.va);
+        let launches = map_vram(st, 512 * LAUNCHES_PER_TOKEN as u64)?;
+        let cb_up = map_vram(st, PAGE)?;
+        let q_up = map_vram(st, PAGE)?;
+        let rec = map_vram(st, PAGE)?;
+        let copy_va = prog_va(Prog::Copy).ok_or(GpuError::InvalidArgument("I13: lipseste programul de copiere"))?;
+        put_bytes(st.mem.writer_mut(), cb_up.pa, &transfer::copy_cbuf(host.va, vblob.va, bytes)?)?;
+        put_bytes(st.mem.writer_mut(), q_up.pa, &transfer::copy_qmd(copy_va, cb_up.va, bytes)?.to_bytes()?)?;
+        let mut maps: Vec<Mapping> = alloc::vec![vblob, kc, vc, launches, cb_up, q_up];
+        maps.extend(progs.iter().map(|(_, m)| *m));
+        // 1. The upload: one launch, two records.
+        put_bytes(st.mem.writer_mut(), rec.pa, &[0; 32])?;
+        let mut words = alloc::vec![0u32; transfer::sequence_words(1)];
+        let mut pb = PushBuf::new(&mut words);
+        transfer::encode_sequence(&mut pb, &[q_up.va], rec.va, I13_FIRST)?;
+        let n = pb.len();
+        let sys = [host];
+        let b = run_records(vbar, clock, journal, st, l, permit, &words[..n], rec, 2, I13_FIRST + 1, &maps, &sys, doorbell)?;
+        let up_ns = match b {
+            Ok(b) => transfer::analyze_sequence(&b, 1, I13_FIRST)?[0],
+            Err(last) => {
+                lines.push(format!("{}: I13: urcarea greutatilor nu s-a terminat (inregistrarea 1 = {:#x})", p, last));
+                return Err(GpuError::Timeout { waited_us: WAIT_US });
+            }
+        };
+        lines.push(format!(
+            "{}: i13: strat E {} / {} capete: {} octeti (greutati + spatiu de lucru) urcati cu o copiere in {} ns ({} MB/s)",
+            p, e, s.heads, bytes, up_ns, transfer::CopySpeed::mb_per_s(bytes, up_ns)
+        ));
+        let at = |o: u64| vblob.va + o;
+        let wv = WeightVas {
+            ln1_g: at(offs[0]),
+            ln1_b: at(offs[1]),
+            wqkv: at(offs[2]),
+            bqkv: at(offs[3]),
+            wout: at(offs[4]),
+            bout: at(offs[5]),
+            ln2_g: at(offs[6]),
+            ln2_b: at(offs[7]),
+            wfc: at(offs[8]),
+            bfc: at(offs[9]),
+            wproj: at(offs[10]),
+            bproj: at(offs[11]),
+        };
+        let vas = LayerVas::with_scratch(e, at(scratch_off), kc.va, vc.va, wv)?;
+        let x_pa = vblob.pa + (vas.x - vblob.va);
+        let (mut kcpu, mut vcpu) = (alloc::vec![0.0f32; cl::MAX_POS * e], alloc::vec![0.0f32; cl::MAX_POS * e]);
+        // 2. The positions: 16 launches each.
+        for pos in 0..I13_POSITIONS {
+            let x = kl::test_input(e, I13_SEED, pos);
+            let list = kl::token_launches(&s, &vas, pos)?;
+            let w = st.mem.writer_mut();
+            put_bytes(w, x_pa, &f32_bytes(&x))?;
+            let mut qmds = Vec::with_capacity(list.len());
+            for (k, la) in list.iter().enumerate() {
+                let (cb_va, cb_pa) = (launches.va + 512 * k as u64, launches.pa + 512 * k as u64);
+                let pv = prog_va(la.prog).ok_or(GpuError::InvalidArgument("I13: program necunoscut"))?;
+                put_bytes(w, cb_pa, &la.cbuf)?;
+                put_bytes(w, cb_pa + 256, &la.qmd(pv, cb_va)?)?;
+                qmds.push(cb_va + 256);
+            }
+            let first = I13_FIRST + 0x20 * (pos as u32 + 1);
+            put_bytes(w, rec.pa, &alloc::vec![0u8; 16 * (list.len() + 1)])?;
+            let mut words = alloc::vec![0u32; transfer::sequence_words(qmds.len())];
+            let mut pb = PushBuf::new(&mut words);
+            transfer::encode_sequence(&mut pb, &qmds, rec.va, first)?;
+            let n = pb.len();
+            let last = first + list.len() as u32;
+            let b = run_records(vbar, clock, journal, st, l, permit, &words[..n], rec, list.len() as u64 + 1, last, &maps, &[], doorbell)?;
+            let b = match b {
+                Ok(b) => b,
+                Err(got) => {
+                    lines.push(format!("{}: I13: pozitia {}: ultima inregistrare = {:#x} (asteptat {:#x}): placa nu a terminat", p, pos, got, last));
+                    return Err(GpuError::Timeout { waited_us: WAIT_US });
+                }
+            };
+            let t = transfer::analyze_sequence(&b, list.len(), first)?;
+            let got = {
+                let GpuState { zone, .. } = &*st;
+                let mut vw = nvidia_ga104::vram_window::VramWindow::new(&mut *vbar, &mut *journal, permit, zone.vram_size, &zone.protected)?;
+                let r = (0..e as u64).map(|i| vw.read_u32(x_pa + 4 * i).map(f32::from_bits)).collect::<GpuResult<Vec<f32>>>();
+                let back = vw.restore();
+                r.and_then(|v| back.map(|_| v))?
+            };
+            let mut want = x.clone();
+            cl::step_cpu(&s, &lw.weights(), &mut want, &mut kcpu, &mut vcpu, pos)?;
+            let v = kl::judge(&got, &want);
+            lines.push(format!("{}: {}; {} lansari, {} ns in total (ceasul placii)", p, v.line(pos), t.len(), t.iter().sum::<u64>()));
+            if !v.passes() {
+                return Err(GpuError::InvalidArgument("I13: stratul nu trece (vezi randul de mai sus)"));
+            }
+        }
+        Ok(())
+    })();
+    match r {
+        Ok(()) => {
+            lines.push(format!(
+                "{}: pas I13 strat: ok (E {}, {} capete, {} pozitii x {} lansari, comparat cu procesorul)",
+                p, e, s.heads, I13_POSITIONS, LAUNCHES_PER_TOKEN
+            ));
+            Ok(())
+        }
+        Err(err) => {
+            lines.push(format!("{}: pas I13 strat: ESEC: {} (oprit la prima eroare)", p, err));
+            Err(err)
+        }
+    }
+}
