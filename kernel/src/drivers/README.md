@@ -140,7 +140,12 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
     viteza din ceasul plăcii. I12: y = W·x (Q8_0 3072×768) sus/`q8_matvec`/jos, judecat de `q8_matvec::judge`. Niciun registru nou
     (fereastra VRAM + soneria canalului, ca I10). I13: un strat Kronos (E 768 / 12 capete pe placă; E 128 / 4 în `--sim`, același cod) —
     greutățile + spațiul de lucru urcate cu o singură copiere I11, apoi 4 poziții × 16 lansări (`kronos_layer::token_launches`), x comparat cu
-    `gpu_compute::layer::step_cpu`. I14 nu e încă în OS: lanțul se oprește cinstit la `i14-simbol` și face curățarea.
+    `gpu_compute::layer::step_cpu`. **I14 (`gpu_i14.rs`)**: modelul de control al lui Kronos întâi (`mic_q8_0.kgr`, 840 KB, greutăți la
+    întâmplare; pe placă `/usb/kronos/`, pe discul de test `/disk/kronos/`), SHA-256 verificat față de `vectori.json`, citit cu cititorul KGR1
+    din același fișier (al nostru, după `format_greutati.md` din hub); greutăți + spațiu de lucru + logit-uri urcate în bucăți de ≤ 8 MiB prin
+    arena I11; pentru cele 3 texte de control: fiecare poziție = 35 lansări (`kronos_model::token_launches`) + o copiere a logit-urilor jos,
+    o sonerie pe simbol; logit-urile judecate de `kronos_model::judge` față de `gpu_compute::model::step_cpu`, argmax-ul și cele 5 simboluri
+    greedy față de vectorii lui Kronos. #513 vine cu P6-60. Lanțul trece acum până la capăt în `--sim`.
     Programele vin direct din biblioteca fixată (`transfer::COPY_B128`, `q8_matvec::Q8_MATVEC`). **Pe placă: neîncercat.**
   - Test: `gpu-tur` (`gpu tur --sim` pe modelul plăcii din workstation; `gpu lant --sim` cu `DA` oprit la I7 cu Bus Master înapoi;
     `--eroare` oprit la I6, Bus Master tot înapoi; `--doar-citire` 0 scrieri; `tools/after-gpu-tur.sh` verifică jurnalele de pe disc),

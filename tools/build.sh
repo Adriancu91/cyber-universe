@@ -123,6 +123,10 @@ if [[ ",$EXTRA_FEATURES," == *",test-kronos-"* ]]; then
     for f in a.kgr kronos_459_q8_0.kgr kronos_477_q8_0.kgr; do cp "$ROOT/tests/kronos/mini-q8.kgr" "$DISK_ROOT/kronos-477/$f"; done
     for f in a.kgr kronos_459_q8_0.kgr; do cp "$ROOT/tests/kronos/mini-q8.kgr" "$DISK_ROOT/kronos-459/$f"; done
 fi
+# P6-62 (C-83): I14 in `gpu lant --sim` reads Kronos's tiny control model (random weights, hub vectori/) from the disk.
+if [[ ",$EXTRA_FEATURES," == *",test-gpu-sim,"* ]]; then
+    mkdir -p "$DISK_ROOT/kronos" && cp "$ROOT/tests/kronos/mic_q8_0.kgr" "$DISK_ROOT/kronos/"
+fi
 DISK="$BUILD/disk.img"
 rm -f "$DISK" && truncate -s 40M "$DISK"
 printf 'label: gpt\nstart=2048, size=38M, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7\n' | PATH="$PATH:/usr/sbin:/sbin" sfdisk -q "$DISK"
@@ -178,5 +182,11 @@ if (( USB )) || [[ ",$EXTRA_FEATURES," == *",test-usb,"* ]]; then
     # The marker that lets the OS write on its own stick (kernel/src/fs/fat32.rs), needed by /bin/actualizeaza (P6-08).
     printf 'Cyber Universe: sistemul poate scrie pe acest stick (comanda actualizeaza).\n' > "$BUILD/cyber.rw.stick"
     MTOOLS_SKIP_CHECK=1 mcopy -o -i "$USB_IMG@@1M" "$BUILD/cyber.rw.stick" ::/cyber.rw
+    # P6-62 (C-83): the test stick carries the tiny control model for I14 (/usb/kronos/mic_q8_0.kgr, 840 KB, random
+    # weights from Kronos's control vectors; NOT an NVIDIA file).
+    if [[ "$MODE" == "gpu-scrie" ]]; then
+        MTOOLS_SKIP_CHECK=1 mmd -i "$USB_IMG@@1M" ::/kronos 2>/dev/null || true
+        MTOOLS_SKIP_CHECK=1 mcopy -o -i "$USB_IMG@@1M" "$ROOT/tests/kronos/mic_q8_0.kgr" ::/kronos/mic_q8_0.kgr
+    fi
     echo "[build] Gata: build/$(basename "$USB_IMG") (de scris pe stick, vezi docs/USB.md)"
 fi

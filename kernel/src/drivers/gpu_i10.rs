@@ -370,6 +370,8 @@ impl SimGpu {
             cp.register_program_with_needs(kl::LAYERNORM, c::layernorm_on_cpu, c::LAYERNORM_NEEDS);
             cp.register_program_with_needs(kl::ATTENTION, c::attention_on_cpu, c::ATTENTION_NEEDS);
             cp.register_program(kl::GELU, c::gelu_on_cpu);
+            // I14: the embedding (token row + position row).
+            cp.register_program(kl::EMBED, c::embed_on_cpu);
         }
         cp.sim_launch_ns = 4000;
         let sys = gpu_sim::vram::SimVram::new(crate::mem::frame::top_of_ram().next_multiple_of(0x1000));

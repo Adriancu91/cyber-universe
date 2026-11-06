@@ -51,7 +51,7 @@ const I11_SEED: u32 = 0x83;
 const I11_FIRST: u32 = 0x600;
 const I12_SEED: u32 = 0x12;
 const I12_FIRST: u32 = 0x700;
-const PAGE: u64 = 0x1000;
+pub(super) const PAGE: u64 = 0x1000;
 
 /// The DMA arena of I11/I12: 2 × 8 MiB (I11) + W|x and y of I12, contiguous, between 16 MiB and 4 GiB, pinned once
 /// (the card may write there; nothing else ever gets these frames).
@@ -59,7 +59,7 @@ const ARENA_PAGES: u64 = 2 * (I11_BOARD_BYTES / PAGE) + 704;
 static ARENA: crate::sched::Mutex<Option<u64>> = crate::sched::Mutex::new(None);
 
 /// Bus addresses (no IOMMU = physical) of `n` arena pages from page `first`; the arena is allocated on first use.
-fn arena_pages(first: u64, n: u64) -> GpuResult<Vec<u64>> {
+pub(super) fn arena_pages(first: u64, n: u64) -> GpuResult<Vec<u64>> {
     if first + n > ARENA_PAGES {
         return Err(GpuError::OutOfMemory { requested: n * PAGE });
     }
@@ -85,7 +85,7 @@ pub(super) fn ram(m: &SysMapping) -> impl Iterator<Item = &'static mut [u8]> + '
     })
 }
 
-fn ram_write(m: &SysMapping, data: &[u8]) {
+pub(super) fn ram_write(m: &SysMapping, data: &[u8]) {
     let mut rest = data;
     for page in ram(m) {
         let n = rest.len().min(page.len());
@@ -95,7 +95,7 @@ fn ram_write(m: &SysMapping, data: &[u8]) {
     }
 }
 
-fn ram_read(m: &SysMapping, len: u64) -> Vec<u8> {
+pub(super) fn ram_read(m: &SysMapping, len: u64) -> Vec<u8> {
     let mut v = Vec::with_capacity(len as usize);
     for page in ram(m) {
         let n = (len as usize - v.len()).min(page.len());
@@ -107,16 +107,16 @@ fn ram_read(m: &SysMapping, len: u64) -> Vec<u8> {
     v
 }
 
-fn map_vram(st: &mut GpuState, bytes: u64) -> GpuResult<Mapping> {
+pub(super) fn map_vram(st: &mut GpuState, bytes: u64) -> GpuResult<Mapping> {
     st.mem.alloc_mapped(bytes.next_multiple_of(PAGE), PAGE)
 }
 
 /// What the doorbell closures get (the same as I10's).
-type Bell<'d, V> = dyn FnMut(&mut V, &mut Journal, u64, u32, &Ring<'_>) -> GpuResult<()> + 'd;
+pub(super) type Bell<'d, V> = dyn FnMut(&mut V, &mut Journal, u64, u32, &Ring<'_>) -> GpuResult<()> + 'd;
 
 /// Submits `words` fenced on the last record, rings, waits for the last record's payload and returns all records.
 #[allow(clippy::too_many_arguments)]
-fn run_records<V: Mmio + ?Sized, K: Clock + ?Sized>(
+pub(super) fn run_records<V: Mmio + ?Sized, K: Clock + ?Sized>(
     vbar: &mut V,
     clock: &mut K,
     journal: &mut Journal,
@@ -368,7 +368,7 @@ const I13_POSITIONS: usize = 4;
 const I13_SEED: u32 = 0x13;
 const I13_FIRST: u32 = 0x900;
 
-fn f32_bytes(v: &[f32]) -> Vec<u8> {
+pub(super) fn f32_bytes(v: &[f32]) -> Vec<u8> {
     v.iter().flat_map(|x| x.to_le_bytes()).collect()
 }
 

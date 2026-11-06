@@ -67,11 +67,14 @@ fi
 if grep -v '^\s*//' "$ROOT/kernel/src/drivers/gpu_i10.rs" | grep -nE 'write_volatile|as \*mut|HardwareWritePermit::new|WRITABLE|checked_write32'; then
     echo "[after-gpu] EȘUAT: gpu_i10.rs scrie direct (trebuie doar prin bibliotecă și gardurile din gpu_i6.rs)"; exit 1
 fi
-# P6-62 (C-83): gpu_i11.rs (I11, I12) the same: the card is reached only through the library and the fences; its
-# programs come from the pinned library itself (`transfer::COPY_B128`, `q8_matvec::Q8_MATVEC`), not from copies here.
-if grep -v '^\s*//' "$ROOT/kernel/src/drivers/gpu_i11.rs" | grep -nE 'write_volatile|as \*mut|HardwareWritePermit::new|WRITABLE|checked_write32|include_bytes'; then
-    echo "[after-gpu] EȘUAT: gpu_i11.rs scrie direct sau are o copie proprie a unui program"; exit 1
-fi
+# P6-62 (C-83): gpu_i11.rs (I11–I13) and gpu_i14.rs (I14) the same: the card is reached only through the library and
+# the fences; their programs come from the pinned library itself (`transfer::COPY_B128`, `kronos_layer::PROGRAMS`),
+# not from copies here.
+for f in gpu_i11.rs gpu_i14.rs; do
+    if grep -v '^\s*//' "$ROOT/kernel/src/drivers/$f" | grep -nE 'write_volatile|as \*mut|HardwareWritePermit::new|WRITABLE|checked_write32|include_bytes'; then
+        echo "[after-gpu] EȘUAT: $f scrie direct sau are o copie proprie a unui program"; exit 1
+    fi
+done
 ADD64="$ROOT/kernel/src/drivers/gpu_prog/add64.sm86.sass"
 ADD64_SHA256="a890b75c4207b216c2f959da3b59745dbb43f3cbd58490b37b7b4c1dd12698ce"  # cyber-gpu 20b4a3b (identic in 60740a3, 657e209, bc2f22b)
 if [[ "$(sha256sum "$ADD64" | cut -d' ' -f1)" != "$ADD64_SHA256" ]]; then

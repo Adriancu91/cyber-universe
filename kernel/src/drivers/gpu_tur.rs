@@ -31,6 +31,8 @@ use super::gpu_golden;
 use super::gpu_i10;
 #[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
 use super::gpu_i11;
+#[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
+use super::gpu_i14;
 use alloc::{format, string::String, vec::Vec};
 use gpu_core::diag::Journal;
 use gpu_core::error::{GpuError, GpuResult};
@@ -38,9 +40,9 @@ use gpu_core::hal::{Clock, ConfigSpace, Mmio};
 use gpu_core::PciAddress;
 use nvidia_ga104::chain::{run_chain_ready, ChainReport, WINDOW_CHAIN_C83};
 
-/// P6-62 (C-83): the plan steps the OS runs in the window chain. I11–I13 are in the OS; I14 is not yet, so the chain
-/// stops honestly before `i14-simbol` ("blocat in plan") and still runs the cleanup.
-const READY_IN_OS: &[&str] = &["I5", "I6", "I7", "I8", "I9", "I10", "I11", "I12", "I13"];
+/// P6-62 (C-83): the plan steps the OS runs in the window chain: I5 to I14 (I14 with Kronos's tiny control model first,
+/// `gpu_i14`; #513 comes with P6-60).
+const READY_IN_OS: &[&str] = &["I5", "I6", "I7", "I8", "I9", "I10", "I11", "I12", "I13", "I14"];
 use nvidia_ga104::gsp::falcon;
 use nvidia_ga104::read_tour::run_tour;
 
@@ -391,7 +393,7 @@ pub fn chain() -> Vec<String> {
             r.map(|_| ())
         }
         #[cfg(feature = "gpu-scrie")]
-        "i11-copiere" | "i12-q8-matvec" | "i13-strat" => {
+        "i11-copiere" | "i12-q8-matvec" | "i13-strat" | "i14-simbol" => {
             // P6-62 (C-83): no new register: the VRAM window and the work-channel doorbell, as in I10.
             let (Some(st), Some(l)) = (gs.as_mut(), launched.as_mut()) else { return Err(step_failed("lipseste I10")) };
             let Some(token) = st.space.as_ref().map(|(_, w)| w.doorbell_token) else { return Err(step_failed("lipseste I9")) };
@@ -405,7 +407,10 @@ pub fn chain() -> Vec<String> {
                     gpu_i11::copy_step(p, &mut vf, &mut clock, j, st, l, gpu_i11::I11_BOARD_BYTES, Some(&permit), &mut lines, &mut bell)
                 }
                 "i12-q8-matvec" => gpu_i11::matvec_step(p, &mut vf, &mut clock, j, st, l, Some(&permit), &mut lines, &mut bell),
-                _ => gpu_i11::layer_step(p, &mut vf, &mut clock, j, st, l, gpu_i11::I13_BOARD, Some(&permit), &mut lines, &mut bell),
+                "i13-strat" => {
+                    gpu_i11::layer_step(p, &mut vf, &mut clock, j, st, l, gpu_i11::I13_BOARD, Some(&permit), &mut lines, &mut bell)
+                }
+                _ => gpu_i14::token_step(p, &mut vf, &mut clock, j, st, l, gpu_i14::MIC_BOARD, Some(&permit), &mut lines, &mut bell),
             };
             refused += vf.refused + db.refused;
             r
@@ -711,7 +716,7 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
             lines.push(format!("{}: modelul GPU: {} sonerii in total, {} lansari (ceasul modelului: 4000 ns pe lansare)", p, gpu.rung, gpu.launches));
             r.map(|_| ())
         }
-        "i11-copiere" | "i12-q8-matvec" | "i13-strat" => {
+        "i11-copiere" | "i12-q8-matvec" | "i13-strat" | "i14-simbol" => {
             let (Some(st), Some(l), Some(gpu)) = (gs.as_mut(), launched.as_mut(), sim_gpu.as_mut()) else {
                 return Err(step_failed("lipseste I10"));
             };
@@ -727,6 +732,10 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
                     gpu_i11::copy_step(p, &mut vram, &mut clock, j, st, l, gpu_i11::I11_SIM_BYTES, None, &mut lines, &mut bell)
                 }
                 "i12-q8-matvec" => gpu_i11::matvec_step(p, &mut vram, &mut clock, j, st, l, None, &mut lines, &mut bell),
+                "i14-simbol" => {
+                    lines.push(format!("{}: I14 in SIMULARE: modelul de control de pe discul de test (pe placa: {}; acelasi cod)", p, gpu_i14::MIC_BOARD));
+                    gpu_i14::token_step(p, &mut vram, &mut clock, j, st, l, gpu_i14::MIC_SIM, None, &mut lines, &mut bell)
+                }
                 _ => {
                     lines.push(format!(
                         "{}: I13 in SIMULARE: strat E {} / {} capete (pe placa E {} / {}; acelasi cod)",
