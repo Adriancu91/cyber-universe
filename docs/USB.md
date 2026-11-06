@@ -94,6 +94,9 @@ Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet 
 8. **Întrebări pentru Kronos (P6-61):** `run kronos --intreaba Ce este un sistem de operare?` — Kronos răspunde pe un rând și ține
    minte conversația în `/usb/kronos/conversatie.txt` (întrebarea următoare vede ultimele schimburi). Modelul e încă unul care
    continuă text, nu un asistent antrenat: răspunsurile pot fi ciudate.
+9. **Git simplu pe ramuri (P6-61):** `run gh-ia --lista Adriancu91/cyber-universe docs` arată fișierele unui dosar;
+   `run gh-trimite --ramura os/nota /usb/nota.txt Adriancu91/cyber-universe note/nota.txt` pune fișierul pe ramura `os/nota`
+   (niciodată pe `main`; tokenul trebuie să aibă drept de scriere și pe acel depozit).
 
 ## Pentru Claude (tehnic)
 - Varianta B merge pentru că firmware-ul UEFI caută `EFI/BOOT/BOOTX64.EFI` pe orice partiție FAT32, iar Limine își citește

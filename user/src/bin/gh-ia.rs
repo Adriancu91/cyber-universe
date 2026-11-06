@@ -34,6 +34,26 @@ const MAX_ANSWER: usize = 4 * 1024 * 1024;
 
 fn main() -> i64 {
     let args: Vec<&str> = cyber_user::args().skip(1).collect();
+    if args.first() == Some(&"--lista") {
+        // F8 (P6-61 step 4): the files of a folder (of a branch, with `--ramura`).
+        let (repo, dir, branch) = match &args[1..] {
+            [r] => (*r, "", None),
+            [r, d] if *d != "--ramura" => (*r, *d, None),
+            [r, "--ramura", b] => (*r, "", Some(*b)),
+            [r, d, "--ramura", b] => (*r, *d, Some(*b)),
+            _ => {
+                println!("folosire: gh-ia --lista <proprietar/depozit> [dosar] [--ramura <ramura>]");
+                return 1;
+            }
+        };
+        return match list(&config(), repo, dir, branch) {
+            Ok(()) => 0,
+            Err(e) => {
+                println!("gh-ia: {}", e);
+                1
+            }
+        };
+    }
     if args.first() == Some(&"--hub") {
         return match hub(&config(), &args[1..]) {
             Ok(()) => 0,
@@ -46,6 +66,7 @@ fn main() -> i64 {
     if args.len() != 3 {
         println!("folosire: gh-ia <proprietar/depozit> <cale in depozit> <fisier>");
         println!("  exemplu: gh-ia Adriancu91/cyber-universe docs/STATE.md /usb/STATE.md   (token in /usb/github.token, daca e privat)");
+        println!("          gh-ia --lista <proprietar/depozit> [dosar] [--ramura <ramura>]   (fisierele unui dosar)");
         println!("          gh-ia --hub [comenzi [proiect] | stare [proiect] | decizii]   (doar citire din Cyber Hub)");
         return 1;
     }
@@ -137,6 +158,50 @@ fn commands_for<'a>(all: &'a str, project: &str) -> Vec<(&'a str, Vec<&'a str>)>
         }
     }
     out
+}
+
+/// The entries of a folder through the contents API (an array of `{name, type, size}`), one per line.
+fn list(c: &Config, repo: &str, dir: &str, branch: Option<&str>) -> Result<(), String> {
+    if !valid_repo(repo) {
+        return Err(format!("depozit invalid: {} (forma: proprietar/depozit)", repo));
+    }
+    if !dir.is_empty() && !valid_path(dir) {
+        return Err(format!("cale invalida in depozit: {} (fara / la inceput, fara ..)", dir));
+    }
+    if let Some(b) = branch {
+        if b.is_empty() || b.contains("..") || !b.bytes().all(|x| x.is_ascii_alphanumeric() || b"-_./".contains(&x)) {
+            return Err(format!("ramura invalida: {}", b));
+        }
+    }
+    let _ = cyber_user::rights::ask_secret(&c.token);
+    let token = read_file(&c.token, 512).map(|t| String::from_utf8_lossy(&t).trim().to_string()).filter(|t| !t.is_empty());
+    let _ = cyber_user::rights::drop_secrets();
+    let auth = token.map(|t| format!("Authorization: Bearer {}\r\n", t)).unwrap_or_default();
+    let mut api = format!("/repos/{}/contents/{}", repo, encode_path(dir));
+    if let Some(b) = branch {
+        api += &format!("?ref={}", encode_path(b));
+    }
+    let headers = format!("Accept: application/vnd.github+json\r\nX-GitHub-Api-Version: 2022-11-28\r\n{}", auth);
+    let r = http_client::request("gh-ia", c.address.as_deref(), &c.host, c.port, "GET", &api, &headers, &[], MAX_ANSWER)?;
+    match r.status {
+        200 => {}
+        401 => return Err("tokenul GitHub e gresit sau a expirat (401)".to_string()),
+        404 => return Err(format!("{} nu exista in {} (sau depozitul e privat si lipseste tokenul)", if dir.is_empty() { "/" } else { dir }, repo)),
+        s => return Err(format!("eroare {} de la GitHub", s)),
+    }
+    let j = core::str::from_utf8(&r.body).ok().and_then(|t| cyber_json::parse(t).ok()).ok_or("raspunsul GitHub nu e JSON")?;
+    let Some(items) = j.as_array() else {
+        return Err(format!("{} e un fisier, nu un dosar", dir));
+    };
+    println!("gh-ia: {}/{}{}: {} intrari", repo, dir, branch.map(|b| format!(" (ramura {})", b)).unwrap_or_default(), items.len());
+    for it in items {
+        let name = it.get("name").and_then(Value::as_str).unwrap_or("?");
+        match it.get("type").and_then(Value::as_str) {
+            Some("dir") => println!("  {}/", name),
+            _ => println!("  {}  ({} octeti)", name, it.get("size").and_then(Value::as_f64).unwrap_or(0.0) as u64),
+        }
+    }
+    Ok(())
 }
 
 /// GET of one file through the contents API (base64 decoded, size checked).

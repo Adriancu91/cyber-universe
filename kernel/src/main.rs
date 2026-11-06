@@ -1772,6 +1772,32 @@ fn test_ghpush() {
     assert!(hub(&["decizii"], "decizii") == 0);
     assert!(hub(&["stare", "../x"], "proiect cu ..") == 1);
     info!("test: hub citit din OS OK");
+    // P6-61 step 4 (F8): commits on a branch `os/...` (made from main), never on main; folders listed.
+    let push = |args: &[&str], what: &str| {
+        let mut all = alloc::vec!["gh-trimite"];
+        all.extend_from_slice(args);
+        let id = proc::spawn_path("/bin/gh-trimite", &all).expect("test: /bin/gh-trimite");
+        let code = proc::wait_child(id);
+        info!("test: gh-trimite ({}) a iesit cu codul {}", what, code);
+        code
+    };
+    assert!(push(&["--ramura", "main", "/etc/nota.txt", R, "note/x.txt"], "ramura main") == 1);
+    assert!(push(&["--ramura", "os/../main", "/etc/nota.txt", R, "note/x.txt"], "ramura cu ..") == 1);
+    assert!(push(&["--ramura", "os/test-f8", "/etc/nota.txt", R, "note/pe-ramura.txt"], "ramura noua") == 0);
+    assert!(push(&["/etc/mare-inapoi.bin", R, "date/b.bin", "--ramura", "os/test-f8"], "ramura existenta") == 0);
+    assert!(take(&[R, "note/pe-ramura.txt", "/etc/y.txt"], "main neatins") == 1);
+    let list = |args: &[&str], what: &str| {
+        let mut all = alloc::vec!["gh-ia", "--lista"];
+        all.extend_from_slice(args);
+        let id = proc::spawn_path("/bin/gh-ia", &all).expect("test: /bin/gh-ia");
+        let code = proc::wait_child(id);
+        info!("test: gh-ia --lista ({}) a iesit cu codul {}", what, code);
+        code
+    };
+    assert!(list(&[R, "note"], "main") == 0);
+    assert!(list(&[R, "note", "--ramura", "os/test-f8"], "ramura") == 0);
+    assert!(list(&[R, "nu-exista"], "dosar lipsa") == 1);
+    info!("test: git simplu pe ramuri os/ OK");
 }
 
 /// HTTPS with real web sites (P6-02): /bin/fetch resolves the name, connects through QEMU's network to the

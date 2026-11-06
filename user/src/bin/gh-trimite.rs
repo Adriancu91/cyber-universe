@@ -37,18 +37,33 @@ const MAX_FILE: usize = 1024 * 1024;
 const MAX_ANSWER: usize = 4 * 1024 * 1024;
 
 fn main() -> i64 {
-    let args: Vec<&str> = cyber_user::args().skip(1).collect();
+    let mut args: Vec<&str> = cyber_user::args().skip(1).collect();
+    // F8 (P6-61 step 4): `--ramura os/<nume>` = the commit goes on that branch (made from main when missing), never main.
+    let mut branch = None;
+    if let Some(i) = args.iter().position(|a| *a == "--ramura") {
+        let Some(b) = args.get(i + 1).copied() else {
+            println!("gh-trimite: --ramura cere un nume (os/<nume>)");
+            return 1;
+        };
+        if !valid_branch(b) {
+            println!("gh-trimite: ramura {} refuzata: doar ramuri os/<nume> (litere, cifre, - _ . /), niciodata main", b);
+            return 1;
+        }
+        branch = Some(b);
+        args.drain(i..i + 2);
+    }
     if args.first() == Some(&"--rapoarte") {
         return reports(&config(), args.get(1).copied().unwrap_or(REPORTS_DIR));
     }
     if args.len() < 3 {
         println!("folosire: gh-trimite <fisier> <proprietar/depozit> <cale in depozit> [mesaj]");
+        println!("          gh-trimite --ramura os/<nume> <fisier> <proprietar/depozit> <cale>   (commit pe ramura os/..., nu pe main)");
         println!("          gh-trimite --rapoarte [dosar]   (rapoartele noi din {} -> hub, rezultate/os-automat/<data>/)", REPORTS_DIR);
         println!("  exemplu: gh-trimite /disk/note.txt Adriancu91/cyber-universe note/azi.txt   (token in /usb/github.token)");
         return 1;
     }
     let message = if args.len() > 3 { args[3..].join(" ") } else { format!("Din Cyber Universe: {}", args[2]) };
-    match run(&config(), args[0], args[1], args[2], &message) {
+    match run(&config(), args[0], args[1], args[2], &message, branch) {
         Ok(()) => 0,
         Err(e) => {
             println!("gh-trimite: {}", e);
@@ -168,7 +183,18 @@ fn error_for(status: u16, body: &[u8]) -> String {
     }
 }
 
-fn run(c: &Config, file: &str, repo: &str, path: &str, message: &str) -> Result<(), String> {
+/// A branch the OS may write to: `os/<name>`, plain characters, no `..`, no end slash.
+fn valid_branch(b: &str) -> bool {
+    b.strip_prefix("os/").is_some_and(|rest| {
+        !rest.is_empty()
+            && !rest.ends_with('/')
+            && !rest.contains("..")
+            && !rest.contains("//")
+            && rest.bytes().all(|x| x.is_ascii_alphanumeric() || b"-_./".contains(&x))
+    })
+}
+
+fn run(c: &Config, file: &str, repo: &str, path: &str, message: &str, branch: Option<&str>) -> Result<(), String> {
     if !valid_repo(repo) {
         return Err(format!("depozit invalid: {} (forma: proprietar/depozit)", repo));
     }
@@ -179,18 +205,61 @@ fn run(c: &Config, file: &str, repo: &str, path: &str, message: &str) -> Result<
     let Some(token) = read_token(c) else {
         return Err(format!("lipseste tokenul GitHub (un rand in {})", c.token));
     };
-    put(c, &token, repo, path, &data, message)
+    if let Some(b) = branch {
+        ensure_branch(c, &token, repo, b)?;
+    }
+    put_on(c, &token, repo, path, &data, message, branch)
 }
 
-/// GET (is it there, is it the same?) then PUT. Prints what happened.
+/// The branch `b` exists after this: if GitHub does not have it, it is made from the tip of `main` (git refs API).
+fn ensure_branch(c: &Config, token: &str, repo: &str, b: &str) -> Result<(), String> {
+    let headers = format!("Accept: application/vnd.github+json\r\nX-GitHub-Api-Version: 2022-11-28\r\nAuthorization: Bearer {}\r\n", token);
+    let ask = |method: &str, api: &str, extra: &str, body: &[u8]| {
+        http_client::request("gh-trimite", c.address.as_deref(), &c.host, c.port, method, api, &format!("{}{}", headers, extra), body, MAX_ANSWER)
+    };
+    let r = ask("GET", &format!("/repos/{}/git/ref/heads/{}", repo, encode_path(b)), "", &[])?;
+    match r.status {
+        200 => return Ok(()),
+        404 => {}
+        s => return Err(error_for(s, &r.body)),
+    }
+    let r = ask("GET", &format!("/repos/{}/git/ref/heads/main", repo), "", &[])?;
+    if r.status != 200 {
+        return Err(format!("nu gasesc ramura main in {}: {}", repo, error_for(r.status, &r.body)));
+    }
+    let j = core::str::from_utf8(&r.body).ok().and_then(|t| cyber_json::parse(t).ok()).ok_or("raspunsul GitHub nu e JSON")?;
+    let sha = j.get("object").and_then(|o| o.get("sha")).and_then(Value::as_str).ok_or("raspuns fara sha pentru main")?.to_string();
+    let body = Value::Object(alloc::vec![
+        (String::from("ref"), Value::String(format!("refs/heads/{}", b))),
+        (String::from("sha"), Value::String(sha.clone())),
+    ])
+    .to_string();
+    let r = ask("POST", &format!("/repos/{}/git/refs", repo), "Content-Type: application/json\r\n", body.as_bytes())?;
+    if r.status != 201 {
+        return Err(format!("ramura {} nu s-a facut: {}", b, error_for(r.status, &r.body)));
+    }
+    println!("gh-trimite: ramura noua {} in {} (din main, {})", b, repo, &sha[..sha.len().min(7)]);
+    Ok(())
+}
+
 fn put(c: &Config, token: &str, repo: &str, path: &str, data: &[u8], message: &str) -> Result<(), String> {
+    put_on(c, token, repo, path, data, message, None)
+}
+
+/// GET (is it there, is it the same?) then PUT, on `branch` (None = the default branch). Prints what happened.
+fn put_on(c: &Config, token: &str, repo: &str, path: &str, data: &[u8], message: &str, branch: Option<&str>) -> Result<(), String> {
     if !valid_repo(repo) || !valid_path(path) {
         return Err(format!("depozit sau cale invalida: {} {}", repo, path));
     }
     let api = format!("/repos/{}/contents/{}", repo, encode_path(path));
+    let get_api = match branch {
+        Some(b) => format!("{}?ref={}", api, encode_path(b)),
+        None => api.clone(),
+    };
     let headers = format!("Accept: application/vnd.github+json\r\nX-GitHub-Api-Version: 2022-11-28\r\nAuthorization: Bearer {}\r\n", token);
     let ask = |method: &str, extra: &str, body: &[u8]| {
-        http_client::request("gh-trimite", c.address.as_deref(), &c.host, c.port, method, &api, &format!("{}{}", headers, extra), body, MAX_ANSWER)
+        let url = if method == "GET" { &get_api } else { &api };
+        http_client::request("gh-trimite", c.address.as_deref(), &c.host, c.port, method, url, &format!("{}{}", headers, extra), body, MAX_ANSWER)
     };
 
     // 1. Is it there already?
@@ -221,6 +290,9 @@ fn put(c: &Config, token: &str, repo: &str, path: &str, data: &[u8], message: &s
     if let Some(sha) = &old_sha {
         fields.push((String::from("sha"), Value::str(sha)));
     }
+    if let Some(b) = branch {
+        fields.push((String::from("branch"), Value::str(b)));
+    }
     let body = Value::Object(fields).to_string();
     let r = ask("PUT", "Content-Type: application/json\r\n", body.as_bytes())?;
     drop(body);
@@ -230,10 +302,11 @@ fn put(c: &Config, token: &str, repo: &str, path: &str, data: &[u8], message: &s
     let j = core::str::from_utf8(&r.body).ok().and_then(|t| cyber_json::parse(t).ok());
     let commit = j.as_ref().and_then(|j| j.get("commit")).and_then(|c| c.get("sha")).and_then(Value::as_str).unwrap_or("");
     println!(
-        "gh-trimite: {} {} in {} (commit {})",
+        "gh-trimite: {} {} in {}{} (commit {})",
         if old_sha.is_some() { "actualizat" } else { "creat" },
         path,
         repo,
+        branch.map(|b| format!(" pe ramura {}", b)).unwrap_or_default(),
         &commit[..commit.len().min(7)]
     );
     Ok(())
