@@ -1519,6 +1519,12 @@ fn test_web() {
         (&["web", "https://test.cyber.local:18447/text.txt", "--adresa", a][..], "web text simplu"),
         (&["web", "https://test.cyber.local:18447/lipsa", "--adresa", a][..], "web pagina lipsa"),
         (&["web", "9"][..], "web legatura inexistenta"),
+        // P6-61 step 6 (F6b): forms, GET and POST, values given and the starting ones (hidden, checked, selected).
+        (&["web", "https://test.cyber.local:18447/formular", "--adresa", a][..], "web pagina cu formulare"),
+        (&["web", "--formular", "1", "nu-exista=1"][..], "web formular camp lipsa"),
+        (&["web", "--formular", "1", "q=mere si pere", "--adresa", a][..], "web formular GET"),
+        (&["web", "https://test.cyber.local:18447/formular", "--adresa", a][..], "web pagina cu formulare (iar)"),
+        (&["web", "--formular", "2", "mesaj=Salut, ăîș!", "--adresa", a][..], "web formular POST"),
     ] {
         let id = proc::spawn_path("/bin/web", args).expect("test: /bin/web");
         let code = proc::wait_child(id);

@@ -5,6 +5,8 @@
 //!   web <N>             opens link N of the last page shown
 //!   web --pagina <P>    screen page P of the last page (without downloading it again)
 //!   web --legaturi      all the links of the last page, with their full address
+//!   web --formular <F> [camp=valoare ...]   F6b (P6-61): sends form F of the last page (GET or POST,
+//!                       application/x-www-form-urlencoded) with its fields' values, changed by the pairs given
 //! Options: --linii L (lines per screen page, default 40), --latime W (characters per line, default 78),
 //! --adresa A (connect to A instead of resolving the name — tests only). The last page is kept in /tmp/web/
 //! (pagina.txt = the text, legaturi.txt = its address, then one link per line), so `cat` can show it too.
@@ -33,6 +35,8 @@ const MAX_BODY: usize = 2 * 1024 * 1024;
 const DIR: &str = "/tmp/web";
 const TEXT: &str = "/tmp/web/pagina.txt";
 const LINKS: &str = "/tmp/web/legaturi.txt";
+/// The forms of the last page: `F<TAB>method<TAB>action` lines, each followed by `<TAB>name<TAB>value` lines.
+const FORMS: &str = "/tmp/web/formulare.txt";
 
 struct Options {
     lines: usize,
@@ -45,6 +49,7 @@ fn main() -> i64 {
     let mut target: Option<String> = None;
     let mut page: Option<usize> = None;
     let mut list_links = false;
+    let mut form: Option<(usize, Vec<(String, String)>)> = None;
     let mut args = cyber_user::args().skip(1);
     while let Some(a) = args.next() {
         let mut number = |what: &str| -> Option<usize> {
@@ -75,6 +80,16 @@ fn main() -> i64 {
                 }
             },
             "--legaturi" => list_links = true,
+            "--formular" => match number("--formular") {
+                Some(v) => form = Some((v, Vec::new())),
+                None => return 1,
+            },
+            _ if form.is_some() && a.contains('=') && !a.starts_with("--") => {
+                let (k, v) = a.split_once('=').unwrap_or((a, ""));
+                if let Some((_, pairs)) = form.as_mut() {
+                    pairs.push((k.to_string(), v.to_string()));
+                }
+            }
             _ if target.is_none() && !a.starts_with("--") => target = Some(a.to_string()),
             _ => {
                 println!("web: nu inteleg \"{}\"", a);
@@ -84,6 +99,9 @@ fn main() -> i64 {
     }
     if list_links {
         return show_links();
+    }
+    if let Some((n, pairs)) = form {
+        return send_form(n, &pairs, &opts);
     }
     let Some(target) = target else {
         return match page {
@@ -106,17 +124,75 @@ fn main() -> i64 {
 
 fn usage() -> i64 {
     println!("folosire: web <adresa> | web <N> (legatura N) | web --pagina <P> | web --legaturi");
+    println!("          web --formular <F> [camp=valoare ...]   (trimite formularul F al paginii)");
     println!("          [--linii L] [--latime W]");
     1
 }
 
+/// Form F of the last page, filled with its starting values and `pairs` (only fields the form has), sent to its
+/// address: GET = the fields as the query of the address, POST = the fields as the body.
+fn send_form(n: usize, pairs: &[(String, String)], opts: &Options) -> i64 {
+    let (Some(all), Some(links)) = (read_saved(FORMS), read_saved(LINKS)) else {
+        println!("web: nicio pagina deschisa inca (web <adresa>)");
+        return 1;
+    };
+    let page_url = links.lines().next().unwrap_or("").to_string();
+    let mut forms: Vec<html::Form> = Vec::new();
+    for line in all.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        match parts.as_slice() {
+            ["F", method, action] => forms.push(html::Form { action: action.to_string(), method: method.to_string(), fields: Vec::new() }),
+            ["", k, v] => {
+                if let Some(f) = forms.last_mut() {
+                    f.fields.push((k.to_string(), v.to_string()));
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(f) = forms.get(n - 1).cloned() else {
+        println!("web: pagina are {} formulare", forms.len());
+        return 1;
+    };
+    let mut fields = f.fields.clone();
+    for (k, v) in pairs {
+        match fields.iter_mut().find(|(name, _)| name == k) {
+            Some(field) => field.1 = v.clone(),
+            None => {
+                let names: Vec<&str> = f.fields.iter().map(|(n, _)| n.as_str()).collect();
+                println!("web: formularul F{} nu are campul \"{}\" (are: {})", n, k, names.join(", "));
+                return 1;
+            }
+        }
+    }
+    let target = if f.action.is_empty() { Some(page_url.clone()) } else { html::resolve(&page_url, &f.action) };
+    let Some(target) = target else {
+        println!("web: formularul trimite spre o adresa pe care nu o pot deschide: {}", f.action);
+        return 1;
+    };
+    let data = html::form_encode(&fields);
+    println!("web: trimit formularul F{} ({}, {} campuri) spre {}", n, f.method.to_ascii_uppercase(), fields.len(), target);
+    if f.method == "post" {
+        open_with(&target, "POST", data.as_bytes(), 1, opts)
+    } else {
+        let base = target.split('?').next().unwrap_or(&target).split('#').next().unwrap_or("");
+        open_page(&format!("{}?{}", base, data), 1, opts)
+    }
+}
+
 /// Downloads `url` (following redirects), turns it into text, keeps it in /tmp/web and shows screen page `page`.
 fn open_page(url: &str, page: usize, opts: &Options) -> i64 {
+    open_with(url, "GET", &[], page, opts)
+}
+
+/// As `open_page`, with the first request's method and body (a redirect after a POST is followed with GET).
+fn open_with(url: &str, method: &str, body: &[u8], page: usize, opts: &Options) -> i64 {
     let mut url = url.to_string();
     let mut redirects = 0;
+    let (mut method, mut send) = (method.to_string(), body.to_vec());
     let body = loop {
         println!("web: deschid {}", url);
-        let resp = match get(&url, opts.address.as_deref()) {
+        let resp = match get(&url, &method, &send, opts.address.as_deref()) {
             Ok(r) => r,
             Err(e) => {
                 println!("web: {}", e);
@@ -132,6 +208,10 @@ fn open_page(url: &str, page: usize, opts: &Options) -> i64 {
                 };
                 println!("web: redirectionat ({}) spre {}", resp.status, next);
                 url = next;
+                if resp.status == 303 || method == "POST" && resp.status != 307 && resp.status != 308 {
+                    method = String::from("GET");
+                    send.clear();
+                }
                 redirects += 1;
             }
             (301 | 302 | 303 | 307 | 308, _) => {
@@ -148,14 +228,18 @@ fn open_page(url: &str, page: usize, opts: &Options) -> i64 {
     let doc = if looks_like_html(&text) {
         html::render(&text, opts.width)
     } else {
-        html::Doc { title: String::new(), lines: text.lines().map(|l| l.to_string()).collect(), links: Vec::new() }
+        html::Doc { title: String::new(), lines: text.lines().map(|l| l.to_string()).collect(), links: Vec::new(), forms: Vec::new() }
     };
     let mut links = Vec::new();
     for l in &doc.links {
         links.push(html::resolve(&url, l).unwrap_or_else(|| l.clone()));
     }
     save(&url, &doc, &links);
-    println!("web: {} octeti, {} randuri, {} legaturi", body.len(), doc.lines.len(), links.len());
+    if doc.forms.is_empty() {
+        println!("web: {} octeti, {} randuri, {} legaturi", body.len(), doc.lines.len(), links.len());
+    } else {
+        println!("web: {} octeti, {} randuri, {} legaturi, {} formulare (web --formular <F> camp=valoare)", body.len(), doc.lines.len(), links.len(), doc.forms.len());
+    }
     show(&doc.title, &doc.lines, &links, page, opts.lines)
 }
 
@@ -191,11 +275,13 @@ fn looks_like_html(text: &str) -> bool {
     ["<!doctype html", "<html", "<head", "<body", "<p>", "<h1", "<div", "<title"].iter().any(|t| head.contains(t))
 }
 
-/// GET over HTTPS (http_client) or plain HTTP (HTTP/1.0, read until the server closes).
-fn get(url: &str, address: Option<&str>) -> Result<http_client::Response, String> {
+/// GET (or POST with a form body) over HTTPS (http_client) or plain HTTP (HTTP/1.0, read until the server closes).
+fn get(url: &str, method: &str, body: &[u8], address: Option<&str>) -> Result<http_client::Response, String> {
+    let form_head = if method == "POST" { "Content-Type: application/x-www-form-urlencoded\r\n" } else { "" };
     if url.starts_with("https://") {
         let (host, port, path) = http_client::split_url(url).ok_or("adresa de neinteles")?;
-        return http_client::request("web", address, &host, port, "GET", &path, "Accept: text/html, text/plain\r\n", &[], MAX_BODY);
+        let head = format!("Accept: text/html, text/plain\r\n{}", form_head);
+        return http_client::request("web", address, &host, port, method, &path, &head, body, MAX_BODY);
     }
     let rest = url.strip_prefix("http://").ok_or("doar adrese https:// si http://")?;
     let (authority, path) = match rest.find('/') {
@@ -211,8 +297,15 @@ fn get(url: &str, address: Option<&str>) -> Result<http_client::Response, String
         None => resolve(host).map_err(|e| format!("{}: {}", host, error_text(e)))?,
     };
     let mut conn = TcpStream::connect(ip, port, 5000).map_err(|e| format!("{}:{}: {}", host, port, error_text(e)))?;
-    let req = format!("GET {} HTTP/1.0\r\nHost: {}\r\nUser-Agent: CyberUniverse-web\r\nAccept: text/html, text/plain\r\nConnection: close\r\n\r\n", path, host);
+    let length = if method == "POST" { format!("Content-Length: {}\r\n", body.len()) } else { String::new() };
+    let req = format!(
+        "{} {} HTTP/1.0\r\nHost: {}\r\nUser-Agent: CyberUniverse-web\r\nAccept: text/html, text/plain\r\n{}{}Connection: close\r\n\r\n",
+        method, path, host, form_head, length
+    );
     conn.write_all(req.as_bytes()).map_err(|e| format!("trimitere: {}", error_text(e)))?;
+    if !body.is_empty() {
+        conn.write_all(body).map_err(|e| format!("trimitere: {}", error_text(e)))?;
+    }
     let mut raw = Vec::new();
     let mut buf = [0u8; 4096];
     loop {
@@ -274,7 +367,14 @@ fn save(url: &str, doc: &html::Doc, links: &[String]) {
         ls.push_str(l);
         ls.push('\n');
     }
-    if !write_file(TEXT, text.as_bytes()) || !write_file(LINKS, ls.as_bytes()) {
+    let mut fs = String::new();
+    for f in &doc.forms {
+        fs.push_str(&format!("F\t{}\t{}\n", f.method, f.action.replace(['\t', '\n'], " ")));
+        for (k, v) in &f.fields {
+            fs.push_str(&format!("\t{}\t{}\n", k.replace(['\t', '\n'], " "), v.replace(['\t', '\n'], " ")));
+        }
+    }
+    if !write_file(TEXT, text.as_bytes()) || !write_file(LINKS, ls.as_bytes()) || !write_file(FORMS, fs.as_bytes()) {
         println!("web: nu am putut pastra pagina in {} (web <N> nu va merge)", DIR);
     }
 }

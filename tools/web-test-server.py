@@ -50,7 +50,20 @@ PAGE2 = (
     + "<p>Sfarsitul documentatiei.</p></body></html>\n"
 )
 
+# P6-61 step 6 (F6b): two forms. F1: GET to /cauta (text, hidden, checked checkbox, unchecked one, select with a
+# selected option); F2: POST to /trimite (textarea with a starting text, password, submit button).
+FORMS = """<html><head><title>Formulare</title></head><body><h1>Cautare</h1>
+<form action="/cauta" method="get">Cauta: <input type="text" name="q"> <input type=hidden name=lang value=ro>
+<input type="checkbox" name="exact" value="da" checked> exact <input type="checkbox" name="vechi"> vechi
+<select name="unde"><option value="tot">tot</option><option value="titlu" selected>titlu</option></select>
+<input type="submit" value="Cauta"></form>
+<form action="trimite" method="POST"><textarea name="mesaj">scrie aici</textarea>
+<input type="password" name="parola" value="abc"><button>Trimite</button></form>
+</body></html>
+"""
+
 PAGES = {
+    "/formular": ("200 OK", "text/html", FORMS.encode()),
     "/": ("200 OK", "text/html; charset=utf-8", INDEX.encode()),
     "/doc/pagina2.html": ("200 OK", "text/html", PAGE2.encode()),
     "/text.txt": ("200 OK", "text/plain", "Text simplu, fara HTML.\nRandul doi <nu e eticheta>.\n".encode()),
@@ -72,6 +85,25 @@ def answer(conn):
     parts = line.split(" ")
     path = parts[1] if len(parts) > 1 else "/"
     log(line)
+    if path.startswith("/cauta?"):
+        body = ("<html><head><title>Rezultate</title></head><body><p>cautare primita: " + path[len("/cauta?"):]
+                + "</p></body></html>").encode()
+        conn.sendall(f"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode() + body)
+        return
+    if parts[0] == "POST" and path == "/trimite":
+        head, _, data = req.partition(b"\r\n\r\n")
+        hl = head.decode(errors="replace").lower()
+        n = next((int(l.split(":", 1)[1]) for l in hl.split("\r\n") if l.startswith("content-length:")), 0)
+        while len(data) < n:
+            d = conn.recv(4096)
+            if not d:
+                break
+            data += d
+        ok = "content-type: application/x-www-form-urlencoded" in hl
+        body = ("<html><body><p>POST primit (" + ("tip bun" if ok else "TIP GRESIT") + "): " + data.decode(errors="replace")
+                + "</p></body></html>").encode()
+        conn.sendall(f"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode() + body)
+        return
     if path == "/vechi":
         head = "HTTP/1.1 301 Moved Permanently\r\nLocation: /doc/pagina2.html\r\nContent-Length: 0\r\n"
         conn.sendall((head + "Connection: close\r\n\r\n").encode())

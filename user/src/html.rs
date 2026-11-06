@@ -1,7 +1,8 @@
 //! A tolerant HTML-to-text renderer (P6-53, C-68 F6a), written for Cyber Universe from the public WHATWG HTML
 //! specification (only as a reference for tag and entity names; no code from other browsers). It understands
 //! enough for simple pages and documentation: the title, headings, paragraphs, lists, quotes, preformatted text,
-//! simple tables, images (their `alt` text) and links, which are numbered `[N]` in the text. Scripts, styles and
+//! simple tables, images (their `alt` text), links, which are numbered `[N]` in the text, and (F6b, P6-61) forms:
+//! `[formular F1]`, fields `[F1.nume: valoare]`, buttons `[F1: buton "..."]`. Scripts, styles and
 //! the rest of `<head>` are skipped; broken markup never stops it (it just becomes text or is ignored).
 //! Included with `#[path]` by /bin/web; it only needs `alloc`.
 
@@ -14,6 +15,17 @@ pub struct Doc {
     pub lines: Vec<String>,
     /// The `href` of every numbered link, in order (link N is `links[N - 1]`), as written in the page.
     pub links: Vec<String>,
+    /// F6b (P6-61 step 6): the page's forms, numbered `F1`, `F2`... in the text.
+    pub forms: Vec<Form>,
+}
+
+/// A form: where it goes, how (`get` or `post`), and its fields with the values they have at the start
+/// (hidden ones included; a checkbox or radio only when checked; a select with its selected or first option).
+#[derive(Clone)]
+pub struct Form {
+    pub action: String,
+    pub method: String,
+    pub fields: Vec<(String, String)>,
 }
 
 /// Elements whose content is never shown.
@@ -45,9 +57,118 @@ struct Builder {
     cells: usize,
     title: String,
     in_title: bool,
+    forms: Vec<Form>,
+    /// The open `<form>` (index in `forms`).
+    form: Option<usize>,
+    /// The open `<select>`: its field index and whether an option was marked `selected`.
+    select: Option<(usize, bool)>,
+    /// Inside a `<select>` (also one without a name): its options' text is not shown.
+    in_select: bool,
 }
 
 impl Builder {
+    /// The current form, or a form of its own for a field outside any `<form>` (it still shows, with a number).
+    fn form_index(&mut self) -> usize {
+        match self.form {
+            Some(i) => i,
+            None => {
+                self.forms.push(Form { action: String::new(), method: String::from("get"), fields: Vec::new() });
+                self.forms.len() - 1
+            }
+        }
+    }
+
+    fn field_label(&mut self, f: usize, name: &str, shown: &str) {
+        let mut s = String::from(" [F");
+        s.push_str(&(f + 1).to_string());
+        if !name.is_empty() {
+            s.push('.');
+            s.push_str(name);
+        }
+        s.push_str(": ");
+        s.push_str(shown);
+        s.push_str("] ");
+        self.push_text(&s);
+    }
+
+    /// `<input>`, `<button>`, `<textarea>` (with its text), `<select>` / `<option>`.
+    fn form_tag(&mut self, name: &str, attrs: &str, text: Option<&str>) {
+        let field = attr(attrs, "name").map(decode).unwrap_or_default();
+        let value = attr(attrs, "value").map(decode).unwrap_or_default();
+        match name {
+            "input" | "button" => {
+                let kind = attr(attrs, "type").map(|t| t.to_ascii_lowercase()).unwrap_or_else(|| {
+                    String::from(if name == "button" { "submit" } else { "text" })
+                });
+                let f = self.form_index();
+                match kind.as_str() {
+                    "hidden" => {
+                        if !field.is_empty() {
+                            self.forms[f].fields.push((field, value));
+                        }
+                    }
+                    "submit" | "button" | "image" | "reset" => {
+                        let inner = text.map(|t| decode(t).split_whitespace().collect::<Vec<_>>().join(" ")).unwrap_or_default();
+                        let label = if !value.is_empty() { value } else if !inner.is_empty() { inner } else { String::from("Trimite") };
+                        let mut s = String::from("buton \"");
+                        s.push_str(label.trim());
+                        s.push('"');
+                        self.field_label(f, "", &s);
+                    }
+                    "checkbox" | "radio" => {
+                        let on = has_attr(attrs, "checked");
+                        let v = if value.is_empty() { String::from("on") } else { value };
+                        let mut s = String::from(if on { "(x) " } else { "( ) " });
+                        s.push_str(&v);
+                        self.field_label(f, &field, &s);
+                        if on && !field.is_empty() {
+                            self.forms[f].fields.push((field, v));
+                        }
+                    }
+                    _ => {
+                        let shown = if kind == "password" { "*".repeat(value.chars().count()) } else { value.clone() };
+                        let shown = if shown.is_empty() { String::from("___") } else { shown };
+                        self.field_label(f, &field, &shown);
+                        if !field.is_empty() {
+                            self.forms[f].fields.push((field, value));
+                        }
+                    }
+                }
+            }
+            "textarea" => {
+                let f = self.form_index();
+                let v = decode(text.unwrap_or("")).trim().to_string();
+                let shown = if v.is_empty() { String::from("___") } else { v.clone() };
+                self.field_label(f, &field, &shown);
+                if !field.is_empty() {
+                    self.forms[f].fields.push((field, v));
+                }
+            }
+            "select" => {
+                let f = self.form_index();
+                self.field_label(f, &field, "alegere");
+                self.in_select = true;
+                if field.is_empty() {
+                    self.select = None;
+                } else {
+                    self.forms[f].fields.push((field, String::new()));
+                    self.select = Some((self.forms[f].fields.len() - 1, false));
+                }
+            }
+            "option" => {
+                if let (Some((i, chosen)), Some(f)) = (self.select, self.form.or(self.forms.len().checked_sub(1))) {
+                    let selected = has_attr(attrs, "selected");
+                    let first = self.forms[f].fields[i].1.is_empty() && !chosen;
+                    if selected || first {
+                        self.forms[f].fields[i].1 = value;
+                        self.select = Some((i, chosen || selected));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn indent(&self) -> String {
         let mut s = String::new();
         for _ in 0..self.quote {
@@ -117,6 +238,9 @@ impl Builder {
     }
 
     fn push_text(&mut self, s: &str) {
+        if self.select.is_some() || self.in_select {
+            return; // the options of a <select> show as one field, not as text
+        }
         if self.in_title {
             for c in s.chars() {
                 if c.is_whitespace() {
@@ -278,7 +402,29 @@ impl Builder {
                 }
                 self.cells += 1;
             }
-            ("p" | "div" | "table" | "dl" | "figure" | "section" | "article" | "form" | "address", _) => {
+            ("form", false) => {
+                self.start_block(true);
+                let action = attr(attrs, "action").map(|a| decode(a.trim())).unwrap_or_default();
+                let method = attr(attrs, "method").map(|m| m.trim().to_ascii_lowercase()).filter(|m| m == "post").unwrap_or_else(|| String::from("get"));
+                self.forms.push(Form { action, method, fields: Vec::new() });
+                self.form = Some(self.forms.len() - 1);
+                let mut s = String::from("[formular F");
+                s.push_str(&self.forms.len().to_string());
+                s.push(']');
+                self.push_text(&s);
+                self.flush();
+            }
+            ("form", true) => {
+                self.start_block(true);
+                self.form = None;
+                self.select = None;
+            }
+            ("input" | "select" | "option", false) => self.form_tag(name, attrs, None),
+            ("select", true) => {
+                self.select = None;
+                self.in_select = false;
+            }
+            ("p" | "div" | "table" | "dl" | "figure" | "section" | "article" | "address", _) => {
                 self.start_block(true);
             }
             ("dd", false) => {
@@ -289,6 +435,41 @@ impl Builder {
             _ => {}
         }
     }
+}
+
+/// Whether a boolean attribute (`checked`, `selected`) is present.
+fn has_attr(attrs: &str, name: &str) -> bool {
+    let low = attrs.to_ascii_lowercase();
+    low.split(|c: char| c.is_ascii_whitespace() || c == '/' || c == '"' || c == '\'')
+        .any(|w| w == name || w.strip_prefix(name).is_some_and(|r| r.starts_with('=')))
+}
+
+/// `application/x-www-form-urlencoded` (WHATWG URL standard): letters, digits and `*-._` stay, space is `+`.
+pub fn form_encode(fields: &[(String, String)]) -> String {
+    let mut out = String::new();
+    for (i, (k, v)) in fields.iter().enumerate() {
+        if i > 0 {
+            out.push('&');
+        }
+        for (j, part) in [k, v].iter().enumerate() {
+            if j == 1 {
+                out.push('=');
+            }
+            for b in part.bytes() {
+                match b {
+                    b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'*' | b'-' | b'.' | b'_' => out.push(b as char),
+                    b' ' => out.push('+'),
+                    _ => {
+                        const H: &[u8; 16] = b"0123456789ABCDEF";
+                        out.push('%');
+                        out.push(H[(b >> 4) as usize] as char);
+                        out.push(H[(b & 15) as usize] as char);
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 fn chars(s: &str) -> usize {
@@ -406,6 +587,10 @@ pub fn render(html: &str, width: usize) -> Doc {
         cells: 0,
         title: String::new(),
         in_title: false,
+        forms: Vec::new(),
+        form: None,
+        select: None,
+        in_select: false,
     };
     let mut rest = html;
     while !rest.is_empty() {
@@ -447,6 +632,31 @@ pub fn render(html: &str, width: usize) -> Doc {
             rest = pos.map_or("", |p| &rest[p..]);
             continue;
         }
+        if !end && name == "button" {
+            // The button's text is its label (tags inside it dropped).
+            let pos = find_ci(rest, "</button").unwrap_or(rest.len());
+            let mut inner = String::new();
+            let mut in_tag = false;
+            for c in rest[..pos].chars() {
+                match c {
+                    '<' => in_tag = true,
+                    '>' => in_tag = false,
+                    _ if !in_tag => inner.push(c),
+                    _ => {}
+                }
+            }
+            b.form_tag("button", attrs, Some(&inner));
+            rest = &rest[pos..];
+            rest = rest.find('>').map_or("", |e| &rest[e + 1..]);
+            continue;
+        }
+        if !end && name == "textarea" {
+            let pos = find_ci(rest, "</textarea").unwrap_or(rest.len());
+            b.form_tag("textarea", attrs, Some(&rest[..pos]));
+            rest = &rest[pos..];
+            rest = rest.find('>').map_or("", |e| &rest[e + 1..]);
+            continue;
+        }
         if !end && name == "title" {
             let pos = find_ci(rest, "</title").unwrap_or(rest.len());
             b.tag("title", false, "");
@@ -465,7 +675,7 @@ pub fn render(html: &str, width: usize) -> Doc {
     while b.lines.first().is_some_and(|l| l.is_empty()) {
         b.lines.remove(0);
     }
-    Doc { title: b.title.trim().to_string(), lines: b.lines, links: b.links }
+    Doc { title: b.title.trim().to_string(), lines: b.lines, links: b.links, forms: b.forms }
 }
 
 /// The position of the `>` that ends the tag starting at `s[0]`, skipping `>` inside quoted attribute values.
