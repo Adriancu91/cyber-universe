@@ -5,6 +5,10 @@
 //! The token (one line in /usb/github.token) is sent when it exists (needed for private repositories) and never printed.
 //! /etc/github.conf works as for gh-trimite. Files over 1 MiB are refused (the contents API gives no content for them).
 //! Exit code 0 = file written (or already the same), 1 = not.
+//!
+//! `gh-ia --hub [comenzi [proiect] | stare [proiect] | decizii]` (C-84 item 2, P6-61): reads the Cyber Hub (only reads; the
+//! repository is `hub =` in /etc/github.conf, by default Adriancu91/Cyber-hub) and shows on screen Adrian's commands for a
+//! project with their state lines, a project's state file, or the latest decisions — no Windows needed to see them.
 #![no_std]
 #![no_main]
 
@@ -14,7 +18,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use cyber_json::{Value, base64};
-use cyber_user::println;
+use cyber_user::{print, println};
 
 cyber_user::entry!(main);
 cyber_user::heap!(12 * 1024 * 1024);
@@ -30,9 +34,19 @@ const MAX_ANSWER: usize = 4 * 1024 * 1024;
 
 fn main() -> i64 {
     let args: Vec<&str> = cyber_user::args().skip(1).collect();
+    if args.first() == Some(&"--hub") {
+        return match hub(&config(), &args[1..]) {
+            Ok(()) => 0,
+            Err(e) => {
+                println!("hub: {}", e);
+                1
+            }
+        };
+    }
     if args.len() != 3 {
         println!("folosire: gh-ia <proprietar/depozit> <cale in depozit> <fisier>");
         println!("  exemplu: gh-ia Adriancu91/cyber-universe docs/STATE.md /usb/STATE.md   (token in /usb/github.token, daca e privat)");
+        println!("          gh-ia --hub [comenzi [proiect] | stare [proiect] | decizii]   (doar citire din Cyber Hub)");
         return 1;
     }
     match run(&config(), args[0], args[1], args[2]) {
@@ -45,6 +59,88 @@ fn main() -> i64 {
 }
 
 fn run(c: &Config, repo: &str, path: &str, file: &str) -> Result<(), String> {
+    let data = fetch(c, repo, path)?;
+    if read_file(file, data.len() + 1).as_deref() == Some(&data[..]) {
+        println!("gh-ia: {} e deja la fel ({} octeti)", file, data.len());
+        return Ok(());
+    }
+    // Written next to the old file first; the old one is replaced only when the new one reads back right.
+    let tmp = format!("{}.nou", file);
+    write_checked(&tmp, &data)?;
+    let _ = cyber_user::remove(file);
+    if cyber_user::rename(&tmp, file) < 0 {
+        // A file system without renaming (the memory one, /etc): the checked bytes written straight to the name.
+        write_checked(file, &data)?;
+        let _ = cyber_user::remove(&tmp);
+    }
+    println!("gh-ia: {} din {} -> {} ({} octeti)", path, repo, file, data.len());
+    Ok(())
+}
+
+/// How many commands `hub comenzi` shows (the latest), and how many lines of decisions.
+const HUB_COMMANDS: usize = 8;
+const HUB_DECISIONS: usize = 40;
+
+/// `--hub ...`: reads one file of the hub and shows what Adrian needs from it. Nothing is written anywhere.
+fn hub(c: &Config, args: &[&str]) -> Result<(), String> {
+    let what = args.first().copied().unwrap_or("comenzi");
+    let project = args.get(1).copied().unwrap_or("cyber-universe");
+    if args.len() > 2 || !project.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        return Err("folosire: hub [comenzi [proiect] | stare [proiect] | decizii]".to_string());
+    }
+    let text = |path: &str| fetch(c, &c.hub, path).map(|d| String::from_utf8_lossy(&d).into_owned());
+    match what {
+        "comenzi" => {
+            let all = text("COMENZI.md")?;
+            let picked = commands_for(&all, project);
+            let fresh = picked.iter().filter(|(_, states)| states.iter().any(|s| s.trim_end() == "- stare: nou")).count();
+            println!("hub: {} comenzi pentru {} in COMENZI.md ({} cu stare nou); ultimele {}:", picked.len(), project, fresh, HUB_COMMANDS.min(picked.len()));
+            for (head, states) in picked.iter().skip(picked.len().saturating_sub(HUB_COMMANDS)) {
+                println!("{}", head.trim_start_matches("### "));
+                for s in states {
+                    println!("   {}", s.trim_start_matches("- "));
+                }
+            }
+        }
+        "stare" => print!("{}", text(&format!("stare/{}.md", project))?),
+        "decizii" => {
+            let all = text("DECIZII.md")?;
+            let lines: Vec<&str> = all.lines().collect();
+            println!("hub: DECIZII.md, ultimele {} randuri din {}:", HUB_DECISIONS.min(lines.len()), lines.len());
+            for l in &lines[lines.len().saturating_sub(HUB_DECISIONS)..] {
+                println!("{}", l);
+            }
+        }
+        other => return Err(format!("necunoscut: {} (folosire: hub [comenzi [proiect] | stare [proiect] | decizii])", other)),
+    }
+    Ok(())
+}
+
+/// The commands (`### C-NN · proiecte · titlu`) whose project list names `project`, each with its `- stare...` lines.
+fn commands_for<'a>(all: &'a str, project: &str) -> Vec<(&'a str, Vec<&'a str>)> {
+    let mut out: Vec<(&str, Vec<&str>)> = Vec::new();
+    let mut current = false;
+    for line in all.lines() {
+        if line.starts_with("### ") {
+            let projects = line.split(" · ").nth(1).unwrap_or("");
+            current = line.starts_with("### C-")
+                && projects.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')).any(|w| w == project);
+            if current {
+                out.push((line, Vec::new()));
+            }
+        } else if line.starts_with("## ") {
+            current = false;
+        } else if current && line.starts_with("- stare") {
+            if let Some(last) = out.last_mut() {
+                last.1.push(line);
+            }
+        }
+    }
+    out
+}
+
+/// GET of one file through the contents API (base64 decoded, size checked).
+fn fetch(c: &Config, repo: &str, path: &str) -> Result<Vec<u8>, String> {
     if !valid_repo(repo) {
         return Err(format!("depozit invalid: {} (forma: proprietar/depozit)", repo));
     }
@@ -79,21 +175,7 @@ fn run(c: &Config, repo: &str, path: &str, file: &str) -> Result<(), String> {
     if data.len() != size {
         return Err(format!("am primit {} octeti, GitHub spune {}", data.len(), size));
     }
-    if read_file(file, data.len() + 1).as_deref() == Some(&data[..]) {
-        println!("gh-ia: {} e deja la fel ({} octeti)", file, data.len());
-        return Ok(());
-    }
-    // Written next to the old file first; the old one is replaced only when the new one reads back right.
-    let tmp = format!("{}.nou", file);
-    write_checked(&tmp, &data)?;
-    let _ = cyber_user::remove(file);
-    if cyber_user::rename(&tmp, file) < 0 {
-        // A file system without renaming (the memory one, /etc): the checked bytes written straight to the name.
-        write_checked(file, &data)?;
-        let _ = cyber_user::remove(&tmp);
-    }
-    println!("gh-ia: {} din {} -> {} ({} octeti)", path, repo, file, data.len());
-    Ok(())
+    Ok(data)
 }
 
 /// Writes `data` as a new file `path` and reads it back; on any failure the half-written file is removed.

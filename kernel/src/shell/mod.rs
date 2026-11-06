@@ -145,6 +145,12 @@ fn dispatch(line: &str) -> bool {
         },
         "raport" => raport::manual(),
         "trimite" => raport::send_to_hub(),
+        "hub" => {
+            // C-84 item 2 (P6-61): Adrian's commands, a project's state, the decisions — read from the Cyber Hub.
+            let mut all = alloc::vec!["gh-ia", "--hub"];
+            all.extend_from_slice(args);
+            run_program(&all)
+        }
         "compara" => match args {
             [a, b] => out!("{}", compara::compare_files(a, b)),
             _ => out!("folosire: compara <fisier1> <fisier2>\n"),
@@ -228,6 +234,7 @@ fn help() {
     out!("  hw               raport hardware pe o pagina (pentru o singura poza)\n");
     out!("  hw lista [--detalii]  tot hardware-ul: procesor, memorie, PCI, Wi-Fi, USB, ACPI (doar citire)\n");
     out!("  raport           scrie pe stick /usb/raport/<data>-<nr>.txt: hw, lspci, net, jurnalele (fara chei)\n");
+    out!("  hub [comenzi|stare|decizii] [proiect]  citeste din Cyber Hub comenzile lui Adrian, starea, deciziile\n");
     out!("  trimite          rapoartele noi din /usb/raport -> hub (rezultate/os-automat/<data>/), doar cu /usb/github.token\n");
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
     out!("  log --avertismente [n]  doar avertismentele si erorile; log --sumar = cate randuri pe nivel si pe modul\n");

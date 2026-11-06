@@ -9,7 +9,14 @@ import base64, hashlib, json, socket, ssl, sys, urllib.parse
 D = sys.path[0] + "/../tls/tests/data"
 REPO = "Adriancu91/note-test"
 TOKEN = "tok-gh"
-FILES = {"note/vechi.txt": b"versiunea veche\n"}
+FILES = {"note/vechi.txt": b"versiunea veche\n",
+         # P6-61 (C-84 item 2): a small Cyber Hub for `gh-ia --hub` (same repository, `hub =` in the guest's github.conf).
+         "COMENZI.md": "# Comenzi\n\n## Active\n\n### C-1 · kronos · Ceva pentru Kronos\n- stare: nou\n\n"
+                       "### C-2 · cyber-universe · Rapoartele pleaca singure\n- ce: ...\n- stare: preluat (P6-61)\n\n"
+                       "### C-3 · cyber-gpu + cyber-universe · Pasi dupa I10\n- stare: nou\n- stare (cyber-universe): preluat\n\n"
+                       "## Arhiva\n- stare: nu se arata\n".encode(),
+         "stare/cyber-universe.md": "# Stare: Cyber Universe OS\nTotul merge in QEMU (proba).\n".encode(),
+         "DECIZII.md": "".join(f"- decizia {i}\n" for i in range(1, 51)).encode()}
 ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 ctx.minimum_version = ssl.TLSVersion.TLSv1_3
 ctx.load_cert_chain(D + "/ec.pem", D + "/ec.key")

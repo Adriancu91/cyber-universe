@@ -89,6 +89,8 @@ Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet 
    `raport` și după `gpu lant` sistemul trimite singur rapoartele noi din `/usb/raport` în hub, la
    `rezultate/os-automat/<data>/`. Comanda `trimite` le trimite oricând. Ce s-a trimis e scris în `/usb/raport/trimise.txt`
    (fiecare raport pleacă o singură dată). Fără token sau fără rețea apare un mesaj, iar rapoartele rămân pe stick, ca până acum.
+7. **Hub-ul citit din OS (P6-61):** `hub` arată comenzile tale pentru OS și stările lor; `hub stare kronos` (sau alt proiect)
+   arată starea proiectului; `hub decizii` ultimele decizii. Doar citire; merge cu același `github.token` (sau fără, dacă hub-ul e public).
 
 ## Pentru Claude (tehnic)
 - Varianta B merge pentru că firmware-ul UEFI caută `EFI/BOOT/BOOTX64.EFI` pe orice partiție FAT32, iar Limine își citește

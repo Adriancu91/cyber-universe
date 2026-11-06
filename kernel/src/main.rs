@@ -1758,6 +1758,20 @@ fn test_ghpush() {
     assert!(take(&[R, dest, "/etc/jurnal-inapoi.txt"], "raport trimis") == 0);
     assert!(fs::read_all("/etc/jurnal-inapoi.txt").ok().as_deref() == Some(&b"gpu: lant: al doilea jurnal\n"[..]), "test: raportul din hub difera");
     info!("test: rapoartele pleaca singure in hub OK");
+    // P6-61 (C-84 item 2): `gh-ia --hub` reads the hub (here the test repository, `hub =` above) and only shows.
+    let hub = |args: &[&str], what: &str| {
+        let mut all = alloc::vec!["gh-ia", "--hub"];
+        all.extend_from_slice(args);
+        let id = proc::spawn_path("/bin/gh-ia", &all).expect("test: /bin/gh-ia");
+        let code = proc::wait_child(id);
+        info!("test: hub ({}) a iesit cu codul {}", what, code);
+        code
+    };
+    assert!(hub(&[], "comenzi") == 0);
+    assert!(hub(&["stare"], "stare") == 0);
+    assert!(hub(&["decizii"], "decizii") == 0);
+    assert!(hub(&["stare", "../x"], "proiect cu ..") == 1);
+    info!("test: hub citit din OS OK");
 }
 
 /// HTTPS with real web sites (P6-02): /bin/fetch resolves the name, connects through QEMU's network to the

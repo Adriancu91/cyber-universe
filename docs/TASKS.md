@@ -368,6 +368,7 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 - [ ] **P6-60** Kronos #513 ca model principal în OS (comanda C-82, „da 513”): `kronos` alege implicit `kronos_513_q8_0.kgr` (SHA-256 + textele de control noi), #477/#459 rămân de pornit. **Așteaptă** Release-ul `kronos-kgr1-513` + `MODEL.md` actualizat de Kronos. Plan: `docs/plans/P6-60.md`. Dep: Release `kronos-kgr1-513`
 - [~] **P6-61** Unelte spre independența de Windows (comanda C-84, până luni 9 nov): rapoartele pleacă singure în hub, `hub`, Kronos asistent, git simplu pe ramuri `os/…`, `test tot`, browser b, NTP/setări/tastatură/fișiere. Plan: `docs/plans/P6-61.md`.
   Pas 1 gata (2026-11-06): `gh-trimite --rapoarte` + comanda `trimite`; nucleul trimite singur după `raport` și `gpu lant` (doar cu `/usb/github.token`), listă `trimise.txt` pe stick; testat în `ghpush` (QEMU).
+  Pas 2 gata (2026-11-06): comanda `hub [comenzi|stare|decizii] [proiect]` (= `gh-ia --hub`, doar citire) arată din OS comenzile lui Adrian cu stările lor, starea unui proiect, ultimele decizii; testat în `ghpush`.
 - [ ] **P6-62** Pașii GPU după I10 în `gpu lant` + `kronos --gpu` cu întoarcere pe procesor (partea OS din C-83). **Așteaptă** I11–I14 din cyber-gpu (la `657e209` nu există). Plan: `docs/plans/P6-62.md`.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
