@@ -371,6 +371,7 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
   Pas 2 gata (2026-11-06): comanda `hub [comenzi|stare|decizii] [proiect]` (= `gh-ia --hub`, doar citire) arată din OS comenzile lui Adrian cu stările lor, starea unui proiect, ultimele decizii; testat în `ghpush`.
   Pas 3 gata (2026-11-06): `kronos --intreaba <întrebare>` — Kronos ca asistent: răspuns pe un rând, cu ultimele schimburi din istoric în context, istoricul salvat pe stick (`/usb/kronos/conversatie.txt`, `--istoric`); spune cinstit că modelul doar continuă text; testat în `kronos-kgr`/`kronos-kgr-1` (modelul mic).
   Pas 4 gata (2026-11-06): F8 git simplu — `gh-trimite --ramura os/<nume> …` face commit doar pe ramuri `os/…` (ramura se face din `main` dacă lipsește; `main` și `..` refuzate), `gh-ia --lista <depozit> [dosar] [--ramura …]`; testat în `ghpush`.
+  Pas 5 gata (2026-11-06): F9 `test tot` — procesor (vectorii oficiali de calcul), ceas, temporizator, stick (4 KiB scriși/citiți/șterși), rețea (DHCP + DNS), placa video (doar ID PCI); PASS/FAIL/LIPSA + raport `raport/test-tot-*.txt` trimis în hub; scenariu nou `testtot` (QEMU).
 - [ ] **P6-62** Pașii GPU după I10 în `gpu lant` + `kronos --gpu` cu întoarcere pe procesor (partea OS din C-83). **Așteaptă** I11–I14 din cyber-gpu (la `657e209` nu există). Plan: `docs/plans/P6-62.md`.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 

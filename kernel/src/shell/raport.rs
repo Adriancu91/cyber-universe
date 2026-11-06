@@ -112,7 +112,7 @@ pub fn auto_if_errors() {
 fn write_report(reason: &str) -> Result<(String, usize), String> {
     let _one = WRITING.lock();
     let errors_now = crate::log::error_count();
-    let (dir, name) = pick_file()?;
+    let (dir, name) = pick_file("")?;
     let text = hide_secrets(&build(reason), &secrets());
     let path = format!("{}/{}", dir, name);
     fs::create(&path, Kind::File).map_err(|e| format!("{}: {}", path, e.message()))?;
@@ -123,8 +123,26 @@ fn write_report(reason: &str) -> Result<(String, usize), String> {
     Ok((path, written))
 }
 
+/// P6-61 (`test tot`): the first report destination that is mounted with writing, with its `raport/` folder made.
+pub fn writable_mount() -> Option<String> {
+    pick_file("").ok().and_then(|(dir, _)| dir.strip_suffix("/raport").map(String::from))
+}
+
+/// P6-61 (`test tot`): `text` (secrets hidden) as `<mount>/raport/<prefix>AAAALLZZ-<nr>.txt`; returns the path.
+pub fn write_named(prefix: &str, text: &str) -> Result<String, String> {
+    let _one = WRITING.lock();
+    let (dir, name) = pick_file(prefix)?;
+    let path = format!("{}/{}", dir, name);
+    let text = hide_secrets(text, &secrets());
+    fs::create(&path, Kind::File).map_err(|e| format!("{}: {}", path, e.message()))?;
+    fs::write(&path, 0, text.as_bytes()).map_err(|e| format!("{}: {}", path, e.message()))?;
+    fs::flush(&path).map_err(|e| format!("{}: {}", path, e.message()))?;
+    crate::info!("raport: {} scris ({} octeti, {})", path, text.len(), prefix.trim_end_matches('-'));
+    Ok(path)
+}
+
 /// `<mount>/raport/` (created if missing) and the first free `AAAALLZZ-<nr>.txt`.
-fn pick_file() -> Result<(String, String), String> {
+fn pick_file(prefix: &str) -> Result<(String, String), String> {
     let mut last_err = String::from("stick-ul nu e montat (/usb)");
     for mount in destinations() {
         if fs::list(mount).is_err() {
@@ -147,7 +165,7 @@ fn pick_file() -> Result<(String, String), String> {
             .unwrap_or_else(|| String::from("00000000"));
         let existing: Vec<String> = fs::list(&dir).map_err(|e| e.message())?.into_iter().map(|(n, _)| n.to_ascii_lowercase()).collect();
         for nr in 1..1000 {
-            let name = format!("{}-{}.txt", date, nr);
+            let name = format!("{}{}-{}.txt", prefix, date, nr);
             if !existing.contains(&name) {
                 return Ok((dir, name));
             }
