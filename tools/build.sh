@@ -139,6 +139,11 @@ cp "$FLOPPY" "$PICK"
 echo "scriere permisa" > "$BUILD/cyber.rw.pick" && echo "test usb-pick" > "$BUILD/VERSIUNE.pick"
 MTOOLS_SKIP_CHECK=1 mcopy -o -i "$PICK" "$BUILD/cyber.rw.pick" ::/cyber.rw
 MTOOLS_SKIP_CHECK=1 mcopy -o -i "$PICK" "$BUILD/VERSIUNE.pick" ::/VERSIUNE
+# P6-61 (C-84): a test stick whose settings say "ro" (scenario layout-boot-usb: the stick's settings are applied at start-up).
+SETSTICK="$BUILD/stick-setari.img"
+cp "$PICK" "$SETSTICK"
+MTOOLS_SKIP_CHECK=1 mmd -i "$SETSTICK" ::/config
+MTOOLS_SKIP_CHECK=1 mcopy -o -i "$SETSTICK" "$ROOT/tests/disk/layoutboot/config/settings.toml" ::/config/settings.toml
 # C-74: a "normal stick" next to the test stick, with the NVIDIA firmware folder (here one stand-in file, NOT an NVIDIA
 # file) and cyber.rw: the OS mounts it read-only at /usb2 and reads the firmware from it (scenario usb-fw).
 FWSTICK="$BUILD/stick-fw.img"

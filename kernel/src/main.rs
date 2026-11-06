@@ -198,12 +198,18 @@ fn run_desktop() -> bool {
 
 /// Settings saved by the Settings app that the kernel applies at start-up (the keyboard layout).
 fn apply_settings() {
-    let Ok(text) = fs::read_all("/disk/config/settings.toml") else { return };
+    // P6-61: the stick's settings first (they travel with it), then the disk's.
+    let Some((path, text)) = ["/usb/config/settings.toml", "/disk/config/settings.toml"]
+        .into_iter()
+        .find_map(|p| fs::read_all(p).ok().map(|t| (p, t)))
+    else {
+        return;
+    };
     let text = alloc::string::String::from_utf8_lossy(&text);
     let ro = text.lines().any(|l| l.split_once('=').is_some_and(|(k, v)| k.trim() == "tastatura" && v.trim() == "\"ro\""));
     if ro {
         drivers::keyboard::set_layout(drivers::keyboard::Layout::Ro);
-        info!("tastatura: aranjament romanesc (din setari)");
+        info!("tastatura: aranjament romanesc (din setari, {})", path);
     }
 }
 

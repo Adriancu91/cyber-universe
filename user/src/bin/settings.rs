@@ -1,4 +1,5 @@
-//! Settings: the time zone of the clock and the keyboard layout, saved in /disk/config/settings.toml
+//! Settings: the time zone of the clock and the keyboard layout, saved on the stick (/usb/config/settings.toml),
+//! else in /disk/config/settings.toml (P6-61)
 //! (the desktop reads the time zone; the layout is applied at start-up once the Romanian layout
 //! exists, P4-12). `q` or Escape closes the window.
 #![no_std]
@@ -7,7 +8,7 @@
 use cyber_user::gfx::{Canvas, Event, Window};
 use cyber_user::settings;
 use cyber_user::text::Line;
-use cyber_user::{close, create, error_text, open, println, remove, write};
+use cyber_user::{error_text, println};
 
 cyber_user::entry!(main);
 
@@ -50,22 +51,24 @@ impl Settings {
 
     fn save(&mut self) {
         let text = self.text();
-        let _ = create("/disk/config", true); // may exist already
-        let r = remove(settings::PATH);
-        let r = if r < 0 && r != -3 { r } else { create(settings::PATH, false) };
-        let fd = if r < 0 { r } else { open(settings::PATH) };
         self.status = Line::new();
-        if fd < 0 {
-            self.status.push("nu pot salva: ").push(error_text(fd));
-            return;
-        }
-        let n = write(fd as u64, text.as_str().as_bytes());
-        close(fd);
-        if n == text.as_str().len() as i64 {
-            self.status.push("salvat in ").push(settings::PATH);
-            println!("settings: salvat fus_orar {}{}, tastatura {}", if self.zone < 0 { "-" } else { "+" }, self.zone.abs(), if self.ro { "ro" } else { "us" });
-        } else {
-            self.status.push("salvare incompleta");
+        match settings::save(text.as_str().as_bytes()) {
+            Ok(path) => {
+                self.status.push("salvat in ").push(path);
+                println!(
+                    "settings: salvat fus_orar {}{}, tastatura {} in {}",
+                    if self.zone < 0 { "-" } else { "+" },
+                    self.zone.abs(),
+                    if self.ro { "ro" } else { "us" },
+                    path
+                );
+            }
+            Err(e) if e == -5 => {
+                self.status.push("salvare incompleta");
+            }
+            Err(e) => {
+                self.status.push("nu pot salva: ").push(error_text(e));
+            }
         }
     }
 

@@ -1,17 +1,45 @@
-//! System settings, kept in `PATH` as `key = "value"` lines (the same small TOML subset as module.toml).
+//! System settings, kept in `PATHS` (stick first) as `key = "value"` lines (the same small TOML subset as module.toml).
 //! Keys: `fus_orar` (hours added to the computer's clock, e.g. "+3") and `tastatura` ("us" or "ro").
 
-pub const PATH: &str = "/disk/config/settings.toml";
+/// P6-61 (C-84 item 7): the settings live on the stick when it is mounted with writing (they travel with it);
+/// the test disk / older place `/disk/config/` is the fallback (read when the stick has none, written when the
+/// stick cannot be written).
+pub const PATHS: [(&str, &str); 2] = [("/usb/config", "/usb/config/settings.toml"), ("/disk/config", "/disk/config/settings.toml")];
 
-/// Reads the settings file into `buf`; empty text if there is none.
+/// Reads the first settings file that exists into `buf`; empty text if there is none.
 pub fn read(buf: &mut [u8]) -> &str {
-    let fd = crate::open(PATH);
-    if fd < 0 {
-        return "";
+    for (_, path) in PATHS {
+        let fd = crate::open(path);
+        if fd < 0 {
+            continue;
+        }
+        let n = crate::read(fd, buf).max(0) as usize;
+        crate::close(fd);
+        return core::str::from_utf8(&buf[..n]).unwrap_or("");
     }
-    let n = crate::read(fd, buf).max(0) as usize;
-    crate::close(fd);
-    core::str::from_utf8(&buf[..n]).unwrap_or("")
+    ""
+}
+
+/// Writes `text` to the first place that accepts it; returns that path, or the last error.
+pub fn save(text: &[u8]) -> Result<&'static str, i64> {
+    let mut last = -3;
+    for (dir, path) in PATHS {
+        let _ = crate::create(dir, true); // may exist already; fails (and so does the file) when nothing is mounted there
+        let r = crate::remove(path);
+        let r = if r < 0 && r != -3 { r } else { crate::create(path, false) };
+        let fd = if r < 0 { r } else { crate::open(path) };
+        if fd < 0 {
+            last = fd;
+            continue;
+        }
+        let n = crate::write(fd as u64, text);
+        crate::close(fd);
+        if n == text.len() as i64 {
+            return Ok(path);
+        }
+        last = if n < 0 { n } else { -5 };
+    }
+    Err(last)
 }
 
 /// The value of `key` in settings text.
