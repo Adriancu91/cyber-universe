@@ -91,6 +91,9 @@ Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet 
    (fiecare raport pleacă o singură dată). Fără token sau fără rețea apare un mesaj, iar rapoartele rămân pe stick, ca până acum.
 7. **Hub-ul citit din OS (P6-61):** `hub` arată comenzile tale pentru OS și stările lor; `hub stare kronos` (sau alt proiect)
    arată starea proiectului; `hub decizii` ultimele decizii. Doar citire; merge cu același `github.token` (sau fără, dacă hub-ul e public).
+8. **Întrebări pentru Kronos (P6-61):** `run kronos --intreaba Ce este un sistem de operare?` — Kronos răspunde pe un rând și ține
+   minte conversația în `/usb/kronos/conversatie.txt` (întrebarea următoare vede ultimele schimburi). Modelul e încă unul care
+   continuă text, nu un asistent antrenat: răspunsurile pot fi ciudate.
 
 ## Pentru Claude (tehnic)
 - Varianta B merge pentru că firmware-ul UEFI caută `EFI/BOOT/BOOTX64.EFI` pe orice partiție FAT32, iar Limine își citește

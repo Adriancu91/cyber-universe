@@ -369,6 +369,7 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 - [~] **P6-61** Unelte spre independența de Windows (comanda C-84, până luni 9 nov): rapoartele pleacă singure în hub, `hub`, Kronos asistent, git simplu pe ramuri `os/…`, `test tot`, browser b, NTP/setări/tastatură/fișiere. Plan: `docs/plans/P6-61.md`.
   Pas 1 gata (2026-11-06): `gh-trimite --rapoarte` + comanda `trimite`; nucleul trimite singur după `raport` și `gpu lant` (doar cu `/usb/github.token`), listă `trimise.txt` pe stick; testat în `ghpush` (QEMU).
   Pas 2 gata (2026-11-06): comanda `hub [comenzi|stare|decizii] [proiect]` (= `gh-ia --hub`, doar citire) arată din OS comenzile lui Adrian cu stările lor, starea unui proiect, ultimele decizii; testat în `ghpush`.
+  Pas 3 gata (2026-11-06): `kronos --intreaba <întrebare>` — Kronos ca asistent: răspuns pe un rând, cu ultimele schimburi din istoric în context, istoricul salvat pe stick (`/usb/kronos/conversatie.txt`, `--istoric`); spune cinstit că modelul doar continuă text; testat în `kronos-kgr`/`kronos-kgr-1` (modelul mic).
 - [ ] **P6-62** Pașii GPU după I10 în `gpu lant` + `kronos --gpu` cu întoarcere pe procesor (partea OS din C-83). **Așteaptă** I11–I14 din cyber-gpu (la `657e209` nu există). Plan: `docs/plans/P6-62.md`.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 

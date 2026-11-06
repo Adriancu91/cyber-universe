@@ -99,6 +99,16 @@ pub fn run() {
     assert!(run_one(&quiet) == 0, "kronos: --fara-ecran a esuat");
     let penalty = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--n", "5", "--repetitie", "1.5", "Ana", "are", "mere."];
     assert!(run_one(&penalty) == 0, "kronos: --repetitie a esuat");
+    // P6-61 (C-84 item 3): Kronos as an assistant — a question, then a second one that sees the first in the history.
+    let _ = crate::fs::remove("/etc/conversatie.txt");
+    let ask = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--n", "12", "--istoric", "/etc/conversatie.txt", "--intreaba", "Ce", "faci?"];
+    assert!(run_one(&ask) == 0, "kronos: --intreaba a esuat");
+    let ask2 = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--n", "12", "--istoric", "/etc/conversatie.txt", "--intreaba", "Si", "acum?"];
+    assert!(run_one(&ask2) == 0, "kronos: --intreaba (a doua) a esuat");
+    let h = crate::fs::read_all("/etc/conversatie.txt").unwrap_or_default();
+    let h = core::str::from_utf8(&h).unwrap_or("");
+    assert!(h.matches("Intrebare: ").count() == 2 && h.contains("Intrebare: Ce faci?\nRaspuns: ") && h.contains("Intrebare: Si acum?\n"), "kronos: istoricul: {:?}", h);
+    crate::info!("test: kronos --intreaba: 2 schimburi in istoric OK");
     // P6-38 (C-46): the control texts of a known model (here the tiny model of the official vectors) must pass; an
     // unknown model has none (exit 1). The default choice: #477 before #459 before any other .kgr, and the built-in sum
     // of the chosen name must refuse a file that is not that model (exit 3).

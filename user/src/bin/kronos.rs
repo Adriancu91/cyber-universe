@@ -29,6 +29,11 @@
 //! The tokenizer is the one inside the model file (`tokenizer.bpe`, `src/bpe.rs`, P6-27b). Generation stops at a
 //! special token (`<|endoftext|>`), at `--n` tokens or at the end of the context.
 //!
+//! `--intreaba <intrebare>` (P6-61, C-84 item 3): Kronos as an assistant. The prompt is the last exchanges of the history
+//! (`--istoric <cale>`, default `<dosar>/conversatie.txt` on the stick) plus `Intrebare: <q>\nRaspuns:`; generation stops
+//! at the end of the answer's first line; the exchange is appended to the history. The model only continues text (it
+//! was not trained for conversation), and the program says so.
+//!
 //! Exit codes: 0 ok, 1 reference mismatch, 2 bad arguments, 3 wrong SHA-256, 4 cannot read or parse the model.
 #![no_std]
 #![no_main]
@@ -57,6 +62,22 @@ cyber_user::heap!(32 * 1024 * 1024);
 
 /// Declared tolerance against the float64 reference: |engine - ref| <= TOL * (1 + |ref|) for every logit.
 const TOL: f32 = 1e-4;
+
+/// Writes the whole file again (the history is small).
+fn save(path: &str, data: &[u8]) -> Result<(), String> {
+    let _ = cyber_user::remove(path);
+    let r = cyber_user::create(path, false);
+    if r < 0 {
+        return Err(alloc::format!("{}: {}", path, cyber_user::error_text(r)));
+    }
+    let fd = cyber_user::open(path);
+    if fd < 0 {
+        return Err(alloc::format!("{}: {}", path, cyber_user::error_text(fd)));
+    }
+    let w = cyber_user::write(fd as u64, data);
+    cyber_user::close(fd);
+    if w != data.len() as i64 { Err(alloc::format!("{}: scriere incompleta", path)) } else { Ok(()) }
+}
 
 fn now_ms() -> u64 {
     cyber_user::mem_info().map(|m| m.uptime_ms).unwrap_or(0)
@@ -267,6 +288,10 @@ struct Opts {
     penalty: Option<f32>,
     /// (vectori.json, fel)
     vectors: Option<(String, String)>,
+    /// `--intreaba`: the words are a question; answer one line, keep the history.
+    ask: bool,
+    /// `--istoric <cale>`: the conversation file (default `<dosar>/conversatie.txt`).
+    history: Option<String>,
 }
 
 fn parse_args() -> Result<Opts, String> {
@@ -293,6 +318,8 @@ fn parse_args() -> Result<Opts, String> {
         no_screen: false,
         penalty: None,
         vectors: None,
+        ask: false,
+        history: None,
     };
     let mut args = cyber_user::args().skip(1);
     while let Some(a) = args.next() {
@@ -324,6 +351,8 @@ fn parse_args() -> Result<Opts, String> {
             "--profil" => o.profile = true,
             "--fara-cedari" => o.no_yield = true,
             "--fara-ecran" => o.no_screen = true,
+            "--intreaba" => o.ask = true,
+            "--istoric" => o.history = Some(val()?.into()),
             "--repetitie" => {
                 let p: f32 = val()?.parse().map_err(|_| String::from("--repetitie cere un numar (de ex. 1.3)"))?;
                 if !(p >= 1.0 && p <= 10.0) {
@@ -758,6 +787,40 @@ fn profile_report(m: &Model, passes: usize, total: u64, screen: u64, pick: u64, 
     }
 }
 
+/// The history's exchanges, oldest first: `(question, answer)` from `Intrebare: ...` / `Raspuns: ...` lines.
+fn history_turns(text: &str) -> Vec<(String, String)> {
+    let mut turns = Vec::new();
+    let mut q: Option<String> = None;
+    for line in text.lines() {
+        if let Some(x) = line.strip_prefix(ASK_Q) {
+            q = Some(x.trim().into());
+        } else if let (Some(x), Some(qq)) = (line.strip_prefix(ASK_A), q.take()) {
+            turns.push((qq, String::from(x.trim())));
+        }
+    }
+    turns
+}
+
+/// The prompt: as many of the latest exchanges as fit in about 3/4 of the context, then the question.
+fn ask_prompt(tok: &Tokenizer, turns: &[(String, String)], question: &str, context: usize) -> (String, usize) {
+    let tail = alloc::format!("{}{}\n{}", ASK_Q, question, ASK_A.trim_end());
+    let mut first = 0;
+    loop {
+        let mut p = String::new();
+        for (q, a) in &turns[first..] {
+            p += &alloc::format!("{}{}\n{}{}\n\n", ASK_Q, q, ASK_A, a);
+        }
+        p += &tail;
+        if first == turns.len() || tok.encode(&p).len() <= context * 3 / 4 {
+            return (p, turns.len() - first);
+        }
+        first += 1;
+    }
+}
+
+const ASK_Q: &str = "Intrebare: ";
+const ASK_A: &str = "Raspuns: ";
+
 fn main() -> i64 {
     let mut o = match parse_args() {
         Ok(o) => o,
@@ -964,10 +1027,26 @@ fn main() -> i64 {
             }
         };
     }
+    let mut ask_turns = 0;
+    if let (true, Some(tok)) = (o.ask, &tok) {
+        let question = text_of(&o.words).replace('\n', " ");
+        let hist = o.history.clone().unwrap_or_else(|| alloc::format!("{}/conversatie.txt", dir));
+        let old = read_all(&hist).ok().map(|b| String::from_utf8_lossy(b).into_owned()).unwrap_or_default();
+        let turns = history_turns(&old);
+        let (prompt, used) = ask_prompt(tok, &turns, &question, c.context);
+        ask_turns = used;
+        println!("kronos: intrebare cu {} schimburi din istoric ({}, {} in total)", used, hist, turns.len());
+        println!("kronos: (modelul continua text; nu e antrenat pentru conversatie, raspunsul poate fi fara legatura)");
+        o.words = alloc::vec![prompt];
+        o.history = Some(hist);
+    }
     if let Some(tok) = &tok {
         let text = text_of(&o.words);
         o.ids = tok.encode(&text);
         let back = tok.decode(&o.ids);
+        if o.ask {
+            println!("kronos: intrebarea cu istoricul = {} simboluri (context {})", o.ids.len(), c.context);
+        } else {
         println!(
             "kronos: textul `{}` = {} simboluri {:?}; decodat inapoi {}",
             text,
@@ -975,6 +1054,7 @@ fn main() -> i64 {
             o.ids,
             if back == text { "identic" } else { "DIFERIT" }
         );
+        }
         if o.encode_only {
             return if back == text { 0 } else { 1 };
         }
@@ -1054,6 +1134,13 @@ fn main() -> i64 {
         if out.len() == n {
             break;
         }
+        // `--intreaba`: the answer is the first line (a new line after some text ends it).
+        if let (true, Some(t)) = (o.ask, &tok) {
+            let so_far = t.decode(&out);
+            if so_far.trim_start().contains('\n') {
+                break;
+            }
+        }
         logits = match m.forward(&[next], false) {
             Ok(l) => l,
             Err(e) => {
@@ -1074,6 +1161,16 @@ fn main() -> i64 {
         println!("kronos: simboluri generate: {:?}", out);
         if o.no_screen {
             println!("kronos: textul a fost scris doar la sfarsit (--fara-ecran)");
+        }
+        if let (true, Some(hist)) = (o.ask, &o.history) {
+            let answer = String::from(t.decode(&out).trim_start().lines().next().unwrap_or("").trim());
+            println!("kronos: raspuns: {}", answer);
+            let mut all = read_all(hist).ok().map(|b| String::from_utf8_lossy(b).into_owned()).unwrap_or_default();
+            all += &alloc::format!("{}{}\n{}{}\n\n", ASK_Q, text_of(&o.words).rsplit(ASK_Q).next().unwrap_or("").split('\n').next().unwrap_or(""), ASK_A, answer);
+            match save(hist, all.as_bytes()) {
+                Ok(()) => println!("kronos: istoric salvat in {} ({} schimburi; {} folosite acum)", hist, history_turns(&all).len(), ask_turns),
+                Err(e) => println!("kronos: istoricul NU s-a salvat: {}", e),
+            }
         }
     } else {
         println!("kronos: continuare: {:?}", out);
