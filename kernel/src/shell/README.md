@@ -34,6 +34,8 @@
 - **`hub [comenzi|stare|decizii] [proiect]` (P6-61):** pornește `/bin/gh-ia --hub` — citește Cyber Hub, nu scrie nimic.
 - **`test tot` (P6-61, F9):** `testtot.rs` — autotestul pe calculatorul real (procesor, ceas, temporizator, stick, rețea, placa
   video doar prin ID-urile PCI); `PASS`/`FAIL`/`LIPSA`, raport `raport/test-tot-*.txt`, apoi `trimite`. Test: scenariul `testtot`.
+- **`ora [server [port]]` (P6-61):** SNTP (`net/sntp.rs`, RFC 4330): ora din rețea în UTC și ora României (regula UE pentru
+  ora de vară), diferența față de ceasul CMOS (doar citit). Test: scenariul `ora` (`tools/ora-test-server.py`).
   Test: scenariul `raport` (build `test-raport`: în QEMU raportul merge pe `/disk`): raportul automat (eroarea de test de la pornire)
   și cel manual, `tools/after-raport.sh` le citește cu `mtools` (fsck curat, secțiunile, niciun token); filtrul are și un test la pornire.
 - **`cat` și fișierele secrete (P6-23):** `cat /usb/claude.key` (sau `github.token`) nu afișează nimic: „fisier secret”.

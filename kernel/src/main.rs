@@ -257,6 +257,10 @@ fn run_tests() -> ! {
     info!("test: FADT RESET_REG decodare OK");
     assert!(hw::names::self_test(), "hw: tabelul de nume hardware gresit");
     info!("test: tabelul de nume hardware OK (Wi-Fi recunoscut dupa clasa si id)");
+    if let Err(e) = net::sntp::self_test() {
+        panic!("sntp: verificarea interna a esuat: {}", e);
+    }
+    info!("test: ora din retea: datele si ora de vara OK");
     test_heap();
     test_timer();
     test_threads();

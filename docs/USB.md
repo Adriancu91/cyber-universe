@@ -99,6 +99,8 @@ Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet 
    (niciodată pe `main`; tokenul trebuie să aibă drept de scriere și pe acel depozit).
 10. **Autotestul (P6-61):** `test tot` verifică procesorul, ceasul, stick-ul, rețeaua și placa video (doar citiri) și scrie
     `PASS` sau `FAIL` pe fiecare rând, plus un raport `raport/test-tot-….txt` pe stick (trimis singur în hub dacă e tokenul).
+11. **Ora din rețea (P6-61):** `ora` arată ora exactă luată din internet (UTC și ora României) și cât de departe e ceasul
+    calculatorului. Nu schimbă ceasul (îl folosește și Windows).
 
 ## Pentru Claude (tehnic)
 - Varianta B merge pentru că firmware-ul UEFI caută `EFI/BOOT/BOOTX64.EFI` pe orice partiție FAT32, iar Limine își citește

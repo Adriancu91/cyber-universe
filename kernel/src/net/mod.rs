@@ -10,6 +10,7 @@ pub mod icmp;
 pub mod ipv4;
 pub mod remote;
 pub mod remote_crypto;
+pub mod sntp;
 pub mod tcp;
 pub mod udp;
 

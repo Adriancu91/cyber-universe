@@ -146,6 +146,7 @@ fn dispatch(line: &str) -> bool {
         },
         "raport" => raport::manual(),
         "trimite" => raport::send_to_hub(),
+        "ora" => ora(args),
         "test" => match args {
             ["tot"] => testtot::run(),
             _ => out!("folosire: test tot   (autotestul OS-ului pe calculatorul acesta, raport PASS/FAIL pe stick)\n"),
@@ -239,6 +240,7 @@ fn help() {
     out!("  hw               raport hardware pe o pagina (pentru o singura poza)\n");
     out!("  hw lista [--detalii]  tot hardware-ul: procesor, memorie, PCI, Wi-Fi, USB, ACPI (doar citire)\n");
     out!("  raport           scrie pe stick /usb/raport/<data>-<nr>.txt: hw, lspci, net, jurnalele (fara chei)\n");
+    out!("  ora [server [port]]  ora din retea (SNTP, implicit pool.ntp.org) fata de ceasul calculatorului (nu-l schimba)\n");
     out!("  test tot         autotestul OS-ului (procesor, ceas, stick, retea, placa video): PASS/FAIL + raport pe stick\n");
     out!("  hub [comenzi|stare|decizii] [proiect]  citeste din Cyber Hub comenzile lui Adrian, starea, deciziile\n");
     out!("  trimite          rapoartele noi din /usb/raport -> hub (rezultate/os-automat/<data>/), doar cu /usb/github.token\n");
@@ -712,6 +714,80 @@ fn lsusb() {
     for d in devices {
         out!("  port {}  {:04x}:{:04x}  {}\n", d.location(), d.vendor, d.product, d.kind());
     }
+}
+
+/// P6-61 step 7 (C-84): `ora [server [port]]` — the time from the network (SNTP), in UTC and in Romania's time, and how
+/// far the computer's battery clock is from it. The battery clock is only read (Windows keeps it in local time).
+fn ora(args: &[&str]) {
+    let (server, port) = match args {
+        [] => ("pool.ntp.org", 123),
+        [s] => (*s, 123),
+        [s, p] => match p.parse::<u16>() {
+            Ok(p) if p > 0 => (*s, p),
+            _ => {
+                out!("ora: portul trebuie sa fie un numar 1..65535\n");
+                return;
+            }
+        },
+        _ => {
+            out!("folosire: ora [server [port]]\n");
+            return;
+        }
+    };
+    if crate::net::config().is_none() {
+        out!("ora: nicio placa de retea\n");
+        return;
+    }
+    if !crate::net::wait_ready(5000) {
+        out!("ora: reteaua nu are inca adresa (DHCP)\n");
+        return;
+    }
+    let ip = match crate::net::parse_ip(server) {
+        Some(ip) => ip,
+        None => match crate::net::dns::resolve(server) {
+            Ok((ip, _)) => ip,
+            Err(e) => {
+                out!("ora: {}: {}\n", server, e.message());
+                return;
+            }
+        },
+    };
+    use crate::net::sntp;
+    let a = match sntp::query(ip, port) {
+        Ok(a) => a,
+        Err(e) => {
+            out!("ora: {} ({}.{}.{}.{}:{}): {}\n", server, ip[0], ip[1], ip[2], ip[3], port, e);
+            return;
+        }
+    };
+    let (y, mo, d, h, mi, se) = sntp::civil(a.unix);
+    let (off, zone) = sntp::romania_offset(a.unix);
+    let local = (a.unix as i64 + off) as u64;
+    let (ly, lmo, ld, lh, lmi, lse) = sntp::civil(local);
+    out!(
+        "ora: din retea ({}.{}.{}.{}:{}, strat {}, {} ms): {:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC = {:04}-{:02}-{:02} {:02}:{:02}:{:02} ora Romaniei ({})\n",
+        ip[0], ip[1], ip[2], ip[3], port, a.stratum, a.rtt_ms, y, mo, d, h, mi, se, ly, lmo, ld, lh, lmi, lse, zone
+    );
+    match crate::drivers::rtc::now() {
+        Some(t) => {
+            let rtc = sntp::days_from_civil(t.year as i64, t.month as u32, t.day as u32) * 86_400
+                + t.hour as i64 * 3600
+                + t.minute as i64 * 60
+                + t.second as i64;
+            let vs_local = rtc - local as i64;
+            let vs_utc = rtc - a.unix as i64;
+            let (diff, what) = if vs_local.abs() <= vs_utc.abs() { (vs_local, "ora Romaniei (ca Windows)") } else { (vs_utc, "UTC") };
+            out!(
+                "ora: ceasul calculatorului {:04}-{:02}-{:02} {:02}:{:02}:{:02} = {} {} {} s{}\n",
+                t.year, t.month, t.day, t.hour, t.minute, t.second, what,
+                if diff >= 0 { "+" } else { "-" },
+                diff.abs(),
+                if diff.abs() <= 120 { " (bun)" } else { " (DIFERENTA MARE: bateria ceasului sau fusul orar)" }
+            );
+        }
+        None => out!("ora: ceasul calculatorului nu raspunde\n"),
+    }
+    crate::info!("ora: din retea {} (UTC {}), {}", server, a.unix, zone);
 }
 
 fn net() {
