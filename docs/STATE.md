@@ -3,6 +3,19 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-06 ~15:45–16:45 UTC (17:45–18:45 ora României) — sesiune programată, fără Adrian — **C-83 și C-84 preluate; P6-61 (C-84, unelte spre independența de Windows) pașii 1–5, 6a, 7a, 7b gata, testate în QEMU.**
+  - Hub: comenzi noi **C-83** (pașii GPU după I10, cu cyber-gpu) → sarcina **P6-62** (așteaptă I11–I14 din cyber-gpu; la `657e209` nu există — sesiunea Cyber-GPU 57 lucrează la ele) și **C-84** → sarcina **P6-61**. C-82/P6-60: Release-ul `kronos-kgr1-513` tot nu există.
+  - **P6-61, ce merge acum (toate în QEMU, nimic încercat pe hardware):**
+    1. Rapoartele pleacă singure în hub: `gh-trimite --rapoarte` + comanda `trimite`; nucleul trimite după `raport`, `gpu lant`, `test tot` — doar cu `/usb/github.token`; lista `raport/trimise.txt`; destinația `rezultate/os-automat/<data>/`.
+    2. `hub [comenzi|stare|decizii] [proiect]` (`gh-ia --hub`, doar citire).
+    3. `kronos --intreaba <întrebare>` cu istoric pe stick (`/usb/kronos/conversatie.txt`); spune cinstit că modelul doar continuă text.
+    4. F8: `gh-trimite --ramura os/<nume>` (ramura făcută din `main`, `main` refuzat), `gh-ia --lista`.
+    5. F9: `test tot` (procesor, ceas, temporizator, stick, rețea, placa video doar ID PCI) → PASS/FAIL + raport pe stick.
+    6a. F6b: formulare în `web` (`web --formular F camp=valoare`, GET/POST).
+    7a. `ora` (SNTP): ora din rețea, ora României, diferența față de ceasul CMOS (doar citit). 7b. Setările pe stick (`/usb/config/settings.toml`).
+  - Teste noi/extinse: `ghpush` (69 verificări), `kronos-kgr`/`-1`, `testtot`, `ora`, `layout-boot-usb`, `web` (61). Rulate local și: boot, shell, raport, auto, remote, gpu-sim, gpu-tur, drepturi, claude-tools, revenire, phase4, desktop, layout-boot, log, sysapps, editor, terminal, claude-app, update, https, auto-ceas, auto-intrerupt, hw-lista, usb-pick, usb-fw, keyboard-ro, phase2, dns — toate trec.
+  - **Rămân din C-84:** 6b (imagini + CSS de bază în browser), managerul de fișiere dedicat stick-ului (acum: `files /usb`). Duminică seara (8 nov): lista pentru fereastra de luni în hub.
+  - **Următoarea:** CI pe ultimul commit → Release `os-252`; apoi P6-62 când cyber-gpu publică I11+, P6-60 când apare `kronos-kgr1-513`; altfel P6-61 pas 6b.
 - 2026-11-06 ~15:42 UTC (~17:42 ora României) — sesiune programată, fără Adrian — **„OPRIT” ridicat de comanda nouă C-82; sarcina P6-60 adăugată, dar așteaptă Kronos.**
   - Hub: comanda nouă **C-82** („da 513”: #513 înlocuiește #477; partea OS = după Release-ul `kronos-kgr1-513`) → sarcina **P6-60** + plan `docs/plans/P6-60.md`, în hub `preluat`. Release-ul `kronos-kgr1-513` NU există încă (doar `kronos-kgr1-459`) și `integrare/kronos/MODEL.md` nu are #513 (suma, textele de control) → nu se poate începe fără să inventăm valori.
   - C-80: fereastra lui Adrian de azi s-a închis fără test OS (workstation rămas în Windows) → niciun jurnal `os-250`/`os-251`; testul I8–I10 se mută la fereastra următoare.

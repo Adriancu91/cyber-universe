@@ -101,6 +101,8 @@ Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet 
     `PASS` sau `FAIL` pe fiecare rând, plus un raport `raport/test-tot-….txt` pe stick (trimis singur în hub dacă e tokenul).
 11. **Ora din rețea (P6-61):** `ora` arată ora exactă luată din internet (UTC și ora României) și cât de departe e ceasul
     calculatorului. Nu schimbă ceasul (îl folosește și Windows).
+12. **Fișierele de pe stick:** `run files /usb` (sau Start → files → `usb/`) — copiere, ștergere, deschidere în editor.
+    Setările (fus orar, tastatură) se salvează acum pe stick, în `config/settings.toml`, și pornesc cu el pe orice calculator.
 
 ## Pentru Claude (tehnic)
 - Varianta B merge pentru că firmware-ul UEFI caută `EFI/BOOT/BOOTX64.EFI` pe orice partiție FAT32, iar Limine își citește
