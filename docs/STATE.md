@@ -15,7 +15,8 @@
     7a. `ora` (SNTP): ora din rețea, ora României, diferența față de ceasul CMOS (doar citit). 7b. Setările pe stick (`/usb/config/settings.toml`).
   - Teste noi/extinse: `ghpush` (69 verificări), `kronos-kgr`/`-1`, `testtot`, `ora`, `layout-boot-usb`, `web` (61). Rulate local și: boot, shell, raport, auto, remote, gpu-sim, gpu-tur, drepturi, claude-tools, revenire, phase4, desktop, layout-boot, log, sysapps, editor, terminal, claude-app, update, https, auto-ceas, auto-intrerupt, hw-lista, usb-pick, usb-fw, keyboard-ro, phase2, dns — toate trec.
   - **Rămân din C-84:** 6b (imagini + CSS de bază în browser), managerul de fișiere dedicat stick-ului (acum: `files /usb`). Duminică seara (8 nov): lista pentru fereastra de luni în hub.
-  - **Următoarea:** CI pe ultimul commit → Release `os-252`; apoi P6-62 când cyber-gpu publică I11+, P6-60 când apare `kronos-kgr1-513`; altfel P6-61 pas 6b.
+  - CI run 42254246852 **verde** (43 min) → **Release `os-259`** (= `os-251` pe placă + uneltele P6-61).
+  - **Următoarea:** P6-62 când cyber-gpu publică I11+, P6-60 când apare `kronos-kgr1-513`; altfel P6-61 pas 6b.
 - 2026-11-06 ~15:42 UTC (~17:42 ora României) — sesiune programată, fără Adrian — **„OPRIT” ridicat de comanda nouă C-82; sarcina P6-60 adăugată, dar așteaptă Kronos.**
   - Hub: comanda nouă **C-82** („da 513”: #513 înlocuiește #477; partea OS = după Release-ul `kronos-kgr1-513`) → sarcina **P6-60** + plan `docs/plans/P6-60.md`, în hub `preluat`. Release-ul `kronos-kgr1-513` NU există încă (doar `kronos-kgr1-459`) și `integrare/kronos/MODEL.md` nu are #513 (suma, textele de control) → nu se poate începe fără să inventăm valori.
   - C-80: fereastra lui Adrian de azi s-a închis fără test OS (workstation rămas în Windows) → niciun jurnal `os-250`/`os-251`; testul I8–I10 se mută la fereastra următoare.
