@@ -39,6 +39,7 @@ use nvidia_ga104::gsp::work_queue::{
 };
 use nvidia_ga104::gsp::HardwareWritePermit;
 use nvidia_ga104::launch_cost;
+use nvidia_ga104::mmu::SysMapping;
 use nvidia_ga104::push::{PushBuf, DOORBELL};
 use nvidia_ga104::qmd::ComputeQmd;
 use nvidia_ga104::vram_window::VramWindow;
@@ -52,7 +53,7 @@ const ADD64_REGISTERS: u32 = 19;
 /// The completion value: both 32-bit halves matter (a GPU that wrote only one half would not match).
 pub(super) const DONE: u64 = 0x1_0000_0007;
 /// How long the driver waits for the semaphore / the last timestamp record.
-const WAIT_US: u64 = 2_000_000;
+pub(super) const WAIT_US: u64 = 2_000_000;
 /// The launch-cost measurement: 16 launches, payloads 0x500..=0x510.
 const COST_LAUNCHES: u32 = 16;
 const COST_FIRST: u32 = 0x500;
@@ -66,6 +67,8 @@ pub(super) struct Ring<'a> {
     pub entries: u32,
     pub userd_va: u64,
     pub maps: &'a [Mapping],
+    /// P6-62 (C-83, I11+): host-RAM buffers (the OS's DMA pages) the GPU reads or writes through its PTEs.
+    pub sys: &'a [SysMapping],
 }
 
 /// Buffers of the `add64` launch, all mapped in our VA.
@@ -82,9 +85,9 @@ pub(super) struct Add64 {
 
 /// What I10 keeps for the launch cost.
 pub(super) struct Launched {
-    k: Add64,
-    push: Mapping,
-    wq: WorkQueue,
+    pub(super) k: Add64,
+    pub(super) push: Mapping,
+    pub(super) wq: WorkQueue,
 }
 
 /// The inputs (the same as Cyber-GPU's simulation test, so the results compare): x = i/4 − 3, y = i²/7.
@@ -92,7 +95,7 @@ fn inputs() -> (Vec<f32>, Vec<f32>) {
     ((0..64).map(|i| i as f32 * 0.25 - 3.0).collect(), (0..64).map(|i| (i * i) as f32 / 7.0).collect())
 }
 
-fn put_bytes<W: ChannelMemory + ?Sized>(w: &mut W, pa: u64, bytes: &[u8]) -> GpuResult<()> {
+pub(super) fn put_bytes<W: ChannelMemory + ?Sized>(w: &mut W, pa: u64, bytes: &[u8]) -> GpuResult<()> {
     for (i, ch) in bytes.chunks(4).enumerate() {
         let mut b = [0u8; 4];
         b[..ch.len()].copy_from_slice(ch);
@@ -137,7 +140,7 @@ fn buffers(st: &mut GpuState) -> GpuResult<Add64> {
 }
 
 /// Reads through the VRAM window (writes refused: everything is written by `flush`, read back there).
-struct Reader<'w, 'a, M: Mmio + ?Sized>(&'w mut VramWindow<'a, M>);
+pub(super) struct Reader<'w, 'a, M: Mmio + ?Sized>(&'w mut VramWindow<'a, M>);
 
 impl<M: Mmio + ?Sized> ChannelMemory for Reader<'_, '_, M> {
     fn write_u32(&mut self, _pa: u64, _v: u32) -> GpuResult<()> {
@@ -150,7 +153,7 @@ impl<M: Mmio + ?Sized> ChannelMemory for Reader<'_, '_, M> {
 
 /// Flush + TLB invalidate (window put back), the doorbell, then `wait` on the window (window put back on every path).
 #[allow(clippy::too_many_arguments)]
-fn kick_and_wait<V: Mmio + ?Sized, K: Clock + ?Sized, T>(
+pub(super) fn kick_and_wait<V: Mmio + ?Sized, K: Clock + ?Sized, T>(
     vbar: &mut V,
     clock: &mut K,
     journal: &mut Journal,
@@ -208,7 +211,7 @@ pub(super) fn add64_step<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
         let root = st.mem.root();
         let maps = [w.ring, push, k.prog, k.cbuf, k.a, k.b, k.c, k.qmd, k.sem];
-        let ring = Ring { root, ring_va: w.ring.va, entries: w.entries, userd_va: w.ring.va + w.userd_offset, maps: &maps };
+        let ring = Ring { root, ring_va: w.ring.va, entries: w.entries, userd_va: w.ring.va + w.userd_offset, maps: &maps, sys: &[] };
         let GpuState { pending, zone, vram_words, .. } = &mut *st;
         let (sem, c) = kick_and_wait(vbar, clock, journal, permit, zone, pending, vram_words, root, (bell.bar0_offset, bell.value), &ring, doorbell, |rd, clock| {
             let mut last = 0;
@@ -286,7 +289,7 @@ pub(super) fn cost_step<V: Mmio + ?Sized, K: Clock + ?Sized>(
         let root = st.mem.root();
         let k = &l.k;
         let maps = [w.ring, l.push, k.prog, k.cbuf, k.a, k.b, k.c, k.qmd, k.sem, rec];
-        let ring = Ring { root, ring_va: w.ring.va, entries: w.entries, userd_va: w.ring.va + w.userd_offset, maps: &maps };
+        let ring = Ring { root, ring_va: w.ring.va, entries: w.entries, userd_va: w.ring.va + w.userd_offset, maps: &maps, sys: &[] };
         let last_pa = rec.pa + launch_cost::RECORD * u64::from(COST_LAUNCHES);
         let want_last = COST_FIRST + COST_LAUNCHES;
         let wq = &mut l.wq;
@@ -348,15 +351,39 @@ pub(super) struct SimGpu {
     pub rung: u32,
     pub launches: usize,
     pub invalidates_seen: usize,
+    /// P6-62: the model of host RAM (the OS's DMA pages, indexed by bus address), as in Cyber-GPU's tests.
+    sys: gpu_sim::vram::SimVram,
 }
 
 #[cfg(feature = "test-gpu-sim")]
 impl SimGpu {
     pub(super) fn new(token: u32) -> Self {
-        let mut cp = gpu_sim::cmdproc::CommandProcessor::new();
-        cp.register_program(ADD64, gpu_sim::cmdproc::add64_on_cpu);
+        use gpu_sim::cmdproc as c;
+        let mut cp = c::CommandProcessor::new();
+        cp.register_program(ADD64, c::add64_on_cpu);
+        // P6-62 (C-83): the programs of I11/I12 (Cyber-GPU's NAK builds) and their CPU stand-ins.
+        cp.register_program(nvidia_ga104::transfer::COPY_B128, c::copy_b128_on_cpu);
+        cp.register_program_with_needs(nvidia_ga104::q8_matvec::Q8_MATVEC, c::q8_matvec_on_cpu, c::Q8_MATVEC_NEEDS);
         cp.sim_launch_ns = 4000;
-        SimGpu { cp, token, rung: 0, launches: 0, invalidates_seen: 0 }
+        let sys = gpu_sim::vram::SimVram::new(crate::mem::frame::top_of_ram().next_multiple_of(0x1000));
+        SimGpu { cp, token, rung: 0, launches: 0, invalidates_seen: 0, sys }
+    }
+
+    /// The OS's DMA pages of `m` (real RAM, the arena of `gpu_i11`) copied into the model's host memory, or back.
+    fn sys_sync(&mut self, m: &SysMapping, to_model: bool) -> GpuResult<()> {
+        for (page, &bus) in super::gpu_i11::ram(m).zip(&m.pages) {
+            for (i, w) in page.chunks_exact_mut(8).enumerate() {
+                let a = bus + 8 * i as u64;
+                if to_model {
+                    let mut b = [0u8; 8];
+                    b.copy_from_slice(w);
+                    self.sys.write_u64(a, u64::from_le_bytes(b)).map_err(GpuError::InvalidArgument)?;
+                } else {
+                    w.copy_from_slice(&self.sys.read_u64(a).map_err(GpuError::InvalidArgument)?.to_le_bytes());
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn ring(&mut self, v: &mut gpu_sim::pramin::SimBar0Vram, off: u64, value: u32, r: &Ring<'_>) -> GpuResult<()> {
@@ -368,12 +395,20 @@ impl SimGpu {
         }
         self.invalidates_seen = v.invalidates.len();
         self.rung += 1;
-        for m in r.maps {
-            self.cp.mem.load_from_vram(&v.vram, r.root, m.va, m.size.next_multiple_of(0x1000))?;
+        for m in r.sys {
+            self.sys_sync(m, true)?;
+        }
+        let spans: Vec<(u64, u64)> =
+            r.maps.iter().map(|m| (m.va, m.size.next_multiple_of(0x1000))).chain(r.sys.iter().map(|m| (m.va, m.size))).collect();
+        for &(va, len) in &spans {
+            self.cp.mem.load_from(&v.vram, &self.sys, r.root, va, len)?;
         }
         self.cp.run_channel(r.ring_va, r.entries, r.userd_va)?;
-        for m in r.maps {
-            self.cp.mem.store_to_vram(&mut v.vram, r.root, m.va, m.size.next_multiple_of(0x1000))?;
+        for &(va, len) in &spans {
+            self.cp.mem.store_to(&mut v.vram, &mut self.sys, r.root, va, len)?;
+        }
+        for m in r.sys {
+            self.sys_sync(m, false)?;
         }
         self.launches = self.cp.events.iter().filter(|e| matches!(e, gpu_sim::cmdproc::Event::Launch { .. })).count();
         Ok(())

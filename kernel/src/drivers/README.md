@@ -134,6 +134,12 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   - **P6-58 (cyber-gpu `60740a3`):** înainte de golden, WPR2 e recitit (2 citiri, fără scrieri) și zona VRAM vine din
     `FbLayout::free_after_i7`: dacă Booter a pus WPR2 altundeva decât a cerut `GspFwWprMeta`, golden se oprește înainte de prima scriere în VRAM.
     În `--sim`, Booter-ul modelului lărgește singur WPR2 din `GspFwWprMeta`-ul nostru (P6-59, cyber-gpu `657e209`), ca placa din 5 nov (`0x1f4100000..0x1ffee0000`); `gpu tur --sim` arată și refuzul pe un WPR2 nelărgit.
+  - **P6-62 (C-83, cyber-gpu `bc2f22b`):** lanțul = `WINDOW_CHAIN_C83`; **I11 și I12 (`gpu_i11.rs`)** după I10. I11: copiere mare
+    RAM → VRAM → RAM (8 MiB pe placă; 1 MiB în `--sim`, același cod) prin `copy_b128`, cu PTE-uri spre paginile DMA ale OS-ului
+    (o arenă fixată `gpu-i11`, ~19 MiB sub 4 GiB, folosită doar de acești pași), verificată bit cu bit + 3 cuvinte VRAM prin fereastră +
+    viteza din ceasul plăcii. I12: y = W·x (Q8_0 3072×768) sus/`q8_matvec`/jos, judecat de `q8_matvec::judge`. Niciun registru nou
+    (fereastra VRAM + soneria canalului, ca I10). I13/I14 nu sunt încă în OS: lanțul se oprește cinstit la `i13-strat` și face curățarea.
+    Programele vin direct din biblioteca fixată (`transfer::COPY_B128`, `q8_matvec::Q8_MATVEC`). **Pe placă: neîncercat.**
   - Test: `gpu-tur` (`gpu tur --sim` pe modelul plăcii din workstation; `gpu lant --sim` cu `DA` oprit la I7 cu Bus Master înapoi;
     `--eroare` oprit la I6, Bus Master tot înapoi; `--doar-citire` 0 scrieri; `tools/after-gpu-tur.sh` verifică jurnalele de pe disc),
     `gpu-scrie` (`gpu lant` → „nicio placa NVIDIA”), `tools/after-gpu.sh` (în `gpu_tur.rs` tot ce poate scrie e doar în build-ul `gpu-scrie`).

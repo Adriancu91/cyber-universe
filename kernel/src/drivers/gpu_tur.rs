@@ -6,7 +6,7 @@
 //!   `fapt <key> = <value>` per fact (the format `compara_raport` of Cyber-GPU reads back), then the write count, which
 //!   must be 0. On the allow-list of the automatic loop (C-53).
 //! - `gpu lant`: the window steps one after the other. P6-55 (C-71): the whole window chain of Cyber-GPU
-//!   (`run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, ..)`, I6 to the first computation). The OS has the I6
+//!   (`run_chain_ready(WINDOW_CHAIN_C83, READY_IN_OS, ..)`, I6 to the first computation). The OS has the I6
 //!   preparation, Bus Master on, FWSEC-FRTS, the WPR2 read after I6 (`i6-wpr2-citit`, reads only), Bus Master back and
 //!   the tour after; P6-56 (C-72): I7 (Booter on SEC2, `gpu_i7.rs`) and `i7-citit`; step 2: I8 (`gpu_i8.rs`: SetSystemInfo + SetRegistry, the doorbell, the wait for GSP_INIT_DONE); step 2b: golden + I9 (`gpu_golden.rs`: RM messages with the GSP doorbell each, page tables in VRAM through the VRAM window); step 3: I10 (`gpu_i10.rs`: `add64` on the work channel, the TLB invalidate, the work-channel doorbell, the result bit for bit; the launch cost). The driver owns the order and the stop rules; this file only does each step. Writes are allowed
 //!   only in the test-stick build (`gpu-scrie`) and only after `DA` (asked by the shell); in every other build the
@@ -29,12 +29,18 @@ use super::gpu_i8;
 use super::gpu_golden;
 #[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
 use super::gpu_i10;
+#[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
+use super::gpu_i11;
 use alloc::{format, string::String, vec::Vec};
 use gpu_core::diag::Journal;
 use gpu_core::error::{GpuError, GpuResult};
 use gpu_core::hal::{Clock, ConfigSpace, Mmio};
 use gpu_core::PciAddress;
-use nvidia_ga104::chain::{run_chain_ready, ChainReport, READY_FOR_WINDOW, WINDOW_CHAIN_FULL};
+use nvidia_ga104::chain::{run_chain_ready, ChainReport, WINDOW_CHAIN_C83};
+
+/// P6-62 (C-83): the plan steps the OS runs in the window chain. I11 and I12 are in the OS; I13 and I14 are not yet,
+/// so the chain stops honestly before `i13-strat` ("blocat in plan") and still runs the cleanup.
+const READY_IN_OS: &[&str] = &["I5", "I6", "I7", "I8", "I9", "I10", "I11", "I12"];
 use nvidia_ga104::gsp::falcon;
 use nvidia_ga104::read_tour::run_tour;
 
@@ -228,7 +234,7 @@ pub fn chain() -> Vec<String> {
     #[cfg(feature = "gpu-scrie")]
     let mut launched: Option<gpu_i10::Launched> = None;
     let mut refused = 0usize;
-    let report = run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, writes_allowed, &mut j, |s, j| match s.id {
+    let report = run_chain_ready(WINDOW_CHAIN_C83, READY_IN_OS, writes_allowed, &mut j, |s, j| match s.id {
         "pregatire-i6" => {
             let mut win = ReadOnlyBar0Window::with_len(bar0, nvidia_ga104::fuse::FUSE_WINDOW);
             let r = gpu_i6::prepare(p, &mut win, j, &mut clock, &mut lines);
@@ -385,6 +391,24 @@ pub fn chain() -> Vec<String> {
             r.map(|_| ())
         }
         #[cfg(feature = "gpu-scrie")]
+        "i11-copiere" | "i12-q8-matvec" => {
+            // P6-62 (C-83): no new register: the VRAM window and the work-channel doorbell, as in I10.
+            let (Some(st), Some(l)) = (gs.as_mut(), launched.as_mut()) else { return Err(step_failed("lipseste I10")) };
+            let Some(token) = st.space.as_ref().map(|(_, w)| w.doorbell_token) else { return Err(step_failed("lipseste I9")) };
+            let mut vf = gpu_i6::hw::VramFence::new(bar0);
+            let mut db = gpu_i6::hw::DoorbellFence::new(bar0, token);
+            let mut bell = |_: &mut gpu_i6::hw::VramFence, j: &mut Journal, off: u64, v: u32, _: &gpu_i10::Ring<'_>| {
+                ring_work_doorbell(&mut db, j, off, v)
+            };
+            let r = if s.id == "i11-copiere" {
+                gpu_i11::copy_step(p, &mut vf, &mut clock, j, st, l, gpu_i11::I11_BOARD_BYTES, Some(&permit), &mut lines, &mut bell)
+            } else {
+                gpu_i11::matvec_step(p, &mut vf, &mut clock, j, st, l, Some(&permit), &mut lines, &mut bell)
+            };
+            refused += vf.refused + db.refused;
+            r
+        }
+        #[cfg(feature = "gpu-scrie")]
         "bus-master-oprit" => match old {
             None => Ok(()),
             Some(o) => {
@@ -535,7 +559,7 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
     let mut vram = gpu_sim::pramin::SimBar0Vram::new(gpu_sim::vram::SimVram::new(8 << 30), 0);
     let mut sim_gpu: Option<gpu_i10::SimGpu> = None;
     let mut launched: Option<gpu_i10::Launched> = None;
-    let report = run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, writes_allowed, &mut j, |s, j| match s.id {
+    let report = run_chain_ready(WINDOW_CHAIN_C83, READY_IN_OS, writes_allowed, &mut j, |s, j| match s.id {
         "pregatire-i6" => match gpu_i6::prepare(p, &mut ro, j, &mut clock, &mut lines) {
             Some((_, c)) if c.passes() => {
                 frts = c.frts;
@@ -684,6 +708,28 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
             });
             lines.push(format!("{}: modelul GPU: {} sonerii in total, {} lansari (ceasul modelului: 4000 ns pe lansare)", p, gpu.rung, gpu.launches));
             r.map(|_| ())
+        }
+        "i11-copiere" | "i12-q8-matvec" => {
+            let (Some(st), Some(l), Some(gpu)) = (gs.as_mut(), launched.as_mut(), sim_gpu.as_mut()) else {
+                return Err(step_failed("lipseste I10"));
+            };
+            let stray = vram.stray_writes.len();
+            let mut bell = |v: &mut gpu_sim::pramin::SimBar0Vram, j: &mut Journal, off: u64, val: u32, ring: &gpu_i10::Ring<'_>| {
+                gpu.ring(v, off, val, ring)?;
+                sim_journal_doorbell(j, off, val);
+                Ok(())
+            };
+            let r = if s.id == "i11-copiere" {
+                lines.push(format!("{}: I11 in SIMULARE: {} octeti (pe placa {}; acelasi cod)", p, gpu_i11::I11_SIM_BYTES, gpu_i11::I11_BOARD_BYTES));
+                gpu_i11::copy_step(p, &mut vram, &mut clock, j, st, l, gpu_i11::I11_SIM_BYTES, None, &mut lines, &mut bell)
+            } else {
+                gpu_i11::matvec_step(p, &mut vram, &mut clock, j, st, l, None, &mut lines, &mut bell)
+            };
+            lines.push(format!(
+                "{}: modelul GPU: {} sonerii in total, {} lansari, {} scrieri in alte registre",
+                p, gpu.rung, gpu.launches, vram.stray_writes.len() - stray
+            ));
+            r
         }
         "bus-master-oprit" => match old {
             None => Ok(()),

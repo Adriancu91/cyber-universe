@@ -5,7 +5,7 @@
 #         GSP window 0x110000..0x113FFF or (P6-56, I7 only) the SEC2 window 0x840000..0x843FFF, the step lines in
 #         chain order, I7 passed (SEC2 mailbox 0 = the GspFwWprMeta address), I8 passed with only the GSP doorbell, golden + I9
 #         passed, I10 (P6-56 step 3) passed with only the VRAM window, the TLB invalidate and one work-channel doorbell
-#         (0xBB0090) per I10 step, the tour after.
+#         (0xBB0090) per I10 step, I11 + I12 (P6-62, C-83) the same, the chain stopped before I13, the tour after.
 #   003 = `gpu lant --sim --eroare`: the same shape, I6 failed, Bus Master still back, the tour still after it.
 #   004 = `gpu lant --sim --doar-citire`: no write at all, the chain stopped before Bus Master, the tour still ran.
 set -uo pipefail
@@ -79,7 +79,12 @@ for k, ev, i6_ok in ((2, ok, True), (3, err, False)):
         cost = step(ev, "i10-cost-lansare")
         assert i10 and ev[i10[0]].endswith("ok") and cost and ev[cost[0]].endswith("ok"), f"{k}: I10 nu a trecut"
         assert not [i for i in wbell + tlb if i < i9[0]], f"{k}: sonerie de canal/TLB inainte de I10"
-        for lo, hi in ((i9[0], i10[0]), (i10[0], cost[0])):
+        # P6-62 (C-83): I11 and I12 pass with the same shape as I10 (no new register); I13 is not in the OS yet: the
+        # chain stops before it (its step line = ESEC, no write after I12).
+        i11, i12, i13 = step(ev, "i11-copiere"), step(ev, "i12-q8-matvec"), step(ev, "i13-strat")
+        assert i11 and ev[i11[0]].endswith("ok") and i12 and ev[i12[0]].endswith("ok"), f"{k}: I11/I12 nu au trecut"
+        assert i13 and ev[i13[0]].endswith("ESEC") and i13[0] > i12[0], f"{k}: lantul nu s-a oprit cinstit la I13"
+        for lo, hi in ((i9[0], i10[0]), (i10[0], cost[0]), (cost[0], i11[0]), (i11[0], i12[0])):
             seg = [i for i in gsp if lo < i < hi]
             b = [i for i in seg if i in wbell]
             assert len(b) == 1, f"{k}: I10: {len(b)} sonerii de canal (trebuie 1)"
@@ -87,7 +92,7 @@ for k, ev, i6_ok in ((2, ok, True), (3, err, False)):
             inv = [i for i in seg if i in tlb and off(i) == 0xB830B0]
             assert inv and inv[-1] < b[0], f"{k}: I10: invalidarea TLB nu e inainte de sonerie"
             assert ev[b[0] - 1].endswith("scriere fara recitire"), f"{k}: I10: soneria fara nota"
-        assert not [i for i in gsp if cost[0] < i < cfg[1]], f"{k}: scriere dupa I10"
+        assert not [i for i in gsp if i12[0] < i < cfg[1]], f"{k}: scriere dupa I12"
         after = [i for i in gsp if i8[0] < i < i9[0]]
         bells = [i for i in after if off(i) == 0x110C00]
         assert after and all(i in bells or i in vwin for i in after), f"{k}: golden/I9: alte scrieri decat soneria si fereastra VRAM"
