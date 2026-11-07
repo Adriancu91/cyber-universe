@@ -171,6 +171,7 @@ extern "C" fn kernel_main() -> ! {
         shell::auto::run_if_present(); // P6-41: `/usb/auto/teste.txt` = the automatic test loop (restarts at the end)
         revenire::system_ready();
         net::remote::start_if_asked(); // P6-49: `remote.porneste` next to the key = the remote console at boot
+        shell::hubcmd::start_if_asked(); // P6-64: `/usb/hub/la-pornire` = run Adrian's commands from the hub
         run_desktop(); // the desktop first; when it closes (Escape), the text shell
         loop {
             shell::run();
@@ -369,6 +370,7 @@ fn run_tests() -> ! {
         #[cfg(feature = "test-auto")]
         {
             shell::auto::self_test();
+            shell::hubcmd::self_test();
             shell::auto::run_if_present();
         }
         serial_println!("TASTATURA: astept taste");
@@ -1900,6 +1902,26 @@ fn test_ghpush() {
     assert!(hub(&["decizii"], "decizii") == 0);
     assert!(hub(&["stare", "../x"], "proiect cu ..") == 1);
     info!("test: hub citit din OS OK");
+    // P6-64 (C-87 item 2): Adrian's commands from the hub file `integrare/cyber-universe/os-comenzi.md`, only the
+    // allow-listed ones, each once; the report goes to the hub.
+    shell::hubcmd::self_test();
+    let _ = fs::remove("/etc/hub/facute.txt");
+    shell::hubcmd::command(&["--arata"]);
+    assert!(fs::kind("/etc/hub/facute.txt").is_err(), "test: --arata nu noteaza nimic");
+    shell::hubcmd::command(&[]);
+    let ran = alloc::string::String::from_utf8(fs::read_all("/etc/hub/facute.txt").unwrap_or_default()).unwrap_or_default();
+    let ids: alloc::vec::Vec<&str> = ran.lines().filter_map(|l| l.split_whitespace().next()).collect();
+    assert!(ids == ["K-1", "K-2", "K-4"], "test: facute.txt: {:?}", ran);
+    assert!(ran.lines().nth(1).is_some_and(|l| l.ends_with(" refuzat")), "test: K-2 trebuia refuzat: {:?}", ran);
+    let l = ledger();
+    let dest = l.lines().find(|x| x.starts_with("hub-")).and_then(|x| x.split(" -> ").nth(1)).expect("test: raportul hub- in trimise.txt");
+    assert!(take(&[R, dest, "/etc/hub-inapoi.txt"], "raport comenzi hub") == 0);
+    let back = alloc::string::String::from_utf8(fs::read_all("/etc/hub-inapoi.txt").unwrap_or_default()).unwrap_or_default();
+    assert!(back.contains("== [1/3] K-1: uptime ==") && back.contains("REFUZAT: gpu lant scrie in placa video") && back.contains("REZULTAT: 2 rulate, 1 refuzate"), "test: raportul hub: {}", back);
+    assert!(back.contains("memorie:") || back.contains("libera"), "test: raportul hub nu are iesirea lui `mem`: {}", back);
+    shell::hubcmd::command(&[]); // the same file again: every ID already ran
+    assert!(fs::read_all("/etc/hub/facute.txt").map(|t| t.len()).unwrap_or(0) == ran.len(), "test: a doua rulare a notat ceva");
+    info!("test: comenzile din hub rulate in OS OK");
     // P6-61 step 4 (F8): commits on a branch `os/...` (made from main), never on main; folders listed.
     let push = |args: &[&str], what: &str| {
         let mut all = alloc::vec!["gh-trimite"];

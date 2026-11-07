@@ -9,6 +9,9 @@
 //! `gh-ia --hub [comenzi [proiect] | stare [proiect] | decizii]` (C-84 item 2, P6-61): reads the Cyber Hub (only reads; the
 //! repository is `hub =` in /etc/github.conf, by default Adriancu91/Cyber-hub) and shows on screen Adrian's commands for a
 //! project with their state lines, a project's state file, or the latest decisions — no Windows needed to see them.
+//!
+//! `gh-ia --hub-ia <cale> <fisier>` (C-87 item 2, P6-64): one file of the hub to <fisier>, like the plain form (the kernel's
+//! `hub ruleaza` takes `integrare/cyber-universe/os-comenzi.md` this way).
 #![no_std]
 #![no_main]
 
@@ -59,6 +62,23 @@ fn main() -> i64 {
             Ok(()) => 0,
             Err(e) => {
                 println!("hub: {}", e);
+                1
+            }
+        };
+    }
+    if args.first() == Some(&"--hub-ia") {
+        // C-87 item 2 (P6-64): one file of the hub (`hub =` in /etc/github.conf) into Cyber Universe, as `gh-ia` does.
+        let c = config();
+        return match &args[1..] {
+            [path, file] => match run(&c, &c.hub, path, file) {
+                Ok(()) => 0,
+                Err(e) => {
+                    println!("gh-ia: {}", e);
+                    1
+                }
+            },
+            _ => {
+                println!("folosire: gh-ia --hub-ia <cale in hub> <fisier>");
                 1
             }
         };

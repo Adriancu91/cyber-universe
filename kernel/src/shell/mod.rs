@@ -7,6 +7,7 @@ use alloc::{format, string::String, vec::Vec};
 
 pub mod auto;
 pub mod compara;
+pub mod hubcmd;
 pub mod raport;
 mod testtot;
 #[cfg(feature = "qemu-test")]
@@ -151,6 +152,7 @@ fn dispatch(line: &str) -> bool {
             ["tot"] => testtot::run(),
             _ => out!("folosire: test tot   (autotestul OS-ului pe calculatorul acesta, raport PASS/FAIL pe stick)\n"),
         },
+        "hub" if args.first() == Some(&"ruleaza") => hubcmd::command(&args[1..]), // C-87 item 2 (P6-64)
         "hub" => {
             // C-84 item 2 (P6-61): Adrian's commands, a project's state, the decisions — read from the Cyber Hub.
             let mut all = alloc::vec!["gh-ia", "--hub"];
@@ -243,6 +245,7 @@ fn help() {
     out!("  ora [server [port]]  ora din retea (SNTP, implicit pool.ntp.org) fata de ceasul calculatorului (nu-l schimba)\n");
     out!("  test tot         autotestul OS-ului (procesor, ceas, stick, retea, placa video): PASS/FAIL + raport pe stick\n");
     out!("  hub [comenzi|stare|decizii] [proiect]  citeste din Cyber Hub comenzile lui Adrian, starea, deciziile\n");
+    out!("  hub ruleaza [--arata]  ruleaza comenzile lui Adrian din hub (os-comenzi.md), doar din lista alba; raport -> hub\n");
     out!("  trimite          rapoartele noi din /usb/raport -> hub (rezultate/os-automat/<data>/), doar cu /usb/github.token\n");
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
     out!("  log --avertismente [n]  doar avertismentele si erorile; log --sumar = cate randuri pe nivel si pe modul\n");

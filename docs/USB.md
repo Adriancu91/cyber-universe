@@ -107,6 +107,13 @@ Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet 
     (105,7 MiB) și, lângă el, `kronos_513_q8_0.kgr.sha256`. Le iei din Release-ul `kronos-kgr1-513` al depozitului `cyberspace`
     (când există; până atunci sunt pe workstation în `C:\Kronos\cyberspace\lucru\export\`). `run kronos --control` trebuie să
     scrie „CONTROL: TRECE (#513 …)”. Dacă #513 lipsește, `kronos` folosește singur #477, apoi #459, dacă le ai pe stick.
+14. **Comenzi din hub (P6-64, comanda C-87):** în hub, în fișierul `integrare/cyber-universe/os-comenzi.md`, scrii (sau îi
+    ceri centrului de comandă să scrie) rânduri ca `- [ ] K-1: test tot`. În OS, `hub ruleaza` le ia, rulează **doar** comenzile
+    de pe lista albă (`test tot`, `raport`, `trimite`, `hw`, `log …`, `gpu tur`, `run kronos --profil …`, `run kronos --control`),
+    fiecare o singură dată (ID-urile rulate stau pe stick în `hub/facute.txt`), și trimite raportul în hub
+    (`rezultate/os-automat/<data>/hub-….txt`). `gpu lant`, `--gpu`, `--scrie`, `reboot`, ștergerile și actualizările sunt
+    refuzate: acelea le pornești doar tu, la tastatură, cu „DA”. `hub ruleaza --arata` doar arată ce ar rula.
+    Ca să ruleze singur la fiecare pornire: pe stick, în dosarul `hub`, un fișier gol `la-pornire`. Are nevoie de `github.token`.
 
 ## Pentru Claude (tehnic)
 - Varianta B merge pentru că firmware-ul UEFI caută `EFI/BOOT/BOOTX64.EFI` pe orice partiție FAT32, iar Limine își citește

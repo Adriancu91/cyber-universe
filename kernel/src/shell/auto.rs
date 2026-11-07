@@ -225,14 +225,14 @@ fn watchdog() {
 }
 
 /// The report file, written in place: every piece is on the stick before the next command starts.
-struct Report {
+pub(super) struct Report {
     path: String,
     offset: u64,
     ok: bool,
 }
 
 impl Report {
-    fn create(path: &str) -> Report {
+    pub(super) fn create(path: &str) -> Report {
         let ok = fs::create(path, Kind::File).is_ok();
         if !ok {
             say(&format!("auto: raportul {} nu s-a putut crea (stick doar citire? lipseste cyber.rw)\n", path));
@@ -247,7 +247,7 @@ impl Report {
         }
     }
 
-    fn add(&mut self, text: &str) {
+    pub(super) fn add(&mut self, text: &str) {
         if !self.ok {
             return;
         }
@@ -265,7 +265,7 @@ impl Report {
 }
 
 /// `<base>.txt`, or `<base>-2.txt` … when it already exists.
-fn free_name(base: &str) -> String {
+pub(super) fn free_name(base: &str) -> String {
     let first = format!("{}.txt", base);
     if matches!(fs::kind(&first), Err(FsError::NotFound)) {
         return first;
@@ -279,20 +279,20 @@ fn free_name(base: &str) -> String {
     format!("{}-99.txt", base)
 }
 
-fn date_stamp() -> String {
+pub(super) fn date_stamp() -> String {
     crate::drivers::rtc::now()
         .map(|t| format!("{:04}{:02}{:02}-{:02}{:02}", t.year, t.month, t.day, t.hour, t.minute))
         .unwrap_or_else(|| String::from("00000000-0000"))
 }
 
-fn now_text() -> String {
+pub(super) fn now_text() -> String {
     crate::drivers::rtc::now()
         .map(|t| format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", t.year, t.month, t.day, t.hour, t.minute, t.second))
         .unwrap_or_else(|| String::from("ceasul nu s-a citit"))
 }
 
 /// Progress on the screen and the serial port (never into the report capture).
-fn say(text: &str) {
+pub(super) fn say(text: &str) {
     crate::print!("{}", text);
     crate::serial_print!("{}", text);
 }

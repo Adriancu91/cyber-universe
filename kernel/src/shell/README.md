@@ -32,6 +32,11 @@
   `/bin/gh-trimite --rapoarte`; se face singur și după `raport` și după `gpu lant`. Doar dacă există `/usb/github.token` și rețea;
   altfel mesaj clar și rapoartele rămân pe stick. Lista celor trimise: `/usb/raport/trimise.txt`. Test: `ghpush`.
 - **`hub [comenzi|stare|decizii] [proiect]` (P6-61):** pornește `/bin/gh-ia --hub` — citește Cyber Hub, nu scrie nimic.
+- **`hub ruleaza [--arata]` (P6-64, comanda C-87):** `hubcmd.rs` — ia din hub `integrare/cyber-universe/os-comenzi.md`
+  (`/bin/gh-ia --hub-ia`), alege rândurile `- [ ] K-<nr>: <comandă>` încă nerulate (`/usb/hub/facute.txt`, notat înainte de
+  rulare), cel mult 20, rulează doar lista albă (a modului automat + `test tot` + `trimite`; `DA`, `hub`, `gpu lant`, `--gpu`,
+  `--scrie`, `reboot` refuzate), scrie `/usb/raport/hub-<data>.txt` și face `trimite`. `/usb/hub/la-pornire` = la fiecare
+  pornire, pe un fir al sistemului. Test: `ghpush` (+ verificarea listei în `auto`).
 - **`test tot` (P6-61, F9):** `testtot.rs` — autotestul pe calculatorul real (procesor, ceas, temporizator, stick, rețea, placa
   video doar prin ID-urile PCI); `PASS`/`FAIL`/`LIPSA`, raport `raport/test-tot-*.txt`, apoi `trimite`. Test: scenariul `testtot`.
 - **`ora [server [port]]` (P6-61):** SNTP (`net/sntp.rs`, RFC 4330): ora din rețea în UTC și ora României (regula UE pentru

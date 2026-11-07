@@ -56,7 +56,7 @@ pub fn manual() {
 }
 
 /// The reports folder and the token file `send_to_hub` looks at (the `ghpush` test build has no stick: /etc).
-fn hub_paths() -> (&'static str, &'static str) {
+pub(super) fn hub_paths() -> (&'static str, &'static str) {
     #[cfg(feature = "test-ghpush")]
     return ("/etc/raport", "/etc/github.token");
     #[cfg(not(feature = "test-ghpush"))]

@@ -216,5 +216,7 @@
   Nucleul îl pornește după `raport`, `gpu lant` și la comanda `trimite`. Test: tot în `ghpush`.
 - `gh-ia --hub [comenzi [proiect] | stare [proiect] | decizii]` (P6-61, C-84) — citește Cyber Hub și arată pe ecran comenzile
   proiectului (ultimele 8, cu rândurile `stare`), `stare/<proiect>.md` sau ultimele 40 de rânduri din `DECIZII.md`. Comanda shell `hub`. Test: `ghpush`.
+- `gh-ia --hub-ia <cale> <fișier>` (P6-64, C-87) — un fișier din hub pe disc; nucleul îl folosește la `hub ruleaza`
+  (`integrare/cyber-universe/os-comenzi.md`, lista albă în `kernel/src/shell/hubcmd.rs`). Test: `ghpush`.
 - F8 (P6-61): `gh-trimite --ramura os/<nume> …` (commit pe o ramură `os/…`, făcută din `main` cu API-ul „git refs” dacă
   lipsește; `main` refuzat) și `gh-ia --lista <depozit> [dosar] [--ramura r]`. Test: `ghpush` (serverul de imitație are ramuri).

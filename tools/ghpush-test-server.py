@@ -16,7 +16,10 @@ FILES = {"note/vechi.txt": b"versiunea veche\n",
                        "### C-3 · cyber-gpu + cyber-universe · Pasi dupa I10\n- stare: nou\n- stare (cyber-universe): preluat\n\n"
                        "## Arhiva\n- stare: nu se arata\n".encode(),
          "stare/cyber-universe.md": "# Stare: Cyber Universe OS\nTotul merge in QEMU (proba).\n".encode(),
-         "DECIZII.md": "".join(f"- decizia {i}\n" for i in range(1, 51)).encode()}
+         "DECIZII.md": "".join(f"- decizia {i}\n" for i in range(1, 51)).encode(),
+         # P6-64 (C-87 item 2): Adrian's commands for the OS: one to run, one refused (writes to the card), one done by hand.
+         "integrare/cyber-universe/os-comenzi.md": "# Comenzi pentru OS\n\n- [ ] K-1: uptime\n- [ ] K-2: `gpu lant`\n"
+                                                   "- [x] K-3: hw\n- [ ] K-4: mem\n".encode()}
 ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 ctx.minimum_version = ssl.TLSVersion.TLSv1_3
 ctx.load_cert_chain(D + "/ec.pem", D + "/ec.key")
