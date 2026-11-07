@@ -1610,10 +1610,21 @@ fn test_web() {
         (&["web", "--formular", "1", "q=mere si pere", "--adresa", a][..], "web formular GET"),
         (&["web", "https://test.cyber.local:18447/formular", "--adresa", a][..], "web pagina cu formulare (iar)"),
         (&["web", "--formular", "2", "mesaj=Salut, ăîș!", "--adresa", a][..], "web formular POST"),
+        // F6b: basic CSS hides what the page hides (checked below in /tmp/web/pagina.txt); hidden fields still go.
+        (&["web", "https://test.cyber.local:18447/stil", "--adresa", a][..], "web pagina cu stil"),
+        (&["web", "--formular", "1", "--adresa", a][..], "web formular cu camp ascuns"),
     ] {
         let id = proc::spawn_path("/bin/web", args).expect("test: /bin/web");
         let code = proc::wait_child(id);
         info!("test: {} a iesit cu codul {}", what, code);
+        if what == "web pagina cu stil" {
+            let page = fs::read_all("/tmp/web/pagina.txt").expect("test: /tmp/web/pagina.txt");
+            let page = core::str::from_utf8(&page).unwrap_or("");
+            for word in ["RECLAMA", "LEGATURA", "SECRET", "ATRIBUT", "INLINE", "ASCUNS", "CAMP"] {
+                assert!(!page.contains(word), "test web: CSS: {} se vede", word);
+            }
+            info!("test: web CSS de baza: nimic din ce ascunde pagina nu se vede");
+        }
     }
 }
 

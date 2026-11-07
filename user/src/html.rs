@@ -4,6 +4,10 @@
 //! simple tables, images (their `alt` text), links, which are numbered `[N]` in the text, and (F6b, P6-61) forms:
 //! `[formular F1]`, fields `[F1.nume: valoare]`, buttons `[F1: buton "..."]`. Scripts, styles and
 //! the rest of `<head>` are skipped; broken markup never stops it (it just becomes text or is ignored).
+//! Basic CSS (F6b, P6-61): what the page hides does not show — the `hidden` attribute, `style="display:none"` /
+//! `visibility:hidden`, and rules in `<style>` with simple selectors (`tag`, `.clasa`, `#id`, `tag.clasa`, lists with
+//! commas; rules inside `@media` and selectors with spaces or `:` are ignored, so nothing is hidden by mistake).
+//! Form fields in hidden parts are still sent, as browsers do (CSS spec: `display` only changes the rendering).
 //! Included with `#[path]` by /bin/web; it only needs `alloc`.
 
 use alloc::string::{String, ToString};
@@ -64,7 +68,147 @@ struct Builder {
     select: Option<(usize, bool)>,
     /// Inside a `<select>` (also one without a name): its options' text is not shown.
     in_select: bool,
+    /// Simple selectors whose rules say `display:none` / `visibility:hidden`.
+    css: Vec<Selector>,
+    /// The element hidden by CSS we are inside: its name, how many elements of the same name and how many other
+    /// elements are open inside it.
+    off: Option<(String, usize, usize)>,
 }
+
+/// A compound selector: an optional tag name, classes and an id that must all match.
+struct Selector {
+    tag: Option<String>,
+    classes: Vec<String>,
+    id: Option<String>,
+}
+
+impl Selector {
+    /// `div`, `.a`, `#b`, `p.a.c`, `span#b`; None for anything else (descendants, `:hover`, `[attr]`, `*`...).
+    fn parse(s: &str) -> Option<Selector> {
+        let s = s.trim();
+        if s.is_empty() || s.contains(|c: char| c.is_whitespace() || ":[]>+~*()".contains(c)) {
+            return None;
+        }
+        let mut sel = Selector { tag: None, classes: Vec::new(), id: None };
+        let mut rest = s;
+        let first = rest.find(['.', '#']).unwrap_or(rest.len());
+        if first > 0 {
+            sel.tag = Some(rest[..first].to_ascii_lowercase());
+        }
+        rest = &rest[first..];
+        while !rest.is_empty() {
+            let kind = rest.as_bytes()[0];
+            let body = &rest[1..];
+            let n = body.find(['.', '#']).unwrap_or(body.len());
+            if n == 0 {
+                return None;
+            }
+            if kind == b'.' {
+                sel.classes.push(body[..n].to_string());
+            } else if sel.id.replace(body[..n].to_string()).is_some() {
+                return None;
+            }
+            rest = &body[n..];
+        }
+        Some(sel)
+    }
+
+    fn matches(&self, name: &str, attrs: &str) -> bool {
+        if self.tag.as_deref().is_some_and(|t| t != name) {
+            return false;
+        }
+        if let Some(id) = &self.id {
+            if attr(attrs, "id").map(|v| v.trim()) != Some(id.as_str()) {
+                return false;
+            }
+        }
+        let class = attr(attrs, "class").unwrap_or("");
+        self.classes.iter().all(|c| class.split_ascii_whitespace().any(|w| w == c))
+    }
+}
+
+/// Whether CSS declarations hide the element (`display: none`, `visibility: hidden`).
+fn hides(decls: &str) -> bool {
+    let d: String = decls.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_ascii_lowercase();
+    d.split(';').any(|x| {
+        let x = x.trim_end_matches("!important");
+        x == "display:none" || x == "visibility:hidden"
+    })
+}
+
+/// The selectors hidden by the `<style>` sheets of the page.
+fn hidden_selectors(html: &str) -> Vec<Selector> {
+    let mut out = Vec::new();
+    let mut rest = html;
+    while let Some(p) = find_ci(rest, "<style") {
+        rest = &rest[p..];
+        let Some(gt) = tag_end(rest) else { break };
+        let media = attr(&rest[6..gt], "media").map(|m| m.trim().to_ascii_lowercase());
+        rest = &rest[gt + 1..];
+        let end = find_ci(rest, "</style").unwrap_or(rest.len());
+        if media.as_deref().is_none_or(|m| m.is_empty() || m == "all" || m == "screen") {
+            sheet_rules(&rest[..end], &mut out);
+        }
+        rest = &rest[end..];
+    }
+    out
+}
+
+/// Reads a style sheet: comments dropped, `@` blocks skipped whole, each rule that hides adds its selectors.
+fn sheet_rules(css: &str, out: &mut Vec<Selector>) {
+    let mut clean = String::new();
+    let mut rest = css;
+    while let Some(p) = rest.find("/*") {
+        clean.push_str(&rest[..p]);
+        rest = rest[p + 2..].find("*/").map_or("", |e| &rest[p + 2 + e + 2..]);
+    }
+    clean.push_str(rest);
+    let mut rest = clean.as_str();
+    loop {
+        rest = rest.trim_start();
+        if rest.is_empty() {
+            break;
+        }
+        if rest.starts_with('@') {
+            // `@import ...;` or `@media ... { ... }`: skipped (nested braces counted).
+            let semi = rest.find(';').unwrap_or(rest.len());
+            let brace = rest.find('{').unwrap_or(rest.len());
+            if semi < brace {
+                rest = &rest[(semi + 1).min(rest.len())..];
+                continue;
+            }
+            let mut depth = 0;
+            let mut cut = rest.len();
+            for (i, c) in rest.char_indices().skip(brace) {
+                match c {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            cut = i + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            rest = &rest[cut..];
+            continue;
+        }
+        let Some(open) = rest.find('{') else { break };
+        let close = rest[open..].find('}').map_or(rest.len(), |c| open + c);
+        if hides(&rest[open + 1..close]) {
+            out.extend(rest[..open].split(',').filter_map(Selector::parse));
+        }
+        rest = &rest[(close + 1).min(rest.len())..];
+    }
+}
+
+/// Elements whose end tag may be left out (WHATWG "optional tags"), so a hidden one also ends where it would close.
+const OPTIONAL_END: [&str; 8] = ["p", "li", "dt", "dd", "tr", "td", "th", "option"];
+
+/// Elements that have no end tag.
+const VOID: [&str; 13] = ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"];
 
 impl Builder {
     /// The current form, or a form of its own for a field outside any `<form>` (it still shows, with a number).
@@ -253,7 +397,7 @@ impl Builder {
             }
             return;
         }
-        if self.hidden > 0 {
+        if self.hidden > 0 || self.off.is_some() {
             return;
         }
         if self.pre > 0 {
@@ -278,6 +422,16 @@ impl Builder {
         }
     }
 
+    /// Whether the page hides this element: the `hidden` attribute, an inline style, or a `<style>` rule.
+    fn css_hidden(&self, name: &str, attrs: &str) -> bool {
+        if matches!(name, "html" | "body") {
+            return false;
+        }
+        attr(attrs, "hidden").is_some()
+            || attr(attrs, "style").is_some_and(hides)
+            || self.css.iter().any(|sel| sel.matches(name, attrs))
+    }
+
     fn tag(&mut self, name: &str, end: bool, attrs: &str) {
         if name == "body" && !end {
             // Pages that never close <head> (allowed by HTML) still show their body.
@@ -298,6 +452,58 @@ impl Builder {
         }
         if self.hidden > 0 {
             return;
+        }
+        if let Some((h, same, inner)) = self.off.as_mut() {
+            let optional_end = OPTIONAL_END.contains(&h.as_str());
+            let void = VOID.contains(&name) || attrs.trim_end().ends_with('/');
+            let mut own_end = false;
+            if !end && h == name {
+                if optional_end && *same == 0 {
+                    // `<li hidden>a<li>b`: the next one closes the hidden one (its end tag may be left out).
+                    self.off = None;
+                } else {
+                    *same += 1;
+                }
+            } else if !end && optional_end && h == "p" && *inner == 0 && BLOCKS.contains(&name) {
+                // A new block closes a paragraph.
+                self.off = None;
+            } else if !end && !void {
+                *inner += 1;
+            } else if end && h == name {
+                if *same > 0 {
+                    *same -= 1;
+                } else {
+                    self.off = None;
+                    own_end = true;
+                }
+            } else if end && *inner > 0 {
+                *inner -= 1;
+            } else if end && optional_end {
+                // The end of its parent (`</ul>` after a hidden `<li>`) ends it too; that tag is handled normally.
+                self.off = None;
+            }
+            // Its own end tag is done here (a form or select still needs theirs, for the fields).
+            if own_end && !matches!(name, "form" | "select") {
+                return;
+            }
+            // Hidden by CSS: nothing shows, but the form fields still count (they are sent).
+            if self.off.is_some() && !matches!(name, "form" | "input" | "select" | "option") {
+                return;
+            }
+        }
+        if self.off.is_none() && !end && self.css_hidden(name, attrs) {
+            if VOID.contains(&name) || attrs.trim_end().ends_with('/') {
+                if name == "input" {
+                    self.off = Some((String::new(), 0, 0));
+                    self.form_tag(name, attrs, None);
+                    self.off = None;
+                }
+                return;
+            }
+            self.off = Some((name.to_string(), 0, 0));
+            if !matches!(name, "form" | "select") {
+                return;
+            }
         }
         match (name, end) {
             ("br", _) => {
@@ -591,6 +797,8 @@ pub fn render(html: &str, width: usize) -> Doc {
         form: None,
         select: None,
         in_select: false,
+        css: hidden_selectors(html),
+        off: None,
     };
     let mut rest = html;
     while !rest.is_empty() {

@@ -136,6 +136,10 @@
   tabelele simple (celule despărțite prin ` | `), citatele (`> `), textul preformatat, imaginile (doar textul `alt`) și
   **legăturile numerotate `[N]`**, listate cu adresa completă la sfârșitul paginii. Scripturile, stilurile și restul
   `<head>` nu se arată; paginile făcute de JavaScript nu se văd (treapta a: pagini simple și documentație).
+  **CSS de bază** (F6b, P6-61): ce ascunde pagina nu se arată — atributul `hidden`, `style="display:none"` /
+  `visibility:hidden` și regulile din `<style>` cu selectori simpli (`p`, `.clasa`, `#id`, `p.clasa`, liste cu virgulă);
+  regulile din `@media` și selectorii compuși sunt ignorați (mai bine arată prea mult decât să ascundă din greșeală).
+  Câmpurile de formular din părțile ascunse se trimit totuși, ca în browserele obișnuite. Test: scenariul `web` (pagina `/stil`).
   `web <N>` deschide legătura N a ultimei pagini, `web --pagina P` arată pagina de ecran P fără să descarce din nou,
   `web --legaturi` toate legăturile. Opțiuni: `--linii L` (rânduri pe pagină de ecran, 40), `--latime W` (78),
   `--adresa A` (doar teste). Urmează redirecționările (cel mult 5). Ultima pagină se păstrează în `/tmp/web/`

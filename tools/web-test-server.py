@@ -62,7 +62,18 @@ FORMS = """<html><head><title>Formulare</title></head><body><h1>Cautare</h1>
 </body></html>
 """
 
+# P6-61 step 6 (F6b): basic CSS. The words in capitals must not show; the hidden field is still sent.
+STIL = """<html><head><title>Stil</title><style>/* foaia */ .ascuns, #reclama { display: none }
+@media print { .tipar { display: none } } div p { display: none }</style></head><body>
+<h1>Stil de baza</h1><div id="reclama">RECLAMA <a href="/r">LEGATURA</a></div><p class="ascuns">SECRET</p>
+<p hidden>ATRIBUT</p><p style="display: none">INLINE</p><p class="tipar">vizibil pe ecran</p>
+<ul><li hidden>ASCUNS<li>element vizibil</ul>
+<form action="/cauta"><div class="ascuns"><input name="capcana" value="z">CAMP</div><input name="q" value="a"></form>
+<p>sfarsit stil</p></body></html>
+"""
+
 PAGES = {
+    "/stil": ("200 OK", "text/html", STIL.encode()),
     "/formular": ("200 OK", "text/html", FORMS.encode()),
     "/": ("200 OK", "text/html; charset=utf-8", INDEX.encode()),
     "/doc/pagina2.html": ("200 OK", "text/html", PAGE2.encode()),
