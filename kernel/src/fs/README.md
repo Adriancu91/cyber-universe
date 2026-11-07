@@ -30,6 +30,7 @@
   (conținutul `/etc/motd`, ciclul complet creare → scriere → citire → ștergere fără scurgeri în heap, erori clare pentru căi greșite).
    și `test: FAT32 OK` (listare `/disk`, nume lungi, 100 KiB peste multe clustere cu suma corectă, citire de la mijloc,
   scriere refuzată, aceeași partiție găsită și prin MBR). Scrierea: scenariul `fatwrite` — o copie a discului de test
-  marcată cu `cyber.rw`, atașată ca SATA; nucleul creează, scrie, suprascrie, șterge; apoi `tools/after-fatwrite.sh`
+  marcată cu `cyber.rw`, atașată ca SATA; nucleul creează, scrie, suprascrie, șterge, redenumește și mută dosare
+  (P6-61: intrarea `..` a dosarului mutat arată spre noul părinte; un dosar nu se poate muta în el însuși); apoi `tools/after-fatwrite.sh`
   verifică imaginea cu `fsck.fat -n` (fără erori) și citește fișierele cu mtools (conținut corect văzut din Linux).
 - **Surse:** POSIX (formatul ustar); Microsoft „FAT32 File System Specification” (fatgen103); specificația UEFI (GPT); design propriu pentru VFS.

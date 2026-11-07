@@ -16,9 +16,14 @@
   Din shell: comanda `desktop`. Test: scenariul `desktop`.
 - `mod_salut` — programul modulului de test `salut` (`modules/salut`); programele `mod_*` nu intră în `/bin`, ci în pachetele de module.
 - `monitor` — monitorul sistemului: memorie, procesor, programele care merg (actualizat la o secundă); clic pe un program + `o` îl oprește.
-- `files` — managerul de fișiere: navigare, deschidere (directoare, programe), copiere/lipire, ștergere; butoane sus
-  și taste (Enter, Backspace, j/k, c, v, s, q). Primul argument = directorul de pornire.
-  Test pentru amândouă: scenariul `sysapps` (clicuri și taste simulate, captura `tests/screens/sysapps.png`).
+- `files` — managerul de fișiere: navigare, deschidere (directoare, programe), copiere/lipire de fișiere și de dosare întregi,
+  ștergere (un dosar plin: `s` de două ori), dosar nou (`n`), redenumire (`r`, scrii numele, Enter; Esc renunță), butonul
+  „Stick” (`u`) = `/usb`; mărimea fișierelor în dreapta. Fără argument pornește în `/usb` dacă e un stick, altfel în `/`.
+  Pe stick, după fiecare schimbare scrie imediat tot pe stick („scris pe stick”), ca să-l poți scoate. Scrie doar pe discuri
+  marcate `cyber.rw` (niciodată pe discurile calculatorului); fișierele secrete (token, chei) nu se văd și nu se copiază.
+  Butoane sus și taste (Enter, Backspace, j/k, c, v, s, n, r, u, q). Primul argument = directorul de pornire.
+  Test pentru amândouă: scenariul `sysapps` (clicuri și taste simulate, captura `tests/screens/sysapps.png`);
+  pe stick: scenariul `files-usb` (P6-61, captura `tests/screens/files-usb.png`).
 - `editor [fișier]` — editor de text: scriere, săgeți, Home, End, Backspace, Delete; Ctrl+S salvează, Ctrl+Q iese
   (de două ori dacă sunt modificări nesalvate); fișiere UTF-8 până la 64 KiB. Managerul de fișiere deschide aici
   fișierele care nu sunt programe.

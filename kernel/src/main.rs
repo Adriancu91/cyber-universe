@@ -352,6 +352,9 @@ fn run_tests() -> ! {
     #[cfg(feature = "test-sysapps")]
     test_system_apps();
 
+    #[cfg(feature = "test-files-usb")]
+    test_files_usb();
+
     #[cfg(feature = "test-editor")]
     test_editor_and_settings();
 
@@ -1022,8 +1025,21 @@ fn test_fat_write() {
     let list = fs::list("/disk/scris/multe").unwrap();
     assert!(list.len() == 20, "{} fisiere in /disk/scris/multe", list.len());
     assert!(fs::read_all("/disk/scris/multe/fisier-19.txt").unwrap() == b"/disk/scris/multe/fisier-19.txt", "ultimul fisier");
+    // P6-61: a folder renamed in place, then moved into another folder and back to the root (its ".." follows the
+    // parent; fsck.fat checks it in tools/after-fatwrite.sh). It cannot go inside itself.
+    fs::create("/disk/scris/dosar", Kind::Dir).unwrap();
+    fs::create("/disk/scris/dosar/b.txt", Kind::File).unwrap();
+    fs::write("/disk/scris/dosar/b.txt", 0, b"b\n").unwrap();
+    fs::rename("/disk/scris/dosar", "/disk/scris/Dosar Redenumit").expect("test: redenumire director");
+    fs::rename("/disk/scris/Dosar Redenumit", "/disk/scris/multe/dosar").expect("test: mutare director");
+    fs::rename("/disk/scris/multe/dosar", "/disk/mutat").expect("test: mutare director in radacina");
+    assert!(fs::read_all("/disk/mutat/b.txt").unwrap() == b"b\n", "fisierul din directorul mutat");
+    assert!(fs::kind("/disk/scris/dosar") == Err(FsError::NotFound), "numele vechi al directorului a ramas");
+    assert!(fs::rename("/disk/mutat", "/disk/mutat/in") == Err(FsError::InvalidPath), "director mutat in el insusi");
+    fs::create("/disk/scris/gol2", Kind::Dir).unwrap();
+    fs::rename("/disk/scris/gol2", "/disk/scris/multe/gol2").expect("test: mutare director gol");
     assert!(fs::read_all("/disk/salut.txt").unwrap() == b"salut de pe disc\n", "fisierele vechi s-au stricat");
-    info!("test: scriere FAT32 OK (nume scurte si lungi, 10000 octeti peste clustere, gol, stergere, director marit)");
+    info!("test: scriere FAT32 OK (nume scurte si lungi, 10000 octeti peste clustere, gol, stergere, director marit, director redenumit si mutat)");
 }
 
 /// Module manager on a copy of the test disk marked for writing: dependency checks, install, start
@@ -1128,6 +1144,75 @@ fn test_system_apps() {
     assert!(proc::wait(monitor) == 0, "monitorul nu a iesit cu 0");
     wait_for("serverul grafic nu se opreste", &|| !ui::running());
     info!("test: aplicatii de sistem OK (monitor: lista si oprire; fisiere: copiere, lipire, stergere, navigare)");
+}
+
+/// P6-61 (C-84 item 7): the file manager on the stick (a writable copy of a Release-like stick at /usb): started
+/// without arguments it opens /usb; a whole folder is copied into a new folder, the new folder is renamed by typing,
+/// and deleted with everything in it only after a second `s`.
+#[cfg(feature = "test-files-usb")]
+fn test_files_usb() {
+    use drivers::keyboard::{Key, push_key};
+    use input::{MouseEvent, push_mouse};
+    let wait_for = |what: &str, ok: &dyn Fn() -> bool| {
+        let deadline = arch::x86_64::apic::ticks() + 10 * arch::x86_64::apic::HZ;
+        while !ok() {
+            assert!(arch::x86_64::apic::ticks() < deadline, "test files-usb: {}", what);
+            sched::sleep_ms(10);
+        }
+    };
+    let click = |x: usize, y: usize| {
+        let (cx, cy) = ui::cursor().expect("test: serverul grafic nu merge");
+        push_mouse(MouseEvent { dx: (x as isize - cx as isize) as i16, dy: (y as isize - cy as isize) as i16, buttons: 0 });
+        push_mouse(MouseEvent { dx: 0, dy: 0, buttons: 1 });
+        push_mouse(MouseEvent { dx: 0, dy: 0, buttons: 0 });
+        sched::sleep_ms(250);
+    };
+    let key = |c: Key| {
+        push_key(c);
+        sched::sleep_ms(200);
+    };
+    let top_is = |id: u64| ui::top_window().is_some_and(|(o, _)| o == id);
+    let src = fs::read_all("/usb/docs/mare.bin").expect("test: /usb/docs/mare.bin");
+
+    // Without arguments: /usb. Rows: .., docs/, pachete/, then the 4 files
+    let files = proc::spawn_path("/bin/files", &["files"]).expect("test: files");
+    wait_for("managerul de fisiere nu porneste", &|| top_is(files));
+    sched::sleep_ms(300);
+    let (_, (fx, fy)) = ui::top_window().unwrap();
+    let row = |i: usize| (fx + 100, fy + 48 + i * 20 + 10);
+    let (x, y) = row(1);
+    click(x, y);
+    key(Key::Char('c')); // the folder docs
+    key(Key::Char('n')); // /usb/dosar-nou, selected
+    wait_for("dosarul nou nu a aparut", &|| fs::kind("/usb/dosar-nou") == Ok(fs::Kind::Dir));
+    key(Key::Enter);
+    key(Key::Char('v'));
+    wait_for("dosarul copiat nu a ajuns pe stick", &|| fs::read_all("/usb/dosar-nou/docs/mare.fnv").is_ok());
+    assert!(fs::read_all("/usb/dosar-nou/docs/mare.bin").is_ok_and(|d| d == src), "copia lui mare.bin difera");
+    key(Key::Backspace); // back in /usb, dosar-nou still selected (row 2)
+    key(Key::Char('r'));
+    for _ in 0.."dosar-nou".len() {
+        key(Key::Backspace);
+    }
+    for c in "copie".chars() {
+        key(Key::Char(c));
+    }
+    key(Key::Enter);
+    wait_for("redenumirea nu a ajuns pe stick", &|| fs::kind("/usb/copie/docs") == Ok(fs::Kind::Dir));
+    assert!(fs::kind("/usb/dosar-nou") == Err(fs::FsError::NotFound), "numele vechi a ramas");
+    let (x, y) = row(1); // .., copie/, docs/, pachete/
+    click(x, y);
+    key(Key::Char('s'));
+    sched::sleep_ms(300);
+    assert!(fs::kind("/usb/copie") == Ok(fs::Kind::Dir), "dosarul plin s-a sters fara al doilea s");
+    key(Key::Char('s'));
+    wait_for("stergerea dosarului nu a ajuns pe stick", &|| fs::kind("/usb/copie") == Err(fs::FsError::NotFound));
+    assert!(fs::read_all("/usb/docs/mare.bin").is_ok_and(|d| d == src), "originalul s-a schimbat");
+    serial_println!("FILES-USB: captura");
+    sched::sleep_ms(1500); // the harness saves the screen now
+    key(Key::Char('q'));
+    assert!(proc::wait(files) == 0, "files nu a iesit cu 0");
+    info!("test: manager de fisiere pe stick OK (dosar nou, copiere de dosar, redenumire, stergere cu confirmare)");
 }
 
 /// The editor gets real key presses from QEMU (letters, Enter, arrows, Home, End, Backspace, Delete,

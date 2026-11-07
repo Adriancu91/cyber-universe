@@ -25,5 +25,8 @@ sys.exit(0 if data == bytes(want) else 1)
 PY
 mdir -b -i "$IMG@@1M" ::/scris | grep -q "sterge.txt" && fail "sterge.txt nu a fost șters"
 n="$(mdir -b -i "$IMG@@1M" ::/scris/multe | wc -l)"
-[[ "$n" == 20 ]] || fail "în /scris/multe sunt $n fișiere, așteptat 20"
+[[ "$n" == 21 ]] || fail "în /scris/multe sunt $n intrări, așteptat 20 de fișiere + dosarul gol2"
+# P6-61: the folder renamed and moved by the kernel (fsck.fat above checked its "..").
+[[ "$(mtype -i "$IMG@@1M" ::/mutat/b.txt)" == "b" ]] || fail "mutat/b.txt lipsește sau are alt conținut"
+mdir -b -i "$IMG@@1M" ::/scris | grep -qi "dosar" && fail "numele vechi al dosarului a rămas"
 echo "[after-fatwrite] fsck.fat curat, fișierele scrise de nucleu se citesc corect în Linux"

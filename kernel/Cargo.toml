@@ -97,6 +97,8 @@ test-fatwrite = ["qemu-test"]
 test-modules = ["qemu-test"]
 # P4-09: system monitor and file manager driven with simulated clicks and keys.
 test-sysapps = ["qemu-test"]
+# P6-61 (C-84 item 7): the file manager on a writable test stick at /usb.
+test-files-usb = ["qemu-test"]
 # P4-10: text editor (keys typed by QEMU), settings, opening a text file from the file manager.
 test-editor = ["qemu-test"]
 # P4-11: the Modules app driven with the real (emulated) mouse: install, start, stop, remove.

@@ -1,26 +1,36 @@
 //! File manager: browse folders, open (folders, programs; other files in the editor), copy, paste and
-//! delete files.
+//! delete files and whole folders, make a folder, rename. Made for the stick (P6-61, C-84 item 7): the
+//! "Stick" button goes to /usb, every change on the stick is written out at once (so it can be pulled
+//! out), sizes are shown next to the files.
 //! Mouse: click selects; the buttons at the top act on the selection. Keys: Enter = open,
-//! Backspace = up one folder, j / k = next / previous, c = copy, v = paste, s = delete, q = quit.
-//! The first argument is the folder to start in (default `/`).
+//! Backspace = up one folder, j / k = next / previous, c = copy, v = paste, s = delete (a folder that
+//! is not empty: press s a second time), n = new folder, r = rename (type the name, Enter; Esc gives up),
+//! u = the stick, q = quit.
+//! The first argument is the folder to start in (default: /usb if there is a stick, otherwise `/`).
+//! Writing goes through the kernel's rules: only disks marked `cyber.rw` (never the computer's own disks).
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use cyber_user::gfx::{Canvas, Event, Window};
-use cyber_user::text::Line;
-use cyber_user::{close, create, error_text, open, println, read, remove, spawn, write};
+use cyber_user::{close, create, error_text, open, println, read, remove, rename, spawn, stat, sync, write};
 
 cyber_user::entry!(main);
+cyber_user::heap!(1024 * 1024);
 
-const W: usize = 480;
+const W: usize = 680;
 const H: usize = 360;
 const BAR_H: usize = 28;
 const LIST_Y: usize = 48;
 const ROW_H: usize = 20;
 const ROWS: usize = (H - LIST_Y - 18) / ROW_H;
-const MAX: usize = 128;
-const NAME: usize = 64;
-const PATH: usize = 256;
+/// Folders deeper than this are not copied or deleted (a loop guard; the stick's folders are shallow).
+const MAX_DEPTH: usize = 8;
+const STICK: &str = "/usb";
 
 const BG: u32 = 0x00_F4_F6_F8;
 const TEXT: u32 = 0x00_10_18_20;
@@ -29,159 +39,200 @@ const BUTTON: u32 = 0x00_20_70_C0;
 const WHITE: u32 = 0x00_FF_FF_FF;
 const SELECTED: u32 = 0x00_C8_DC_F0;
 const FOLDER: u32 = 0x00_C0_80_10;
+const INPUT: u32 = 0x00_FF_F4_C0;
 
 /// Toolbar: (label, key it stands for).
-const BUTTONS: [(&str, char); 5] = [("Sus", '\u{8}'), ("Deschide", '\n'), ("Copiaza", 'c'), ("Lipeste", 'v'), ("Sterge", 's')];
+const BUTTONS: [(&str, char); 8] = [
+    ("Sus", '\u{8}'),
+    ("Deschide", '\n'),
+    ("Copiaza", 'c'),
+    ("Lipeste", 'v'),
+    ("Sterge", 's'),
+    ("Nou", 'n'),
+    ("Nume", 'r'),
+    ("Stick", 'u'),
+];
 
 static mut PIXELS: [u32; W * H] = [0; W * H];
 
-#[derive(Clone, Copy)]
 struct Entry {
-    name: [u8; NAME],
-    len: usize,
+    name: String,
     dir: bool,
+    /// Bytes (files only).
+    size: u64,
 }
 
-impl Entry {
-    fn name(&self) -> &str {
-        core::str::from_utf8(&self.name[..self.len]).unwrap_or("?")
+fn join(dir: &str, name: &str) -> String {
+    if dir.ends_with('/') { format!("{}{}", dir, name) } else { format!("{}/{}", dir, name) }
+}
+
+fn parent(p: &str) -> String {
+    match p.rfind('/') {
+        Some(0) | None => "/".to_string(),
+        Some(i) => p[..i].to_string(),
     }
 }
 
-/// A path without a heap.
-#[derive(Clone, Copy)]
-struct Path {
-    buf: [u8; PATH],
-    len: usize,
+fn file_name(p: &str) -> &str {
+    p.rsplit('/').next().unwrap_or("")
 }
 
-impl Path {
-    fn new(s: &str) -> Path {
-        let mut p = Path { buf: [0; PATH], len: 0 };
-        p.set(s);
-        p
+/// The names in `dir`: (name, is a folder), or a negative error.
+fn list_dir(dir: &str) -> Result<Vec<(String, bool)>, i64> {
+    let mut buf = alloc::vec![0u8; 16 * 1024];
+    let n = cyber_user::list(dir, &mut buf);
+    if n < 0 {
+        return Err(n);
     }
-    fn set(&mut self, s: &str) {
-        self.len = s.len().min(PATH);
-        self.buf[..self.len].copy_from_slice(&s.as_bytes()[..self.len]);
+    Ok(buf[..n as usize]
+        .split(|&b| b == b'\n')
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let s = core::str::from_utf8(l).unwrap_or("?");
+            match s.strip_suffix('/') {
+                Some(d) => (d.to_string(), true),
+                None => (s.to_string(), false),
+            }
+        })
+        .collect())
+}
+
+fn is_dir(p: &str) -> bool {
+    stat(p) == cyber_user::E_IS_DIR
+}
+
+/// "12 B", "3 KB", "4.2 MB".
+fn human(n: u64) -> String {
+    if n < 1024 {
+        format!("{} B", n)
+    } else if n < 1024 * 1024 {
+        format!("{} KB", n.div_ceil(1024))
+    } else {
+        let t = n * 10 / (1024 * 1024);
+        format!("{}.{} MB", t / 10, t % 10)
     }
-    fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.buf[..self.len]).unwrap_or("/")
-    }
-    /// This folder + `/name`.
-    fn join(&self, name: &str) -> Path {
-        let mut p = *self;
-        if !p.as_str().ends_with('/') && p.len < PATH {
-            p.buf[p.len] = b'/';
-            p.len += 1;
-        }
-        let n = name.len().min(PATH - p.len);
-        p.buf[p.len..p.len + n].copy_from_slice(&name.as_bytes()[..n]);
-        p.len += n;
-        p
-    }
-    fn parent(&self) -> Path {
-        let s = self.as_str();
-        match s.rfind('/') {
-            Some(0) | None => Path::new("/"),
-            Some(i) => Path::new(&s[..i]),
-        }
-    }
-    fn file_name(&self) -> &str {
-        self.as_str().rsplit('/').next().unwrap_or("")
-    }
+}
+
+/// What a copy or delete of a folder did.
+#[derive(Default)]
+struct Count {
+    files: u64,
+    dirs: u64,
+    bytes: u64,
 }
 
 struct Files {
-    cwd: Path,
-    entries: [Entry; MAX],
-    count: usize,
+    cwd: String,
+    entries: Vec<Entry>,
     selected: usize,
     top: usize,
-    clipboard: Option<Path>,
-    status: Line,
+    clipboard: Option<(String, bool)>,
+    status: String,
+    /// Rename in progress: the text typed so far.
+    input: Option<String>,
+    /// The folder waiting for a second `s`.
+    confirm_delete: Option<String>,
 }
 
 impl Files {
     fn load(&mut self) {
-        let mut buf = [0u8; 4096];
-        let n = cyber_user::list(self.cwd.as_str(), &mut buf);
-        self.count = 0;
-        if self.cwd.as_str() != "/" {
-            self.add("..", true);
+        self.entries.clear();
+        if self.cwd != "/" {
+            self.entries.push(Entry { name: "..".to_string(), dir: true, size: 0 });
         }
-        if n < 0 {
-            self.say("nu pot citi directorul: ").push(error_text(n));
-            return;
-        }
-        for line in buf[..n as usize].split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
-            let s = core::str::from_utf8(line).unwrap_or("?");
-            match s.strip_suffix('/') {
-                Some(d) => self.add(d, true),
-                None => self.add(s, false),
+        let names = match list_dir(&self.cwd) {
+            Ok(n) => n,
+            Err(e) => {
+                self.status = format!("nu pot citi directorul: {}", error_text(e));
+                return;
             }
+        };
+        let first = self.entries.len();
+        for (name, dir) in names {
+            let size = if dir { 0 } else { stat(&join(&self.cwd, &name)).max(0) as u64 };
+            self.entries.push(Entry { name, dir, size });
         }
         // Folders first, then files, each by name without regard to case (".." stays first).
-        let first = if self.cwd.as_str() != "/" { 1 } else { 0 };
-        let key = |e: &Entry| (!e.dir, e.name);
-        for i in first + 1..self.count {
-            let mut j = i;
-            while j > first && lower_key(key(&self.entries[j])) < lower_key(key(&self.entries[j - 1])) {
-                self.entries.swap(j, j - 1);
-                j -= 1;
-            }
-        }
-        self.selected = 0;
+        self.entries[first..].sort_by(|a, b| (!a.dir, a.name.to_ascii_lowercase()).cmp(&(!b.dir, b.name.to_ascii_lowercase())));
+        self.selected = self.selected.min(self.entries.len().saturating_sub(1));
         self.top = 0;
-        println!("files: {} ({} intrari)", self.cwd.as_str(), self.count - first);
+        println!("files: {} ({} intrari)", self.cwd, self.entries.len() - first);
     }
 
-    fn add(&mut self, name: &str, dir: bool) {
-        if self.count == MAX {
-            return;
+    fn go(&mut self, dir: String) {
+        self.cwd = dir;
+        self.selected = 0;
+        self.load();
+    }
+
+    /// One folder up, with the folder we were in selected.
+    fn up(&mut self) {
+        let from = file_name(&self.cwd).to_string();
+        self.go(parent(&self.cwd));
+        if let Some(i) = self.entries.iter().position(|e| e.dir && e.name == from) {
+            self.selected = i;
+            self.top = i.saturating_sub(ROWS - 1);
         }
-        let len = name.len().min(NAME);
-        let mut e = Entry { name: [0; NAME], len, dir };
-        e.name[..len].copy_from_slice(&name.as_bytes()[..len]);
-        self.entries[self.count] = e;
-        self.count += 1;
     }
 
-    fn say(&mut self, s: &str) -> &mut Line {
-        self.status = Line::new();
-        self.status.push(s);
-        &mut self.status
-    }
-
-    fn selected_path(&self) -> Option<(Path, bool)> {
-        let e = self.entries.get(self.selected).filter(|_| self.selected < self.count)?;
-        if e.name() == ".." {
+    fn selected_path(&self) -> Option<(String, bool)> {
+        let e = self.entries.get(self.selected)?;
+        if e.name == ".." {
             return None;
         }
-        Some((self.cwd.join(e.name()), e.dir))
+        Some((join(&self.cwd, &e.name), e.dir))
+    }
+
+    /// After a change under `path`: on the stick, write out the cache now (it can be pulled out).
+    fn written(&mut self, path: &str) {
+        if path == STICK || path.starts_with("/usb/") {
+            let r = sync(path);
+            if r < 0 {
+                self.status.push_str(&format!(" (scrierea pe stick: {})", error_text(r)));
+            } else {
+                self.status.push_str(" - scris pe stick");
+            }
+        }
     }
 
     fn key(&mut self, k: char) -> bool {
+        if self.input.is_some() {
+            self.typing(k);
+            return true;
+        }
+        if k != 's' {
+            self.confirm_delete = None;
+        }
         match k {
             'q' | '\u{1b}' => return false,
-            '\u{8}' => {
-                self.cwd = self.cwd.parent();
-                self.load();
-            }
+            '\u{8}' => self.up(),
             '\n' => self.open_selected(),
-            'j' => self.selected = (self.selected + 1).min(self.count.saturating_sub(1)),
+            'j' => self.selected = (self.selected + 1).min(self.entries.len().saturating_sub(1)),
             'k' => self.selected = self.selected.saturating_sub(1),
             'c' => match self.selected_path() {
-                Some((p, false)) => {
-                    self.clipboard = Some(p);
-                    self.say("copiat: ").push(p.as_str());
+                Some((p, dir)) => {
+                    self.status = format!("copiat{}: {}", if dir { " (dosar)" } else { "" }, p);
+                    self.clipboard = Some((p, dir));
                 }
-                _ => {
-                    self.say("alege un fisier (directoarele nu se copiaza)");
-                }
+                None => self.status = "alege un fisier sau un dosar".to_string(),
             },
             'v' => self.paste(),
             's' => self.delete(),
+            'n' => self.new_folder(),
+            'r' => match self.selected_path() {
+                Some((p, _)) => {
+                    self.input = Some(file_name(&p).to_string());
+                    self.status = "numele nou, apoi Enter (Esc = renunt)".to_string();
+                }
+                None => self.status = "alege ce redenumesti".to_string(),
+            },
+            'u' => {
+                if is_dir(STICK) {
+                    self.go(STICK.to_string());
+                } else {
+                    self.status = "niciun stick la /usb".to_string();
+                }
+            }
             _ => {}
         }
         if self.selected < self.top {
@@ -192,63 +243,160 @@ impl Files {
         true
     }
 
+    /// A key while the new name is typed.
+    fn typing(&mut self, k: char) {
+        let Some(text) = self.input.as_mut() else { return };
+        match k {
+            '\u{1b}' => {
+                self.input = None;
+                self.status = "redenumire anulata".to_string();
+            }
+            '\u{8}' => {
+                text.pop();
+            }
+            '\n' => {
+                let name = self.input.take().unwrap_or_default();
+                self.rename_to(name.trim());
+            }
+            c if (c as u32) >= 0x20 && c != '/' && text.len() < 64 => text.push(c),
+            _ => {}
+        }
+    }
+
+    fn rename_to(&mut self, name: &str) {
+        let Some((from, _)) = self.selected_path() else { return };
+        if name.is_empty() || name == file_name(&from) {
+            self.status = "numele nu s-a schimbat".to_string();
+            return;
+        }
+        let to = join(&self.cwd, name);
+        let r = rename(&from, &to);
+        if r < 0 {
+            self.status = format!("nu pot redenumi: {}", error_text(r));
+            return;
+        }
+        println!("files: redenumit {} -> {}", from, to);
+        self.load();
+        if let Some(i) = self.entries.iter().position(|e| e.name == name) {
+            self.selected = i;
+        }
+        self.status = format!("redenumit: {}", name);
+        self.written(&to);
+    }
+
+    fn new_folder(&mut self) {
+        let mut name = "dosar-nou".to_string();
+        let mut i = 2;
+        while stat(&join(&self.cwd, &name)) != cyber_user::E_NOT_FOUND {
+            name = format!("dosar-nou-{}", i);
+            i += 1;
+            if i > 99 {
+                self.status = "prea multe dosare noi".to_string();
+                return;
+            }
+        }
+        let p = join(&self.cwd, &name);
+        let r = create(&p, true);
+        if r < 0 {
+            self.status = format!("nu pot face dosarul: {}", error_text(r));
+            return;
+        }
+        println!("files: dosar nou {}", p);
+        self.load();
+        if let Some(i) = self.entries.iter().position(|e| e.name == name) {
+            self.selected = i;
+        }
+        self.status = format!("dosar nou: {} (r = alt nume)", name);
+        self.written(&p);
+    }
+
     fn open_selected(&mut self) {
-        let Some(e) = self.entries.get(self.selected).copied().filter(|_| self.selected < self.count) else { return };
-        if e.name() == ".." {
-            self.cwd = self.cwd.parent();
-            self.load();
-        } else if e.dir {
-            self.cwd = self.cwd.join(e.name());
-            self.load();
+        let Some(e) = self.entries.get(self.selected) else { return };
+        let (name, dir) = (e.name.clone(), e.dir);
+        if name == ".." {
+            self.up();
+        } else if dir {
+            let d = join(&self.cwd, &name);
+            self.go(d);
         } else {
-            let p = self.cwd.join(e.name());
-            if is_program(p.as_str()) {
-                let r = spawn(p.as_str());
-                if r < 0 {
-                    self.say("nu porneste: ").push(error_text(r));
-                } else {
-                    self.say("pornit: ").push(p.as_str());
-                }
+            let p = join(&self.cwd, &name);
+            if is_program(&p) {
+                let r = spawn(&p);
+                self.status = if r < 0 { format!("nu porneste: {}", error_text(r)) } else { format!("pornit: {}", p) };
             } else {
                 // Everything else opens in the text editor.
-                let r = cyber_user::spawn_with("/bin/editor", p.as_str());
-                if r < 0 {
-                    self.say("editorul nu porneste: ").push(error_text(r));
-                } else {
-                    self.say("deschis in editor: ").push(p.as_str());
-                }
+                let r = cyber_user::spawn_with("/bin/editor", &p);
+                self.status =
+                    if r < 0 { format!("editorul nu porneste: {}", error_text(r)) } else { format!("deschis in editor: {}", p) };
             }
         }
     }
 
     fn paste(&mut self) {
-        let Some(src) = self.clipboard else {
-            self.say("nimic copiat");
+        let Some((src, dir)) = self.clipboard.clone() else {
+            self.status = "nimic copiat".to_string();
             return;
         };
-        let dst = self.cwd.join(src.file_name());
-        match copy(src.as_str(), dst.as_str()) {
-            Ok(n) => {
-                println!("files: copiat {} -> {} ({} octeti)", src.as_str(), dst.as_str(), n);
-                self.load();
-                self.say("lipit: ").push(dst.as_str());
+        let dst = join(&self.cwd, file_name(&src));
+        if dst == src {
+            self.status = "e deja aici (alege alt dosar)".to_string();
+            return;
+        }
+        if dir {
+            if self.cwd == src || self.cwd.starts_with(&format!("{}/", src)) {
+                self.status = "nu pot copia un dosar in el insusi".to_string();
+                return;
             }
-            Err(e) => {
-                self.say("nu pot lipi: ").push(error_text(e));
+            let mut n = Count::default();
+            let r = copy_tree(&src, &dst, 0, &mut n);
+            println!("files: copiat dosarul {} -> {} ({} fisiere, {} dosare, {} octeti)", src, dst, n.files, n.dirs, n.bytes);
+            self.load();
+            self.status = match r {
+                Ok(()) => format!("lipit dosarul: {} ({} fisiere, {})", dst, n.files, human(n.bytes)),
+                Err(e) => format!("copiere oprita dupa {} fisiere: {}", n.files, error_text(e)),
+            };
+        } else {
+            match copy(&src, &dst) {
+                Ok(n) => {
+                    println!("files: copiat {} -> {} ({} octeti)", src, dst, n);
+                    self.load();
+                    self.status = format!("lipit: {}", dst);
+                }
+                Err(e) => {
+                    self.status = format!("nu pot lipi: {}", error_text(e));
+                    return;
+                }
             }
         }
+        self.written(&dst);
     }
 
     fn delete(&mut self) {
-        let Some((p, _)) = self.selected_path() else { return };
-        let r = remove(p.as_str());
-        if r < 0 {
-            self.say("nu pot sterge: ").push(error_text(r));
-        } else {
-            println!("files: sters {}", p.as_str());
-            self.load();
-            self.say("sters: ").push(p.as_str());
+        let Some((p, dir)) = self.selected_path() else { return };
+        if dir {
+            let inside = list_dir(&p).map(|v| v.len()).unwrap_or(0);
+            if inside > 0 && self.confirm_delete.as_deref() != Some(p.as_str()) {
+                self.status = format!("dosarul are {} intrari: apasa s inca o data ca sa-l stergi tot", inside);
+                self.confirm_delete = Some(p);
+                return;
+            }
         }
+        self.confirm_delete = None;
+        let mut n = Count::default();
+        let r = if dir { remove_tree(&p, 0, &mut n) } else { remove(&p) };
+        if r < 0 {
+            self.status = format!("nu pot sterge: {}", error_text(r));
+            return;
+        }
+        if dir && n.files + n.dirs > 1 {
+            println!("files: sters dosarul {} ({} fisiere, {} dosare)", p, n.files, n.dirs);
+        } else {
+            println!("files: sters {}", p);
+        }
+        self.load();
+        self.status = format!("sters: {}", p);
+        let cwd = self.cwd.clone();
+        self.written(&cwd);
     }
 
     fn click(&mut self, x: usize, y: usize) -> bool {
@@ -261,9 +409,12 @@ impl Files {
                 }
                 bx += w + 4;
             }
-        } else if y >= LIST_Y {
+        } else if y >= LIST_Y && self.input.is_none() {
             let i = self.top + (y - LIST_Y) / ROW_H;
-            if i < self.count && (y - LIST_Y) / ROW_H < ROWS {
+            if i < self.entries.len() && (y - LIST_Y) / ROW_H < ROWS {
+                if i != self.selected {
+                    self.confirm_delete = None;
+                }
                 self.selected = i;
             }
         }
@@ -279,8 +430,8 @@ impl Files {
             c.text(bx + 6, 6, label, WHITE, 2);
             bx += w + 4;
         }
-        c.text(6, 34, self.cwd.as_str(), DIM, 1);
-        for (row, i) in (self.top..self.count).take(ROWS).enumerate() {
+        c.text(6, 34, &self.cwd, DIM, 1);
+        for (row, i) in (self.top..self.entries.len()).take(ROWS).enumerate() {
             let e = &self.entries[i];
             let y = LIST_Y + row * ROW_H;
             if i == self.selected {
@@ -289,19 +440,75 @@ impl Files {
             if e.dir {
                 c.fill(8, y + 5, 12, 10, FOLDER);
             }
-            c.text(28, y + 4, e.name(), TEXT, 1);
-            if e.dir && e.name() != ".." {
-                c.text(28 + e.len * 6, y + 4, "/", TEXT, 1);
+            match (&self.input, i == self.selected) {
+                (Some(text), true) => {
+                    c.fill(26, y + 2, W - 120, ROW_H - 4, INPUT);
+                    let end = 28 + c.text(28, y + 4, text, TEXT, 1);
+                    c.fill(end + 1, y + 4, 2, 12, TEXT);
+                }
+                _ => {
+                    let end = 28 + c.text(28, y + 4, &e.name, TEXT, 1);
+                    if e.dir && e.name != ".." {
+                        c.text(end, y + 4, "/", TEXT, 1);
+                    }
+                }
+            }
+            if !e.dir {
+                let s = human(e.size);
+                c.text(W - 8 - s.len() * 6, y + 4, &s, DIM, 1);
             }
         }
-        c.text(6, H - 14, self.status.as_str(), DIM, 1);
+        c.text(6, H - 14, &self.status, DIM, 1);
         win.present_all(c);
     }
 }
 
-/// Sort key: folders first, then the name in lower case.
-fn lower_key((file, name): (bool, [u8; NAME])) -> (bool, [u8; NAME]) {
-    (file, name.map(|b| b.to_ascii_lowercase()))
+/// Copies the folder `src` with everything in it to `dst` (which must not exist).
+fn copy_tree(src: &str, dst: &str, depth: usize, n: &mut Count) -> Result<(), i64> {
+    if depth > MAX_DEPTH {
+        return Err(-1);
+    }
+    let r = create(dst, true);
+    if r < 0 {
+        return Err(r);
+    }
+    n.dirs += 1;
+    for (name, dir) in list_dir(src)? {
+        let (s, d) = (join(src, &name), join(dst, &name));
+        if dir {
+            copy_tree(&s, &d, depth + 1, n)?;
+        } else {
+            n.bytes += copy(&s, &d)?;
+            n.files += 1;
+        }
+    }
+    Ok(())
+}
+
+/// Deletes the folder `path` with everything in it; 0 or a negative error.
+fn remove_tree(path: &str, depth: usize, n: &mut Count) -> i64 {
+    if depth > MAX_DEPTH {
+        return -1;
+    }
+    let names = match list_dir(path) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    for (name, dir) in names {
+        let p = join(path, &name);
+        let r = if dir { remove_tree(&p, depth + 1, n) } else { remove(&p) };
+        if r < 0 {
+            return r;
+        }
+        if !dir {
+            n.files += 1;
+        }
+    }
+    let r = remove(path);
+    if r >= 0 {
+        n.dirs += 1;
+    }
+    r
 }
 
 /// Programs are files in /bin, or ELF files.
@@ -350,7 +557,11 @@ fn copy(src: &str, dst: &str) -> Result<u64, i64> {
 }
 
 fn main() -> i64 {
-    let start = cyber_user::args().nth(1).unwrap_or("/");
+    let start = match cyber_user::args().nth(1) {
+        Some(a) => a.to_string(),
+        None if is_dir(STICK) => STICK.to_string(),
+        None => "/".to_string(),
+    };
     let win = match Window::open("Fisiere", W, H) {
         Ok(w) => w,
         Err(e) => {
@@ -360,8 +571,16 @@ fn main() -> i64 {
     };
     // SAFETY: one thread; the only reference to PIXELS.
     let mut c = Canvas::new(W, H, unsafe { &mut *core::ptr::addr_of_mut!(PIXELS) });
-    let empty = Entry { name: [0; NAME], len: 0, dir: false };
-    let mut f = Files { cwd: Path::new(start), entries: [empty; MAX], count: 0, selected: 0, top: 0, clipboard: None, status: Line::new() };
+    let mut f = Files {
+        cwd: start,
+        entries: Vec::new(),
+        selected: 0,
+        top: 0,
+        clipboard: None,
+        status: String::new(),
+        input: None,
+        confirm_delete: None,
+    };
     f.load();
     f.draw(&mut c, &win);
     while let Some(e) = win.wait_event() {

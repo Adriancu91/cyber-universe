@@ -805,18 +805,32 @@ impl FileSystem for Fat32 {
             return Err(FsError::InvalidPath);
         }
         let e = self.lookup(from)?;
-        if e.is_dir {
-            return Err(FsError::IsADirectory);
+        // A folder cannot go inside itself (P6-61: folders can be renamed and moved too).
+        if e.is_dir && to.len() > from.len() && to[..from.len()].iter().zip(from).all(|(a, b)| a.eq_ignore_ascii_case(b)) {
+            return Err(FsError::InvalidPath);
         }
         let (dir, name) = self.parent_and_name(to)?;
         if self.read_dir(dir.cluster)?.iter().any(|d| d.name.eq_ignore_ascii_case(name)) {
             return Err(FsError::AlreadyExists);
         }
-        self.add_entry(&dir, name, ATTR_ARCHIVE, e.cluster)?;
+        let old_parent = self.parent_and_name(from)?.0.cluster;
+        let attr = if e.is_dir { ATTR_DIRECTORY } else { ATTR_ARCHIVE };
+        self.add_entry(&dir, name, attr, e.cluster)?;
         let new = self.lookup(to)?;
-        self.update_entry(&new, e.cluster, e.size)?;
+        self.update_entry(&new, e.cluster, if e.is_dir { 0 } else { e.size })?;
         for &(c, off) in &e.slots {
             self.write_slot(c, off, &[0xE5])?;
+        }
+        // A folder moved to another parent: its ".." entry points at the new parent (cluster 0 = the root).
+        if e.is_dir && e.cluster != 0 && old_parent != dir.cluster {
+            let mut first = vec![0u8; self.cluster_bytes()];
+            self.read_cluster(e.cluster, &mut first)?;
+            if &first[32..43] == b"..         " {
+                let parent = if dir.cluster == self.root_cluster { 0 } else { dir.cluster };
+                first[32 + 20..32 + 22].copy_from_slice(&((parent >> 16) as u16).to_le_bytes());
+                first[32 + 26..32 + 28].copy_from_slice(&(parent as u16).to_le_bytes());
+                self.write_cluster(e.cluster, &first)?;
+            }
         }
         Ok(())
     }
