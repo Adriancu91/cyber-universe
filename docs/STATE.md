@@ -3,6 +3,15 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-07 ~18:40–19:55 UTC (20:40–21:55 ora României) — sesiune programată, fără Adrian — **P6-67 bifat: CI-ul în trei părți paralele, ~30 min în loc de 55.**
+  - **Oprirea de siguranță (regula 5):** nu se aplică (sesiunea dinainte a bifat trei sarcini).
+  - Hub: nicio comandă nouă pentru `cyber-universe` (C-88 e la Kronos); `os-comenzi.md` gol. Copiile locale (OS și hub) aveau iar `main` divergent (69/50) → copia veche pe ramura locală `vechi-local-2026-11-07`, `main` nou din `origin/main`; nimic forțat. `env-check --install`: mediul complet.
+  - **De ce P6-67:** rularea CI de pe `8bdc91e` a durat **54m51s din limita de 60** (testele QEMU singure ~50 min, 97 de scenarii) — încă 2–3 scenarii și CI-ul (deci și Release-ul) ar fi picat doar din timp. Repo public → minutele sunt gratuite.
+  - **Ce s-a schimbat:** `tools/test.sh --shard K/N` (fiecare al N-lea scenariu, începând cu al K-lea; fără opțiune = ca înainte; K/N greșit = cod 2). `.github/workflows/ci.yml`: jobul `build-and-test` = matrice `teste-1` (`--shard 1/2`), `teste-2` (`--shard 2/2`), `stick` (testele pe gazdă + imaginile de stick + fișierele de Release); `fail-fast: false`, cache separat pe parte, artefacte `rezultate-test-<parte>`; Release-ul tot după toate trei.
+  - Test: local `boot`, `shell`, `log` (și cu `--shard`); pe ramura `wip/P6-67-ci` run 42403081784 **verde**: 49 + 48 = 97 scenarii trecute, ~30 min. Apoi pe `main`: run 42405596803 (rezultatul mai jos).
+  - Ramura `wip/P6-67-ci` a rămas pe GitHub (ștergerea a fost refuzată de legătura sesiunii); e la fel ca `main`, se poate șterge oricând.
+  - **Următoarea:** **P6-63** duminică 8 nov seara (lista pentru luni). Propunerea `recover` în `gpu lant` rămâne doar cu „da”.
+  - Avertisment: la un scenariu nou, partea în care intră depinde de poziția lui în `tests/scenarios.txt`; dacă o parte se apropie iar de 60 min, se trece la `--shard K/3` (încă o linie în matrice).
 - 2026-11-07 ~15:40–18:15 UTC (17:40–20:15 ora României) — sesiune programată, fără Adrian — **comanda nouă C-87 preluată: P6-64, P6-65, P6-66 bifate (testate în QEMU / SIMULARE).**
   - **Oprirea de siguranță (regula 5):** nu se aplică (a treia sesiune în urmă a bifat P6-61; aceasta bifează trei sarcini).
   - Hub: comanda **C-87** (centrul de comandă, prin delegarea lui Adrian: „mai mulți pași OS + GPU până luni”) → pct. 2 = **P6-64**, pct. 3 = **P6-65**, pct. 1 = **P6-66**, pct. 4 = **P6-63** (duminică seara). Copia locală a hub-ului avea iar `main` divergent (50/50) → aliniat la `origin/main` (copia veche rămâne în reflog). `env-check --install`: mediul complet.
