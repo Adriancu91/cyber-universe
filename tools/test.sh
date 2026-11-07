@@ -5,6 +5,7 @@
 #   tools/test.sh --no-build ...  reuse existing ISOs
 #   CYBER_NET=1 tools/test.sh    also the scenarios marked `internet` (real web sites)
 #   tools/test.sh --stress        5-minute stability test (tests/stress.txt), not run on every push
+#   tools/test.sh --shard K/N     only every N-th scenario starting with the K-th (CI runs the parts in parallel, P6-67)
 # Exit code: 0 = all passed, 1 = at least one failed.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/qemu-common.sh"
@@ -13,8 +14,20 @@ BUILD_FIRST=1
 SCENARIOS="$ROOT/tests/scenarios.txt"
 TIMEOUT=60
 ONLY=()
-for arg in "$@"; do
+SHARD_K=1; SHARD_N=1
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+    arg="${args[i]}"
     case "$arg" in
+        --shard) i=$((i+1)); arg="--shard=${args[i]:-}" ;;
+    esac
+    case "$arg" in
+        --shard=*)
+            v="${arg#--shard=}"
+            if [[ ! "$v" =~ ^([0-9]+)/([0-9]+)$ ]] || (( BASH_REMATCH[1] < 1 || BASH_REMATCH[1] > BASH_REMATCH[2] )); then
+                echo "--shard cere K/N cu 1 <= K <= N (primit: '$v')" >&2; exit 2
+            fi
+            SHARD_K="${BASH_REMATCH[1]}"; SHARD_N="${BASH_REMATCH[2]}" ;;
         --no-build) BUILD_FIRST=0 ;;
         --stress) SCENARIOS="$ROOT/tests/stress.txt"; TIMEOUT=420 ;;
         -*) echo "Opțiune necunoscută: $arg" >&2; exit 2 ;;
@@ -27,9 +40,12 @@ mkdir -p "$BUILD"
 trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; echo "${s%"${s##*[![:space:]]}"}"; }
 
 passed=0; failed=0; skipped=0; failed_names=()
+index=0
 while IFS='|' read -r name features ending expects screenshot qextra; do
     name="$(trim "$name")"
     [[ -z "$name" || "$name" == \#* ]] && continue
+    index=$((index+1))
+    (( (index - 1) % SHARD_N == SHARD_K - 1 )) || continue
     if (( ${#ONLY[@]} )) && [[ ! " ${ONLY[*]} " == *" $name "* ]]; then continue; fi
     features="$(trim "$features")"; ending="$(trim "$ending")"
     expects="$(trim "$expects")"; screenshot="$(trim "${screenshot:-}")"; qextra="$(trim "${qextra:-}")"
@@ -117,5 +133,6 @@ while IFS='|' read -r name features ending expects screenshot qextra; do
     fi
 done < "$SCENARIOS"
 
+(( SHARD_N > 1 )) && echo "== partea $SHARD_K/$SHARD_N din scenarii"
 echo "== rezultat: $passed trecute, $failed eșuate${failed_names:+ (${failed_names[*]})}$( (( skipped )) && echo ", $skipped sarite (fara internet)")"
 (( failed == 0 && passed > 0 ))

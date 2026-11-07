@@ -15,9 +15,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # P6-67: three parts running at the same time (one run took 54m51s of the 60-minute limit with all scenarios in one job):
+  # teste-1 / teste-2 = every other QEMU scenario (tools/test.sh --shard), stick = host tests + stick images + Release files.
   build-and-test:
+    name: ${{ matrix.parte }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - parte: teste-1
+            shard: 1/2
+          - parte: teste-2
+            shard: 2/2
+          - parte: stick
+            shard: ""
     steps:
       # C-37: no stored github.token header, otherwise git sends it instead of CYBER_GPU_TOKEN for cyber-gpu.
       - uses: actions/checkout@v4
@@ -51,25 +64,31 @@ jobs:
             json/target
             rtl8168/target
             e1000e/target
-          key: ${{ runner.os }}-cu2-${{ hashFiles('**/Cargo.toml', '**/Cargo.lock', '**/rust-toolchain.toml') }}
+          key: ${{ runner.os }}-cu2-${{ matrix.parte }}-${{ hashFiles('**/Cargo.toml', '**/Cargo.lock', '**/rust-toolchain.toml') }}
           restore-keys: |
+            ${{ runner.os }}-cu2-${{ matrix.parte }}-
             ${{ runner.os }}-cu2-
 
       - name: Verificare mediu
         run: tools/env-check.sh
 
       - name: Criptografie — vectorii oficiali pe gazdă (crypto/)
+        if: matrix.parte == 'stick'
         run: cd crypto && cargo test --release
 
       - name: TLS 1.3 — clientul nostru față de un server OpenSSL pe gazdă și față de site-uri reale (tls/)
+        if: matrix.parte == 'stick'
         run: cd tls && CYBER_NET=1 cargo test --release -- --nocapture
 
       - name: JSON — cititorul și scriitorul propriu, față de Python (json/)
+        if: matrix.parte == 'stick'
         run: cd json && cargo test --release
 
       - name: Driver Realtek RTL8168 — față de modelul cipului, pe gazdă (rtl8168/)
+        if: matrix.parte == 'stick'
         run: cd rtl8168 && cargo test --release
       - name: Driver Intel e1000/82574/I219 — față de modelul plăcii, pe gazdă (e1000e/)
+        if: matrix.parte == 'stick'
         run: cd e1000e && cargo test --release
 
       - name: Acces la cyber-gpu (repo privat, B-005)
@@ -77,17 +96,21 @@ jobs:
           CYBER_GPU_TOKEN: ${{ secrets.CYBER_GPU_TOKEN }}
         run: tools/ci-cyber-gpu-acces.sh
 
-      - name: Build + test în QEMU (cu scenariile care au nevoie de internet)
-        run: CYBER_NET=1 tools/test.sh
+      - name: Build + test în QEMU, partea ${{ matrix.shard }} (cu scenariile care au nevoie de internet)
+        if: matrix.shard != ''
+        run: CYBER_NET=1 tools/test.sh --shard ${{ matrix.shard }}
 
       - name: Imagine pentru stick USB (docs/USB.md)
+        if: matrix.parte == 'stick'
         run: tools/build.sh --usb
 
       # P6-40 (C-52): the test stick of the I6 window (`gpu i6 --scrie`), a separate kernel and image in the Release.
       - name: Stick-ul de test pentru fereastra I6 (gpu-scrie)
+        if: matrix.parte == 'stick'
         run: tools/build.sh --gpu-scrie --usb
 
       - name: Imaginea pentru stick
+        if: matrix.parte == 'stick'
         uses: actions/upload-artifact@v4
         with:
           name: stick-usb
@@ -95,11 +118,11 @@ jobs:
           if-no-files-found: error
 
       - name: Fișierele pentru Release (P6-07)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: matrix.parte == 'stick' && github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: tools/release-files.sh
 
       - name: Fișierele pentru Release
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: matrix.parte == 'stick' && github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: release
@@ -110,7 +133,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rezultate-test
+          name: rezultate-test-${{ matrix.parte }}
           path: |
             build/serial-*.log
             build/build-*.log
