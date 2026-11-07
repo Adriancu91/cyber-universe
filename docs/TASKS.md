@@ -385,6 +385,7 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
   Rezultat (2026-11-07 ~16:30 UTC): `kronos --conversatie` (modelul încărcat o dată, întrebări tastate, `\` = rând continuat, `gata` = sfârșit, istoric pe stick) + apelul nou 44 `read_line`; testat în QEMU (`kronos-kgr`, `kronos-kgr-1`: două întrebări tastate de test, ambele în istoric). Refuzat în bucla automată/hub. Cu #513: doar pe workstation.
 - [x] **P6-66** `kronos --gpu` cu generare continuă + viteza față de procesor în același raport (comanda C-87 pct. 1). Plan: `docs/plans/P6-66.md`. Dep: generarea continuă din cyber-gpu (C-87 pct. 1 GPU) în copia din hub
   Rezultat (2026-11-07 ~17:00 UTC): cyber-gpu fixat pe `34a9793` (doar adăugări); I14 generează prin `kronos_gen::Generation` (oprire la prima eroare, viteza din ceasul plăcii, bugetul VRAM verificat înainte de urcare); `kronos --gpu` rulează după placă același text pe procesor și scrie `comparatie: placa … / procesor … simboluri/s; simbolurile IDENTICE`. Testat doar în SIMULARE (`kronos-gpu`, `gpu-tur`, `gpu*`). Recuperarea fără repornire (C-87 pas 3 GPU) nu e legată încă în OS.
+- [~] **P6-67** CI-ul în trei bucăți paralele (teste-1, teste-2, stick): rularea din 7 nov a durat 54m51s din limita de 60. `tools/test.sh --shard K/N`. Plan: `docs/plans/P6-67.md`.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
