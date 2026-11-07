@@ -809,3 +809,48 @@ fn sim_system_info() -> nvidia_ga104::gsp::sysinfo::SystemInfoInput {
         is_primary: true,
     }
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// P6-62 step 3: `kronos --gpu`.
+// ---------------------------------------------------------------------------------------------------------------
+
+/// Set by the shell only after Adrian typed `DA` for `kronos --gpu` (the same question as `gpu lant`); taken by the
+/// first `kronos_gpu` call. Without it the board is never touched and `/bin/kronos` stays on the processor.
+pub static KRONOS_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// A `kronos --gpu` request (call 43 from `/bin/kronos`): the whole window chain with the request queued for its
+/// `i14-simbol` step (the board is set up only inside the chain; every token judged against the processor). Returns the
+/// board's greedy tokens, or why not (then `/bin/kronos` generates on the processor), and the chain's lines.
+pub fn kronos_gpu(path: &str, prompt: Vec<usize>, n: usize, sim: bool) -> (Result<Vec<usize>, String>, Vec<String>) {
+    use core::sync::atomic::Ordering;
+    if !KRONOS_ARMED.swap(false, Ordering::SeqCst) {
+        return (Err(String::from("fara DA de la shell (kronos --gpu se porneste doar din shell, cu DA)")), Vec::new());
+    }
+    if sim && !cfg!(feature = "test-gpu-sim") {
+        return (Err(String::from("--gpu-sim exista doar in build-ul de test")), Vec::new());
+    }
+    if !sim && !cfg!(feature = "gpu-scrie") {
+        return (Err(String::from("acest sistem nu poate scrie in placa (doar stick-ul de test, gpu-scrie)")), Vec::new());
+    }
+    #[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
+    {
+        *gpu_i14::KRONOS_RESULT.lock() = None;
+        *gpu_i14::KRONOS_JOB.lock() = Some(gpu_i14::KronosJob { path: String::from(path), prompt, n });
+        crate::info!("gpu: kronos --gpu: lantul porneste{} cu cererea la i14-simbol", if sim { " (SIMULARE)" } else { "" });
+        #[cfg(feature = "test-gpu-sim")]
+        let lines = if sim { chain_sim(false, true) } else { chain() };
+        #[cfg(not(feature = "test-gpu-sim"))]
+        let lines = chain();
+        // A chain that stopped before I14 never took the request.
+        let left = gpu_i14::KRONOS_JOB.lock().take().is_some();
+        let res = gpu_i14::KRONOS_RESULT.lock().take().unwrap_or_else(|| {
+            Err(String::from(if left { "lantul s-a oprit inainte de i14-simbol" } else { "niciun raspuns de la i14-simbol" }))
+        });
+        (res, lines)
+    }
+    #[cfg(not(any(feature = "gpu-scrie", feature = "test-gpu-sim")))]
+    {
+        let _ = (path, prompt, n);
+        (Err(String::from("acest sistem nu poate scrie in placa")), Vec::new())
+    }
+}

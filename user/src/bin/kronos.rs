@@ -34,6 +34,12 @@
 //! at the end of the answer's first line; the exchange is appended to the history. The model only continues text (it
 //! was not trained for conversation), and the program says so.
 //!
+//! `--gpu` (P6-62 step 3, C-83): the greedy continuation on the video card. Started only from the shell, which asks
+//! `DA` first (the whole window chain of `gpu lant` runs once, the text at its `i14-simbol` step, every token compared
+//! in the kernel with the processor). Any error (no `DA`, a build that cannot write to the card, the chain stopped,
+//! a token that does not match, time out) -> the same text on the processor, with a note. `--gpu-sim` = the same on
+//! the gpu-sim models (test builds only). Plain greedy only (not with `--repetitie` or `--intreaba`).
+//!
 //! Exit codes: 0 ok, 1 reference mismatch, 2 bad arguments, 3 wrong SHA-256, 4 cannot read or parse the model.
 #![no_std]
 #![no_main]
@@ -292,6 +298,8 @@ struct Opts {
     ask: bool,
     /// `--istoric <cale>`: the conversation file (default `<dosar>/conversatie.txt`).
     history: Option<String>,
+    /// `--gpu` / `--gpu-sim` (P6-62 step 3): Some(false) = the board, Some(true) = the simulated board.
+    gpu: Option<bool>,
 }
 
 fn parse_args() -> Result<Opts, String> {
@@ -320,6 +328,7 @@ fn parse_args() -> Result<Opts, String> {
         vectors: None,
         ask: false,
         history: None,
+        gpu: None,
     };
     let mut args = cyber_user::args().skip(1);
     while let Some(a) = args.next() {
@@ -352,6 +361,8 @@ fn parse_args() -> Result<Opts, String> {
             "--fara-cedari" => o.no_yield = true,
             "--fara-ecran" => o.no_screen = true,
             "--intreaba" => o.ask = true,
+            "--gpu" => o.gpu = Some(false),
+            "--gpu-sim" => o.gpu = Some(true),
             "--istoric" => o.history = Some(val()?.into()),
             "--repetitie" => {
                 let p: f32 = val()?.parse().map_err(|_| String::from("--repetitie cere un numar (de ex. 1.3)"))?;
@@ -676,6 +687,68 @@ fn penalize(logits: &mut [f32], seen: &[u32], p: f32) {
 
 /// P6-47: short names of the block's stages in `--profil` (index = `prof` kind).
 const PROFILE_SHORT: [&str; kgr::prof::N] = ["qkv", "proiectie", "fc 4E", "iesire MLP", "cap", "atentie", "restul", "asteptare"];
+
+/// P6-62 step 3: `--gpu`. `Some(code)` = done on the board; `None` = continue on the processor (the note says why).
+fn on_gpu(o: &Opts, path: &str, n: usize, sim: bool, tok: Option<&Tokenizer>) -> Option<i64> {
+    let back = |why: &str| {
+        println!("kronos: --gpu: {} -> continui pe procesor", why);
+        None
+    };
+    if o.penalty.is_some() || o.ask {
+        return back("pe placa doar alegerea greedy simpla (fara --repetitie si --intreaba)");
+    }
+    if n == 0 {
+        return back("nimic de generat");
+    }
+    let ids: Vec<String> = o.ids.iter().map(|x| alloc::format!("{}", x)).collect();
+    let req = alloc::format!("{}\n{}\n{}\n{}\n", if sim { "sim" } else { "placa" }, path, n, ids.join(","));
+    println!("kronos: --gpu{}: lantul ferestrei porneste, apoi {} simboluri pe placa (pot trece cateva minute)", if sim { " (SIMULARE)" } else { "" }, n);
+    let mut buf = alloc::vec![0u8; 64 * 1024];
+    let t0 = now_ms();
+    let got = cyber_user::gpu_kronos(&req, &mut buf);
+    let ms = now_ms() - t0;
+    if got < 0 {
+        return back(&alloc::format!("apelul a fost refuzat (cod {})", got));
+    }
+    let text = String::from_utf8_lossy(&buf[..got as usize]).into_owned();
+    let mut lines = text.lines();
+    let first = lines.next().unwrap_or("");
+    // The chain's last lines (its result) say where it stopped.
+    let rest: Vec<&str> = lines.collect();
+    for l in rest.iter().filter(|l| l.contains("kronos --gpu") || l.contains("rezultat lant")) {
+        println!("kronos: lant: {}", l);
+    }
+    let Some(list) = first.strip_prefix("ok ") else {
+        return back(first.strip_prefix("eroare ").unwrap_or(first));
+    };
+    let parsed: Option<Vec<u32>> = list.split(',').map(|t| t.trim().parse::<u32>().ok()).collect();
+    let Some(mut out) = parsed.filter(|v| v.len() == n) else {
+        return back(&alloc::format!("raspuns de neinteles de la nucleu: {}", first));
+    };
+    let mut ended = false;
+    if let Some(t) = tok {
+        if let Some(cut) = out.iter().position(|&x| t.is_special(x)) {
+            out.truncate(cut);
+            ended = true;
+        }
+        println!("kronos: continuare: {}", t.decode(&out));
+        println!(
+            "kronos: textul generat `{}`{}",
+            t.decode(&out).replace('\n', "\\n"),
+            if ended { " (oprit la simbolul de sfarsit)" } else { "" }
+        );
+        println!("kronos: simboluri generate: {:?}", out);
+    } else {
+        println!("kronos: continuare: {:?}", out);
+    }
+    println!(
+        "kronos: PE PLACA{}: {} simboluri, fiecare comparat in nucleu cu procesorul (lantul intreg + textul in {} ms)",
+        if sim { " (SIMULARE)" } else { "" },
+        out.len(),
+        ms
+    );
+    Some(0)
+}
 
 /// `--profil`: where the cycles of the generated tokens went.
 /// P6-39 (C-48): the generated text goes to the screen at most this often (whole lines, one block).
@@ -1080,6 +1153,12 @@ fn main() -> i64 {
         return 2;
     }
     let n = o.n.min(c.context.saturating_sub(o.ids.len()));
+    if let Some(sim) = o.gpu {
+        if let Some(code) = on_gpu(&o, &path, n, sim, tok.as_ref()) {
+            kgr::stop_pool();
+            return code;
+        }
+    }
     let per_ms = if o.profile { kgr::prof::calibrate() } else { 0 };
     kgr::prof::set_detail(o.profile);
     let t1 = now_ms();

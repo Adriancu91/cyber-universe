@@ -41,6 +41,14 @@ pub const SYS_THREAD_EXIT: u64 = 39;
 pub const SYS_PROMISE: u64 = 40;
 pub const SYS_UNVEIL: u64 = 41;
 pub const SYS_SECRET: u64 = 42;
+pub const SYS_GPU_KRONOS: u64 = 43;
+
+/// P6-62 step 3 (`kronos --gpu`): the request text (`placa`|`sim`, model path, n, ids separated by commas, one per
+/// line) runs at the end of the window chain; the answer (`ok 1,2,3` or `eroare ...`, then the chain's lines) goes to
+/// `buf`. Returns the bytes written or a negative error.
+pub fn gpu_kronos(req: &str, buf: &mut [u8]) -> i64 {
+    syscall4(SYS_GPU_KRONOS, req.as_ptr() as u64, req.len() as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
+}
 /// Error: outside this program's promises or rights (P6-23).
 pub const E_DENIED: i64 = -24;
 

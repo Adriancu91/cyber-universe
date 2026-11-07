@@ -315,7 +315,241 @@ fn pack(m: &OwnedModel) -> Blob {
     Blob { bytes: b, emb_tok, emb_pos, ln_g, ln_b, layers, scratch, fin }
 }
 
-/// Step `i14-simbol` with the model file at `path` (the control model `mic_q8_0.kgr`).
+/// P6-62 step 3: a `kronos --gpu` request. `/bin/kronos` gives the model file, the prompt's token ids and how many
+/// tokens to generate; the chain's `i14-simbol` step runs it on the board right after the control model passed (the
+/// board is set up only inside the chain, behind Adrian's `DA`). Every token is judged against the CPU oracle like the
+/// control texts; any error ends the request and `/bin/kronos` continues on the processor.
+pub struct KronosJob {
+    pub path: String,
+    pub prompt: Vec<usize>,
+    pub n: usize,
+}
+
+/// The request waiting for the next chain, and its answer (the greedy tokens of the board, or why not).
+pub static KRONOS_JOB: crate::sched::Mutex<Option<KronosJob>> = crate::sched::Mutex::new(None);
+pub static KRONOS_RESULT: crate::sched::Mutex<Option<Result<Vec<usize>, String>>> = crate::sched::Mutex::new(None);
+
+/// One text run on the board: its prompt, how many greedy tokens, and (control texts only) Kronos's expected answer.
+struct Run<'a> {
+    name: String,
+    prompt: Vec<usize>,
+    steps: usize,
+    argmax: Option<&'a [usize]>,
+    greedy: Option<&'a [usize]>,
+}
+
+/// The board's pieces a run needs (P6-62 step 3: shared by the control model and a `kronos --gpu` request).
+#[allow(clippy::too_many_arguments)]
+fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    m: &OwnedModel,
+    runs: &[Run<'_>],
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    doorbell: &mut Bell<'_, V>,
+    tokens_done: &mut usize,
+) -> GpuResult<(Vec<Vec<usize>>, f32, u64)> {
+    let s = m.shape;
+    let e = s.e;
+    let n_tok = km::launches_per_token(m.layers.len());
+    let n = n_tok + 1; // + the copy of the logits down
+    let words_per_token = transfer::sequence_words(n);
+    if 4 * words_per_token as u64 > l.push.size / 2 {
+        lines.push(format!(
+            "{}: I14: {} lansari pe simbol = {} cuvinte, zona de comenzi are {} octeti (trebuie marita)",
+            p, n, words_per_token, l.push.size
+        ));
+        return Err(bad("I14: zona de comenzi prea mica pentru un simbol"));
+    }
+    // 1. The blob, uploaded through the arena in pieces of at most 8 MiB.
+    let blob = pack(m);
+    let total = blob.bytes.len() as u64;
+    let vblob = map_vram(st, total)?;
+    let piece = total.min(I11_BOARD_BYTES);
+    let host = st.mem.alloc_sys_mapped(&arena_pages(0, piece.div_ceil(PAGE))?)?;
+    let logits_bytes = (4 * m.vocab as u64).next_multiple_of(16);
+    let host_logits = st.mem.alloc_sys_mapped(&arena_pages(I11_BOARD_BYTES / PAGE, logits_bytes.div_ceil(PAGE))?)?;
+    let mut progs: Vec<(Prog, Mapping)> = Vec::new();
+    for prog in PROGRAMS {
+        let pm = map_vram(st, prog.code().len() as u64)?;
+        put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
+        progs.push((prog, pm));
+    }
+    let prog_va = |want: Prog| progs.iter().find(|(q, _)| *q == want).map(|(_, pm)| pm.va);
+    let copy_va = prog_va(Prog::Copy).ok_or(bad("I14: lipseste programul de copiere"))?;
+    let mut caches = Vec::with_capacity(m.layers.len());
+    for _ in 0..m.layers.len() {
+        caches.push((map_vram(st, kl::cache_bytes(e))?, map_vram(st, kl::cache_bytes(e))?));
+    }
+    let launches = map_vram(st, 512 * n as u64)?;
+    let (cb_up, q_up, rec_up) = (map_vram(st, PAGE)?, map_vram(st, PAGE)?, map_vram(st, PAGE)?);
+    let rec = map_vram(st, (16 * (n as u64 + 1)).next_multiple_of(PAGE))?;
+    let mut maps: Vec<Mapping> = alloc::vec![vblob, launches, cb_up, q_up, rec_up];
+    maps.extend(caches.iter().flat_map(|(k, v)| [*k, *v]));
+    maps.extend(progs.iter().map(|(_, pm)| *pm));
+    let mut up_ns = 0u64;
+    let mut k = 0u32;
+    for (i, chunk) in blob.bytes.chunks(piece as usize).enumerate() {
+        let len = (chunk.len() as u64).next_multiple_of(16);
+        ram_write(&host, chunk);
+        let w = st.mem.writer_mut();
+        put_bytes(w, cb_up.pa, &transfer::copy_cbuf(host.va, vblob.va + i as u64 * piece, len)?)?;
+        put_bytes(w, q_up.pa, &transfer::copy_qmd(copy_va, cb_up.va, len)?.to_bytes()?)?;
+        put_bytes(w, rec_up.pa, &[0; 32])?;
+        let first = UP_FIRST + STRIDE * k;
+        k += 1;
+        let mut words = alloc::vec![0u32; transfer::sequence_words(1)];
+        let mut pb = PushBuf::new(&mut words);
+        transfer::encode_sequence(&mut pb, &[q_up.va], rec_up.va, first)?;
+        let nw = pb.len();
+        let sys = [host.clone()];
+        match run_records(vbar, clock, journal, st, l, permit, &words[..nw], rec_up, 2, first + 1, &maps, &sys, doorbell)? {
+            Ok(b) => up_ns += transfer::analyze_sequence(&b, 1, first)?[0],
+            Err(last) => {
+                lines.push(format!("{}: I14: urcarea bucatii {} nu s-a terminat (inregistrarea 1 = {:#x})", p, i, last));
+                return Err(GpuError::Timeout { waited_us: WAIT_US });
+            }
+        }
+    }
+    lines.push(format!(
+        "{}: i14: {} octeti (greutati + spatiu de lucru + logit-uri) urcati in {} bucati in {} ns ({} MB/s)",
+        p, total, k, up_ns, transfer::CopySpeed::mb_per_s(total, up_ns)
+    ));
+    // 2. The VAs, the copy of the logits down (the same every token).
+    let at = |o: u64| vblob.va + o;
+    let mut lvas = Vec::with_capacity(m.layers.len());
+    for (o, (kc, vc)) in blob.layers.iter().zip(&caches) {
+        let wv = WeightVas {
+            ln1_g: at(o[0]),
+            ln1_b: at(o[1]),
+            wqkv: at(o[2]),
+            bqkv: at(o[3]),
+            wout: at(o[4]),
+            bout: at(o[5]),
+            ln2_g: at(o[6]),
+            ln2_b: at(o[7]),
+            wfc: at(o[8]),
+            bfc: at(o[9]),
+            wproj: at(o[10]),
+            bproj: at(o[11]),
+        };
+        lvas.push(LayerVas::with_scratch(e, at(blob.scratch), kc.va, vc.va, wv)?);
+    }
+    let vas = ModelVas {
+        emb_tok: at(blob.emb_tok),
+        emb_pos: at(blob.emb_pos),
+        ln_g: at(blob.ln_g),
+        ln_b: at(blob.ln_b),
+        layers: lvas,
+        h_final: at(blob.fin),
+        logits: at(blob.fin) + 4 * e as u64,
+    };
+    let (down_cb_va, down_cb_pa) = (launches.va + 512 * n_tok as u64, launches.pa + 512 * n_tok as u64);
+    {
+        let w = st.mem.writer_mut();
+        put_bytes(w, down_cb_pa, &transfer::copy_cbuf(vas.logits, host_logits.va, logits_bytes)?)?;
+        put_bytes(w, down_cb_pa + 256, &transfer::copy_qmd(copy_va, down_cb_va, logits_bytes)?.to_bytes()?)?;
+    }
+    let mut tmaps = maps.clone();
+    tmaps.push(rec);
+    let weights = m.weights();
+    let mut worst = 0.0f32;
+    let mut tok_ns = Vec::new();
+    let mut all = Vec::with_capacity(runs.len());
+    // 3. The texts.
+    for run in runs {
+        let mut cpu_caches = Caches::new(m.layers.len(), e);
+        let mut seq: Vec<usize> = run.prompt.clone();
+        let positions = (run.prompt.len() + run.steps - 1).min(m.context);
+        let mut greedy = Vec::with_capacity(run.steps);
+        for pos in 0..positions {
+            let tok = seq[pos];
+            let list = km::token_launches(&s, m.vocab, m.context, &vas, tok, pos)?;
+            let w = st.mem.writer_mut();
+            let mut qmds = Vec::with_capacity(n);
+            for (j, la) in list.iter().enumerate() {
+                let (cb_va, cb_pa) = (launches.va + 512 * j as u64, launches.pa + 512 * j as u64);
+                let pv = prog_va(la.prog).ok_or(bad("I14: program necunoscut"))?;
+                put_bytes(w, cb_pa, &la.cbuf)?;
+                put_bytes(w, cb_pa + 256, &la.qmd(pv, cb_va)?)?;
+                qmds.push(cb_va + 256);
+            }
+            qmds.push(down_cb_va + 256);
+            put_bytes(w, rec.pa, &alloc::vec![0u8; 16 * (n + 1)])?;
+            ram_write(&host_logits, &alloc::vec![0xee; logits_bytes as usize]);
+            let first = TOKEN_FIRST + STRIDE * *tokens_done as u32;
+            let mut words = alloc::vec![0u32; transfer::sequence_words(n)];
+            let mut pb = PushBuf::new(&mut words);
+            transfer::encode_sequence(&mut pb, &qmds, rec.va, first)?;
+            let nw = pb.len();
+            let last = first + n as u32;
+            let sys = [host_logits.clone()];
+            let b = match run_records(vbar, clock, journal, st, l, permit, &words[..nw], rec, n as u64 + 1, last, &tmaps, &sys, doorbell)? {
+                Ok(b) => b,
+                Err(got) => {
+                    lines.push(format!(
+                        "{}: I14: \"{}\" pozitia {}: ultima inregistrare = {:#x} (asteptat {:#x}): placa nu a terminat",
+                        p, run.name, pos, got, last
+                    ));
+                    return Err(GpuError::Timeout { waited_us: WAIT_US });
+                }
+            };
+            let t = transfer::analyze_sequence(&b, n, first)?;
+            tok_ns.push(t.iter().sum::<u64>());
+            *tokens_done += 1;
+            let got: Vec<f32> = ram_read(&host_logits, 4 * m.vocab as u64)
+                .chunks(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect();
+            let cpu = cm::step_cpu(&weights, &mut cpu_caches, tok, pos)?;
+            let v = km::judge(&got, &cpu);
+            if let km::TokenVerdict::Trece { max_abs, .. } = v {
+                worst = worst.max(max_abs);
+            }
+            if !v.passes() {
+                lines.push(format!("{}: \"{}\": {}", p, run.name, v.line(pos)));
+                return Err(bad("I14: simbolul nu trece (vezi randul de mai sus)"));
+            }
+            let g = cm::argmax(&got).ok_or(bad("I14: logit-uri fara maxim"))?;
+            if let Some(want) = run.argmax
+                && pos < run.prompt.len()
+                && g != want[pos]
+            {
+                lines.push(format!(
+                    "{}: I14: \"{}\" pozitia {}: argmax {} pe placa si procesor, vectori.json {}",
+                    p, run.name, pos, g, want[pos]
+                ));
+                return Err(bad("I14: argmax diferit de vectorii lui Kronos"));
+            }
+            if pos + 1 >= run.prompt.len() {
+                greedy.push(g);
+                seq.push(g);
+            }
+        }
+        if let Some(want) = run.greedy {
+            if greedy[..] != want[..] {
+                lines.push(format!("{}: I14: \"{}\": 5 simboluri greedy {:?}, vectori.json {:?}", p, run.name, greedy, want));
+                return Err(bad("I14: simbolurile greedy difera de vectorii lui Kronos"));
+            }
+            lines.push(format!(
+                "{}: i14: \"{}\": TRECE - {} pozitii, argmax ca vectori.json pe fiecare pozitie, 5 simboluri greedy {:?} identice",
+                p, run.name, positions, greedy
+            ));
+        }
+        all.push(greedy);
+    }
+    tok_ns.sort_unstable();
+    let median = tok_ns.get(tok_ns.len() / 2).copied().unwrap_or(0);
+    Ok((all, worst, median))
+}
+
+/// Step `i14-simbol` with the model file at `path` (the control model `mic_q8_0.kgr`); then a waiting `kronos --gpu`
+/// request, if any (P6-62 step 3).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn token_step<V: Mmio + ?Sized, K: Clock + ?Sized>(
     p: &str,
@@ -342,214 +576,92 @@ pub(super) fn token_step<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
         let m = read_kgr1(&file)?;
         drop(file);
-        let s = m.shape;
-        let e = s.e;
-        let n_tok = km::launches_per_token(m.layers.len());
-        let n = n_tok + 1; // + the copy of the logits down
-        let words_per_token = transfer::sequence_words(n);
-        if 4 * words_per_token as u64 > l.push.size / 2 {
-            lines.push(format!(
-                "{}: I14: {} lansari pe simbol = {} cuvinte, zona de comenzi are {} octeti (trebuie marita)",
-                p, n, words_per_token, l.push.size
-            ));
-            return Err(bad("I14: zona de comenzi prea mica pentru un simbol"));
-        }
+        let n = km::launches_per_token(m.layers.len()) + 1;
         lines.push(format!(
             "{}: i14: modelul de control {} (SHA-256 ca vectori.json; greutati la intamplare, NU #513): {} straturi, E {}, {} capete, vocabular {}, context {}; {} lansari pe simbol + 1 copiere a logit-urilor",
-            p, path, m.layers.len(), e, s.heads, m.vocab, m.context, n_tok
+            p, path, m.layers.len(), m.shape.e, m.shape.heads, m.vocab, m.context, n - 1
         ));
-        // 1. The blob, uploaded through the arena in pieces of at most 8 MiB.
-        let blob = pack(&m);
-        let total = blob.bytes.len() as u64;
-        let vblob = map_vram(st, total)?;
-        let piece = total.min(I11_BOARD_BYTES);
-        let host = st.mem.alloc_sys_mapped(&arena_pages(0, piece.div_ceil(PAGE))?)?;
-        let logits_bytes = (4 * m.vocab as u64).next_multiple_of(16);
-        let host_logits = st.mem.alloc_sys_mapped(&arena_pages(I11_BOARD_BYTES / PAGE, logits_bytes.div_ceil(PAGE))?)?;
-        let mut progs: Vec<(Prog, Mapping)> = Vec::new();
-        for prog in PROGRAMS {
-            let pm = map_vram(st, prog.code().len() as u64)?;
-            put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
-            progs.push((prog, pm));
-        }
-        let prog_va = |want: Prog| progs.iter().find(|(q, _)| *q == want).map(|(_, pm)| pm.va);
-        let copy_va = prog_va(Prog::Copy).ok_or(bad("I14: lipseste programul de copiere"))?;
-        let mut caches = Vec::with_capacity(m.layers.len());
-        for _ in 0..m.layers.len() {
-            caches.push((map_vram(st, kl::cache_bytes(e))?, map_vram(st, kl::cache_bytes(e))?));
-        }
-        let launches = map_vram(st, 512 * n as u64)?;
-        let (cb_up, q_up, rec_up) = (map_vram(st, PAGE)?, map_vram(st, PAGE)?, map_vram(st, PAGE)?);
-        let rec = map_vram(st, (16 * (n as u64 + 1)).next_multiple_of(PAGE))?;
-        let mut maps: Vec<Mapping> = alloc::vec![vblob, launches, cb_up, q_up, rec_up];
-        maps.extend(caches.iter().flat_map(|(k, v)| [*k, *v]));
-        maps.extend(progs.iter().map(|(_, pm)| *pm));
-        let mut up_ns = 0u64;
-        let mut k = 0u32;
-        for (i, chunk) in blob.bytes.chunks(piece as usize).enumerate() {
-            let len = (chunk.len() as u64).next_multiple_of(16);
-            ram_write(&host, chunk);
-            let w = st.mem.writer_mut();
-            put_bytes(w, cb_up.pa, &transfer::copy_cbuf(host.va, vblob.va + i as u64 * piece, len)?)?;
-            put_bytes(w, q_up.pa, &transfer::copy_qmd(copy_va, cb_up.va, len)?.to_bytes()?)?;
-            put_bytes(w, rec_up.pa, &[0; 32])?;
-            let first = UP_FIRST + STRIDE * k;
-            k += 1;
-            let mut words = alloc::vec![0u32; transfer::sequence_words(1)];
-            let mut pb = PushBuf::new(&mut words);
-            transfer::encode_sequence(&mut pb, &[q_up.va], rec_up.va, first)?;
-            let nw = pb.len();
-            let sys = [host.clone()];
-            match run_records(vbar, clock, journal, st, l, permit, &words[..nw], rec_up, 2, first + 1, &maps, &sys, doorbell)? {
-                Ok(b) => up_ns += transfer::analyze_sequence(&b, 1, first)?[0],
-                Err(last) => {
-                    lines.push(format!("{}: I14: urcarea bucatii {} nu s-a terminat (inregistrarea 1 = {:#x})", p, i, last));
-                    return Err(GpuError::Timeout { waited_us: WAIT_US });
-                }
-            }
-        }
-        lines.push(format!(
-            "{}: i14: {} octeti (greutati + spatiu de lucru + logit-uri) urcati in {} bucati in {} ns ({} MB/s)",
-            p, total, k, up_ns, transfer::CopySpeed::mb_per_s(total, up_ns)
-        ));
-        // 2. The VAs, the copy of the logits down (the same every token).
-        let at = |o: u64| vblob.va + o;
-        let mut lvas = Vec::with_capacity(m.layers.len());
-        for (o, (kc, vc)) in blob.layers.iter().zip(&caches) {
-            let wv = WeightVas {
-                ln1_g: at(o[0]),
-                ln1_b: at(o[1]),
-                wqkv: at(o[2]),
-                bqkv: at(o[3]),
-                wout: at(o[4]),
-                bout: at(o[5]),
-                ln2_g: at(o[6]),
-                ln2_b: at(o[7]),
-                wfc: at(o[8]),
-                bfc: at(o[9]),
-                wproj: at(o[10]),
-                bproj: at(o[11]),
-            };
-            lvas.push(LayerVas::with_scratch(e, at(blob.scratch), kc.va, vc.va, wv)?);
-        }
-        let vas = ModelVas {
-            emb_tok: at(blob.emb_tok),
-            emb_pos: at(blob.emb_pos),
-            ln_g: at(blob.ln_g),
-            ln_b: at(blob.ln_b),
-            layers: lvas,
-            h_final: at(blob.fin),
-            logits: at(blob.fin) + 4 * e as u64,
-        };
-        let (down_cb_va, down_cb_pa) = (launches.va + 512 * n_tok as u64, launches.pa + 512 * n_tok as u64);
-        {
-            let w = st.mem.writer_mut();
-            put_bytes(w, down_cb_pa, &transfer::copy_cbuf(vas.logits, host_logits.va, logits_bytes)?)?;
-            put_bytes(w, down_cb_pa + 256, &transfer::copy_qmd(copy_va, down_cb_va, logits_bytes)?.to_bytes()?)?;
-        }
-        let mut tmaps = maps.clone();
-        tmaps.push(rec);
-        let weights = m.weights();
-        let mut worst = 0.0f32;
-        let mut tok_ns = Vec::new();
-        // 3. The control texts.
-        for ctl in &MIC_CONTROLS {
-            let mut cpu_caches = Caches::new(m.layers.len(), e);
-            let mut seq: Vec<usize> = ctl.prompt.to_vec();
-            let positions = ctl.prompt.len() + ctl.greedy.len() - 1;
-            let mut greedy = Vec::with_capacity(ctl.greedy.len());
-            for pos in 0..positions {
-                let tok = seq[pos];
-                let list = km::token_launches(&s, m.vocab, m.context, &vas, tok, pos)?;
-                let w = st.mem.writer_mut();
-                let mut qmds = Vec::with_capacity(n);
-                for (j, la) in list.iter().enumerate() {
-                    let (cb_va, cb_pa) = (launches.va + 512 * j as u64, launches.pa + 512 * j as u64);
-                    let pv = prog_va(la.prog).ok_or(bad("I14: program necunoscut"))?;
-                    put_bytes(w, cb_pa, &la.cbuf)?;
-                    put_bytes(w, cb_pa + 256, &la.qmd(pv, cb_va)?)?;
-                    qmds.push(cb_va + 256);
-                }
-                qmds.push(down_cb_va + 256);
-                put_bytes(w, rec.pa, &alloc::vec![0u8; 16 * (n + 1)])?;
-                ram_write(&host_logits, &alloc::vec![0xee; logits_bytes as usize]);
-                let first = TOKEN_FIRST + STRIDE * tokens_done as u32;
-                let mut words = alloc::vec![0u32; transfer::sequence_words(n)];
-                let mut pb = PushBuf::new(&mut words);
-                transfer::encode_sequence(&mut pb, &qmds, rec.va, first)?;
-                let nw = pb.len();
-                let last = first + n as u32;
-                let sys = [host_logits.clone()];
-                let b = match run_records(vbar, clock, journal, st, l, permit, &words[..nw], rec, n as u64 + 1, last, &tmaps, &sys, doorbell)? {
-                    Ok(b) => b,
-                    Err(got) => {
-                        lines.push(format!(
-                            "{}: I14: \"{}\" pozitia {}: ultima inregistrare = {:#x} (asteptat {:#x}): placa nu a terminat",
-                            p, ctl.text, pos, got, last
-                        ));
-                        return Err(GpuError::Timeout { waited_us: WAIT_US });
-                    }
-                };
-                let t = transfer::analyze_sequence(&b, n, first)?;
-                tok_ns.push(t.iter().sum::<u64>());
-                tokens_done += 1;
-                let got: Vec<f32> = ram_read(&host_logits, 4 * m.vocab as u64)
-                    .chunks(4)
-                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                    .collect();
-                let cpu = cm::step_cpu(&weights, &mut cpu_caches, tok, pos)?;
-                let v = km::judge(&got, &cpu);
-                if let km::TokenVerdict::Trece { max_abs, .. } = v {
-                    worst = worst.max(max_abs);
-                }
-                if !v.passes() {
-                    lines.push(format!("{}: \"{}\": {}", p, ctl.text, v.line(pos)));
-                    return Err(bad("I14: simbolul nu trece (vezi randul de mai sus)"));
-                }
-                let g = cm::argmax(&got).ok_or(bad("I14: logit-uri fara maxim"))?;
-                if pos < ctl.prompt.len() && g != ctl.argmax[pos] {
-                    lines.push(format!(
-                        "{}: I14: \"{}\" pozitia {}: argmax {} pe placa si procesor, vectori.json {}",
-                        p, ctl.text, pos, g, ctl.argmax[pos]
-                    ));
-                    return Err(bad("I14: argmax diferit de vectorii lui Kronos"));
-                }
-                if pos + 1 >= ctl.prompt.len() {
-                    greedy.push(g);
-                    seq.push(g);
-                }
-            }
-            if greedy[..] != ctl.greedy[..] {
-                lines.push(format!("{}: I14: \"{}\": 5 simboluri greedy {:?}, vectori.json {:?}", p, ctl.text, greedy, ctl.greedy));
-                return Err(bad("I14: simbolurile greedy difera de vectorii lui Kronos"));
-            }
-            lines.push(format!(
-                "{}: i14: \"{}\": TRECE - {} pozitii, argmax ca vectori.json pe fiecare pozitie, 5 simboluri greedy {:?} identice",
-                p, ctl.text, positions, greedy
-            ));
-        }
-        tok_ns.sort_unstable();
+        let runs: Vec<Run<'_>> = MIC_CONTROLS
+            .iter()
+            .map(|c| Run {
+                name: String::from(c.text),
+                prompt: c.prompt.to_vec(),
+                steps: c.greedy.len(),
+                argmax: Some(c.argmax),
+                greedy: Some(&c.greedy),
+            })
+            .collect();
+        let (_, worst, median) =
+            run_model(p, vbar, clock, journal, st, l, &m, &runs, permit, lines, doorbell, &mut tokens_done)?;
         lines.push(format!(
             "{}: i14: {} simboluri pe placa, fiecare = o sonerie ({} lansari); abaterea maxima a logit-urilor fata de procesor {:e}; durata mediana a unui simbol {} ns (ceasul placii)",
-            p,
-            tokens_done,
-            n,
-            worst,
-            tok_ns[tok_ns.len() / 2]
+            p, tokens_done, n, worst, median
         ));
         Ok(())
     })();
-    match r {
-        Ok(()) => {
-            lines.push(format!(
-                "{}: pas I14 simbol: ok (modelul de control, {} simboluri comparate cu procesorul si cu vectorii lui Kronos; #513 vine cu P6-60)",
-                p, tokens_done
-            ));
-            Ok(())
-        }
+    match &r {
+        Ok(()) => lines.push(format!(
+            "{}: pas I14 simbol: ok (modelul de control, {} simboluri comparate cu procesorul si cu vectorii lui Kronos; #513 vine cu P6-60)",
+            p, tokens_done
+        )),
         Err(err) => {
-            lines.push(format!("{}: pas I14 simbol: ESEC: {} (oprit la prima eroare, dupa {} simboluri)", p, err, tokens_done));
-            Err(err)
+            lines.push(format!("{}: pas I14 simbol: ESEC: {} (oprit la prima eroare, dupa {} simboluri)", p, err, tokens_done))
         }
     }
+    // P6-62 step 3: the `kronos --gpu` request runs only after the control model passed. Its own failure does not fail
+    // I14 (the chain still cleans up the same way); `/bin/kronos` then continues on the processor.
+    let job = KRONOS_JOB.lock().take();
+    if let Some(job) = job {
+        let res = match &r {
+            Ok(()) => kronos_job(p, vbar, clock, journal, st, l, &job, permit, lines, doorbell, &mut tokens_done),
+            Err(err) => Err(format!("modelul de control nu a trecut pe placa ({})", err)),
+        };
+        match &res {
+            Ok(t) => lines.push(format!("{}: kronos --gpu: {} simboluri generate pe placa (fiecare comparat cu procesorul)", p, t.len())),
+            Err(why) => lines.push(format!("{}: kronos --gpu: ESEC: {} -> kronos continua pe procesor", p, why)),
+        }
+        *KRONOS_RESULT.lock() = Some(res);
+    }
+    r
+}
+
+/// The `kronos --gpu` request: the model from its path, the prompt + `n` greedy tokens on the board.
+#[allow(clippy::too_many_arguments)]
+fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    job: &KronosJob,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    doorbell: &mut Bell<'_, V>,
+    tokens_done: &mut usize,
+) -> Result<Vec<usize>, String> {
+    let file = crate::fs::read_all(&job.path).map_err(|e| format!("nu pot citi {}: {}", job.path, e.message()))?;
+    let m = read_kgr1(&file).map_err(|e| format!("{}: {}", job.path, e))?;
+    drop(file);
+    if job.prompt.is_empty() || job.n == 0 {
+        return Err(String::from("cererea nu are simboluri sau n = 0"));
+    }
+    if let Some(bad_id) = job.prompt.iter().find(|&&t| t >= m.vocab) {
+        return Err(format!("simbolul {} e in afara vocabularului ({})", bad_id, m.vocab));
+    }
+    if job.prompt.len() >= m.context {
+        return Err(format!("textul are {} simboluri, contextul modelului {}", job.prompt.len(), m.context));
+    }
+    lines.push(format!(
+        "{}: kronos --gpu: {} ({} straturi, E {}, vocabular {}, context {}): {} simboluri date, {} de generat",
+        p, job.path, m.layers.len(), m.shape.e, m.vocab, m.context, job.prompt.len(), job.n
+    ));
+    let runs = [Run { name: String::from("kronos --gpu"), prompt: job.prompt.clone(), steps: job.n, argmax: None, greedy: None }];
+    let (mut all, worst, median) = run_model(p, vbar, clock, journal, st, l, &m, &runs, permit, lines, doorbell, tokens_done)
+        .map_err(|e| format!("{}", e))?;
+    lines.push(format!(
+        "{}: kronos --gpu: abaterea maxima a logit-urilor fata de procesor {:e}; durata mediana a unui simbol {} ns (ceasul placii)",
+        p, worst, median
+    ));
+    Ok(all.pop().unwrap_or_default())
 }

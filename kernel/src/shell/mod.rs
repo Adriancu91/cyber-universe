@@ -320,7 +320,37 @@ fn run_program(args: &[&str]) {
         return;
     };
     let path = if name.contains('/') { String::from(name) } else { format!("/bin/{}", name) };
-    match crate::proc::spawn_path(&path, args) {
+    // P6-62 step 3: `kronos --gpu` runs the whole window chain (it writes to the board): the same `DA` as `gpu lant`.
+    let gpu = path == "/bin/kronos" && args.iter().any(|a| matches!(*a, "--gpu" | "--gpu-sim"));
+    if gpu {
+        for l in crate::drivers::gpu::LANT_WARNING {
+            out!("{}\n", l);
+        }
+        out!("kronos --gpu: lantul de mai sus ruleaza o data, apoi textul tau pe placa (fiecare simbol comparat cu procesorul);\n");
+        out!("la orice eroare kronos continua pe procesor.\n");
+        out!("Scrie DA (litere mari) si Enter ca sa continui; orice altceva = doar procesorul: ");
+        let Some(answer) = read_line() else { return };
+        if answer.trim() == "DA" {
+            crate::info!("gpu: kronos --gpu: confirmat cu DA");
+            crate::drivers::gpu_tur::KRONOS_ARMED.store(true, core::sync::atomic::Ordering::SeqCst);
+        } else {
+            out!("kronos --gpu: fara DA, placa nu e atinsa; kronos merge pe procesor\n");
+        }
+    }
+    let spawned = crate::proc::spawn_path(&path, args);
+    if gpu {
+        // Whatever happens, the permission never outlives this one program.
+        if let Ok(id) = &spawned {
+            let code = crate::proc::wait(*id);
+            crate::drivers::gpu_tur::KRONOS_ARMED.store(false, core::sync::atomic::Ordering::SeqCst);
+            if code != 0 {
+                out!("({} a iesit cu codul {})\n", name, code);
+            }
+            return;
+        }
+        crate::drivers::gpu_tur::KRONOS_ARMED.store(false, core::sync::atomic::Ordering::SeqCst);
+    }
+    match spawned {
         Ok(id) => {
             let code = crate::proc::wait(id);
             if code != 0 {

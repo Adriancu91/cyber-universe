@@ -83,6 +83,10 @@ pub(super) struct Add64 {
     want: Vec<u32>,
 }
 
+/// The work channel's pushbuffer area (P6-62): 16 KiB = two #513 tokens in flight (`kronos_model::push_bytes_per_token(12)`
+/// = 7 832 B each; Cyber-GPU's answer of 7 Nov, `C-83_i14.md`). I10 had 4 KiB, too small for even one #513 token.
+pub(super) const PUSH_BYTES: u64 = 0x4000;
+
 /// What I10 keeps for the launch cost.
 pub(super) struct Launched {
     pub(super) k: Add64,
@@ -198,7 +202,7 @@ pub(super) fn add64_step<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let r = (|| {
         let w = st.space.as_ref().map(|(_, w)| w.clone()).ok_or(GpuError::InvalidArgument("I10: lipseste canalul de lucru"))?;
         let k = buffers(st)?;
-        let push = st.mem.alloc_mapped(0x1000, 0x1000)?;
+        let push = st.mem.alloc_mapped(PUSH_BYTES, 0x1000)?;
         let mut wq = WorkQueue::new(&w, push)?;
         let mut buf = [0u32; 16];
         let mut pb = PushBuf::new(&mut buf);

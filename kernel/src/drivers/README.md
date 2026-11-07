@@ -146,6 +146,11 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
     arena I11; pentru cele 3 texte de control: fiecare poziție = 35 lansări (`kronos_model::token_launches`) + o copiere a logit-urilor jos,
     o sonerie pe simbol; logit-urile judecate de `kronos_model::judge` față de `gpu_compute::model::step_cpu`, argmax-ul și cele 5 simboluri
     greedy față de vectorii lui Kronos. #513 vine cu P6-60. Lanțul trece acum până la capăt în `--sim`.
+    **`kronos --gpu` (P6-62 pas 3):** shell-ul întreabă `DA` (ca la `gpu lant`), apoi `/bin/kronos` cere prin apelul 43 lanțul întreg;
+    la `i14-simbol`, după ce modelul de control a trecut, rulează cererea (modelul dat, textul + n simboluri greedy, fiecare simbol judecat
+    față de procesor, același cod `run_model`). Orice eroare (fără `DA`, build care nu poate scrie, lanț oprit, simbol greșit, timp depășit)
+    → kronos continuă pe procesor, cu notă. Refuzat de bucla automată și de consola la distanță. Zona de comenzi a canalului: 16 KiB
+    (`gpu_i10::PUSH_BYTES`, două simboluri #513 în zbor, răspunsul cyber-gpu din 7 nov).
     Programele vin direct din biblioteca fixată (`transfer::COPY_B128`, `q8_matvec::Q8_MATVEC`). **Pe placă: neîncercat.**
   - Test: `gpu-tur` (`gpu tur --sim` pe modelul plăcii din workstation; `gpu lant --sim` cu `DA` oprit la I7 cu Bus Master înapoi;
     `--eroare` oprit la I6, Bus Master tot înapoi; `--doar-citire` 0 scrieri; `tools/after-gpu-tur.sh` verifică jurnalele de pe disc),

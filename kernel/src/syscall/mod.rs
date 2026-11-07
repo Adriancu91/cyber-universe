@@ -47,6 +47,7 @@ pub const SYS_THREAD_EXIT: u64 = 39;
 pub const SYS_PROMISE: u64 = 40;
 pub const SYS_UNVEIL: u64 = 41;
 pub const SYS_SECRET: u64 = 42;
+pub const SYS_GPU_KRONOS: u64 = 43;
 
 mod net;
 mod ui;
@@ -96,7 +97,7 @@ fn group_of(nr: u64) -> Option<u64> {
         SYS_EXIT | SYS_THREAD_EXIT | SYS_PROMISE | SYS_UNVEIL | SYS_SECRET => return None,
         SYS_WRITE | SYS_YIELD | SYS_SLEEP_MS | SYS_READ | SYS_CLOSE | SYS_TIME | SYS_SYSINFO | SYS_RANDOM
         | SYS_MEM_MAP | SYS_MEM_UNMAP | SYS_THREAD_SPAWN | SYS_THREAD_JOIN => P_STDIO,
-        SYS_OPEN | SYS_STAT | SYS_LIST => P_RPATH,
+        SYS_OPEN | SYS_STAT | SYS_LIST | SYS_GPU_KRONOS => P_RPATH,
         SYS_CREATE | SYS_REMOVE | SYS_RENAME | SYS_SYNC => P_WPATH,
         SYS_RESOLVE | SYS_TCP_CONNECT | SYS_UDP_OPEN | SYS_UDP_SEND | SYS_UDP_RECV | SYS_NET_INFO | SYS_PING => P_INET,
         SYS_SPAWN | SYS_WAIT | SYS_KILL => P_PROC,
@@ -191,6 +192,7 @@ fn call(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64, a5: u64) -> i64 {
         SYS_PROMISE => crate::proc::with_rights(|r| r.promise(a1) as i64).unwrap_or(E_INVALID),
         SYS_UNVEIL => unveil(a1, a2, _a3),
         SYS_SECRET => secret(a1, a2, _a3),
+        SYS_GPU_KRONOS => gpu_kronos(a1, a2, _a3, a4),
         _ => E_INVALID,
     }
 }
@@ -216,6 +218,52 @@ fn unveil(ptr: u64, len: u64, rights: u64) -> i64 {
 
 /// secret(op, path, length): op 1 = this program asks for one secret file (`/usb/claude.key`,
 /// `/usb/github.token`); op 0 = it gives up every secret for good. P6-23.
+/// gpu_kronos(request, request_len, buf, buf_len) (P6-62 step 3, `kronos --gpu`): the request is text, one item per
+/// line: `placa` or `sim`, the model path, how many tokens, the prompt's token ids separated by commas. Runs the window
+/// chain with the request at `i14-simbol` (only after the shell's `DA`, see `gpu_tur::KRONOS_ARMED`). Writes to `buf`
+/// the line `ok 1,2,3` or `eroare <why>`, then the chain's lines (as many as fit); returns the bytes written.
+fn gpu_kronos(ptr: u64, len: u64, buf: u64, buf_len: u64) -> i64 {
+    use alloc::{string::String, vec::Vec};
+    if len == 0 || len > 64 * 1024 || !user_range_ok(ptr, len, false) || buf_len < 256 || !user_range_ok(buf, buf_len, true) {
+        return E_FAULT;
+    }
+    // SAFETY: the range was just checked to be mapped user memory of the current address space.
+    let req = unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) };
+    let Ok(req) = core::str::from_utf8(req) else { return E_INVALID };
+    let mut it = req.lines();
+    let (Some(kind), Some(path), Some(n), Some(ids)) = (it.next(), it.next(), it.next(), it.next()) else { return E_INVALID };
+    let sim = match kind {
+        "sim" => true,
+        "placa" => false,
+        _ => return E_INVALID,
+    };
+    let Ok(n) = n.trim().parse::<usize>() else { return E_INVALID };
+    let prompt: Option<Vec<usize>> = ids.split(',').map(|t| t.trim().parse::<usize>().ok()).collect();
+    let Some(prompt) = prompt else { return E_INVALID };
+    if let Err(e) = path_allowed(path, crate::proc::rights::R_READ) {
+        return e;
+    }
+    let (res, lines) = crate::drivers::gpu_tur::kronos_gpu(path, prompt, n, sim);
+    let mut out = match &res {
+        Ok(t) => {
+            let ids: Vec<String> = t.iter().map(|x| alloc::format!("{}", x)).collect();
+            alloc::format!("ok {}\n", ids.join(","))
+        }
+        Err(why) => alloc::format!("eroare {}\n", why.replace('\n', " ")),
+    };
+    // The chain already wrote its lines to the log (`gpu_i6::finish`).
+    for l in &lines {
+        if out.len() + l.len() + 1 <= buf_len as usize {
+            out.push_str(l);
+            out.push('\n');
+        }
+    }
+    let n = out.len().min(buf_len as usize);
+    // SAFETY: the range was checked to be writable user memory of this program.
+    unsafe { core::ptr::copy_nonoverlapping(out.as_ptr(), buf as *mut u8, n) };
+    n as i64
+}
+
 fn secret(op: u64, ptr: u64, len: u64) -> i64 {
     match op {
         0 => crate::proc::with_rights(|r| r.drop_secrets()).map_or(E_INVALID, |()| 0),

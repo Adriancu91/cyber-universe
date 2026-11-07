@@ -64,6 +64,10 @@
   op 0 = renunță la toate, definitiv. Un secret necerut sau o cale ascunsă = `-3` (nu există, nici în `list`); un apel nepromis sau
   o cale fără dreptul cerut = `-24`. Căile se compară canonic (litere mici, fără `.`, `..` aplicat). Un program pornit de altul
   moștenește promisiunile și căile vizibile, nu și secretele. Test: scenariul `drepturi` + testul de la pornire `rights::self_test`.
+  `43 gpu_kronos(cerere, lungime, buf, lungime_buf)` (P6-62 pas 3, `kronos --gpu`, grupul rpath): cererea e text, câte un rând:
+  `placa`/`sim`, calea modelului, câte simboluri, simbolurile textului separate prin virgulă. Rulează lanțul ferestrei cu cererea la
+  `i14-simbol` **doar dacă shell-ul a primit `DA`** chiar pentru acest program (`gpu_tur::KRONOS_ARMED`, folosit o singură dată);
+  în `buf`: `ok 1,2,3` sau `eroare <de ce>`, apoi rândurile lanțului. Test: scenariul `kronos-gpu` + `tools/after-kronos-gpu.sh`.
 - **Erori:** `-1` argument invalid, `-2` adresă invalidă, `-3` nu există, `-4` e director, `-5` descriptor închis, `-6` prea multe fișiere, `-22` memorie insuficientă, `-24` nepermis (P6-23).
 - **Siguranță:** orice pointer primit e verificat pagină cu pagină (`paging::user_accessible`): în jumătatea de jos,
   mapat cu drept USER la toate nivelurile. O excepție în ring 3 oprește doar programul (cod de ieșire `-1`).
