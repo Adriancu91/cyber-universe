@@ -42,6 +42,8 @@
 //! in the kernel with the processor). Any error (no `DA`, a build that cannot write to the card, the chain stopped,
 //! a token that does not match, time out) -> the same text on the processor, with a note. `--gpu-sim` = the same on
 //! the gpu-sim models (test builds only). Plain greedy only (not with `--repetitie` or `--intreaba`).
+//! P6-66 (C-87 item 1): after the board, the same text runs on the processor and one line compares the speeds (board
+//! clock vs processor) and says whether the tokens are identical (exit 1 if not).
 //!
 //! Exit codes: 0 ok, 1 reference mismatch, 2 bad arguments, 3 wrong SHA-256, 4 cannot read or parse the model.
 #![no_std]
@@ -712,8 +714,25 @@ fn penalize(logits: &mut [f32], seen: &[u32], p: f32) {
 /// P6-47: short names of the block's stages in `--profil` (index = `prof` kind).
 const PROFILE_SHORT: [&str; kgr::prof::N] = ["qkv", "proiectie", "fc 4E", "iesire MLP", "cap", "atentie", "restul", "asteptare"];
 
-/// P6-62 step 3: `--gpu`. `Some(code)` = done on the board; `None` = continue on the processor (the note says why).
-fn on_gpu(o: &Opts, path: &str, n: usize, sim: bool, tok: Option<&Tokenizer>) -> Option<i64> {
+/// What the board made (P6-66): its tokens (cut at the end-of-text token) and its speed line from the kernel, if any.
+struct GpuDone {
+    tokens: Vec<u32>,
+    /// Tokens per second ×100 on the board's clock (driver pauses included), from the kernel's `generare (...)` line.
+    per_s_x100: Option<u64>,
+    sim: bool,
+}
+
+/// `12.34 simboluri/s` → 1234 (the first such number after `simboluri noi; `).
+fn speed_of(line: &str) -> Option<u64> {
+    let rest = line.split("simboluri noi; ").nth(1)?;
+    let num = rest.split(" simboluri/s").next()?;
+    let (a, b) = num.split_once('.').unwrap_or((num, "0"));
+    Some(a.trim().parse::<u64>().ok()? * 100 + b.trim().get(..2).unwrap_or(b.trim()).parse::<u64>().ok()?)
+}
+
+/// P6-62 step 3: `--gpu`. `Some(..)` = done on the board (P6-66: the same text then runs on the processor, for the
+/// speed comparison in the same report); `None` = continue on the processor (the note says why).
+fn on_gpu(o: &Opts, path: &str, n: usize, sim: bool, tok: Option<&Tokenizer>) -> Option<GpuDone> {
     let back = |why: &str| {
         println!("kronos: --gpu: {} -> continui pe procesor", why);
         None
@@ -742,6 +761,7 @@ fn on_gpu(o: &Opts, path: &str, n: usize, sim: bool, tok: Option<&Tokenizer>) ->
     for l in rest.iter().filter(|l| l.contains("kronos --gpu") || l.contains("rezultat lant")) {
         println!("kronos: lant: {}", l);
     }
+    let per_s_x100 = rest.iter().find(|l| l.contains("kronos --gpu: generare (")).and_then(|l| speed_of(l));
     let Some(list) = first.strip_prefix("ok ") else {
         return back(first.strip_prefix("eroare ").unwrap_or(first));
     };
@@ -771,7 +791,7 @@ fn on_gpu(o: &Opts, path: &str, n: usize, sim: bool, tok: Option<&Tokenizer>) ->
         out.len(),
         ms
     );
-    Some(0)
+    Some(GpuDone { tokens: out, per_s_x100, sim })
 }
 
 /// `--profil`: where the cycles of the generated tokens went.
@@ -1270,10 +1290,11 @@ fn main() -> i64 {
         return 2;
     }
     let n = o.n.min(c.context.saturating_sub(o.ids.len()));
+    let mut gpu_done: Option<GpuDone> = None;
     if let Some(sim) = o.gpu {
-        if let Some(code) = on_gpu(&o, &path, n, sim, tok.as_ref()) {
-            kgr::stop_pool();
-            return code;
+        gpu_done = on_gpu(&o, &path, n, sim, tok.as_ref());
+        if gpu_done.is_some() {
+            println!("kronos: acelasi text si pe procesor, pentru comparatia de viteza (C-87):");
         }
     }
     let per_ms = if o.profile { kgr::prof::calibrate() } else { 0 };
@@ -1389,5 +1410,26 @@ fn main() -> i64 {
         profile_report(&m, out.len().saturating_sub(1), c_total, c_screen, c_pick, per_ms);
     }
     kgr::stop_pool();
+    if let Some(g) = gpu_done {
+        // P6-66 (C-87 item 1): the board and the processor on the same text, in the same report.
+        let same = g.tokens[..] == out[..];
+        let cpu_x100 = out.len() as u64 * 100_000 / gen_ms;
+        let board = match g.per_s_x100 {
+            Some(v) => alloc::format!("{}.{:02} simboluri/s (ceasul placii)", v / 100, v % 100),
+            None => String::from("? simboluri/s (fara randul de viteza al nucleului)"),
+        };
+        println!(
+            "kronos: comparatie: placa{} {} / procesor {}.{:02} simboluri/s; simbolurile {}",
+            if g.sim { " (SIMULARE)" } else { "" },
+            board,
+            cpu_x100 / 100,
+            cpu_x100 % 100,
+            if same { "IDENTICE" } else { "DIFERITE" }
+        );
+        if !same {
+            println!("kronos: placa {:?}, procesor {:?}", g.tokens, out);
+            return 1;
+        }
+    }
     0
 }

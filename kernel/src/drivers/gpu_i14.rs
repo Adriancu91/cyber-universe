@@ -31,7 +31,9 @@ use gpu_core::hal::{Clock, Mmio};
 use nvidia_ga104::gsp::golden::Mapping;
 use nvidia_ga104::gsp::HardwareWritePermit;
 use nvidia_ga104::kronos_layer::{self as kl, LayerVas, OwnedLayer, Prog, WeightVas, PROGRAMS};
+use nvidia_ga104::kronos_gen::{GenPlan, Generation, Stop, TokenCheck, TokenOutput, TokenRunner, VramBudget};
 use nvidia_ga104::kronos_model::{self as km, ModelVas, OwnedModel};
+use nvidia_ga104::mmu::SysMapping;
 use nvidia_ga104::push::PushBuf;
 use nvidia_ga104::transfer;
 
@@ -74,6 +76,9 @@ const MIC_CONTROLS: [Control; 3] = [
         greedy: [8117, 8117, 3604, 3604, 3604],
     },
 ];
+
+/// VRAM kept free after a model's upload (C-87 step 4: the screen and the steps after I14).
+const VRAM_RESERVE: u64 = 4 << 20;
 
 const UP_FIRST: u32 = 0xc000;
 const TOKEN_FIRST: u32 = 0x1_0000;
@@ -366,6 +371,14 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         ));
         return Err(bad("I14: zona de comenzi prea mica pentru un simbol"));
     }
+    // 0. C-87 step 4: the VRAM the model needs, from its shapes, checked before anything is uploaded.
+    let budget = VramBudget::of_model(m)?;
+    let (free, largest) = st.mem.vram_free();
+    lines.push(format!("{}: i14: {}; VRAM liber {} MiB (cea mai lunga bucata {} MiB)", p, budget.line(m.layers.len()), free >> 20, largest >> 20));
+    if let Err(err) = budget.check(free, largest, VRAM_RESERVE) {
+        lines.push(format!("{}: I14: modelul nu incape in VRAM-ul liber (pastrez {} MiB rezerva): nimic urcat", p, VRAM_RESERVE >> 20));
+        return Err(err);
+    }
     // 1. The blob, uploaded through the arena in pieces of at most 8 MiB.
     let blob = pack(m);
     let total = blob.bytes.len() as u64;
@@ -459,78 +472,52 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     tmaps.push(rec);
     let weights = m.weights();
     let mut worst = 0.0f32;
-    let mut tok_ns = Vec::new();
+    let mut medians = Vec::new();
     let mut all = Vec::with_capacity(runs.len());
-    // 3. The texts.
+    let label = if permit.is_some() { "placa" } else { "SIMULARE" };
+    // 3. The texts: cyber-gpu's continuous generation (C-87 step 1, `kronos_gen::Generation`): one submission per
+    //    position, every position judged against the CPU engine, stop at the first error with nothing more submitted.
     for run in runs {
-        let mut cpu_caches = Caches::new(m.layers.len(), e);
-        let mut seq: Vec<usize> = run.prompt.clone();
-        let positions = (run.prompt.len() + run.steps - 1).min(m.context);
-        let mut greedy = Vec::with_capacity(run.steps);
-        for pos in 0..positions {
-            let tok = seq[pos];
-            let list = km::token_launches(&s, m.vocab, m.context, &vas, tok, pos)?;
-            let w = st.mem.writer_mut();
-            let mut qmds = Vec::with_capacity(n);
-            for (j, la) in list.iter().enumerate() {
-                let (cb_va, cb_pa) = (launches.va + 512 * j as u64, launches.pa + 512 * j as u64);
-                let pv = prog_va(la.prog).ok_or(bad("I14: program necunoscut"))?;
-                put_bytes(w, cb_pa, &la.cbuf)?;
-                put_bytes(w, cb_pa + 256, &la.qmd(pv, cb_va)?)?;
-                qmds.push(cb_va + 256);
-            }
-            qmds.push(down_cb_va + 256);
-            put_bytes(w, rec.pa, &alloc::vec![0u8; 16 * (n + 1)])?;
-            ram_write(&host_logits, &alloc::vec![0xee; logits_bytes as usize]);
-            let first = TOKEN_FIRST + STRIDE * *tokens_done as u32;
-            let mut words = alloc::vec![0u32; transfer::sequence_words(n)];
-            let mut pb = PushBuf::new(&mut words);
-            transfer::encode_sequence(&mut pb, &qmds, rec.va, first)?;
-            let nw = pb.len();
-            let last = first + n as u32;
-            let sys = [host_logits.clone()];
-            let b = match run_records(vbar, clock, journal, st, l, permit, &words[..nw], rec, n as u64 + 1, last, &tmaps, &sys, doorbell)? {
-                Ok(b) => b,
-                Err(got) => {
-                    lines.push(format!(
-                        "{}: I14: \"{}\" pozitia {}: ultima inregistrare = {:#x} (asteptat {:#x}): placa nu a terminat",
-                        p, run.name, pos, got, last
-                    ));
-                    return Err(GpuError::Timeout { waited_us: WAIT_US });
-                }
-            };
-            let t = transfer::analyze_sequence(&b, n, first)?;
-            tok_ns.push(t.iter().sum::<u64>());
-            *tokens_done += 1;
-            let got: Vec<f32> = ram_read(&host_logits, 4 * m.vocab as u64)
-                .chunks(4)
-                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                .collect();
-            let cpu = cm::step_cpu(&weights, &mut cpu_caches, tok, pos)?;
-            let v = km::judge(&got, &cpu);
-            if let km::TokenVerdict::Trece { max_abs, .. } = v {
-                worst = worst.max(max_abs);
-            }
-            if !v.passes() {
-                lines.push(format!("{}: \"{}\": {}", p, run.name, v.line(pos)));
-                return Err(bad("I14: simbolul nu trece (vezi randul de mai sus)"));
-            }
-            let g = cm::argmax(&got).ok_or(bad("I14: logit-uri fara maxim"))?;
-            if let Some(want) = run.argmax
-                && pos < run.prompt.len()
-                && g != want[pos]
-            {
-                lines.push(format!(
-                    "{}: I14: \"{}\" pozitia {}: argmax {} pe placa si procesor, vectori.json {}",
-                    p, run.name, pos, g, want[pos]
-                ));
-                return Err(bad("I14: argmax diferit de vectorii lui Kronos"));
-            }
-            if pos + 1 >= run.prompt.len() {
-                greedy.push(g);
-                seq.push(g);
-            }
+        let plan = GenPlan::new(&run.prompt, run.steps, m.vocab, m.context)?;
+        let positions = plan.positions();
+        let mut generation = Generation::new(plan);
+        let mut runner = BoardRunner {
+            p,
+            vbar: &mut *vbar,
+            clock: &mut *clock,
+            journal: &mut *journal,
+            st: &mut *st,
+            l: &mut *l,
+            permit,
+            lines: &mut *lines,
+            doorbell: &mut *doorbell,
+            tokens_done: &mut *tokens_done,
+            m,
+            vas: &vas,
+            launches,
+            rec,
+            down_cb_va,
+            host_logits: host_logits.clone(),
+            logits_bytes,
+            progs: &progs,
+            tmaps: &tmaps,
+            n,
+            name: &run.name,
+            argmax: run.argmax,
+            prompt_len: run.prompt.len(),
+        };
+        let mut check = CpuCheck { w: &weights, caches: Caches::new(m.layers.len(), e) };
+        let stop = generation.run(&mut runner, Some(&mut check)).clone();
+        let stats = generation.stats();
+        worst = worst.max(generation.worst_abs);
+        if !stop.is_clean_end() {
+            lines.push(format!("{}: I14: \"{}\": {}", p, run.name, stop.line()));
+            return Err(match stop {
+                Stop::Eroare { err, .. } => err,
+                _ => bad("I14: generarea s-a oprit (vezi randul de mai sus)"),
+            });
         }
+        let greedy = generation.generated().to_vec();
         if let Some(want) = run.greedy {
             if greedy[..] != want[..] {
                 lines.push(format!("{}: I14: \"{}\": 5 simboluri greedy {:?}, vectori.json {:?}", p, run.name, greedy, want));
@@ -540,12 +527,115 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 "{}: i14: \"{}\": TRECE - {} pozitii, argmax ca vectori.json pe fiecare pozitie, 5 simboluri greedy {:?} identice",
                 p, run.name, positions, greedy
             ));
+        } else {
+            lines.push(format!("{}: {}: {} ({})", p, run.name, stats.line(label), stop.line()));
         }
+        medians.push(stats.median_ns);
         all.push(greedy);
     }
-    tok_ns.sort_unstable();
-    let median = tok_ns.get(tok_ns.len() / 2).copied().unwrap_or(0);
+    medians.sort_unstable();
+    let median = medians.get(medians.len() / 2).copied().unwrap_or(0);
     Ok((all, worst, median))
+}
+
+/// One position on the board for `kronos_gen::Generation`: the launches written, ONE submission + doorbell, the
+/// records and the logits read back (I14's work, now behind cyber-gpu's `TokenRunner`).
+struct BoardRunner<'r, 'b, V: Mmio + ?Sized, K: Clock + ?Sized> {
+    p: &'r str,
+    vbar: &'r mut V,
+    clock: &'r mut K,
+    journal: &'r mut Journal,
+    st: &'r mut GpuState,
+    l: &'r mut Launched,
+    permit: Option<&'r HardwareWritePermit>,
+    lines: &'r mut Vec<String>,
+    doorbell: &'r mut Bell<'b, V>,
+    tokens_done: &'r mut usize,
+    m: &'r OwnedModel,
+    vas: &'r ModelVas,
+    launches: Mapping,
+    rec: Mapping,
+    down_cb_va: u64,
+    host_logits: SysMapping,
+    logits_bytes: u64,
+    progs: &'r [(Prog, Mapping)],
+    tmaps: &'r [Mapping],
+    /// Launches per position, with the copy of the logits down.
+    n: usize,
+    name: &'r str,
+    /// Control texts: Kronos's argmax for every prompt position (`vectori.json`).
+    argmax: Option<&'r [usize]>,
+    prompt_len: usize,
+}
+
+impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V, K> {
+    fn run_token(&mut self, tok: usize, pos: usize) -> GpuResult<TokenOutput> {
+        let (p, n, m) = (self.p, self.n, self.m);
+        let list = km::token_launches(&m.shape, m.vocab, m.context, self.vas, tok, pos)?;
+        let prog_va = |want: Prog| self.progs.iter().find(|(q, _)| *q == want).map(|(_, pm)| pm.va);
+        let w = self.st.mem.writer_mut();
+        let mut qmds = Vec::with_capacity(n);
+        for (j, la) in list.iter().enumerate() {
+            let (cb_va, cb_pa) = (self.launches.va + 512 * j as u64, self.launches.pa + 512 * j as u64);
+            let pv = prog_va(la.prog).ok_or(bad("I14: program necunoscut"))?;
+            put_bytes(w, cb_pa, &la.cbuf)?;
+            put_bytes(w, cb_pa + 256, &la.qmd(pv, cb_va)?)?;
+            qmds.push(cb_va + 256);
+        }
+        qmds.push(self.down_cb_va + 256);
+        put_bytes(w, self.rec.pa, &alloc::vec![0u8; 16 * (n + 1)])?;
+        ram_write(&self.host_logits, &alloc::vec![0xee; self.logits_bytes as usize]);
+        let first = TOKEN_FIRST + STRIDE * *self.tokens_done as u32;
+        let mut words = alloc::vec![0u32; transfer::sequence_words(n)];
+        let mut pb = PushBuf::new(&mut words);
+        transfer::encode_sequence(&mut pb, &qmds, self.rec.va, first)?;
+        let nw = pb.len();
+        let last = first + n as u32;
+        let sys = [self.host_logits.clone()];
+        let b = match run_records(
+            self.vbar, self.clock, self.journal, self.st, self.l, self.permit, &words[..nw], self.rec, n as u64 + 1, last, self.tmaps, &sys,
+            self.doorbell,
+        )? {
+            Ok(b) => b,
+            Err(got) => {
+                self.lines.push(format!(
+                    "{}: I14: \"{}\" pozitia {}: ultima inregistrare = {:#x} (asteptat {:#x}): placa nu a terminat",
+                    p, self.name, pos, got, last
+                ));
+                return Err(GpuError::Timeout { waited_us: WAIT_US });
+            }
+        };
+        let t = transfer::analyze_sequence(&b, n, first)?;
+        *self.tokens_done += 1;
+        let time = |k: usize| u64::from_le_bytes(b[16 * k + 8..16 * k + 16].try_into().unwrap_or([0; 8]));
+        let logits: Vec<f32> = ram_read(&self.host_logits, 4 * m.vocab as u64)
+            .chunks(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        if let (Some(want), Some(g)) = (self.argmax, cm::argmax(&logits))
+            && pos < self.prompt_len
+            && g != want[pos]
+        {
+            self.lines.push(format!(
+                "{}: I14: \"{}\" pozitia {}: argmax {} pe placa, vectori.json {}",
+                p, self.name, pos, g, want[pos]
+            ));
+            return Err(bad("I14: argmax diferit de vectorii lui Kronos"));
+        }
+        Ok(TokenOutput { logits, start_ns: time(0), end_ns: time(n), busy_ns: t.iter().sum() })
+    }
+}
+
+/// The CPU engine on the same weights, for `Generation`'s judgement of every position.
+struct CpuCheck<'a, 'w> {
+    w: &'a cm::ModelWeights<'w>,
+    caches: Caches,
+}
+
+impl TokenCheck for CpuCheck<'_, '_> {
+    fn cpu_logits(&mut self, token: usize, pos: usize) -> GpuResult<Vec<f32>> {
+        cm::step_cpu(self.w, &mut self.caches, token, pos)
+    }
 }
 
 /// Step `i14-simbol` with the model file at `path` (the control model `mic_q8_0.kgr`); then a waiting `kronos --gpu`

@@ -146,6 +146,10 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
     arena I11; pentru cele 3 texte de control: fiecare poziție = 35 lansări (`kronos_model::token_launches`) + o copiere a logit-urilor jos,
     o sonerie pe simbol; logit-urile judecate de `kronos_model::judge` față de `gpu_compute::model::step_cpu`, argmax-ul și cele 5 simboluri
     greedy față de vectorii lui Kronos. #513 (P6-60) rulează prin `kronos --gpu`, care îl alege implicit de pe stick. Lanțul trece acum până la capăt în `--sim`.
+    **P6-66 (C-87 pct. 1, cyber-gpu `34a9793`):** bucla de texte merge acum prin `kronos_gen::Generation` (o trimitere pe poziție, `TokenRunner` =
+    `BoardRunner`, fiecare poziție judecată de `CpuCheck` = motorul de pe procesor; oprire la prima eroare, nimic trimis după) și dă rândul
+    de viteză din ceasul plăcii (`generare (placa|SIMULARE): … simboluri/s`). Înainte de urcare: `VramBudget::of_model` față de
+    `vram_free()` (rezervă 4 MiB), refuz cinstit dacă nu încape. Pentru 24 de straturi zona de comenzi ar trebui 32 KiB (acum 16, ajunge pentru #513).
     **`kronos --gpu` (P6-62 pas 3):** shell-ul întreabă `DA` (ca la `gpu lant`), apoi `/bin/kronos` cere prin apelul 43 lanțul întreg;
     la `i14-simbol`, după ce modelul de control a trecut, rulează cererea (modelul dat, textul + n simboluri greedy, fiecare simbol judecat
     față de procesor, același cod `run_model`). Orice eroare (fără `DA`, build care nu poate scrie, lanț oprit, simbol greșit, timp depășit)
