@@ -386,7 +386,7 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 - [x] **P6-66** `kronos --gpu` cu generare continuă + viteza față de procesor în același raport (comanda C-87 pct. 1). Plan: `docs/plans/P6-66.md`. Dep: generarea continuă din cyber-gpu (C-87 pct. 1 GPU) în copia din hub
   Rezultat (2026-11-07 ~17:00 UTC): cyber-gpu fixat pe `34a9793` (doar adăugări); I14 generează prin `kronos_gen::Generation` (oprire la prima eroare, viteza din ceasul plăcii, bugetul VRAM verificat înainte de urcare); `kronos --gpu` rulează după placă același text pe procesor și scrie `comparatie: placa … / procesor … simboluri/s; simbolurile IDENTICE`. Testat doar în SIMULARE (`kronos-gpu`, `gpu-tur`, `gpu*`). Recuperarea fără repornire (C-87 pas 3 GPU) nu e legată încă în OS.
 - [x] **P6-67** CI-ul în trei bucăți paralele (teste-1, teste-2, stick): rularea din 7 nov a durat 54m51s din limita de 60. `tools/test.sh --shard K/N`. Plan: `docs/plans/P6-67.md`.
-  Rezultat (2026-11-07 ~19:20 UTC): pe ramura `wip/P6-67-ci` (run 42403081784) toate trei părțile verzi: teste-1 49/49 (23 min), teste-2 48/48 (30 min), stick 6 min — **toată rularea ~30 min în loc de 55**, aceleași 97 de scenarii. Apoi în `main` (run 42405596803).
+  Rezultat (2026-11-07 ~19:20 UTC): pe ramura `wip/P6-67-ci` (run 42403081784) toate trei părțile verzi: teste-1 49/49 (23 min), teste-2 48/48 (30 min), stick 6 min — **toată rularea ~30 min în loc de 55**, aceleași 97 de scenarii. Apoi în `main`: run 42405596803 verde (~35 min) → Release `os-275`.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
