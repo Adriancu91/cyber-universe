@@ -24,6 +24,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Spațiu pe disc (uneltele mari ale mașinii GitHub, nefolosite aici)
+        # 2026-11-07: run 42391129170 had 97/97 scenarios green, then ran out of disk (93 MB left) building the stick image:
+        # the cache restored the previous cyber-gpu revision's build files next to the new ones.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
       - name: Unelte sistem (QEMU, OVMF, xorriso, unelte FAT)
         run: |
           sudo apt-get update -qq
