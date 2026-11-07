@@ -38,10 +38,20 @@ pub struct Order {
     pub command: String,
 }
 
-/// The open commands of the file: `- [ ] K-12: test tot`. `[x]` (done by hand), other lines and bad IDs are skipped.
+/// The open commands of the file: `- [ ] K-12: test tot`. `[x]` (done by hand), other lines, bad IDs and anything inside a
+/// ``` block are skipped.
 pub fn parse(text: &str) -> Vec<Order> {
     let mut out: Vec<Order> = Vec::new();
+    let mut in_code = false;
     for raw in text.lines() {
+        // Examples inside ``` blocks never run.
+        if raw.trim_start().starts_with("```") {
+            in_code = !in_code;
+            continue;
+        }
+        if in_code {
+            continue;
+        }
         let Some(rest) = raw.trim().strip_prefix("- [ ] ") else { continue };
         let Some((id, command)) = rest.split_once(':') else { continue };
         let id = id.trim().trim_matches('`');
@@ -213,7 +223,7 @@ fn run_inner(only_show: bool) {
 #[cfg(any(feature = "test-ghpush", feature = "test-auto"))]
 pub fn self_test() {
     let text = "# Comenzi\n- [ ] K-1: test tot\n- [x] K-2: raport\n- [ ] K-3: `gpu lant`\n  - [ ] K-4 : hw  \n- [ ] K-1: raport\n\
-                - [ ] X-5: hw\n- [ ] K-: hw\n- [ ] K-6:\ntext oarecare K-7: hw\n";
+                - [ ] X-5: hw\n- [ ] K-: hw\n- [ ] K-6:\ntext oarecare K-7: hw\n```\n- [ ] K-8: hw\n```\n";
     let p = parse(text);
     let ids: Vec<&str> = p.iter().map(|o| o.id.as_str()).collect();
     assert!(ids == ["K-1", "K-3", "K-4"], "hub: parse: {:?}", ids);
