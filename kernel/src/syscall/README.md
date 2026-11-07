@@ -68,6 +68,9 @@
   `placa`/`sim`, calea modelului, câte simboluri, simbolurile textului separate prin virgulă. Rulează lanțul ferestrei cu cererea la
   `i14-simbol` **doar dacă shell-ul a primit `DA`** chiar pentru acest program (`gpu_tur::KRONOS_ARMED`, folosit o singură dată);
   în `buf`: `ok 1,2,3` sau `eroare <de ce>`, apoi rândurile lanțului. Test: scenariul `kronos-gpu` + `tools/after-kronos-gpu.sh`.
+  `44 read_line(buf, lungime)` (P6-65, grupul stdio): așteaptă un rând de la tastatură (sau din fereastra Terminal în care rulează
+  programul), îl afișează cât se tastează (Backspace șterge), întoarce lungimea (UTF-8, fără Enter, cel mult 4 KiB) sau `-1` dacă
+  fereastra s-a închis. Folosit de `kronos --conversatie`. Test: `kronos-kgr` (tastele trimise de test).
 - **Erori:** `-1` argument invalid, `-2` adresă invalidă, `-3` nu există, `-4` e director, `-5` descriptor închis, `-6` prea multe fișiere, `-22` memorie insuficientă, `-24` nepermis (P6-23).
 - **Siguranță:** orice pointer primit e verificat pagină cu pagină (`paging::user_accessible`): în jumătatea de jos,
   mapat cu drept USER la toate nivelurile. O excepție în ring 3 oprește doar programul (cod de ieșire `-1`).

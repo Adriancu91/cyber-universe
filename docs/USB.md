@@ -94,6 +94,8 @@ Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet 
 8. **Întrebări pentru Kronos (P6-61):** `run kronos --intreaba Ce este un sistem de operare?` — Kronos răspunde pe un rând și ține
    minte conversația în `/usb/kronos/conversatie.txt` (întrebarea următoare vede ultimele schimburi). Modelul e încă unul care
    continuă text, nu un asistent antrenat: răspunsurile pot fi ciudate.
+   **Conversație (P6-65):** `run kronos --conversatie` — încarcă modelul (#513) o singură dată, apoi scrii întrebare după întrebare
+   (`Tu: `); o întrebare lungă continuă pe rândul următor dacă pui `\` la capăt; rând gol sau `gata` = sfârșit.
 9. **Git simplu pe ramuri (P6-61):** `run gh-ia --lista Adriancu91/cyber-universe docs` arată fișierele unui dosar;
    `run gh-trimite --ramura os/nota /usb/nota.txt Adriancu91/cyber-universe note/nota.txt` pune fișierul pe ramura `os/nota`
    (niciodată pe `main`; tokenul trebuie să aibă drept de scriere și pe acel depozit).

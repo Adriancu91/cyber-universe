@@ -228,6 +228,12 @@ extern "x86-interrupt" fn handler(_frame: idt::InterruptStackFrame) {
 
 /// Adds a key press to the queue read by `read_key`/`wait_key`. Called by the PS/2 interrupt handler and
 /// by the USB keyboard driver; interrupts are off while the queue changes, so the two cannot mix.
+/// Keys waiting in the queue (tests: typing longer text without overflowing it).
+#[cfg(feature = "qemu-test")]
+pub fn pending() -> usize {
+    (HEAD.load(Ordering::Acquire) + QUEUE - TAIL.load(Ordering::Acquire)) % QUEUE
+}
+
 pub fn push_key(key: Key) {
     let flags = crate::sched::spin::lock(&PUSH_LOCK);
     let head = HEAD.load(Ordering::Relaxed);

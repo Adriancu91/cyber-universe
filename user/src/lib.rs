@@ -42,6 +42,7 @@ pub const SYS_PROMISE: u64 = 40;
 pub const SYS_UNVEIL: u64 = 41;
 pub const SYS_SECRET: u64 = 42;
 pub const SYS_GPU_KRONOS: u64 = 43;
+pub const SYS_READ_LINE: u64 = 44;
 
 /// P6-62 step 3 (`kronos --gpu`): the request text (`placa`|`sim`, model path, n, ids separated by commas, one per
 /// line) runs at the end of the window chain; the answer (`ok 1,2,3` or `eroare ...`, then the chain's lines) goes to
@@ -209,6 +210,12 @@ pub mod modules {
 }
 
 /// Starts the program at `path`. Returns its id or a negative error.
+/// One line typed at the keyboard (or in the terminal window the program runs in), echoed while typed (P6-65):
+/// its length in `buf` (UTF-8, without Enter), or a negative error (the window closed). At most 4 KiB.
+pub fn read_line(buf: &mut [u8]) -> i64 {
+    syscall3(SYS_READ_LINE, buf.as_mut_ptr() as u64, buf.len().min(4096) as u64, 0)
+}
+
 pub fn spawn(path: &str) -> i64 {
     syscall4(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, 0, 0)
 }

@@ -48,6 +48,8 @@ pub const SYS_PROMISE: u64 = 40;
 pub const SYS_UNVEIL: u64 = 41;
 pub const SYS_SECRET: u64 = 42;
 pub const SYS_GPU_KRONOS: u64 = 43;
+/// P6-65 (C-87 item 3): one line typed at the keyboard (or in the program's terminal window), echoed as it is typed.
+pub const SYS_READ_LINE: u64 = 44;
 
 mod net;
 mod ui;
@@ -96,7 +98,7 @@ fn group_of(nr: u64) -> Option<u64> {
     Some(match nr {
         SYS_EXIT | SYS_THREAD_EXIT | SYS_PROMISE | SYS_UNVEIL | SYS_SECRET => return None,
         SYS_WRITE | SYS_YIELD | SYS_SLEEP_MS | SYS_READ | SYS_CLOSE | SYS_TIME | SYS_SYSINFO | SYS_RANDOM
-        | SYS_MEM_MAP | SYS_MEM_UNMAP | SYS_THREAD_SPAWN | SYS_THREAD_JOIN => P_STDIO,
+        | SYS_MEM_MAP | SYS_MEM_UNMAP | SYS_THREAD_SPAWN | SYS_THREAD_JOIN | SYS_READ_LINE => P_STDIO,
         SYS_OPEN | SYS_STAT | SYS_LIST | SYS_GPU_KRONOS => P_RPATH,
         SYS_CREATE | SYS_REMOVE | SYS_RENAME | SYS_SYNC => P_WPATH,
         SYS_RESOLVE | SYS_TCP_CONNECT | SYS_UDP_OPEN | SYS_UDP_SEND | SYS_UDP_RECV | SYS_NET_INFO | SYS_PING => P_INET,
@@ -193,6 +195,7 @@ fn call(nr: u64, a1: u64, a2: u64, _a3: u64, a4: u64, a5: u64) -> i64 {
         SYS_UNVEIL => unveil(a1, a2, _a3),
         SYS_SECRET => secret(a1, a2, _a3),
         SYS_GPU_KRONOS => gpu_kronos(a1, a2, _a3, a4),
+        SYS_READ_LINE => read_line(a1, a2),
         _ => E_INVALID,
     }
 }
@@ -384,15 +387,64 @@ fn write(fd: u64, buf: u64, len: u64) -> i64 {
         });
         return n as i64;
     }
+    console_out(bytes);
+    len as i64
+}
+
+/// Program text for the console: the program's terminal window, or the screen + serial port (+ the automatic mode's report).
+fn console_out(bytes: &[u8]) {
     if let Some(t) = crate::proc::terminal() {
         crate::term::write(t, bytes);
-        return len as i64;
+        return;
     }
     let text = core::str::from_utf8(bytes).unwrap_or("<text invalid>");
     crate::shell::program_output(text); // the automatic mode's report (P6-41)
     crate::serial_print!("{}", text);
     crate::print!("{}", text);
-    len as i64
+}
+
+/// read_line(buf, len) (P6-65): waits for one line from the keyboard, or from the terminal window the program was started
+/// in; echoes it (Backspace erases); returns its length in bytes (UTF-8, without the Enter), or E_INVALID when the window
+/// closed. At most `len` bytes (up to 4 KiB): the keys after that are ignored until Enter.
+fn read_line(buf: u64, len: u64) -> i64 {
+    use crate::drivers::keyboard::Key;
+    if len == 0 || len > 4096 {
+        return E_INVALID;
+    }
+    if !user_range_ok(buf, len, true) {
+        return E_FAULT;
+    }
+    let term = crate::proc::terminal();
+    let mut line = alloc::string::String::new();
+    loop {
+        let key = match term {
+            Some(t) => match crate::term::wait_key(t) {
+                Some(k) => k,
+                None => return E_INVALID,
+            },
+            None => crate::drivers::keyboard::wait_key(),
+        };
+        match key {
+            Key::Enter => {
+                console_out(b"\n");
+                break;
+            }
+            Key::Backspace => {
+                if line.pop().is_some() {
+                    console_out(b"\x08");
+                }
+            }
+            Key::Char(c) if !c.is_control() && line.len() + c.len_utf8() <= len as usize => {
+                line.push(c);
+                let mut b = [0u8; 4];
+                console_out(c.encode_utf8(&mut b).as_bytes());
+            }
+            _ => {}
+        }
+    }
+    // SAFETY: [buf, buf + len) was checked to be writable user memory; line.len() <= len.
+    unsafe { core::ptr::copy_nonoverlapping(line.as_ptr(), buf as *mut u8, line.len()) };
+    line.len() as i64
 }
 
 fn fs_error(e: crate::fs::FsError) -> i64 {

@@ -109,6 +109,27 @@ pub fn run() {
     let h = core::str::from_utf8(&h).unwrap_or("");
     assert!(h.matches("Intrebare: ").count() == 2 && h.contains("Intrebare: Ce faci?\nRaspuns: ") && h.contains("Intrebare: Si acum?\n"), "kronos: istoricul: {:?}", h);
     crate::info!("test: kronos --intreaba: 2 schimburi in istoric OK");
+    // P6-65 (C-87 item 3): a conversation typed at the keyboard, the model loaded once; the second question on two lines
+    // (`\` at the end); `gata` ends it. Both exchanges are in the history.
+    let _ = crate::fs::remove("/etc/conversatie2.txt");
+    let chat = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--n", "12", "--istoric", "/etc/conversatie2.txt", "--conversatie"];
+    let id = crate::proc::spawn_path("/bin/kronos", &chat).expect("kronos nu porneste");
+    for line in ["Ce faci?", "Spune\\", "mai mult.", "gata"] {
+        for ch in line.chars().chain(core::iter::once('\n')) {
+            while crate::drivers::keyboard::pending() > 32 {
+                sched::sleep_ms(5);
+            }
+            use crate::drivers::keyboard::{Key, push_key};
+            push_key(if ch == '\n' { Key::Enter } else { Key::Char(ch) });
+        }
+    }
+    assert!(crate::proc::wait(id) == 0, "kronos: --conversatie a esuat");
+    let h = crate::fs::read_all("/etc/conversatie2.txt").unwrap_or_default();
+    let h = core::str::from_utf8(&h).unwrap_or("");
+    assert!(h.matches("Intrebare: ").count() == 2 && h.contains("Intrebare: Ce faci?\nRaspuns: ") && h.contains("Intrebare: Spune mai mult.\nRaspuns: "), "kronos: conversatia: {:?}", h);
+    let bad = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--conversatie", "--gpu"];
+    assert!(run_one(&bad) == 2, "kronos: --conversatie --gpu acceptat");
+    crate::info!("test: kronos --conversatie: 2 intrebari tastate, istoric OK");
     // P6-38 (C-46): the control texts of a known model (here the tiny model of the official vectors) must pass; an
     // unknown model has none (exit 1). The default choice (P6-60): #513 before #477 before #459 before any other .kgr, and the built-in sum
     // of the chosen name must refuse a file that is not that model (exit 3).

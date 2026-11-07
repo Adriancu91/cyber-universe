@@ -34,6 +34,9 @@
 //! at the end of the answer's first line; the exchange is appended to the history. The model only continues text (it
 //! was not trained for conversation), and the program says so.
 //!
+//! `--conversatie` (P6-65, C-87 item 3): the same, for several questions typed at the keyboard (`Tu: `), the model loaded
+//! once; a line ending in `\` continues on the next one; an empty line or `gata` ends. Every exchange goes to the history.
+//!
 //! `--gpu` (P6-62 step 3, C-83): the greedy continuation on the video card. Started only from the shell, which asks
 //! `DA` first (the whole window chain of `gpu lant` runs once, the text at its `i14-simbol` step, every token compared
 //! in the kernel with the processor). Any error (no `DA`, a build that cannot write to the card, the chain stopped,
@@ -310,6 +313,8 @@ struct Opts {
     vectors: Option<(String, String)>,
     /// `--intreaba`: the words are a question; answer one line, keep the history.
     ask: bool,
+    /// `--conversatie` (P6-65): several questions typed at the keyboard, the model loaded once.
+    chat: bool,
     /// `--istoric <cale>`: the conversation file (default `<dosar>/conversatie.txt`).
     history: Option<String>,
     /// `--gpu` / `--gpu-sim` (P6-62 step 3): Some(false) = the board, Some(true) = the simulated board.
@@ -341,6 +346,7 @@ fn parse_args() -> Result<Opts, String> {
         penalty: None,
         vectors: None,
         ask: false,
+        chat: false,
         history: None,
         gpu: None,
     };
@@ -375,6 +381,7 @@ fn parse_args() -> Result<Opts, String> {
             "--fara-cedari" => o.no_yield = true,
             "--fara-ecran" => o.no_screen = true,
             "--intreaba" => o.ask = true,
+            "--conversatie" => o.chat = true,
             "--gpu" => o.gpu = Some(false),
             "--gpu-sim" => o.gpu = Some(true),
             "--istoric" => o.history = Some(val()?.into()),
@@ -392,6 +399,9 @@ fn parse_args() -> Result<Opts, String> {
             _ if a.starts_with("--") => return Err(alloc::format!("argument necunoscut `{}`", a)),
             _ => o.words.push(a.into()),
         }
+    }
+    if o.chat && (o.gpu.is_some() || o.ask || !o.words.is_empty()) {
+        return Err("--conversatie merge singura: fara --gpu, --intreaba sau text (intrebarile le scrii la tastatura)".into());
     }
     Ok(o)
 }
@@ -905,6 +915,93 @@ fn ask_prompt(tok: &Tokenizer, turns: &[(String, String)], question: &str, conte
     }
 }
 
+/// One question typed at the keyboard: lines ending in `\\` continue on the next one (joined with a space). `None` = the
+/// window closed.
+fn read_question() -> Option<String> {
+    let mut q = String::new();
+    let mut buf = [0u8; 1024];
+    loop {
+        cyber_user::print!("{}", if q.is_empty() { "Tu: " } else { "... " });
+        let n = cyber_user::read_line(&mut buf);
+        if n < 0 {
+            return None;
+        }
+        let line = String::from_utf8_lossy(&buf[..n as usize]).into_owned();
+        let (part, more) = match line.trim_end().strip_suffix('\\') {
+            Some(p) => (p.trim(), true),
+            None => (line.trim(), false),
+        };
+        if !q.is_empty() && !part.is_empty() {
+            q.push(' ');
+        }
+        q += part;
+        if !more {
+            return Some(q);
+        }
+    }
+}
+
+/// `--conversatie` (P6-65, C-87 item 3): questions typed one after another, the model loaded once; each answer sees the
+/// latest exchanges of the history (as `--intreaba`) and is appended to it. An empty line or `gata` ends.
+fn conversation(m: &mut Model, tok: &Tokenizer, hist: &str, n: usize, context: usize, name: &str) -> i64 {
+    println!("kronos: conversatie cu {} (istoric {})", name, hist);
+    println!("kronos: scrie intrebarea si Enter; `\\` la capat = continui pe randul urmator; rand gol sau `gata` = sfarsit");
+    println!("kronos: (modelul continua text; nu e antrenat pentru conversatie, raspunsul poate fi fara legatura)");
+    let mut asked = 0;
+    loop {
+        let Some(q) = read_question() else { break };
+        if q.is_empty() || q.eq_ignore_ascii_case("gata") {
+            break;
+        }
+        let old = read_all(hist).ok().map(|b| String::from_utf8_lossy(b).into_owned()).unwrap_or_default();
+        let turns = history_turns(&old);
+        let (prompt, used) = ask_prompt(tok, &turns, &q, context);
+        let ids = tok.encode(&prompt);
+        let budget = n.min(context.saturating_sub(ids.len()));
+        if budget == 0 {
+            println!("kronos: intrebarea e prea lunga pentru contextul modelului ({} simboluri); scrie una mai scurta", context);
+            continue;
+        }
+        m.reset();
+        let t0 = now_ms();
+        let mut logits = match m.forward(&ids, false) {
+            Ok(l) => l,
+            Err(e) => {
+                println!("kronos: {}", e);
+                continue;
+            }
+        };
+        let mut out: Vec<u32> = Vec::new();
+        while out.len() < budget {
+            let next = kgr::argmax(&logits);
+            if tok.is_special(next) {
+                break;
+            }
+            out.push(next);
+            if out.len() == budget || tok.decode(&out).trim_start().contains('\n') {
+                break;
+            }
+            logits = match m.forward(&[next], false) {
+                Ok(l) => l,
+                Err(e) => {
+                    println!("kronos: {}", e);
+                    break;
+                }
+            };
+        }
+        let answer = String::from(tok.decode(&out).trim_start().lines().next().unwrap_or("").trim());
+        println!("Kronos: {}", answer);
+        println!("kronos: ({} schimburi din istoric, {} simboluri, {} ms)", used, out.len(), now_ms() - t0);
+        let all = old + &alloc::format!("{}{}\n{}{}\n\n", ASK_Q, q, ASK_A, answer);
+        if let Err(e) = save(hist, all.as_bytes()) {
+            println!("kronos: istoricul NU s-a salvat: {}", e);
+        }
+        asked += 1;
+    }
+    println!("kronos: conversatie incheiata: {} intrebari; istoricul in {}", asked, hist);
+    0
+}
+
 const ASK_Q: &str = "Intrebare: ";
 const ASK_A: &str = "Raspuns: ";
 
@@ -1057,7 +1154,7 @@ fn main() -> i64 {
         },
         if m.tune.proj_threads > 0 { "din reglaj sau --fire-proiectie" } else { "cate capete are modelul" }
     );
-    let tok = if vectors.is_some() || !o.words.is_empty() || o.control {
+    let tok = if vectors.is_some() || !o.words.is_empty() || o.control || o.chat {
         match Tokenizer::from_json(m.tokenizer, c.vocab) {
             Ok(t) => {
                 println!(
@@ -1113,6 +1210,12 @@ fn main() -> i64 {
                 1
             }
         };
+    }
+    if let (true, Some(tok)) = (o.chat, &tok) {
+        let hist = o.history.clone().unwrap_or_else(|| alloc::format!("{}/conversatie.txt", dir));
+        let code = conversation(&mut m, tok, &hist, o.n, c.context, known.map(|k| k.name).unwrap_or("model necunoscut"));
+        kgr::stop_pool();
+        return code;
     }
     let mut ask_turns = 0;
     if let (true, Some(tok)) = (o.ask, &tok) {

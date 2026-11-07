@@ -57,7 +57,9 @@
   neterminate) și se oprește la `<|endoftext|>`. Shell-ul taie la spații, deci cuvintele se lipesc la loc cu un spațiu.
   `kronos --codeaza <text>` arată doar simbolurile și decodarea înapoi.
   **Asistent (P6-61, C-84):** `kronos --intreaba <întrebare> [--istoric <cale>]` — ultimele schimburi din istoric (implicit
-  `<dosar>/conversatie.txt`) + `Intrebare: …\nRaspuns:`, răspuns până la primul rând nou, schimbul adăugat în istoric. Clasele de caractere (`src/unicode.rs`) sunt generate
+  `<dosar>/conversatie.txt`) + `Intrebare: …\nRaspuns:`, răspuns până la primul rând nou, schimbul adăugat în istoric.
+  `kronos --conversatie` (P6-65, C-87): același lucru pentru mai multe întrebări tastate (`Tu: `, apelul 44 `read_line`), modelul
+  încărcat o singură dată; `\` la capăt = rândul continuă; rând gol sau `gata` = sfârșit. Refuzat în bucla automată și din hub. Clasele de caractere (`src/unicode.rs`) sunt generate
   de `tools/gen-unicode.py` (Python 3.13, Unicode 15.1); JSON-ul mare se citește fără arbore (`src/jscan.rs`), fiindcă heap-ul
   programelor e first-fit și 100.000 de alocări mici ar dura zeci de secunde în QEMU.
   `kronos --vectori <vectori.json> f32|q8_0` = vectorii oficiali Kronos (hub `integrare/kronos/vectori/`, copiați în

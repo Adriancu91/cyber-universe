@@ -221,7 +221,7 @@ pub fn self_test() {
     for ok in ["test tot", "trimite", "raport", "hw", "gpu tur", "run kronos --profil --n 64 Buna", "run kronos --control", "log gpu 40", "timp test tot"] {
         assert!(allowed(ok).is_ok(), "hub: `{}` trebuia permis", ok);
     }
-    for bad in ["gpu lant", "gpu lant DA", "gpu i6 --scrie", "run kronos --gpu Ana", "reboot", "hub ruleaza", "hub", "run actualizeaza", "run files", "mod remove x", "test", "remote porneste", "da"] {
+    for bad in ["gpu lant", "gpu lant DA", "gpu i6 --scrie", "run kronos --gpu Ana", "reboot", "hub ruleaza", "hub", "run actualizeaza", "run files", "mod remove x", "test", "remote porneste", "da", "run kronos --conversatie"] {
         assert!(allowed(bad).is_err(), "hub: `{}` trebuia refuzat", bad);
     }
     crate::info!("test: comenzile din hub: citire si lista alba OK");
