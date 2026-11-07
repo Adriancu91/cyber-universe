@@ -21,6 +21,8 @@ pub struct Doc {
     pub links: Vec<String>,
     /// F6b (P6-61 step 6): the page's forms, numbered `F1`, `F2`... in the text.
     pub forms: Vec<Form>,
+    /// F6b: the `src` of every image shown (not hidden), in order, as written in the page (`web --imagine N`).
+    pub images: Vec<String>,
 }
 
 /// A form: where it goes, how (`get` or `post`), and its fields with the values they have at the start
@@ -68,6 +70,7 @@ struct Builder {
     select: Option<(usize, bool)>,
     /// Inside a `<select>` (also one without a name): its options' text is not shown.
     in_select: bool,
+    images: Vec<String>,
     /// Simple selectors whose rules say `display:none` / `visibility:hidden`.
     css: Vec<Selector>,
     /// The element hidden by CSS we are inside: its name, how many elements of the same name and how many other
@@ -534,6 +537,9 @@ impl Builder {
                 }
             }
             ("img", _) => {
+                if let Some(src) = attr(attrs, "src").map(|v| decode(v.trim())).filter(|v| !v.is_empty() && !v.starts_with("data:")) {
+                    self.images.push(src);
+                }
                 if let Some(alt) = attr(attrs, "alt").map(decode).filter(|a| !a.trim().is_empty()) {
                     self.push_text(" [imagine: ");
                     self.push_text(alt.trim());
@@ -797,6 +803,7 @@ pub fn render(html: &str, width: usize) -> Doc {
         form: None,
         select: None,
         in_select: false,
+        images: Vec::new(),
         css: hidden_selectors(html),
         off: None,
     };
@@ -883,7 +890,7 @@ pub fn render(html: &str, width: usize) -> Doc {
     while b.lines.first().is_some_and(|l| l.is_empty()) {
         b.lines.remove(0);
     }
-    Doc { title: b.title.trim().to_string(), lines: b.lines, links: b.links, forms: b.forms }
+    Doc { title: b.title.trim().to_string(), lines: b.lines, links: b.links, forms: b.forms, images: b.images }
 }
 
 /// The position of the `>` that ends the tag starting at `s[0]`, skipping `>` inside quoted attribute values.

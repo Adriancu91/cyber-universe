@@ -1613,8 +1613,24 @@ fn test_web() {
         // F6b: basic CSS hides what the page hides (checked below in /tmp/web/pagina.txt); hidden fields still go.
         (&["web", "https://test.cyber.local:18447/stil", "--adresa", a][..], "web pagina cu stil"),
         (&["web", "--formular", "1", "--adresa", a][..], "web formular cu camp ascuns"),
+        // F6b: the images of a page; image 1 (PNG made by the test server) decoded and shown in a window, closed with Esc.
+        (&["web", "https://test.cyber.local:18447/", "--adresa", a, "--linii", "3"][..], "web pagina cu imagine"),
+        (&["web", "--imagini"][..], "web lista de imagini"),
+        (&["web", "--imagine", "1", "--adresa", a][..], "web imagine"),
+        (&["web", "--imagine", "2", "--adresa", a][..], "web imagine inexistenta"),
     ] {
         let id = proc::spawn_path("/bin/web", args).expect("test: /bin/web");
+        if what == "web imagine" {
+            let deadline = arch::x86_64::apic::ticks() + 15 * arch::x86_64::apic::HZ;
+            while !ui::top_window().is_some_and(|(o, _)| o == id) {
+                assert!(arch::x86_64::apic::ticks() < deadline, "test web: fereastra imaginii nu apare");
+                sched::sleep_ms(20);
+            }
+            sched::sleep_ms(300);
+            serial_println!("WEB: captura imagine");
+            sched::sleep_ms(1500); // the harness saves the screen now
+            drivers::keyboard::push_key(drivers::keyboard::Key::Escape);
+        }
         let code = proc::wait_child(id);
         info!("test: {} a iesit cu codul {}", what, code);
         if what == "web pagina cu stil" {

@@ -72,7 +72,53 @@ STIL = """<html><head><title>Stil</title><style>/* foaia */ .ascuns, #reclama { 
 <p>sfarsit stil</p></body></html>
 """
 
+
+
+def png_test():
+    """P6-61 step 6 (F6b): a 48 x 32 RGBA PNG with every row filter (0..4, in turn) and some transparent pixels,
+    built here with zlib (no picture library), so /bin/web's own PNG decoder is checked against known pixels."""
+    import struct, zlib
+    w, h = 48, 32
+    px = [[((x * 5) & 255, (y * 8) & 255, ((x ^ y) * 9) & 255, 255 if (x + y) % 7 else (x * 5) & 255) for x in range(w)] for y in range(h)]
+    raw = bytearray()
+    prev = bytes(w * 4)
+    for y in range(h):
+        row = bytes(c for p in px[y] for c in p)
+        f = y % 5
+        out = bytearray()
+        for i in range(len(row)):
+            a = row[i - 4] if i >= 4 else 0
+            b = prev[i]
+            c = prev[i - 4] if i >= 4 else 0
+            if f == 0: pred = 0
+            elif f == 1: pred = a
+            elif f == 2: pred = b
+            elif f == 3: pred = (a + b) // 2
+            else:
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                pred = a if pa <= pb and pa <= pc else (b if pb <= pc else c)
+            out.append((row[i] - pred) & 255)
+        raw += bytes([f]) + out
+        prev = row
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+    data = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)) \
+        + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b"")
+    # The checksum /bin/web prints: FNV-1a 64 of the pixels composited over white, as little-endian 0x00RRGGBB.
+    hsum = 0xcbf29ce484222325
+    for y in range(h):
+        for (r, g, b, al) in px[y]:
+            v = [(c * al + 255 * (255 - al)) // 255 for c in (r, g, b)]
+            for byte in (v[2], v[1], v[0], 0):
+                hsum = ((hsum ^ byte) * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
+    return data, hsum
+
+
+PNG_TEST, PNG_SUM = png_test()
+
 PAGES = {
+    "/x.png": ("200 OK", "image/png", PNG_TEST),
     "/stil": ("200 OK", "text/html", STIL.encode()),
     "/formular": ("200 OK", "text/html", FORMS.encode()),
     "/": ("200 OK", "text/html; charset=utf-8", INDEX.encode()),
@@ -150,6 +196,10 @@ def serve(port, tls):
             log("eroare:", e)
             raw.close()
 
+
+if len(sys.argv) == 2 and sys.argv[1] == "--png-suma":
+    print(f"{PNG_SUM:016x}")
+    sys.exit(0)
 
 if len(sys.argv) == 3 and sys.argv[1] == "--print":
     sys.stdout.write(PAGES[sys.argv[2]][2].decode())

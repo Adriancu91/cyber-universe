@@ -7,6 +7,8 @@
 //!   web --legaturi      all the links of the last page, with their full address
 //!   web --formular <F> [camp=valoare ...]   F6b (P6-61): sends form F of the last page (GET or POST,
 //!                       application/x-www-form-urlencoded) with its fields' values, changed by the pairs given
+//!   web --imagini       F6b: the images of the last page, numbered, with their full address
+//!   web --imagine <N>   F6b: downloads image N of the last page and shows it in a window (PNG; Esc or q closes)
 //! Options: --linii L (lines per screen page, default 40), --latime W (characters per line, default 78),
 //! --adresa A (connect to A instead of resolving the name — tests only). The last page is kept in /tmp/web/
 //! (pagina.txt = the text, legaturi.txt = its address, then one link per line), so `cat` can show it too.
@@ -19,6 +21,7 @@ extern crate alloc;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use cyber_user::gfx::{Canvas, Event, Window};
 use cyber_user::net::{TcpStream, parse_ip, resolve};
 use cyber_user::{error_text, println};
 
@@ -29,6 +32,8 @@ cyber_user::heap!(8 * 1024 * 1024);
 mod http_client;
 #[path = "../html.rs"]
 mod html;
+#[path = "../png.rs"]
+mod png;
 
 /// The largest page kept (simple pages and documentation are far smaller).
 const MAX_BODY: usize = 2 * 1024 * 1024;
@@ -37,6 +42,11 @@ const TEXT: &str = "/tmp/web/pagina.txt";
 const LINKS: &str = "/tmp/web/legaturi.txt";
 /// The forms of the last page: `F<TAB>method<TAB>action` lines, each followed by `<TAB>name<TAB>value` lines.
 const FORMS: &str = "/tmp/web/formulare.txt";
+/// The images of the last page: its address, then one image address per line.
+const IMAGES: &str = "/tmp/web/imagini.txt";
+/// The largest window for a picture; bigger pictures are shown smaller.
+const VIEW_W: usize = 640;
+const VIEW_H: usize = 480;
 
 struct Options {
     lines: usize,
@@ -49,6 +59,8 @@ fn main() -> i64 {
     let mut target: Option<String> = None;
     let mut page: Option<usize> = None;
     let mut list_links = false;
+    let mut list_images = false;
+    let mut image: Option<usize> = None;
     let mut form: Option<(usize, Vec<(String, String)>)> = None;
     let mut args = cyber_user::args().skip(1);
     while let Some(a) = args.next() {
@@ -80,6 +92,11 @@ fn main() -> i64 {
                 }
             },
             "--legaturi" => list_links = true,
+            "--imagini" => list_images = true,
+            "--imagine" => match number("--imagine") {
+                Some(v) => image = Some(v),
+                None => return 1,
+            },
             "--formular" => match number("--formular") {
                 Some(v) => form = Some((v, Vec::new())),
                 None => return 1,
@@ -99,6 +116,12 @@ fn main() -> i64 {
     }
     if list_links {
         return show_links();
+    }
+    if list_images {
+        return show_images();
+    }
+    if let Some(n) = image {
+        return show_image(n, &opts);
     }
     if let Some((n, pairs)) = form {
         return send_form(n, &pairs, &opts);
@@ -125,6 +148,7 @@ fn main() -> i64 {
 fn usage() -> i64 {
     println!("folosire: web <adresa> | web <N> (legatura N) | web --pagina <P> | web --legaturi");
     println!("          web --formular <F> [camp=valoare ...]   (trimite formularul F al paginii)");
+    println!("          web --imagini | web --imagine <N>   (imaginile paginii; PNG intr-o fereastra)");
     println!("          [--linii L] [--latime W]");
     1
 }
@@ -192,7 +216,7 @@ fn open_with(url: &str, method: &str, body: &[u8], page: usize, opts: &Options) 
     let (mut method, mut send) = (method.to_string(), body.to_vec());
     let body = loop {
         println!("web: deschid {}", url);
-        let resp = match get(&url, &method, &send, opts.address.as_deref()) {
+        let resp = match get(&url, &method, &send, opts.address.as_deref(), "text/html, text/plain") {
             Ok(r) => r,
             Err(e) => {
                 println!("web: {}", e);
@@ -228,18 +252,28 @@ fn open_with(url: &str, method: &str, body: &[u8], page: usize, opts: &Options) 
     let doc = if looks_like_html(&text) {
         html::render(&text, opts.width)
     } else {
-        html::Doc { title: String::new(), lines: text.lines().map(|l| l.to_string()).collect(), links: Vec::new(), forms: Vec::new() }
+        html::Doc {
+            title: String::new(),
+            lines: text.lines().map(|l| l.to_string()).collect(),
+            links: Vec::new(),
+            forms: Vec::new(),
+            images: Vec::new(),
+        }
     };
     let mut links = Vec::new();
     for l in &doc.links {
         links.push(html::resolve(&url, l).unwrap_or_else(|| l.clone()));
     }
-    save(&url, &doc, &links);
-    if doc.forms.is_empty() {
-        println!("web: {} octeti, {} randuri, {} legaturi", body.len(), doc.lines.len(), links.len());
-    } else {
-        println!("web: {} octeti, {} randuri, {} legaturi, {} formulare (web --formular <F> camp=valoare)", body.len(), doc.lines.len(), links.len(), doc.forms.len());
+    let images: Vec<String> = doc.images.iter().map(|i| html::resolve(&url, i).unwrap_or_else(|| i.clone())).collect();
+    save(&url, &doc, &links, &images);
+    let mut more = String::new();
+    if !doc.forms.is_empty() {
+        more.push_str(&format!(", {} formulare (web --formular <F> camp=valoare)", doc.forms.len()));
     }
+    if !images.is_empty() {
+        more.push_str(&format!(", {} imagini (web --imagine <N>)", images.len()));
+    }
+    println!("web: {} octeti, {} randuri, {} legaturi{}", body.len(), doc.lines.len(), links.len(), more);
     show(&doc.title, &doc.lines, &links, page, opts.lines)
 }
 
@@ -276,11 +310,11 @@ fn looks_like_html(text: &str) -> bool {
 }
 
 /// GET (or POST with a form body) over HTTPS (http_client) or plain HTTP (HTTP/1.0, read until the server closes).
-fn get(url: &str, method: &str, body: &[u8], address: Option<&str>) -> Result<http_client::Response, String> {
+fn get(url: &str, method: &str, body: &[u8], address: Option<&str>, accept: &str) -> Result<http_client::Response, String> {
     let form_head = if method == "POST" { "Content-Type: application/x-www-form-urlencoded\r\n" } else { "" };
     if url.starts_with("https://") {
         let (host, port, path) = http_client::split_url(url).ok_or("adresa de neinteles")?;
-        let head = format!("Accept: text/html, text/plain\r\n{}", form_head);
+        let head = format!("Accept: {}\r\n{}", accept, form_head);
         return http_client::request("web", address, &host, port, method, &path, &head, body, MAX_BODY);
     }
     let rest = url.strip_prefix("http://").ok_or("doar adrese https:// si http://")?;
@@ -299,8 +333,8 @@ fn get(url: &str, method: &str, body: &[u8], address: Option<&str>) -> Result<ht
     let mut conn = TcpStream::connect(ip, port, 5000).map_err(|e| format!("{}:{}: {}", host, port, error_text(e)))?;
     let length = if method == "POST" { format!("Content-Length: {}\r\n", body.len()) } else { String::new() };
     let req = format!(
-        "{} {} HTTP/1.0\r\nHost: {}\r\nUser-Agent: CyberUniverse-web\r\nAccept: text/html, text/plain\r\n{}{}Connection: close\r\n\r\n",
-        method, path, host, form_head, length
+        "{} {} HTTP/1.0\r\nHost: {}\r\nUser-Agent: CyberUniverse-web\r\nAccept: {}\r\n{}{}Connection: close\r\n\r\n",
+        method, path, host, accept, form_head, length
     );
     conn.write_all(req.as_bytes()).map_err(|e| format!("trimitere: {}", error_text(e)))?;
     if !body.is_empty() {
@@ -351,7 +385,7 @@ fn write_file(path: &str, data: &[u8]) -> bool {
 
 /// Keeps the page for `web <N>`, `web --pagina P` and `web --legaturi`: pagina.txt = title line, then the text;
 /// legaturi.txt = the page's address, then one link per line.
-fn save(url: &str, doc: &html::Doc, links: &[String]) {
+fn save(url: &str, doc: &html::Doc, links: &[String], images: &[String]) {
     let _ = cyber_user::create("/tmp", true);
     let _ = cyber_user::create(DIR, true);
     let mut text = String::new();
@@ -374,7 +408,17 @@ fn save(url: &str, doc: &html::Doc, links: &[String]) {
             fs.push_str(&format!("\t{}\t{}\n", k.replace(['\t', '\n'], " "), v.replace(['\t', '\n'], " ")));
         }
     }
-    if !write_file(TEXT, text.as_bytes()) || !write_file(LINKS, ls.as_bytes()) || !write_file(FORMS, fs.as_bytes()) {
+    let mut is = String::from(url);
+    is.push('\n');
+    for i in images {
+        is.push_str(i);
+        is.push('\n');
+    }
+    if !write_file(TEXT, text.as_bytes())
+        || !write_file(LINKS, ls.as_bytes())
+        || !write_file(FORMS, fs.as_bytes())
+        || !write_file(IMAGES, is.as_bytes())
+    {
         println!("web: nu am putut pastra pagina in {} (web <N> nu va merge)", DIR);
     }
 }
@@ -420,6 +464,109 @@ fn show_links() -> i64 {
     println!("web: legaturile din {}", it.next().unwrap_or(""));
     for (i, l) in it.enumerate() {
         println!("[{}] {}", i + 1, l);
+    }
+    0
+}
+
+fn show_images() -> i64 {
+    let Some(all) = read_saved(IMAGES) else {
+        println!("web: nicio pagina deschisa inca (web <adresa>)");
+        return 1;
+    };
+    let mut it = all.lines();
+    println!("web: imaginile din {}", it.next().unwrap_or(""));
+    for (i, l) in it.enumerate() {
+        println!("[{}] {}", i + 1, l);
+    }
+    0
+}
+
+/// F6b: downloads image N of the last page, decodes it (PNG) and shows it in a window, smaller if it does not fit.
+fn show_image(n: usize, opts: &Options) -> i64 {
+    let Some(all) = read_saved(IMAGES) else {
+        println!("web: nicio pagina deschisa inca (web <adresa>)");
+        return 1;
+    };
+    let Some(mut url) = all.lines().skip(1).nth(n - 1).map(|l| l.to_string()) else {
+        println!("web: pagina are doar {} imagini", all.lines().count().saturating_sub(1));
+        return 1;
+    };
+    println!("web: imaginea {}: {}", n, url);
+    let mut redirects = 0;
+    let data = loop {
+        let resp = match get(&url, "GET", &[], opts.address.as_deref(), "image/png, image/*") {
+            Ok(r) => r,
+            Err(e) => {
+                println!("web: {}", e);
+                return 1;
+            }
+        };
+        match (resp.status, resp.location) {
+            (200, _) => break resp.body,
+            (301 | 302 | 303 | 307 | 308, Some(loc)) if redirects < 5 => {
+                let Some(next) = html::resolve(&url, &loc) else {
+                    println!("web: redirectionare spre o adresa pe care nu o pot deschide: {}", loc);
+                    return 1;
+                };
+                url = next;
+                redirects += 1;
+            }
+            (s, _) => {
+                println!("web: serverul a raspuns {} (imaginea nu se poate arata)", s);
+                return 1;
+            }
+        }
+    };
+    if !png::is_png(&data) {
+        let kind = if data.starts_with(&[0xFF, 0xD8]) {
+            "JPEG"
+        } else if data.starts_with(b"GIF8") {
+            "GIF"
+        } else if data.len() > 12 && &data[8..12] == b"WEBP" {
+            "WebP"
+        } else {
+            "un format necunoscut"
+        };
+        println!("web: imaginea e {} ({} octeti); deocamdata arat doar PNG", kind, data.len());
+        return 1;
+    }
+    let pic = match png::decode(&data) {
+        Ok(p) => p,
+        Err(e) => {
+            println!("web: PNG: {}", e);
+            return 1;
+        }
+    };
+    println!("web: {}x{}, PNG {}, {} octeti, suma {:016x}", pic.width, pic.height, pic.kind, data.len(), png::checksum(&pic));
+    // Smaller by a whole factor if it does not fit; the window is at least 160 x 60 (the picture in its middle).
+    let step = pic.width.div_ceil(VIEW_W).max(pic.height.div_ceil(VIEW_H)).max(1);
+    let (pw, ph) = (pic.width.div_ceil(step), pic.height.div_ceil(step));
+    let (ww, wh) = (pw.max(160), ph.max(60));
+    let win = match Window::open("Imagine", ww, wh) {
+        Ok(w) => w,
+        Err(e) => {
+            println!("web: nu pot deschide fereastra ({})", error_text(e));
+            return 0;
+        }
+    };
+    let mut pixels = alloc::vec![0x00FF_FFFFu32; ww * wh];
+    let (ox, oy) = ((ww - pw) / 2, (wh - ph) / 2);
+    for y in 0..ph {
+        for x in 0..pw {
+            pixels[(oy + y) * ww + ox + x] = pic.pixels[(y * step).min(pic.height - 1) * pic.width + (x * step).min(pic.width - 1)];
+        }
+    }
+    let c = Canvas::new(ww, wh, &mut pixels);
+    win.present_all(&c);
+    if step > 1 {
+        println!("web: imagine aratata in fereastra, micsorata de {} ori (Esc sau q inchide)", step);
+    } else {
+        println!("web: imagine aratata in fereastra (Esc sau q inchide)");
+    }
+    while let Some(e) = win.wait_event() {
+        if let Event::Key('q' | '\u{1b}') = e {
+            break;
+        }
     }
     0
 }

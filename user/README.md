@@ -140,6 +140,12 @@
   `visibility:hidden` și regulile din `<style>` cu selectori simpli (`p`, `.clasa`, `#id`, `p.clasa`, liste cu virgulă);
   regulile din `@media` și selectorii compuși sunt ignorați (mai bine arată prea mult decât să ascundă din greșeală).
   Câmpurile de formular din părțile ascunse se trimit totuși, ca în browserele obișnuite. Test: scenariul `web` (pagina `/stil`).
+  **Imagini** (F6b, P6-61): `web --imagini` listează imaginile ultimei pagini; `web --imagine N` o descarcă pe a N-a și o
+  arată într-o fereastră (micșorată dacă e mai mare de 640x480; Esc sau q închide). Deocamdată doar **PNG** (toate
+  tipurile de culoare, 1–16 biți, cele 5 filtre, transparența peste alb; nu cele întrețesute); JPEG/GIF/WebP sunt
+  recunoscute și refuzate cinstit. Decodorul (`src/png.rs`: DEFLATE după RFC 1950/1951 + PNG după specificația W3C)
+  e scris de noi, fără cod din zlib/libpng; verificat față de Pillow pe 28 de fișiere și cu 21 000 de fișiere stricate
+  (fără cădere). Test: scenariul `web` (PNG 48x32 făcut de server cu zlib, suma pixelilor, captura `tests/screens/web-imagine.png`).
   `web <N>` deschide legătura N a ultimei pagini, `web --pagina P` arată pagina de ecran P fără să descarce din nou,
   `web --legaturi` toate legăturile. Opțiuni: `--linii L` (rânduri pe pagină de ecran, 40), `--latime W` (78),
   `--adresa A` (doar teste). Urmează redirecționările (cel mult 5). Ultima pagină se păstrează în `/tmp/web/`
