@@ -119,7 +119,9 @@ if [[ ",$EXTRA_FEATURES," == *",test-kronos-"* ]]; then
     mkdir -p "$DISK_ROOT/kronos" && cp "$ROOT"/tests/kronos/* "$DISK_ROOT/kronos/"
     # P6-38 (C-46): which model `kronos` picks: copies of the tiny model under the names of the real ones (their
     # built-in SHA-256 must refuse them), with an earlier name (a.kgr) that must not win.
-    mkdir -p "$DISK_ROOT/kronos-477" "$DISK_ROOT/kronos-459"
+    # P6-60 (C-82): #513 before #477 before #459.
+    mkdir -p "$DISK_ROOT/kronos-513" "$DISK_ROOT/kronos-477" "$DISK_ROOT/kronos-459"
+    for f in a.kgr kronos_459_q8_0.kgr kronos_477_q8_0.kgr kronos_513_q8_0.kgr; do cp "$ROOT/tests/kronos/mini-q8.kgr" "$DISK_ROOT/kronos-513/$f"; done
     for f in a.kgr kronos_459_q8_0.kgr kronos_477_q8_0.kgr; do cp "$ROOT/tests/kronos/mini-q8.kgr" "$DISK_ROOT/kronos-477/$f"; done
     for f in a.kgr kronos_459_q8_0.kgr; do cp "$ROOT/tests/kronos/mini-q8.kgr" "$DISK_ROOT/kronos-459/$f"; done
 fi

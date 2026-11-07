@@ -145,7 +145,7 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
     din același fișier (al nostru, după `format_greutati.md` din hub); greutăți + spațiu de lucru + logit-uri urcate în bucăți de ≤ 8 MiB prin
     arena I11; pentru cele 3 texte de control: fiecare poziție = 35 lansări (`kronos_model::token_launches`) + o copiere a logit-urilor jos,
     o sonerie pe simbol; logit-urile judecate de `kronos_model::judge` față de `gpu_compute::model::step_cpu`, argmax-ul și cele 5 simboluri
-    greedy față de vectorii lui Kronos. #513 vine cu P6-60. Lanțul trece acum până la capăt în `--sim`.
+    greedy față de vectorii lui Kronos. #513 (P6-60) rulează prin `kronos --gpu`, care îl alege implicit de pe stick. Lanțul trece acum până la capăt în `--sim`.
     **`kronos --gpu` (P6-62 pas 3):** shell-ul întreabă `DA` (ca la `gpu lant`), apoi `/bin/kronos` cere prin apelul 43 lanțul întreg;
     la `i14-simbol`, după ce modelul de control a trecut, rulează cererea (modelul dat, textul + n simboluri greedy, fiecare simbol judecat
     față de procesor, același cod `run_model`). Orice eroare (fără `DA`, build care nu poate scrie, lanț oprit, simbol greșit, timp depășit)

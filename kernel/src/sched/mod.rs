@@ -25,6 +25,11 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 /// Stack size of every new kernel thread.
 const STACK_SIZE: usize = 16 * 1024;
 
+/// Written in the lowest 8 bytes of every thread stack; checked at every switch away from the thread. The stacks are
+/// heap blocks without a guard page, so an overflow would otherwise silently corrupt the neighbouring heap block (seen
+/// in P6-60: the GPU window chain run from a program's system call on a 16 KiB stack).
+const STACK_CANARY: u64 = 0x5354_4956_4153_5441; // "ATSAVITS"
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum State {
     Ready,
@@ -217,6 +222,18 @@ pub fn spawn_system(f: fn()) -> u64 {
     id
 }
 
+/// Like `spawn`, with a kernel stack of `stack_bytes` (at least the usual 16 KiB): for deep kernel work such as the
+/// GPU window chain started by a program (`gpu_tur::kronos_gpu`), which does not fit in a program's kernel stack.
+pub fn spawn_with_stack(f: fn(), stack_bytes: usize) -> u64 {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let t = new_thread_sized(id, f, stack_bytes.max(STACK_SIZE).next_multiple_of(16));
+    with_sched(|s| {
+        s.ready.push_back(t);
+        kick_idle(s);
+    });
+    id
+}
+
 /// Like `spawn`, but the thread runs with the page tables at `root` (an `AddressSpace`; 0 = kernel's).
 /// The address space must outlive the thread.
 pub fn spawn_in(root: u64, f: fn()) -> u64 {
@@ -231,8 +248,13 @@ pub fn spawn_in(root: u64, f: fn()) -> u64 {
 }
 
 fn new_thread(id: u64, f: fn()) -> Box<Thread> {
-    let stack = vec![0u8; STACK_SIZE].into_boxed_slice();
-    let top = (stack.as_ptr() as u64 + STACK_SIZE as u64) & !15;
+    new_thread_sized(id, f, STACK_SIZE)
+}
+
+fn new_thread_sized(id: u64, f: fn(), size: usize) -> Box<Thread> {
+    let mut stack = vec![0u8; size].into_boxed_slice();
+    stack[..8].copy_from_slice(&STACK_CANARY.to_le_bytes());
+    let top = (stack.as_ptr() as u64 + size as u64) & !15;
     // SAFETY: the 56 bytes below `top` belong to `stack`, which the new thread owns.
     let rsp = unsafe { switch::initial_stack(top, f as *const () as usize) };
     Box::new(Thread { id, state: State::Ready, rsp, wait_key: 0, wake_at: 0, root: 0, kstack_top: top, system: false, killed: false, cpu_ticks: 0, _stack: Some(stack), fpu: crate::arch::x86_64::fpu::Area::new(), preparing: false })
@@ -475,6 +497,10 @@ pub fn yield_now() {
         }
     };
     let mut prev = s.cpus[cpu].current.replace(next).expect("sched: niciun fir curent");
+    if let Some(st) = &prev._stack {
+        // A thread that ran past the bottom of its stack has already corrupted memory: stop loudly, here.
+        assert!(st[..8] == STACK_CANARY.to_le_bytes(), "sched: firul {} a depasit stiva de {} KiB", prev.id, st.len() / 1024);
+    }
     let old_rsp: *mut u64 = &mut prev.rsp; // the Box keeps this address stable when it moves
     let old_fpu = prev.fpu.as_ref().map_or(core::ptr::null_mut(), |a| a.as_ptr());
     match prev.state {
@@ -523,6 +549,16 @@ pub fn exit() -> ! {
     with_sched(|s| s.cur().state = State::Exited);
     yield_now();
     unreachable!("sched: un fir terminat a fost reluat");
+}
+
+/// How many bytes of the current thread's stack were ever used (the stack starts zeroed; the lowest non-zero byte
+/// above the canary marks the deepest point). `None` for the boot thread. For diagnostics of deep kernel work.
+pub fn stack_used() -> Option<(usize, usize)> {
+    with_sched(|s| {
+        let st = s.cur()._stack.as_ref()?;
+        let untouched = st[8..].iter().take_while(|&&b| b == 0).count();
+        Some((st.len() - 8 - untouched, st.len()))
+    })
 }
 
 /// Frees the stacks of exited threads. Called right after every switch, never on a zombie's own stack.

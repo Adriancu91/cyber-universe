@@ -8,8 +8,8 @@
 //!                                          `fel` = f32 or q8_0; the model file is next to the JSON
 //!   kronos --control                       P6-38 (C-46): the 3 control texts of the model (recognised by its SHA-256)
 //!                                          against the tokens Kronos published for it (hub `integrare/kronos/MODEL.md`)
-//! Options: `--model <cale>` (default, P6-38: kronos_477_q8_0.kgr in /usb/kronos, else kronos_459_q8_0.kgr (the
-//! fallback), else the first *.kgr there), `--dosar <cale>` (look there instead of /usb/kronos), `--n <simboluri>` (default 32), `--fire <n>`
+//! Options: `--model <cale>` (default, P6-60: kronos_513_q8_0.kgr in /usb/kronos, else kronos_477_q8_0.kgr, else
+//! kronos_459_q8_0.kgr (the fallbacks), else the first *.kgr there), `--dosar <cale>` (look there instead of /usb/kronos), `--n <simboluri>` (default 32), `--fire <n>`
 //! (default: every processor), `--fara-vector` (scalar arithmetic even when AVX2 + FMA exist), `--suma <hex>` (the
 //! SHA-256 the file must have; otherwise `<model>.sha256` next to it, if present; otherwise, P6-38, the sum of the
 //! known model with that file name), `--reglaj <cale>` (the tuning file;
@@ -150,11 +150,22 @@ const fn control(i: usize, greedy: &'static [u32], greedy_text: &'static str) ->
     Control { text: TEXTS[i], ids: IDS[i], greedy, greedy_text }
 }
 
-/// Hub `integrare/kronos/MODEL.md` (S54, C-44) for #477 and #459; `integrare/kronos/vectori/vectori.json` (q8_0) for
-/// the tiny random model of the official vectors (on the test disk, so the control path is tested in QEMU).
-const KNOWN: [Known; 3] = [
+/// Hub `integrare/kronos/MODEL.md` (S83b, C-82) for #513, (S54, C-44) for #477 and #459;
+/// `integrare/kronos/vectori/vectori.json` (q8_0) for the tiny random model of the official vectors (on the test disk,
+/// so the control path is tested in QEMU). The order of the first three is the default choice (P6-60).
+const KNOWN: [Known; 4] = [
     Known {
-        name: "#477",
+        name: "#513",
+        file: "kronos_513_q8_0.kgr",
+        sha256: "66f734b3136206d1be8825b1188b1a90f0c5b00c2e19746547f327f9b95c5859",
+        controls: [
+            control(0, &[2233, 1585, 32, 475, 50], " Acum are 1192"),
+            control(1, &[8369, 1497, 4444, 6882, 44], " orașul Baia Mare,"),
+            control(2, &[1510, 1947, 1358, 1778, 1376], "\n    return a * b"),
+        ],
+    },
+    Known {
+        name: "#477 (rezerva)",
         file: "kronos_477_q8_0.kgr",
         sha256: "bcbe8187087dbb3e531a8a7b10991cd24ea14a6e067d07c0fcbb8d3edd753963",
         controls: [
@@ -194,8 +205,9 @@ fn known_by_sum(sum: &str) -> Option<&'static Known> {
     KNOWN.iter().find(|k| k.sha256 == sum)
 }
 
-/// P6-38 (C-46): the model in `dir` (default /usb/kronos): kronos_477_q8_0.kgr, else kronos_459_q8_0.kgr (the
-/// fallback Kronos keeps), else the first *.kgr; with a line saying which and why.
+/// P6-38 (C-46), P6-60 (C-82): the model in `dir` (default /usb/kronos): kronos_513_q8_0.kgr, else
+/// kronos_477_q8_0.kgr, else kronos_459_q8_0.kgr (the fallbacks Kronos keeps), else the first *.kgr; with a line
+/// saying which and why.
 fn default_model(dir: &str) -> Option<(String, String)> {
     let mut buf = [0u8; 4096];
     let n = cyber_user::list(dir, &mut buf);
@@ -209,12 +221,14 @@ fn default_model(dir: &str) -> Option<(String, String)> {
         .collect();
     let has = |f: &str| names.iter().find(|l| l.to_ascii_lowercase() == f).copied();
     let (name, why) = if let Some(l) = has(KNOWN[0].file) {
-        (l, String::from("#477, modelul Kronos pentru OS"))
+        (l, String::from("#513, modelul Kronos pentru OS"))
     } else if let Some(l) = has(KNOWN[1].file) {
-        (l, alloc::format!("#459, rezerva: {} lipseste", KNOWN[0].file))
+        (l, alloc::format!("#477, rezerva: {} lipseste", KNOWN[0].file))
+    } else if let Some(l) = has(KNOWN[2].file) {
+        (l, alloc::format!("#459, rezerva: nici {}, nici {}", KNOWN[0].file, KNOWN[1].file))
     } else {
         let l = *names.first()?;
-        (l, alloc::format!("primul .kgr; nici {}, nici {}", KNOWN[0].file, KNOWN[1].file))
+        (l, alloc::format!("primul .kgr; niciunul din {}, {}, {}", KNOWN[0].file, KNOWN[1].file, KNOWN[2].file))
     };
     Some((alloc::format!("{}/{}", dir.trim_end_matches('/'), name), why))
 }
@@ -999,7 +1013,7 @@ fn main() -> i64 {
     let known = known_by_sum(&sum);
     match known {
         Some(k) => println!("kronos: modelul cunoscut {} ({})", k.name, k.file),
-        None => println!("kronos: model necunoscut OS-ului (nu e #477 sau #459)"),
+        None => println!("kronos: model necunoscut OS-ului (nu e #513, #477 sau #459)"),
     }
     if o.control && known.is_none() {
         println!("kronos: --control: nu am textele de control pentru acest model (SHA-256 {}); CONTROL: NU TRECE", sum);

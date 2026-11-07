@@ -1,7 +1,10 @@
 # sched — fire de execuție ale nucleului și planificatorul
 
 - **Ce face:** `mod.rs` ține firele (threads) nucleului: firul curent, coada celor gata (round-robin) și firele terminate,
-  ale căror stive se eliberează de firul următor. `spawn(f)` creează un fir cu stivă proprie de 16 KiB,
+  ale căror stive se eliberează de firul următor. `spawn(f)` creează un fir cu stivă proprie de 16 KiB (`spawn_with_stack(f, octeți)` pentru lucru adânc, ex. lanțul GPU
+  pornit de `kronos --gpu`, 256 KiB; P6-60). Stivele n-au pagină de pază, așa că cei mai de jos 8 octeți ai fiecărei stive
+  au un semn (canar) verificat la fiecare comutare: un fir care și-a depășit stiva oprește sistemul cu mesaj clar,
+  în loc să strice în tăcere memoria de alături. `stack_used()` spune cât din stivă a folosit firul curent,
   `yield_now()` cedează procesorul, `exit()` termină firul. Codul de pornire devine firul 0 („main”) în `init()`.
   `switch.rs` conține comutarea de context (salvează registrele rbx, rbp, r12–r15 și `rsp`) și pregătirea stivei unui fir nou.
 - **Preempțiune (P2-02):** la fiecare tick al temporizatorului (10 ms) handler-ul întreruperii cheamă `timer_tick()`,

@@ -4,7 +4,7 @@
 //! `i14-simbol` runs **Kronos's tiny control model first** (`mic_q8_0.kgr`, 840 KB, 2 layers, E 32, vocabulary 16 384,
 //! RANDOM weights; hub `integrare/kronos/vectori/`, copied in `tests/kronos/`), as Cyber-GPU proposed: the answer is
 //! known exactly (`vectori.json`, made by Kronos's own engine), so if it passes here and #513 does not later, the
-//! problem is size (VRAM, pushbuffer, time), not computation. #513 comes with P6-60 (its Release does not exist yet).
+//! problem is size (VRAM, pushbuffer, time), not computation. #513 (P6-60) runs through `kronos --gpu`, which picks it by default from the stick.
 //!
 //! The step: the KGR1 file read from the stick (`/usb/kronos/`, on the test disk `/disk/kronos/` in SIMULATION), its
 //! SHA-256 checked against `vectori.json`; all weights + a NaN scratch + the logits packed into one blob, uploaded in
@@ -601,7 +601,7 @@ pub(super) fn token_step<V: Mmio + ?Sized, K: Clock + ?Sized>(
     })();
     match &r {
         Ok(()) => lines.push(format!(
-            "{}: pas I14 simbol: ok (modelul de control, {} simboluri comparate cu procesorul si cu vectorii lui Kronos; #513 vine cu P6-60)",
+            "{}: pas I14 simbol: ok (modelul de control, {} simboluri comparate cu procesorul si cu vectorii lui Kronos; #513 prin kronos --gpu)",
             p, tokens_done
         )),
         Err(err) => {

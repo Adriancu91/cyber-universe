@@ -103,6 +103,10 @@ Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet 
     calculatorului. Nu schimbă ceasul (îl folosește și Windows).
 12. **Fișierele de pe stick:** `run files /usb` (sau Start → files → `usb/`) — copiere, ștergere, deschidere în editor.
     Setările (fus orar, tastatură) se salvează acum pe stick, în `config/settings.toml`, și pornesc cu el pe orice calculator.
+13. **Modelul Kronos #513 pe stick (P6-60, comanda C-82):** pe stick, în dosarul `kronos`, pui fișierul `kronos_513_q8_0.kgr`
+    (105,7 MiB) și, lângă el, `kronos_513_q8_0.kgr.sha256`. Le iei din Release-ul `kronos-kgr1-513` al depozitului `cyberspace`
+    (când există; până atunci sunt pe workstation în `C:\Kronos\cyberspace\lucru\export\`). `run kronos --control` trebuie să
+    scrie „CONTROL: TRECE (#513 …)”. Dacă #513 lipsește, `kronos` folosește singur #477, apoi #459, dacă le ai pe stick.
 
 ## Pentru Claude (tehnic)
 - Varianta B merge pentru că firmware-ul UEFI caută `EFI/BOOT/BOOTX64.EFI` pe orice partiție FAT32, iar Limine își citește

@@ -110,14 +110,14 @@ pub fn run() {
     assert!(h.matches("Intrebare: ").count() == 2 && h.contains("Intrebare: Ce faci?\nRaspuns: ") && h.contains("Intrebare: Si acum?\n"), "kronos: istoricul: {:?}", h);
     crate::info!("test: kronos --intreaba: 2 schimburi in istoric OK");
     // P6-38 (C-46): the control texts of a known model (here the tiny model of the official vectors) must pass; an
-    // unknown model has none (exit 1). The default choice: #477 before #459 before any other .kgr, and the built-in sum
+    // unknown model has none (exit 1). The default choice (P6-60): #513 before #477 before #459 before any other .kgr, and the built-in sum
     // of the chosen name must refuse a file that is not that model (exit 3).
     let control = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--control"];
     assert!(run_one(&control) == 0, "kronos: --control pe modelul mic nu trece");
     let unknown = ["kronos", "--model", "/disk/kronos/mini-q8.kgr", "--control"];
     let code = run_one(&unknown);
     assert!(code == 1, "kronos: --control pe un model necunoscut a dat codul {}", code);
-    for dir in ["/disk/kronos-477", "/disk/kronos-459"] {
+    for dir in ["/disk/kronos-513", "/disk/kronos-477", "/disk/kronos-459"] {
         let pick = ["kronos", "--dosar", dir, "--simboluri", "1,2"];
         let code = run_one(&pick);
         assert!(code == 3, "kronos: {}: copia modelului mic cu numele modelului mare acceptata (cod {})", dir, code);
@@ -128,7 +128,7 @@ pub fn run() {
     }
     assert!(frame::free_frames() == before, "kronos: {} cadre libere inainte, {} dupa", before, frame::free_frames());
     crate::info!(
-        "test: kronos: motorul KGR1 = referinta (F32, Q8_0, vectori si scalar), suma gresita refuzata, vectorii oficiali Kronos si tokenizerul trec, control si alegerea modelului (477 > 459) OK, {} ms, pe {} nuclee; cadre libere identice",
+        "test: kronos: motorul KGR1 = referinta (F32, Q8_0, vectori si scalar), suma gresita refuzata, vectorii oficiali Kronos si tokenizerul trec, control si alegerea modelului (513 > 477 > 459) OK, {} ms, pe {} nuclee; cadre libere identice",
         ms,
         sched::running_cpus()
     );

@@ -818,6 +818,31 @@ fn sim_system_info() -> nvidia_ga104::gsp::sysinfo::SystemInfoInput {
 /// first `kronos_gpu` call. Without it the board is never touched and `/bin/kronos` stays on the processor.
 pub static KRONOS_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// Kernel stack of the thread that runs the chain for `kronos --gpu`.
+#[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
+const KRONOS_STACK: usize = 256 * 1024;
+#[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
+static KRONOS_SIM: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+#[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
+static KRONOS_LINES: crate::sched::Mutex<Option<Vec<String>>> = crate::sched::Mutex::new(None);
+
+/// The chain thread of `kronos --gpu`: runs the chain once, hands its lines to the waiting system call.
+#[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
+fn kronos_chain_thread() {
+    let sim = KRONOS_SIM.load(core::sync::atomic::Ordering::SeqCst);
+    #[cfg(feature = "test-gpu-sim")]
+    let lines = if sim { chain_sim(false, true) } else { chain() };
+    #[cfg(not(feature = "test-gpu-sim"))]
+    let lines = {
+        let _ = sim;
+        chain()
+    };
+    if let Some((used, size)) = crate::sched::stack_used() {
+        crate::info!("gpu: kronos --gpu: stiva firului lantului: {} KiB folositi din {} KiB", used.div_ceil(1024), size / 1024);
+    }
+    *KRONOS_LINES.lock() = Some(lines);
+}
+
 /// A `kronos --gpu` request (call 43 from `/bin/kronos`): the whole window chain with the request queued for its
 /// `i14-simbol` step (the board is set up only inside the chain; every token judged against the processor). Returns the
 /// board's greedy tokens, or why not (then `/bin/kronos` generates on the processor), and the chain's lines.
@@ -837,10 +862,18 @@ pub fn kronos_gpu(path: &str, prompt: Vec<usize>, n: usize, sim: bool) -> (Resul
         *gpu_i14::KRONOS_RESULT.lock() = None;
         *gpu_i14::KRONOS_JOB.lock() = Some(gpu_i14::KronosJob { path: String::from(path), prompt, n });
         crate::info!("gpu: kronos --gpu: lantul porneste{} cu cererea la i14-simbol", if sim { " (SIMULARE)" } else { "" });
-        #[cfg(feature = "test-gpu-sim")]
-        let lines = if sim { chain_sim(false, true) } else { chain() };
-        #[cfg(not(feature = "test-gpu-sim"))]
-        let lines = chain();
+        // The chain is deep (the window steps, the falcon/GSP models in SIMULATION, the model at I14): it runs on its
+        // own kernel thread with a big stack, not on this program's 16 KiB kernel stack (P6-60: that overflowed and
+        // corrupted the heap). This thread waits for it.
+        KRONOS_SIM.store(sim, Ordering::SeqCst);
+        *KRONOS_LINES.lock() = None;
+        crate::sched::spawn_with_stack(kronos_chain_thread, KRONOS_STACK);
+        let lines = loop {
+            if let Some(l) = KRONOS_LINES.lock().take() {
+                break l;
+            }
+            crate::sched::sleep_ms(20);
+        };
         // A chain that stopped before I14 never took the request.
         let left = gpu_i14::KRONOS_JOB.lock().take().is_some();
         let res = gpu_i14::KRONOS_RESULT.lock().take().unwrap_or_else(|| {
