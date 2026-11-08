@@ -3,6 +3,10 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-08 ~09:40–09:50 UTC (11:40–11:50 ora României) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5, neschimbat); nicio schimbare de cod.
+  - Ultimele sesiuni tot fără sarcină bifată; P6-63 (lista pentru luni) e legată de „duminică seara” și acum e dimineață → nimic de făcut până după ~17:00 UTC. Excepția de mai jos (doar P6-63, diseară) rămâne valabilă.
+  - Hub: nicio comandă nouă pentru `cyber-universe` în `COMENZI.md` (ultimele schimbări: stările cyber-gpu și kronos, o idee parcată „Kronos pe telefon”). Copiile locale aveau din nou `main` divergent față de `origin` (copii vechi) → `main` luat din `origin/main`, nimic forțat pe GitHub. CI: ultimul run pe `main` (42405596803, `os-275`) verde, nimic nou. `env-check --install` nerulat (nicio sarcină de cod).
+  - **Următoarea:** **P6-63** duminică 8 nov seara (după ~17:00 UTC), cu `os-275`; lista GPU de citit împreună: `cyber-gpu/docs/FEREASTRA_C-83.md`.
 - 2026-11-08 ~06:40–06:55 UTC (08:40–08:55 ora României) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5); nicio schimbare de cod.
   - **De ce OPRIT:** ultimele 3 sesiuni (7 nov 23:40, 8 nov 02:40, 8 nov 05:40) n-au bifat nicio sarcină, iar regula 5 din mesajul programat se aplică literal. Cauza NU e un eșec: singura sarcină din coadă, **P6-63** (lista pentru fereastra de luni, punctul 4 din C-87, deja preluată), e legată de dată („nu înainte de 8 nov seara”) și acum e dimineață. Restul cozii așteaptă hardware/Adrian (P6-10, P6-12 p.2, P3-10; P5-07 BLOCAT).
   - **Excepția pentru seara asta (pentru sesiunea următoare):** OPRIT înseamnă „nicio sarcină NOUĂ”. P6-63 nu e nouă (e în coadă din 6 nov, cu plan, parte din C-87 aprobată) și fără ea Adrian n-are lista pentru luni → **duminică seara (după ~17:00 UTC) P6-63 se face, și doar ea.** Înainte de seară: nimic. Dacă Adrian scrie altceva în hub (comandă nouă sau „stop”), contează ce scrie el. Adrian anunțat pe telefon.
