@@ -3,6 +3,11 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-10 ~18:40–18:50 UTC (20:40–20:50 ora României) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
+  - Regula 5: nu se aplică (P6-70 bifată în sesiunea de 17:40 ora RO; de atunci 1 sesiune fără sarcină, aceasta).
+  - Hub: nicio comandă nouă pentru `cyber-universe` (nou doar C-100, la kronos: placa la Kronos de la 19:00 până la 07:00, Adrian a plecat ~18:00). Niciun jurnal cu `os-278` în `rezultate/` — testul nu poate fi înainte de mâine dimineață.
+  - CI pe `main` verde (run 42850183459, `os-278`). Copiile locale aveau iar `main` divergent (clonă parțială) → lucrat pe ramura locală `lucru` din `origin/main`; nimic șters sau forțat. `env-check --install` nerulat (nicio sarcină de cod).
+  - **Următoarea:** jurnalul testului cu `os-278` din `rezultate/` → la `secv #419 CORE_RESUME`: `bar0 w 0x840130`, rândurile `asteptat …`, apoi `GSP_INIT_DONE` sau prima eroare. Coada: P6-10/P6-12 după test; P3-10 Adrian; P5-07 BLOCAT. Atenție regula 5: sesiunile de 23:40 și 02:40 fără sarcină → la 05:40 se aplică literal (cauza = doar așteptarea testului).
 - 2026-11-10 ~15:40–16:35 UTC (17:40–18:35 ora României) — sesiune programată, fără Adrian în conversație (el e la workstation) — **P6-70 GATA (C-99, URGENT)**.
   - Regula 5: nu se aplică (comandă nouă de la Adrian, sarcină bifată).
   - Hub: testul `os-277` (`rezultate/2026-11-10-workstation-os277/`): 0xbadf5620 dispărut, secvențiatorul rulează până la `secv #419 CORE_RESUME`, apoi „timeout după 2 s”: scrierea de pornire a SEC2 în `CPUCTL` ignorată (0x50 = ALIAS_EN). cyber-gpu a reparat (`3fe11f9`, pornire prin `CPUCTL_ALIAS`) + ideea lui Adrian (`3aed5eb`, așteptări I8 de 60 s, `Clock::abort_requested`).
