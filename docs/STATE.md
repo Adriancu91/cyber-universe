@@ -3,6 +3,12 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-10 ~09:40–10:25 UTC (11:40–12:25 ora României) — sesiune programată, fără Adrian — **P6-69 GATA (C-96 pct. 2, URGENT); „OPRIT” ridicat** (comandă nouă de la Adrian + sarcină bifată).
+  - Hub: testul `os-276` din 10 nov (`rezultate/2026-11-10-workstation-os276/`): I6+I7 trec, secvențiatorul pornește (C-91 a mers), **I8 oprit la „eroare hardware 0xbadf5620”** (prima citire HWCFG2 după resetul falcon-ului GSP). cyber-gpu a reparat în `2d66deb` (așteptări tolerante la `0xbadf…`, reset ca în RM, trecere pe falcon, reset în RISC-V la CORE_RESUME, jurnal `secv #…` pentru fiecare cerere).
+  - OS: `kernel/Cargo.toml` + `CYBER_GPU_REV` + `tests/scenarios.txt` pe `2d66deb` (`fb4743d`); `add64.sm86.sass` același SHA. `env-check --install`: mediul complet. `tools/build.sh` OK; `tools/test.sh gpu gpu-sim gpu-i6 gpu-scrie gpu-ro gpu-tur kronos-gpu boot shell` → 9/9 TRECUT (SIMULARE).
+  - CI run 42794463811 **verde** (teste-1, teste-2, stick, release) → **Release `os-277`** (publicat 10:20 UTC, 12 fișiere). Adrian anunțat pe telefon.
+  - Copiile locale aveau iar `main` divergent → vechiul `main` local pe ramura locală `backup-main-local-vechi`, `main` din `origin/main`; nimic șters sau forțat. Atenție: `user/Cargo.toml` ține încă `gpu-compute` pe `a2f9736` (neschimbat, ca înainte).
+  - **Următoarea:** jurnalul testului cu `os-277` din `rezultate/` → analiza primului pas oprit (de urmărit la I8 rândurile `secv #…`). Coada fără sarcini libere fără hardware (P6-10 după test; P3-10 Adrian; P5-07 BLOCAT).
 - 2026-11-10 ~06:40–06:50 UTC (08:40–08:50 ora României) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5, rămâne); nicio schimbare de cod.
   - Hub: nicio comandă nouă pentru `cyber-universe` (C-95, laptopul GA106, a fost **parcat de Adrian** la 07:28 — „rămânem pe workstation”; cyber-gpu a retras codul, OS-ul nu are nimic de făcut). Niciun jurnal cu `os-276` în `rezultate/` la 08:40, deși testul era programat la 07:15 (C-94).
   - Copiile locale vechi aveau iar `main` divergent → clonă nouă în `/home/claude/w2/`; nimic șters sau forțat. `env-check --install` nerulat (nicio sarcină de cod).

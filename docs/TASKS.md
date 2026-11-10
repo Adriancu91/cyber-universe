@@ -390,7 +390,8 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
   Rezultat (2026-11-07 ~19:20 UTC): pe ramura `wip/P6-67-ci` (run 42403081784) toate trei părțile verzi: teste-1 49/49 (23 min), teste-2 48/48 (30 min), stick 6 min — **toată rularea ~30 min în loc de 55**, aceleași 97 de scenarii. Apoi în `main`: run 42405596803 verde (~35 min) → Release `os-275`.
 - [x] **P6-68** Reparația lui I8 (secvențiatorul GSP, „marime sau index in afara bufferului”) din cyber-gpu în OS + Release nou cu CI verde (comanda C-91 pct. 2, URGENT, termen ~12:30 ora României). Plan: `docs/plans/P6-68.md`. Dep: commit-ul cyber-gpu cu reparația
   Rezultat (2026-11-09 ~07:00 UTC): cyber-gpu `bbbdb2f` (secvențiatorul citește până la `cmdIndex`) în OS (`2701483`); 9/9 scenarii GPU în QEMU (SIMULARE); CI verde (run 42573262247, toate 4 părțile) → **Release `os-276`**. Pe placă netestat (Adrian, `gpu lant` + DA).
-- [~] **P6-69** Reparația lui I8 (resetul falcon-ului GSP, „eroare hardware 0xbadf5620”) din cyber-gpu `2d66deb` în OS + Release nou cu CI verde (comanda C-96 pct. 2, URGENT, Adrian la workstation). Plan: `docs/plans/P6-69.md`. Dep: cyber-gpu `2d66deb`
+- [x] **P6-69** Reparația lui I8 (resetul falcon-ului GSP, „eroare hardware 0xbadf5620”) din cyber-gpu `2d66deb` în OS + Release nou cu CI verde (comanda C-96 pct. 2, URGENT, Adrian la workstation). Plan: `docs/plans/P6-69.md`. Dep: cyber-gpu `2d66deb`
+  Rezultat (2026-11-10 ~10:20 UTC): cyber-gpu `2d66deb` în OS (`fb4743d`); 9/9 scenarii GPU în QEMU (SIMULARE); CI verde (run 42794463811, toate 4 părțile) → **Release `os-277`**. Pe placă netestat (Adrian, `gpu lant` + DA).
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
