@@ -76,7 +76,7 @@ for f in gpu_i11.rs gpu_i14.rs; do
     fi
 done
 ADD64="$ROOT/kernel/src/drivers/gpu_prog/add64.sm86.sass"
-ADD64_SHA256="a890b75c4207b216c2f959da3b59745dbb43f3cbd58490b37b7b4c1dd12698ce"  # cyber-gpu 20b4a3b (identic in 60740a3, 657e209, bc2f22b, d706cbb, 34a9793, bbbdb2f)
+ADD64_SHA256="a890b75c4207b216c2f959da3b59745dbb43f3cbd58490b37b7b4c1dd12698ce"  # cyber-gpu 20b4a3b (identic in 60740a3, 657e209, bc2f22b, d706cbb, 34a9793, bbbdb2f, 2d66deb)
 if [[ "$(sha256sum "$ADD64" | cut -d' ' -f1)" != "$ADD64_SHA256" ]]; then
     echo "[after-gpu] EȘUAT: add64.sm86.sass nu e fișierul cyber-gpu (SHA-256 diferit)"; exit 1
 fi
