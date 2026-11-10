@@ -15,6 +15,7 @@
 use crate::mem::paging;
 use crate::pci::Device;
 use alloc::{format, string::String, vec::Vec};
+use core::sync::atomic::{AtomicU64, Ordering};
 
 pub const NVIDIA: u16 = 0x10DE;
 const AMD: u16 = 0x1002;
@@ -283,7 +284,7 @@ pub fn identify() -> Vec<String> {
 // ---------------------------------------------------------------------------------------------------------------
 
 /// Pinned Cyber-GPU revision (kernel/Cargo.toml), shown in the report.
-pub const CYBER_GPU_REV: &str = "2d66deb";
+pub const CYBER_GPU_REV: &str = "3aed5eb";
 
 /// Configuration space of one function for the Cyber-GPU libraries: reads only.
 pub(super) struct ReadOnlyConfig<'a> {
@@ -496,6 +497,53 @@ impl gpu_core::hal::Clock for TscClock {
             core::hint::spin_loop();
         }
     }
+    /// C-99 (Adrian's idea, 10 Nov): the library asks this on every turn of a wait (every ~10-100 us). Esc in the
+    /// keyboard queue stops the wait (`GpuError::Aborted`); while the questions keep coming, one screen line every
+    /// 2 s says how long the board has been waited on, so a 60 s wait is visibly alive.
+    fn abort_requested(&mut self) -> bool {
+        let now = self.now_us();
+        let gap = now.saturating_sub(WAIT_LAST_US.swap(now, Ordering::Relaxed));
+        if gap > WAIT_GAP_US {
+            WAIT_START_US.store(now, Ordering::Relaxed);
+            WAIT_LINE_US.store(now + WAIT_LINE_EVERY_US, Ordering::Relaxed);
+        }
+        if now >= WAIT_LINE_US.load(Ordering::Relaxed) {
+            WAIT_LINE_US.store(now + WAIT_LINE_EVERY_US, Ordering::Relaxed);
+            let s = now.saturating_sub(WAIT_START_US.load(Ordering::Relaxed)) / 1_000_000;
+            crate::shell::live_line(&format!("gpu0: astept raspunsul placii (GSP)... {} s (Esc opreste)", s));
+        }
+        if crate::drivers::keyboard::take_escape() {
+            crate::shell::live_line("gpu0: Esc apasat: opresc asteptarea (pasul se opreste cinstit, jurnalul o noteaza)");
+            return true;
+        }
+        false
+    }
+}
+
+/// C-99: state of the "still waiting" line of `TscClock::abort_requested` (time of the last question, start of the
+/// current stretch of questions, time of the next line). A pause longer than `WAIT_GAP_US` starts a new count.
+static WAIT_LAST_US: AtomicU64 = AtomicU64::new(0);
+static WAIT_START_US: AtomicU64 = AtomicU64::new(0);
+static WAIT_LINE_US: AtomicU64 = AtomicU64::new(u64::MAX);
+const WAIT_GAP_US: u64 = 500_000;
+const WAIT_LINE_EVERY_US: u64 = 2_000_000;
+
+/// P6-70 (C-99): Esc reaches `TscClock::abort_requested` and only Esc stops a wait; keys typed ahead stay queued.
+#[cfg(feature = "qemu-test")]
+pub fn test_esc_clock() {
+    use crate::drivers::keyboard::{self, Key};
+    use gpu_core::hal::Clock;
+    while keyboard::read_key().is_some() {}
+    let mut c = TscClock;
+    assert!(!c.abort_requested(), "test: gpu Esc: oprire fara tasta");
+    keyboard::push_key(Key::Char('a'));
+    assert!(!c.abort_requested(), "test: gpu Esc: oprire la alta tasta");
+    keyboard::push_key(Key::Escape);
+    keyboard::push_key(Key::Char('b'));
+    assert!(c.abort_requested(), "test: gpu Esc: Esc nevazut");
+    assert!(keyboard::read_key() == Some(Key::Char('b')), "test: gpu Esc: tasta de dupa Esc pierduta");
+    assert!(keyboard::read_key().is_none() && !c.abort_requested(), "test: gpu Esc: coada nu e goala");
+    crate::info!("test: gpu Esc OK (Esc opreste asteptarea, celelalte taste raman)");
 }
 
 /// The lines of `gpu gfw` for one result (real card or model).

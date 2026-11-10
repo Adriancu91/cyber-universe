@@ -531,6 +531,7 @@ fn test_gpu_decode() {
     assert!(old.chip == 0x164 && old.revision == 0xa1, "gpu: BOOT_0 decodat gresit: {:?}", old);
     assert!(nv_architecture(0x120) == "necunoscuta", "gpu: arhitectura inventata");
     info!("test: gpu decodare OK (GA104 din BOOT_42, TU104 din BOOT_0)");
+    drivers::gpu::test_esc_clock();
     #[cfg(not(feature = "test-gpu-write"))]
     drivers::gpu::test_bar0_window();
     #[cfg(feature = "test-gpu-write")]

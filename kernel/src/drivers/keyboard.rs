@@ -300,6 +300,24 @@ pub fn read_key() -> Option<Key> {
     key
 }
 
+/// C-99: takes an Escape waiting in the queue, if there is one, together with the keys typed before it (a long GPU
+/// wait stopped by hand); without an Escape nothing is taken, so keys typed ahead for the shell stay queued.
+/// Cheap (at most 64 slots), called on every turn of a polling loop. Same single reader as `read_key`.
+pub fn take_escape() -> bool {
+    let head = HEAD.load(Ordering::Acquire);
+    let mut i = TAIL.load(Ordering::Relaxed);
+    while i != head {
+        // SAFETY: slots between TAIL and HEAD were published by the producers before HEAD advanced.
+        let key = unsafe { (*core::ptr::addr_of!(KEYS))[i] };
+        i = (i + 1) % QUEUE;
+        if key == Some(Key::Escape) {
+            TAIL.store(i, Ordering::Release);
+            return true;
+        }
+    }
+    false
+}
+
 /// Waits (sleeping, without using the CPU) for the next key press.
 #[cfg_attr(all(feature = "qemu-test", not(feature = "test-keyboard")), allow(dead_code))]
 pub fn wait_key() -> Key {

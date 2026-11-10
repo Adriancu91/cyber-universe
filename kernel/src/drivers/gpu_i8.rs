@@ -29,9 +29,9 @@ use super::gpu_i7::I7Prep;
 
 /// GSP-RM 570.144 (the only firmware `firmware::load_gsp_set` accepts): CORE_RESUME writes it back.
 pub(super) const APP_VERSION: u32 = 570_144;
-/// How long GSP-RM may take to write the status-queue header after the doorbell (DEDUS; the whole wait is bounded by
-/// `sequencer::INIT_DONE_US` anyway).
-const STAT_HEADER_US: u64 = 2_000_000;
+/// How long GSP-RM may take to write the status-queue header after the doorbell. P6-70 (C-99, Adrian's idea): as
+/// long as the other waits after the doorbell (`sequencer::LONG_WAIT_US`, 60 s; was 2 s), and Esc stops it.
+const STAT_HEADER_US: u64 = sequencer::LONG_WAIT_US;
 
 /// The PCI facts `GSP_SET_SYSTEM_INFO` carries, read from the configuration space (reads only).
 pub(super) fn system_info(d: &crate::pci::Device) -> GpuResult<SystemInfoInput> {
@@ -86,8 +86,18 @@ pub(super) fn init<W: Mmio + ?Sized, K: Clock + ?Sized>(
         let start = clock.now_us();
         loop {
             match prep.queues.link_rx(&prep.shared) {
-                Ok(()) => break,
+                Ok(()) => {
+                    lines.push(format!(
+                        "{}: asteptat I8 antetul cozii de stare (de la sonerie): raspuns dupa {} us",
+                        p,
+                        clock.now_us().saturating_sub(start)
+                    ));
+                    break;
+                }
                 Err(e) if clock.now_us().saturating_sub(start) >= STAT_HEADER_US => return Err(e),
+                Err(_) if clock.abort_requested() => {
+                    return Err(GpuError::Aborted { waited_us: clock.now_us().saturating_sub(start) });
+                }
                 Err(_) => {
                     clock.delay_us(1000);
                     poll(&mut prep.shared);

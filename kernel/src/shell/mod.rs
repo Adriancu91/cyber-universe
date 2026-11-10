@@ -55,6 +55,12 @@ pub fn program_output(text: &str) {
     }
 }
 
+/// C-99: a line printed at once by a long-running command (the GPU wait), on the shell that runs it.
+pub(crate) fn live_line(text: &str) {
+    emit(text);
+    emit("\n");
+}
+
 fn emit(text: &str) {
     {
         let mut c = CAPTURE.lock();
