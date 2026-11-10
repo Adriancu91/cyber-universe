@@ -3,6 +3,14 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-10 ~15:40–16:35 UTC (17:40–18:35 ora României) — sesiune programată, fără Adrian în conversație (el e la workstation) — **P6-70 GATA (C-99, URGENT)**.
+  - Regula 5: nu se aplică (comandă nouă de la Adrian, sarcină bifată).
+  - Hub: testul `os-277` (`rezultate/2026-11-10-workstation-os277/`): 0xbadf5620 dispărut, secvențiatorul rulează până la `secv #419 CORE_RESUME`, apoi „timeout după 2 s”: scrierea de pornire a SEC2 în `CPUCTL` ignorată (0x50 = ALIAS_EN). cyber-gpu a reparat (`3fe11f9`, pornire prin `CPUCTL_ALIAS`) + ideea lui Adrian (`3aed5eb`, așteptări I8 de 60 s, `Clock::abort_requested`).
+  - OS (`de63f32`): cyber-gpu `3aed5eb` (acces direct la `cyber-gpu` merge acum din sesiune); `keyboard::take_escape`; `TscClock::abort_requested` = Esc + rândul „gpu0: astept raspunsul placii (GSP)... N s (Esc opreste)” la 2 s; în `gpu_i8.rs` antetul cozii de stare 2 s → 60 s cu Esc + rândul „asteptat I8 antetul … raspuns dupa N us”; test nou `test: gpu Esc OK` (scenariul `gpu`). `env-check --install` OK; `tools/build.sh` OK; `tools/test.sh gpu gpu-sim gpu-i6 gpu-scrie gpu-ro gpu-tur kronos-gpu boot shell` → 9/9 TRECUT (SIMULARE).
+  - CI run 42850183459 **verde** (teste-1, teste-2, stick, release) → **Release `os-278`** (16:27 UTC, 12 fișiere). Adrian anunțat pe telefon.
+  - Copiile locale aveau iar `main` divergent → lucrat pe ramura locală `lucru-10nov` din `origin/main`; nimic șters sau forțat. `user/Cargo.toml` ține încă `gpu-compute` pe `a2f9736` (neschimbat).
+  - Atenție: Esc merge în consola `cyber>`, nu într-o fereastră de terminal din desktop.
+  - **Următoarea:** jurnalul testului cu `os-278` din `rezultate/` → la `secv #419 CORE_RESUME` trebuie să apară `bar0 w 0x840130`, apoi rândurile `asteptat …` (cât a durat) și `GSP_INIT_DONE` sau prima eroare după el. Coada: P6-10/P6-12 după test; P3-10 Adrian; P5-07 BLOCAT.
 - 2026-11-10 ~12:40–12:45 UTC (14:40–14:45 ora României) — sesiune programată, fără Adrian — **nicio sarcină liberă**; nicio schimbare de cod.
   - Regula 5: nu se aplică (P6-69 bifată la 11:40). **Pentru sesiunea următoare (15:40 UTC):** ultimele 3 sesiuni (11:40 ora RO P6-69 → nu; 13:40, 14:40 fără sarcină) — dacă și sesiunea de 17:40 ora RO nu are jurnal/comandă nouă, ultimele 3 sesiuni (13:40, 14:40, 17:40) nu vor fi bifat nimic → regula 5 se aplică literal („OPRIT”); cauza = doar așteptarea testului cu `os-277`, nu un eșec.
   - Hub: nicio comandă nouă pentru `cyber-universe`; niciun jurnal cu `os-277` în `rezultate/`. CI pe `main` verde (run 42794463811, `os-277`).
