@@ -17,9 +17,32 @@ jobs:
           persist-credentials: false
 
       - name: Unelte sistem (QEMU, OVMF, xorriso, unelte FAT)
+        # Fail fast instead of hanging for an hour when the package mirrors stall (CI 284, 11 Nov 2026).
+        timeout-minutes: 25
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-system-x86 ovmf xorriso dosfstools mtools fdisk
+          APT_OPTS="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          for i in 1 2 3; do
+            timeout 150 sudo -E apt-get update $APT_OPTS && \
+            timeout 300 sudo -E apt-get install -y -qq $APT_OPTS \
+              qemu-system-x86 ovmf xorriso dosfstools mtools fdisk && exit 0
+            # CI 284/285: `apt-get update` hung even with a second Ubuntu mirror, so keep only the Ubuntu sources
+            # (the runner's extra repositories are not needed here) and use the kernel.org mirror.
+            echo "apt attempt $i failed; only Ubuntu sources from the kernel.org mirror, retrying in 15 s"
+            sudo mkdir -p /etc/apt/oprite
+            for f in /etc/apt/sources.list.d/*; do
+              [ "$(basename "$f")" = ubuntu.sources ] || sudo mv "$f" /etc/apt/oprite/ 2>/dev/null || true
+            done
+            # CI 286: the runner's Ubuntu sources are `mirror+file:/etc/apt/apt-mirrors.txt` (azure.archive.ubuntu.com,
+            # unreachable on 11 Nov 2026) — put the kernel.org mirror first in that list.
+            printf 'https://mirrors.edge.kernel.org/ubuntu/\n' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+            sudo sed -i -E 's#https?://([a-z0-9.-]*\.)?(archive|security)\.ubuntu\.com/ubuntu/?#https://mirrors.edge.kernel.org/ubuntu/#g' \
+              /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null || true
+            grep -h '^URIs' /etc/apt/sources.list.d/*.sources 2>/dev/null || true; cat /etc/apt/apt-mirrors.txt
+            sleep 15
+          done
+          exit 1
 
       - name: Rust nightly
         run: rustup toolchain install nightly --profile minimal -c rust-src -t x86_64-unknown-none
