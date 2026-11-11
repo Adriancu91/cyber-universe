@@ -1,4 +1,5 @@
-//! FADT (signature `FACP`): only the reset register, used by `reboot`.
+//! FADT (signature `FACP`): the reset register, used by `reboot`, and the ACPI PM timer port (P6-79, a reference
+//! clock for the APIC calibration when the PIT does not count).
 //! Written from the ACPI Specification 6.5, §5.2.9 (FADT layout) and §5.2.3.2 (Generic Address Structure).
 
 /// Where the reset register lives (`RESET_REG.AddressSpaceId`).
@@ -27,8 +28,38 @@ const FLAGS: usize = 112;
 const RESET_REG: usize = 116;
 const RESET_VALUE: usize = 128;
 const RESET_REG_SUP: u32 = 1 << 10;
+const PM_TMR_BLK: usize = 76;
+const X_PM_TMR_BLK: usize = 208;
+/// FADT Flags bit 8: the PM timer counter is 32 bits wide (else 24).
+const TMR_VAL_EXT: u32 = 1 << 8;
 
 static mut RESET: Option<ResetReg> = None;
+/// P6-79: the PM timer's I/O port and whether it is 32 bits wide (0 = none).
+static PM_PORT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// P6-79: the ACPI PM timer from the raw FADT: (I/O port, 32-bit counter). `X_PM_TMR_BLK` first (ACPI 2+, only
+/// when it is in I/O space), else `PM_TMR_BLK`.
+pub fn decode_pm_timer(fadt: &[u8]) -> Option<(u16, bool)> {
+    if fadt.len() < FLAGS + 4 {
+        return None;
+    }
+    let flags = u32::from_le_bytes(fadt[FLAGS..FLAGS + 4].try_into().ok()?);
+    let wide = flags & TMR_VAL_EXT != 0;
+    if fadt.len() >= X_PM_TMR_BLK + 12 && fadt[X_PM_TMR_BLK] == 1 {
+        let a = u64::from_le_bytes(fadt[X_PM_TMR_BLK + 4..X_PM_TMR_BLK + 12].try_into().ok()?);
+        if a != 0 && a <= 0xFFFF {
+            return Some((a as u16, wide));
+        }
+    }
+    let a = u32::from_le_bytes(fadt[PM_TMR_BLK..PM_TMR_BLK + 4].try_into().ok()?);
+    (a != 0 && a <= 0xFFFF).then_some((a as u16, wide))
+}
+
+/// P6-79: the ACPI PM timer read at boot, if the FADT has one in I/O space.
+pub fn pm_timer() -> Option<(u16, bool)> {
+    let v = PM_PORT.load(core::sync::atomic::Ordering::Relaxed);
+    (v & 0xFFFF != 0).then_some((v as u16, v >> 16 != 0))
+}
 
 /// Decodes the reset register from the raw FADT bytes (`None` if the table is too short to have one).
 pub fn decode(fadt: &[u8]) -> Option<ResetReg> {
@@ -58,6 +89,10 @@ pub fn init() {
     };
     // SAFETY: `find` returned a checked, reachable table of `len` bytes.
     let bytes = unsafe { core::slice::from_raw_parts(p, len) };
+    if let Some((port, wide)) = decode_pm_timer(bytes) {
+        PM_PORT.store(u32::from(port) | (u32::from(wide) << 16), core::sync::atomic::Ordering::Relaxed);
+        crate::info!("acpi: temporizator PM la portul {:#x} ({} biti)", port, if wide { 32 } else { 24 });
+    }
     let r = decode(bytes);
     match r {
         Some(r) => {
@@ -111,5 +146,15 @@ pub fn self_test() -> bool {
     let ok2 = decode(&t[..116]).is_none(); // FADT 1.0: too short
     t[FLAGS + 1] = 0;
     let ok3 = matches!(decode(&t), Some(ResetReg { supported: false, .. }));
-    ok1 && ok2 && ok3
+    // P6-79: PM_TMR_BLK 0x608, 24 bits; then X_PM_TMR_BLK (I/O) 0xB008 with TMR_VAL_EXT -> 32 bits.
+    let mut f = [0u8; 220];
+    f[PM_TMR_BLK] = 0x08;
+    f[PM_TMR_BLK + 1] = 0x06;
+    let ok4 = decode_pm_timer(&f) == Some((0x608, false));
+    f[FLAGS + 1] = 0x01; // bit 8
+    f[X_PM_TMR_BLK] = 1;
+    f[X_PM_TMR_BLK + 4] = 0x08;
+    f[X_PM_TMR_BLK + 5] = 0xB0;
+    let ok5 = decode_pm_timer(&f) == Some((0xB008, true));
+    ok1 && ok2 && ok3 && ok4 && ok5
 }

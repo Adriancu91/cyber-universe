@@ -1,10 +1,13 @@
 //! Interrupt controllers: legacy PIC (disabled), local APIC (timer, end-of-interrupt) and I/O APIC
 //! (routes device IRQs such as the keyboard to CPU vectors).
 //! Written from Intel SDM Vol. 3A ch. 11, the 82093AA I/O APIC datasheet and the OSDev Wiki descriptions.
+//! P6-79 (C-109): the local APIC also in x2APIC mode (through MSRs, when the firmware left it so: SDM 3A §11.12), and
+//! the calibration with a fallback reference clock (PIT, then the ACPI PM timer, then the TSC rate from CPUID) and a
+//! time limit on every wait, so a firmware that gates the PIT clock no longer stops the boot.
 
 use super::{inb, outb};
 use crate::mem::paging;
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 
 /// CPU vector of the system timer.
 pub const TIMER_VECTOR: u8 = 32;
@@ -31,6 +34,85 @@ static TICKS: AtomicU64 = AtomicU64::new(0);
 static BSP_APIC: AtomicU64 = AtomicU64::new(0);
 /// APIC timer count for one tick (measured on the boot processor; the others use the same bus clock).
 static PER_TICK: AtomicU64 = AtomicU64::new(0);
+/// P6-79: the local APIC is in x2APIC mode (IA32_APIC_BASE bit 10): registers through MSRs 0x800 + offset/16.
+static X2APIC: AtomicBool = AtomicBool::new(false);
+/// P6-79: the reference clock used for the calibration and for `pit_sleep_ms` (see [`RefClock`]).
+static REF_CLOCK: AtomicU8 = AtomicU8::new(RefClock::Pit as u8);
+/// P6-79: TSC ticks per millisecond from the calibration (for the TSC reference clock).
+static TSC_PER_MS: AtomicU64 = AtomicU64::new(0);
+
+const IA32_APIC_BASE: u32 = 0x1B;
+const APIC_BASE_EXTD: u64 = 1 << 10;
+const APIC_BASE_EN: u64 = 1 << 11;
+const X2APIC_MSR_BASE: u32 = 0x800;
+const X2APIC_ICR: u32 = 0x830;
+
+/// The clock the APIC timer is measured against.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum RefClock {
+    /// PIT channel 2 (port 0x61 bit 5), as before P6-79.
+    Pit = 1,
+    /// The ACPI PM timer (3.579545 MHz, FADT `PM_TMR_BLK`).
+    PmTimer = 2,
+    /// The TSC at the rate CPUID leaf 0x15/0x16 states.
+    Tsc = 3,
+}
+
+impl RefClock {
+    fn name(self) -> &'static str {
+        match self {
+            RefClock::Pit => "PIT (8254)",
+            RefClock::PmTimer => "temporizatorul ACPI PM",
+            RefClock::Tsc => "TSC (frecventa din CPUID)",
+        }
+    }
+}
+
+fn rdmsr(msr: u32) -> u64 {
+    let (lo, hi): (u32, u32);
+    // SAFETY: only architectural MSRs that exist on every x86_64 processor with an APIC are read here
+    // (IA32_APIC_BASE) or, in x2APIC mode only, the x2APIC register MSRs.
+    unsafe { core::arch::asm!("rdmsr", in("ecx") msr, out("eax") lo, out("edx") hi, options(nomem, nostack, preserves_flags)) }
+    (u64::from(hi) << 32) | u64::from(lo)
+}
+
+fn wrmsr(msr: u32, value: u64) {
+    // SAFETY: as in `rdmsr`; the callers write only the x2APIC registers (in x2APIC mode) or the mode bits of
+    // IA32_APIC_BASE.
+    unsafe {
+        core::arch::asm!("wrmsr", in("ecx") msr, in("eax") value as u32, in("edx") (value >> 32) as u32,
+            options(nomem, nostack, preserves_flags))
+    }
+}
+
+fn cpuid(leaf: u32) -> core::arch::x86_64::CpuidResult {
+    // `cpuid` only reads processor identification (a safe intrinsic on x86_64).
+    core::arch::x86_64::__cpuid_count(leaf, 0)
+}
+
+/// TSC rate in Hz stated by the processor (CPUID 0x15: crystal x ratio; else 0x16: base frequency), if any.
+fn cpuid_tsc_hz() -> Option<u64> {
+    let max = cpuid(0).eax;
+    if max >= 0x15 {
+        let l = cpuid(0x15);
+        if l.eax != 0 && l.ebx != 0 && l.ecx != 0 {
+            return Some(u64::from(l.ecx) * u64::from(l.ebx) / u64::from(l.eax));
+        }
+    }
+    if max >= 0x16 {
+        let mhz = cpuid(0x16).eax & 0xFFFF;
+        if mhz != 0 {
+            return Some(u64::from(mhz) * 1_000_000);
+        }
+    }
+    None
+}
+
+/// TSC cycles that surely last at least `ms` milliseconds before the rate is known (a 10 GHz processor).
+const fn tsc_bound(ms: u64) -> u64 {
+    ms * 10_000_000
+}
 
 // TLB shootdown (K6-02b). The processors that run threads are marked in ACTIVE; the one that removes a kernel page
 // sets PENDING for each of the others and sends them an IPI; each one invalidates SHOOT_ADDR and clears its flag
@@ -53,23 +135,44 @@ fn map_mmio(phys: u64) -> u64 {
 }
 
 fn lapic_read(reg: usize) -> u32 {
+    if X2APIC.load(Ordering::Relaxed) {
+        return rdmsr(X2APIC_MSR_BASE + (reg as u32 >> 4)) as u32;
+    }
     // SAFETY: LAPIC_BASE points at the mapped local APIC register page; registers are 32-bit aligned.
     unsafe { ((LAPIC_BASE.load(Ordering::Relaxed) as usize + reg) as *const u32).read_volatile() }
 }
 
 fn lapic_write(reg: usize, value: u32) {
+    if X2APIC.load(Ordering::Relaxed) {
+        wrmsr(X2APIC_MSR_BASE + (reg as u32 >> 4), u64::from(value));
+        return;
+    }
     // SAFETY: as in `lapic_read`.
     unsafe { ((LAPIC_BASE.load(Ordering::Relaxed) as usize + reg) as *mut u32).write_volatile(value) }
 }
 
-/// APIC id of the processor running this code.
+/// APIC id of the processor running this code (x2APIC: the full 32-bit id, cut to 8 bits; ids above 255 do not
+/// occur on the machines we boot).
 pub fn lapic_id() -> u8 {
+    if X2APIC.load(Ordering::Relaxed) {
+        return lapic_read(0x20) as u8;
+    }
     (lapic_read(0x20) >> 24) as u8
 }
 
+/// Whether the local APIC runs in x2APIC mode (for `hw` and the tests).
+#[allow(dead_code)]
+pub fn x2apic() -> bool {
+    X2APIC.load(Ordering::Relaxed)
+}
+
 /// Sends an inter-processor interrupt: `low` = ICR bits 0–31 (vector, delivery mode, level), to `apic_id`.
-/// Waits until the local APIC has sent it (delivery status, bit 12).
+/// Waits until the local APIC has sent it (delivery status, bit 12; x2APIC has no such bit: one MSR write).
 pub fn send_ipi(apic_id: u8, low: u32) {
+    if X2APIC.load(Ordering::Relaxed) {
+        wrmsr(X2APIC_ICR, (u64::from(apic_id) << 32) | u64::from(low));
+        return;
+    }
     lapic_write(0x310, (apic_id as u32) << 24);
     lapic_write(0x300, low);
     for _ in 0..1_000_000 {
@@ -81,7 +184,15 @@ pub fn send_ipi(apic_id: u8, low: u32) {
 }
 
 /// Switches on the local APIC of an additional processor (same spurious vector as the boot CPU; no timer yet).
+/// P6-79: in x2APIC mode every processor must be in it too (the register accesses are global).
 pub fn enable_ap() {
+    if X2APIC.load(Ordering::Relaxed) {
+        let base = rdmsr(IA32_APIC_BASE);
+        if base & APIC_BASE_EXTD == 0 {
+            wrmsr(IA32_APIC_BASE, base | APIC_BASE_EN);
+            wrmsr(IA32_APIC_BASE, base | APIC_BASE_EN | APIC_BASE_EXTD);
+        }
+    }
     lapic_write(LAPIC_SVR, 0x100 | SPURIOUS_VECTOR as u32);
 }
 
@@ -195,8 +306,12 @@ fn disable_pic() {
 }
 
 /// Waits `ms` milliseconds by polling PIT channel 2 (works without interrupts). Max ~54 ms per call.
-fn pit_wait_ms(ms: u64) {
+/// P6-79 (C-109): returns `false` if the PIT did not reach the count within a TSC limit (a firmware that gates the
+/// 8254 clock: before, this loop never ended and the boot stopped after `acpi: MADT`).
+fn pit_wait_ms(ms: u64) -> bool {
     let count = (1_193_182 * ms / 1000) as u16;
+    let start = super::rdtsc();
+    let limit = tsc_bound(ms) + tsc_bound(1);
     // SAFETY: PIT channel 2 and the speaker gate (port 0x61) are standard PC hardware; the speaker stays off.
     unsafe {
         let gate = inb(0x61);
@@ -208,9 +323,99 @@ fn pit_wait_ms(ms: u64) {
         outb(0x61, g & !0x01);
         outb(0x61, g | 0x01);
         while inb(0x61) & 0x20 == 0 {
+            if super::rdtsc().wrapping_sub(start) > limit {
+                return false;
+            }
             core::hint::spin_loop();
         }
     }
+    true
+}
+
+/// P6-79: the ACPI PM timer's counter (24 or 32 bits wide).
+fn pm_read(port: u16) -> u32 {
+    let v: u32;
+    // SAFETY: `port` is the FADT's PM_TMR_BLK; reading it has no side effect.
+    unsafe { core::arch::asm!("in eax, dx", out("eax") v, in("dx") port, options(nomem, nostack, preserves_flags)) }
+    v
+}
+
+/// P6-79: waits `ms` milliseconds on the ACPI PM timer; `false` if it does not count (within a TSC limit).
+fn pm_wait_ms(port: u16, bits32: bool, ms: u64) -> bool {
+    const PM_HZ: u64 = 3_579_545;
+    let mask: u32 = if bits32 { u32::MAX } else { 0x00FF_FFFF };
+    let need = PM_HZ * ms / 1000;
+    let start_tsc = super::rdtsc();
+    let limit = tsc_bound(ms) + tsc_bound(1);
+    let mut last = pm_read(port) & mask;
+    let mut done = 0u64;
+    while done < need {
+        let now = pm_read(port) & mask;
+        done += u64::from(now.wrapping_sub(last) & mask);
+        last = now;
+        if super::rdtsc().wrapping_sub(start_tsc) > limit {
+            return false;
+        }
+        core::hint::spin_loop();
+    }
+    true
+}
+
+/// P6-79: waits `ms` milliseconds on the TSC at the calibrated rate.
+fn tsc_wait_ms(ms: u64) {
+    let per_ms = TSC_PER_MS.load(Ordering::Relaxed).max(1);
+    let start = super::rdtsc();
+    while super::rdtsc().wrapping_sub(start) < ms * per_ms {
+        core::hint::spin_loop();
+    }
+}
+
+/// Waits `ms` milliseconds (at most ~54) on the reference clock chosen at calibration.
+fn ref_wait_ms(ms: u64) -> bool {
+    match REF_CLOCK.load(Ordering::Relaxed) {
+        x if x == RefClock::PmTimer as u8 => match crate::acpi::fadt::pm_timer() {
+            Some((port, bits32)) => pm_wait_ms(port, bits32, ms),
+            None => false,
+        },
+        x if x == RefClock::Tsc as u8 => {
+            tsc_wait_ms(ms);
+            true
+        }
+        _ => pit_wait_ms(ms),
+    }
+}
+
+/// One calibration run against `clock`: APIC timer counts and TSC cycles in 10 ms (`None` if the clock does not count).
+fn measure_10ms(clock: RefClock, tsc_hz: Option<u64>) -> Option<(u64, u64)> {
+    lapic_write(LAPIC_TIMER_INIT, u32::MAX);
+    let tsc_start = super::rdtsc();
+    let ok = match clock {
+        RefClock::Pit => pit_wait_ms(10),
+        RefClock::PmTimer => match crate::acpi::fadt::pm_timer() {
+            Some((port, bits32)) => pm_wait_ms(port, bits32, 10),
+            None => false,
+        },
+        RefClock::Tsc => match tsc_hz {
+            Some(hz) => {
+                while super::rdtsc().wrapping_sub(tsc_start) < hz / 100 {
+                    core::hint::spin_loop();
+                }
+                true
+            }
+            None => false,
+        },
+    };
+    let apic = u64::from(u32::MAX - lapic_read(LAPIC_TIMER_CURRENT));
+    let tsc = super::rdtsc().wrapping_sub(tsc_start);
+    if !ok {
+        return None;
+    }
+    // The TSC reference states its own rate; the others measure it.
+    let tsc_per_ms = match (clock, tsc_hz) {
+        (RefClock::Tsc, Some(hz)) => hz / 1000,
+        _ => tsc / 10,
+    };
+    Some((apic, tsc_per_ms))
 }
 
 extern "x86-interrupt" fn timer_handler(frame: super::idt::InterruptStackFrame) {
@@ -288,6 +493,15 @@ pub fn init() -> bool {
     IOAPIC_BASE.store(map_mmio(madt.ioapics[0].address), Ordering::Relaxed);
     IOAPIC_GSI_BASE.store(madt.ioapics[0].gsi_base as u64, Ordering::Relaxed);
 
+    // P6-79 (C-109): x2APIC left on by the firmware -> the registers through MSRs (the memory page does not answer).
+    let base = rdmsr(IA32_APIC_BASE);
+    X2APIC.store(base & APIC_BASE_EXTD != 0, Ordering::Relaxed);
+    crate::info!(
+        "apic: mod {} (IA32_APIC_BASE {:#x}); pasul urmator: rutele I/O APIC, apoi calibrarea ceasului",
+        if base & APIC_BASE_EXTD != 0 { "x2APIC (registre prin MSR)" } else { "xAPIC (registre prin memorie)" },
+        base
+    );
+
     super::idt::set_handler(TIMER_VECTOR, timer_handler as super::idt::Handler as u64);
     super::idt::set_handler(SPURIOUS_VECTOR, spurious_handler as super::idt::Handler as u64);
     super::idt::set_handler(SHOOTDOWN_VECTOR, shootdown_handler as super::idt::Handler as u64);
@@ -303,16 +517,40 @@ pub fn init() -> bool {
 
     lapic_write(LAPIC_SVR, 0x100 | SPURIOUS_VECTOR as u32); // enable the local APIC
 
-    // Calibrate: count APIC timer ticks during 10 ms measured by the PIT.
+    // Calibrate: count APIC timer ticks during 10 ms measured by a reference clock. P6-79 (C-109): the PIT first (as
+    // before), then the ACPI PM timer, then the TSC rate from CPUID; each wait has a time limit.
     lapic_write(LAPIC_TIMER_DIVIDE, 0x3); // divide by 16
     lapic_write(LAPIC_LVT_TIMER, 1 << 16); // masked while calibrating
-    lapic_write(LAPIC_TIMER_INIT, u32::MAX);
-    let tsc_start = super::rdtsc();
-    pit_wait_ms(10);
-    let per_10ms = u32::MAX - lapic_read(LAPIC_TIMER_CURRENT);
-    crate::time::set_tsc_per_ms((super::rdtsc() - tsc_start) / 10);
-    let per_tick = per_10ms as u64 * 100 / HZ;
+    crate::info!("apic: calibrez ceasul (PIT, apoi ACPI PM, apoi CPUID)");
+    let tsc_hz = cpuid_tsc_hz();
+    let mut chosen = None;
+    for clock in [RefClock::Pit, RefClock::PmTimer, RefClock::Tsc] {
+        match measure_10ms(clock, tsc_hz) {
+            // A sane result: the APIC timer moved, and the TSC rate is one a 64-bit processor can have (200 MHz–10 GHz);
+            // a clock that "ends" at once (an output stuck high) gives a TSC rate far below that.
+            Some((apic, tsc_per_ms)) if apic > 0 && apic < u64::from(u32::MAX) && (200_000..=10_000_000).contains(&tsc_per_ms) => {
+                chosen = Some((clock, apic, tsc_per_ms));
+                break;
+            }
+            Some((apic, tsc_per_ms)) => crate::warn!(
+                "apic: {}: in \"10 ms\" contorul APIC {} si TSC {} kHz (fara sens); incerc urmatorul ceas",
+                clock.name(),
+                apic,
+                tsc_per_ms
+            ),
+            None => crate::warn!("apic: {} nu numara (oprit de firmware?); incerc urmatorul ceas", clock.name()),
+        }
+    }
+    let Some((clock, per_10ms, tsc_per_ms)) = chosen else {
+        crate::error!("apic: niciun ceas de referinta nu numara (PIT, ACPI PM, CPUID); continui fara ceas");
+        return false;
+    };
+    REF_CLOCK.store(clock as u8, Ordering::Relaxed);
+    TSC_PER_MS.store(tsc_per_ms, Ordering::Relaxed);
+    crate::time::set_tsc_per_ms(tsc_per_ms);
+    let per_tick = per_10ms * 100 / HZ;
     PER_TICK.store(per_tick, Ordering::Relaxed);
+    crate::info!("apic: ceasul de referinta: {}; TSC {} kHz", clock.name(), tsc_per_ms);
 
     lapic_write(LAPIC_LVT_TIMER, TIMER_VECTOR as u32 | (1 << 17)); // periodic
     lapic_write(LAPIC_TIMER_INIT, per_tick as u32);
@@ -339,7 +577,7 @@ pub fn pit_sleep_ms(ms: u64) {
     let mut left = ms;
     while left > 0 {
         let step = left.min(50);
-        pit_wait_ms(step);
+        ref_wait_ms(step); // P6-79: the reference clock chosen at calibration (PIT on most machines)
         left -= step;
     }
 }
