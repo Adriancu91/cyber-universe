@@ -37,6 +37,10 @@
   rulare), cel mult 20, rulează doar lista albă (a modului automat + `test tot` + `trimite`; `DA`, `hub`, `gpu lant`, `--gpu`,
   `--scrie`, `reboot` refuzate), scrie `/usb/raport/hub-<data>.txt` și face `trimite`. `/usb/hub/la-pornire` = la fiecare
   pornire, pe un fir al sistemului. Test: `ghpush` (+ verificarea listei în `auto`).
+- **`hub asculta [--la N]` / `hub opreste` (P6-73, comanda C-104):** `hubcmd.rs` — aceeași rulare în buclă, la fiecare N minute
+  (1–60, implicit 2), până la Esc; `/usb/hub/asculta` (gol sau cu numărul de minute) = pornită la pornire pe un fir al sistemului,
+  oprită cu `hub opreste`. Fiecare comandă (și cele refuzate) primește răspunsul ei în hub, `integrare/cyber-universe/raspunsuri/K-<nr>.txt`
+  (`gh-trimite --raspuns`, doar acel dosar), copie pe stick în `/usb/hub/raspunsuri/`. Test: `ghpush` (3 runde la 1 s, K-5 apoi K-6).
 - **`test tot` (P6-61, F9):** `testtot.rs` — autotestul pe calculatorul real (procesor, ceas, temporizator, stick, rețea, placa
   video doar prin ID-urile PCI); `PASS`/`FAIL`/`LIPSA`, raport `raport/test-tot-*.txt`, apoi `trimite`. Test: scenariul `testtot`.
 - **`ora [server [port]]` (P6-61):** SNTP (`net/sntp.rs`, RFC 4330): ora din rețea în UTC și ora României (regula UE pentru

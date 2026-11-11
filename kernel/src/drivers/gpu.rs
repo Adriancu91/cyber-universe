@@ -343,6 +343,13 @@ fn probe_with_cyber_gpu(n: usize, d: &Device, lines: &mut Vec<String>) -> LibPro
         Ok(c) => c,
     };
     lines.push(format!("gpu{}: cyber-gpu {} nvidia-ga104: {} (BAR0 {:#x})", n, CYBER_GPU_REV, c.model, c.bar0));
+    // C-103 (P6-74): what the board's configuration space says about resets without a power cycle (reads only;
+    // the adapter refuses and counts any write).
+    match gpu_pci::caps::reset_capabilities(&mut cfg) {
+        Some(r) => lines.push(format!("gpu{}: reset (C-103, doar citire): {}", n, r.summary())),
+        None => lines.push(format!("gpu{}: reset (C-103, doar citire): fara capabilitate PCIe", n)),
+    }
+    out.refused = cfg.refused;
     if d.command() & 0b10 == 0 {
         lines.push(format!("gpu{}: registrele nu s-au citit: Memory Space oprit de firmware (nu il pornim)", n));
         return out;
@@ -409,6 +416,13 @@ pub fn identify_sim() -> Vec<String> {
                 probe_cfg + probe_regs, probe_cfg, probe_regs, bar0.reads
             ));
             raw.push(format!("dimensionarea BAR: {} scrieri, doar in model", cfg.writes - probe_cfg));
+            // C-103 (P6-74): how the model says the board can be reset without a power cycle (reads only).
+            let before = cfg.writes;
+            match gpu_pci::caps::reset_capabilities(&mut cfg) {
+                Some(r) => raw.push(format!("reset (C-103, doar citire): {}", r.summary())),
+                None => raw.push(String::from("reset (C-103, doar citire): fara capabilitate PCIe")),
+            }
+            assert!(cfg.writes == before, "gpu: reset_capabilities a scris in configuratie");
         }
         Err(e) => raw.push(format!("nivel 0 a esuat: {}", e)),
     }
@@ -844,6 +858,15 @@ pub const PLAN: &[&str] = &[
 
 /// P6-40: what `gpu i6 --scrie` says before it asks for `DA`.
 /// What `gpu lant` (P6-42, C-55) does, shown before it asks for `DA`.
+/// P6-74 (C-103): what `gpu recupereaza` does, before `DA`.
+pub const RECUPEREAZA_WARNING: &[&str] = &[
+    "ATENTIE: gpu recupereaza SCRIE in placa video (doar stick-ul de test), dupa un lant oprit (ex. la I8):",
+    " 1. Booter Unload (fisierul NVIDIA 570.144 de pe stick) pregatit in RAM (nimic scris)  2. Bus Master pornit",
+    " 3. reset GSP + reset SEC2 + Booter Unload pe SEC2 (cutiile 0xFF, 0xFF) — coboara WPR2, ca driverul NVIDIA la descarcare",
+    " 4. Bus Master oprit la loc  5. WPR2 citit si pregatirea I6 din nou (doar citire): daca trece, `gpu lant` merge fara repornire",
+    "Prima incercare pe placa (C-103). Jurnalul merge pe stick; daca ceva nu trece, tot pornirea rece ramane (cablul scos 30 s).",
+];
+
 pub const LANT_WARNING: &[&str] = &[
     "ATENTIE: gpu lant face pasii ferestrei unul dupa altul si SCRIE in placa video (doar stick-ul de test):",
     " 1. pregatire-i6 (doar citire)  2. Bus Master pornit  3. I6 FWSEC-FRTS (aceleasi scrieri ca gpu i6 --scrie)",

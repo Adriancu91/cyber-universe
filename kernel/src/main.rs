@@ -1923,6 +1923,31 @@ fn test_ghpush() {
     shell::hubcmd::command(&[]); // the same file again: every ID already ran
     assert!(fs::read_all("/etc/hub/facute.txt").map(|t| t.len()).unwrap_or(0) == ran.len(), "test: a doua rulare a notat ceva");
     info!("test: comenzile din hub rulate in OS OK");
+    // C-104 (P6-73): `hub asculta` = the same in a loop; two commands arrive in the hub at different rounds, each runs
+    // once, and each answer is its own file in the hub (`integrare/cyber-universe/raspunsuri/K-<nr>.txt`).
+    let base = "# Comenzi pentru OS\n\n- [ ] K-1: uptime\n- [ ] K-2: `gpu lant`\n- [x] K-3: hw\n- [ ] K-4: mem\n- [ ] K-5: uptime\n";
+    shell::hubcmd::listen_test(|round| {
+        let text = if round < 3 { alloc::string::String::from(base) } else { alloc::format!("{}- [ ] K-6: mem\n", base) };
+        put("/etc/os-comenzi-nou.md", text.as_bytes());
+        assert!(run(good, &["/etc/os-comenzi-nou.md", R, shell::hubcmd::HUB_FILE], "comanda noua in hub") == 0);
+    });
+    let ran2 = alloc::string::String::from_utf8(fs::read_all("/etc/hub/facute.txt").unwrap_or_default()).unwrap_or_default();
+    let ids2: alloc::vec::Vec<&str> = ran2.lines().filter_map(|l| l.split_whitespace().next()).collect();
+    assert!(ids2 == ["K-1", "K-2", "K-4", "K-5", "K-6"], "test: hub asculta: facute.txt: {:?}", ran2);
+    let answer = |id: &str| {
+        let local = alloc::format!("/etc/raspuns-{}.txt", id);
+        let remote = alloc::format!("integrare/cyber-universe/raspunsuri/{}.txt", id);
+        assert!(take(&[R, &remote, &local], "raspuns din hub") == 0, "test: {} lipseste din hub", remote);
+        alloc::string::String::from_utf8(fs::read_all(&local).unwrap_or_default()).unwrap_or_default()
+    };
+    let a5 = answer("K-5");
+    assert!(a5.contains("== raspuns Cyber Universe OS: K-5 ==") && a5.contains("comanda: uptime") && a5.contains("-- gata in "), "test: K-5: {}", a5);
+    let a6 = answer("K-6");
+    assert!(a6.contains("comanda: mem") && (a6.contains("memorie") || a6.contains("libera")), "test: K-6: {}", a6);
+    let a2 = answer("K-2");
+    assert!(a2.contains("REFUZAT: gpu lant scrie in placa video") && a2.contains("-- nerulat"), "test: K-2: {}", a2);
+    assert!(run(good, &["--raspuns", "/etc/raspuns-K-5.txt", "K-../x"], "raspuns cu ID gresit") == 1);
+    info!("test: hub asculta OK");
     // P6-61 step 4 (F8): commits on a branch `os/...` (made from main), never on main; folders listed.
     let push = |args: &[&str], what: &str| {
         let mut all = alloc::vec!["gh-trimite"];

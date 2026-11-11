@@ -6,6 +6,7 @@ pub mod e1000;
 pub mod gpu;
 pub mod gpu_i6;
 pub mod gpu_i7;
+pub mod gpu_rec; // P6-74 (C-103): `gpu recupereaza`
 pub mod gpu_i8;
 pub mod gpu_golden;
 pub mod gpu_i10;

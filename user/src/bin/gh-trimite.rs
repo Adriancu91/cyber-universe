@@ -55,10 +55,33 @@ fn main() -> i64 {
     if args.first() == Some(&"--rapoarte") {
         return reports(&config(), args.get(1).copied().unwrap_or(REPORTS_DIR));
     }
+    // C-104 (P6-73): `--raspuns <fisier> K-<nr>` = the answer to one hub command, in the hub (`hub =` from
+    // /etc/github.conf), always at `integrare/cyber-universe/raspunsuri/K-<nr>.txt`; no other path is possible here.
+    if args.first() == Some(&"--raspuns") {
+        let (Some(file), Some(id)) = (args.get(1).copied(), args.get(2).copied()) else {
+            println!("folosire: gh-trimite --raspuns <fisier> K-<nr>");
+            return 1;
+        };
+        if !valid_order_id(id) {
+            println!("gh-trimite: ID invalid: {} (forma: K-<cifre>)", id);
+            return 1;
+        }
+        let c = config();
+        let dest = format!("{}{}.txt", ANSWERS_DIR, id);
+        let message = format!("cyber-universe: raspunsul OS la {} (hub asculta)", id);
+        return match run(&c, file, &c.hub, &dest, &message, None) {
+            Ok(()) => 0,
+            Err(e) => {
+                println!("gh-trimite: {}", e);
+                1
+            }
+        };
+    }
     if args.len() < 3 {
         println!("folosire: gh-trimite <fisier> <proprietar/depozit> <cale in depozit> [mesaj]");
         println!("          gh-trimite --ramura os/<nume> <fisier> <proprietar/depozit> <cale>   (commit pe ramura os/..., nu pe main)");
         println!("          gh-trimite --rapoarte [dosar]   (rapoartele noi din {} -> hub, rezultate/os-automat/<data>/)", REPORTS_DIR);
+        println!("          gh-trimite --raspuns <fisier> K-<nr>   (raspunsul la o comanda din hub -> {}K-<nr>.txt)", ANSWERS_DIR);
         println!("  exemplu: gh-trimite /disk/note.txt Adriancu91/cyber-universe note/azi.txt   (token in /usb/github.token)");
         return 1;
     }
@@ -70,6 +93,14 @@ fn main() -> i64 {
             1
         }
     }
+}
+
+/// C-104: where the answers to the hub commands go (our folder of the hub).
+const ANSWERS_DIR: &str = "integrare/cyber-universe/raspunsuri/";
+
+/// `K-<1..6 digits>`, the form of the hub command IDs (as `hubcmd::parse` in the kernel).
+fn valid_order_id(id: &str) -> bool {
+    id.strip_prefix("K-").is_some_and(|n| !n.is_empty() && n.len() <= 6 && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Where `--rapoarte` looks by default: the reports written on the stick (`raport`, `gpu lant`, updates).

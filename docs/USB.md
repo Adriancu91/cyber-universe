@@ -116,6 +116,19 @@ Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet 
     (`rezultate/os-automat/<data>/hub-….txt`). `gpu lant`, `--gpu`, `--scrie`, `reboot`, ștergerile și actualizările sunt
     refuzate: acelea le pornești doar tu, la tastatură, cu „DA”. `hub ruleaza --arata` doar arată ce ar rula.
     Ca să ruleze singur la fiecare pornire: pe stick, în dosarul `hub`, un fișier gol `la-pornire`. Are nevoie de `github.token`.
+15. **„Agentul de comenzi” — `hub asculta` (P6-73, comanda C-104):** la fel ca `hub ruleaza`, dar în buclă: la fiecare
+    2 minute (sau `hub asculta --la 5` = la 5 minute) se uită în hub, rulează comenzile **noi** de pe lista albă (fiecare o
+    singură dată) și pune răspunsul fiecăreia într-un fișier separat în hub: `integrare/cyber-universe/raspunsuri/K-<nr>.txt`
+    (o copie rămâne pe stick în `hub/raspunsuri/`). **Esc** oprește bucla. Lista albă e aceeași ca la punctul 14 —
+    `gpu lant`, `--scrie`, „DA”, `reboot`, ștergerile rămân **refuzate** (doar tu, la tastatură).
+    Ca să pornească singur: pe stick, în dosarul `hub`, un fișier `asculta` (gol = la 2 minute, sau cu un număr, de ex. `5`);
+    atunci bucla merge în fundal și o oprești cu `hub opreste`.
+    **Tokenul (o singură dată, 5 minute, pe Windows):** github.com → poza ta → *Settings* → *Developer settings* →
+    *Personal access tokens* → *Fine-grained tokens* → *Generate new token*. Nume: `cyber-os-hub`; *Expiration*: 90 de zile;
+    *Repository access*: **Only select repositories** → **doar `Cyber-hub`**; *Permissions* → *Repository permissions* →
+    *Contents*: **Read and write** (nimic altceva). *Generate*, copiezi tokenul și îl pui ca singur rând în fișierul
+    `github.token` din rădăcina stick-ului. **Tokenul stă DOAR pe stick** — nu-l pui niciodată în depozit, în hub sau în chat
+    (OS-ul nu-l afișează și îl ascunde din rapoarte).
 
 ## Pentru Claude (tehnic)
 - Varianta B merge pentru că firmware-ul UEFI caută `EFI/BOOT/BOOTX64.EFI` pe orice partiție FAT32, iar Limine își citește

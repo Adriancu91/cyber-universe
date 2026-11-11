@@ -91,9 +91,13 @@ echo "[after-gpu] ok: gpu_i6.rs scrie doar în build-ul gpu-scrie, doar Command 
 # P6-42 (C-55): kernel/src/drivers/gpu_tur.rs (`gpu tur`, `gpu lant`). Every item or match arm that can write (the `hw`
 # adapters, Bus Master, the falcon load, the write permit) must carry `#[cfg(feature = "gpu-scrie")]` (or be a test-only
 # SIMULARE item, `test-gpu-sim`); what is left after removing those items has no write at all.
+# P6-74 (C-103): kernel/src/drivers/gpu_rec.rs (`gpu recupereaza`) follows the same rule.
 TUR="$ROOT/kernel/src/drivers/gpu_tur.rs"
-python3 - "$TUR" <<'PY' || exit 1
-import re, sys
+REC="$ROOT/kernel/src/drivers/gpu_rec.rs"
+for F in "$TUR" "$REC"; do
+python3 - "$F" <<'PY' || exit 1
+import re, sys, os
+name = os.path.basename(sys.argv[1])
 src = open(sys.argv[1]).read().splitlines()
 out, i = [], 0
 while i < len(src):
@@ -114,7 +118,11 @@ while i < len(src):
 body = "\n".join(x for x in out if not x.strip().startswith("//"))
 bad = [m.group(0) for m in re.finditer(r'write_volatile|write32|write_bytes|WRITABLE|as \*mut|HardwareWritePermit::new|hw::|set_bus_master|restore_command|i6_falcon|dma_put', body)]
 if bad:
-    print("[after-gpu] EȘUAT: scriere posibilă în gpu_tur.rs în afara build-ului gpu-scrie:", sorted(set(bad)))
+    print(f"[after-gpu] EȘUAT: scriere posibilă în {name} în afara build-ului gpu-scrie:", sorted(set(bad)))
     sys.exit(1)
-print("[after-gpu] ok: gpu_tur.rs scrie doar în build-ul gpu-scrie (turul și lanțul doar-citire nu au nicio scriere)")
+if name == "gpu_tur.rs":
+    print("[after-gpu] ok: gpu_tur.rs scrie doar în build-ul gpu-scrie (turul și lanțul doar-citire nu au nicio scriere)")
+else:
+    print(f"[after-gpu] ok: {name} scrie doar în build-ul gpu-scrie (C-103: fără gpu-scrie nicio scriere)")
 PY
+done

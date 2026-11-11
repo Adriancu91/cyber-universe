@@ -160,6 +160,16 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
     `--eroare` oprit la I6, Bus Master tot înapoi; `--doar-citire` 0 scrieri; `tools/after-gpu-tur.sh` verifică jurnalele de pe disc),
     `gpu-scrie` (`gpu lant` → „nicio placa NVIDIA”), `tools/after-gpu.sh` (în `gpu_tur.rs` tot ce poate scrie e doar în build-ul `gpu-scrie`).
     **Nimic nu a rulat pe placa reală.**
+- **`gpu recupereaza` (P6-74, comanda C-103, fișierul `gpu_rec.rs`):** după un lanț oprit (ex. la I8), placa rămâne cu WPR2 ridicat și
+  cere pornire rece. Calea publică a driverului NVIDIA 570.144 (MIT) și a nouveau: programul semnat `booter_unload-570.144.bin` (de pe
+  stick, al 4-lea fișier I4) pe SEC2 cu cutiile (0xFF, 0xFF) — `falcon::booter_unload_dma` din cyber-gpu `bcc314e` (reset GSP, reset SEC2,
+  Booter Unload, cutia 0, WPR2 recitit 0). OS-ul: imaginea în RAM (semnătura aleasă după siguranța SEC2, zonă proprie rezervată, recitită),
+  cere `DA`, Bus Master pornit doar în jurul programului și pus la loc, apoi pregătirea I6 din nou (doar citire): dacă trece, `gpu lant`
+  merge fără repornire. Doar în build-ul `gpu-scrie`; refuzat de bucla automată și de hub. `gpu identifica` arată și rândul
+  „reset (C-103, doar citire)”: FLR, `No_Soft_Reset`, starea D (`gpu_pci::caps::reset_capabilities`, 0 scrieri).
+  - Test: `gpu-rec` (`gpu recupereaza --sim`: fără `DA` oprit; cu `DA` modelul după un lanț oprit la I8 → WPR2 coborât, I6 trece din nou,
+    0 scrieri în registrele WPR2; `--eroare` = WPR2 rămâne ridicat → NU TRECE; fără `gpu-scrie` → refuz), `tools/after-gpu.sh`
+    (în `gpu_rec.rs` tot ce poate scrie e doar în build-ul `gpu-scrie`), `gpu-sim` (rândul de reset). **Pe placă: neîncercat.**
 - **Primele scrieri în placă: `gpu pregatire-i6` și `gpu i6 --scrie` (P6-40, comanda C-52, fișierul `gpu_i6.rs`):** Cyber-GPU fixat pe
   `9597863` (≥ `d879742`; față de `aee06c4` doar adăugări: `fuse`, `i6_check`, `i6_log`, `gpu_pci::bus_master`, `Journal::with_sink`).
   - `gpu pregatire-i6` = pasul 1 al ferestrei I6, **doar citire**: FWSEC în VBIOS, siguranța FWSEC → semnătura, VRAM, WPR2, regiunea FRTS,

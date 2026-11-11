@@ -159,6 +159,8 @@ fn dispatch(line: &str) -> bool {
             _ => out!("folosire: test tot   (autotestul OS-ului pe calculatorul acesta, raport PASS/FAIL pe stick)\n"),
         },
         "hub" if args.first() == Some(&"ruleaza") => hubcmd::command(&args[1..]), // C-87 item 2 (P6-64)
+        "hub" if args.first() == Some(&"asculta") => hubcmd::listen_command(&args[1..]), // C-104 (P6-73)
+        "hub" if args.first() == Some(&"opreste") && args.len() == 1 => hubcmd::stop_command(),
         "hub" => {
             // C-84 item 2 (P6-61): Adrian's commands, a project's state, the decisions — read from the Cyber Hub.
             let mut all = alloc::vec!["gh-ia", "--hub"];
@@ -245,6 +247,7 @@ fn help() {
     out!("  gpu [identifica|plan]  placile video (nivel 0: doar citire; NVIDIA: registrele de identitate)\n");
     out!("  gpu pregatire-i6 pregatirea pasului I6 (doar citire); gpu i6 --scrie = prima scriere (doar stick-ul de test)\n");
     out!("  gpu tur          turul de citire (doar citire, un rand `fapt` pe fapt); gpu lant = pasii ferestrei in lant (cere DA)\n");
+    out!("  gpu recupereaza  dupa un lant oprit: Booter Unload coboara WPR2 fara repornire (cere DA; doar stick-ul de test)\n");
     out!("  hw               raport hardware pe o pagina (pentru o singura poza)\n");
     out!("  hw lista [--detalii]  tot hardware-ul: procesor, memorie, PCI, Wi-Fi, USB, ACPI (doar citire)\n");
     out!("  raport           scrie pe stick /usb/raport/<data>-<nr>.txt: hw, lspci, net, jurnalele (fara chei)\n");
@@ -252,6 +255,8 @@ fn help() {
     out!("  test tot         autotestul OS-ului (procesor, ceas, stick, retea, placa video): PASS/FAIL + raport pe stick\n");
     out!("  hub [comenzi|stare|decizii] [proiect]  citeste din Cyber Hub comenzile lui Adrian, starea, deciziile\n");
     out!("  hub ruleaza [--arata]  ruleaza comenzile lui Adrian din hub (os-comenzi.md), doar din lista alba; raport -> hub\n");
+    out!("  hub asculta [--la N]   la fiecare N minute (implicit 2) ia si ruleaza comenzile noi din hub; Esc opreste\n");
+    out!("  hub opreste      opreste bucla `hub asculta` pornita la pornire (/usb/hub/asculta)\n");
     out!("  trimite          rapoartele noi din /usb/raport -> hub (rezultate/os-automat/<data>/), doar cu /usb/github.token\n");
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
     out!("  log --avertismente [n]  doar avertismentele si erorile; log --sumar = cate randuri pe nivel si pe modul\n");
@@ -652,12 +657,13 @@ fn gpu(args: &[&str]) {
             }
         }
         Some("lant") => lant(&args[1..]),
+        Some("recupereaza") => recupereaza(&args[1..]),
         Some("plan") => {
             for l in crate::drivers::gpu::PLAN {
                 out!("{}\n", l);
             }
         }
-        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios [--detalii] | gpu fwsec | gpu firmware | gpu pregatire-i6 | gpu i6 --scrie | gpu tur | gpu lant | gpu plan)\n", other),
+        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios [--detalii] | gpu fwsec | gpu firmware | gpu pregatire-i6 | gpu i6 --scrie | gpu tur | gpu lant | gpu recupereaza | gpu plan)\n", other),
     }
 }
 
@@ -698,6 +704,48 @@ fn lant(rest: &[&str]) {
         out!("{}\n", l);
     }
     // C-84 item 1: the chain's journal (/usb/raport/gpu-jurnal-NNN.txt) goes to the hub when there is a token.
+    raport::send_to_hub();
+}
+
+/// P6-74 (C-103): `gpu recupereaza [--sim] [--eroare]` — Booter Unload brings WPR2 down without a restart, so the chain
+/// can run again in the same power-on. Asks for `DA` before anything; refused by the automatic loop and the hub.
+fn recupereaza(rest: &[&str]) {
+    if let Some(bad) = rest.iter().find(|a| !matches!(**a, "--sim" | "--eroare")) {
+        out!("gpu recupereaza: optiune necunoscuta: {} (folosire: gpu recupereaza)\n", bad);
+        return;
+    }
+    let sim = rest.contains(&"--sim");
+    if sim && !cfg!(feature = "test-gpu-sim") {
+        out!("gpu: --sim exista doar in build-ul de test (modelul gpu-sim nu intra in sistemul pornit de pe stick)\n");
+        return;
+    }
+    if !sim && !cfg!(feature = "gpu-scrie") {
+        for l in crate::drivers::gpu_rec::recover() {
+            out!("{}\n", l);
+        }
+        return;
+    }
+    for l in crate::drivers::gpu::RECUPEREAZA_WARNING {
+        out!("{}\n", l);
+    }
+    out!("Scrie DA (litere mari) si Enter ca sa continui; orice altceva opreste: ");
+    let Some(answer) = read_line() else { return };
+    if answer.trim() != "DA" {
+        out!("gpu recupereaza: oprit, nimic scris in placa\n");
+        crate::info!("gpu: recupereaza: oprit la confirmare (nimic scris)");
+        return;
+    }
+    crate::info!("gpu: recupereaza: confirmat cu DA{}", if sim { " (SIMULARE)" } else { "" });
+    #[cfg(feature = "test-gpu-sim")]
+    if sim {
+        for l in crate::drivers::gpu_rec::recover_sim(rest.contains(&"--eroare")) {
+            out!("{}\n", l);
+        }
+        return;
+    }
+    for l in crate::drivers::gpu_rec::recover() {
+        out!("{}\n", l);
+    }
     raport::send_to_hub();
 }
 
