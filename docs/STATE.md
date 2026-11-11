@@ -3,6 +3,12 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-11 ~13:00–13:50 UTC (15:00–15:50 ora României) — sesiune programată, fără Adrian, în paralel cu sesiunea care a închis P6-75 — **P6-76 GATA (C-102 completare, după C-107).**
+  - cyber-gpu (sesiunea 87): jurnalul `os-280` → tot `0x59`; comparația cu patru drivere (RM 570.144, tinygrad, nouveau r570, nova-core) → singura diferență `bDmemStack` (0 la noi, 1 la toți) → `b3ac503` pune 1 (DEDUS, neprobat). Legat vârful `2bbd0b3` (include și rezumatul NOCAT `a669387`).
+  - `env-check --install` OK; `tools/build.sh` OK; `tools/test.sh gpu gpu-sim gpu-i6 gpu-rec gpu-scrie gpu-ro gpu-tur kronos-gpu boot shell` → 10/10 TRECUT; după rebase peste P6-75: `gpu gpu-sim update ghpush` → TRECUT.
+  - **Numerotare:** rularea CI a P6-75 (nr. 282) a fost anulată de push-ul meu → **`os-282` NU există**. CI run 43027653873 (nr. 283) verde → **Release `os-283`** (13:44 UTC) = P6-75 (C-105, dezactivat) + `bDmemStack = 1`. Adrian folosește **os-283**.
+  - Hub: clona veche din `/home/claude/cyber-hub` avea `main` divergent → vechiul `main` local pe ramura locală `vechi-local-backup`, `main` din `origin/main`; nimic forțat.
+  - **Următoarea:** jurnalul testului cu `os-283` în hub `rezultate/` → reușită = `rpc_result … = 0x00000000` și începe I8e; eșec = tot `0x59` → rezervele din nota cyber-gpu (`bIsPassthru`, `CLOCK_BOOST`, `RMDevidCheckIgnore`). Coada: P6-10/P6-12; P3-10 Adrian; P5-07 BLOCAT.
 - 2026-11-11 ~12:40–13:40 UTC (14:40–15:40 ora României) — sesiune programată, fără Adrian, **în paralel cu sesiunea OS care face P6-76** — **P6-75 GATA (C-105, partea OS, DEZACTIVAT implicit).**
   - La pornire: sesiunea de 13:30 tocmai închidea P6-72/73/74 (CI 43018709867 verde → `os-281`); am așteptat până și-a scris starea, apoi am luat **C-105** (singura comandă `nou` pentru noi; C-103/C-104 gata).
   - **P6-75:** `actualizeaza --versiune os-N` (Release exact, `/releases/tags/os-N`; inexistent → 404, nimic schimbat). `kernel/src/shell/ciclu.rs`: comanda din hub `ciclu-test os-N` → actualizare → repornire (încercare + confirmare P6-50) → `gpu recupereaza` + `gpu lant` **fără DA** → raport + răspuns `raspunsuri/K-N.txt` → ascultă din nou; fazele în `/usb/hub/ciclu.txt` (`actualizare` → `test` → `test-pornit`); eșecul ciclului (actualizare picată, versiune neconfirmată, sistem căzut în test) → `revenire::return_to_old` + raport. Rezultatul lanțului (trece / oprit la Ix) = rezultat, nu eșec.
