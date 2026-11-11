@@ -3,6 +3,10 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-11 ~13:45–15:05 UTC (aceeași sesiune ca mai jos, partea a doua) — **P6-77 în lucru (cod gata, așteaptă CI).**
+  - cyber-gpu `d3c5351` (C-102 continuare 2: conținutul celor 2 mesaje PMU `UCODE_LIBOS_PRINT` scris în jurnal ca atare, doar citiri) legat: commit `61a308d`; 10/10 scenarii GPU locale TRECUT. (Cealaltă sesiune OS preluase și ea P6-77 la 15:46 ora RO — notat în hub că e deja împins.)
+  - **CI 284:** toate trei părțile atârnă la pasul „Unelte sistem” (`apt-get install` pe mașina GitHub) — prima rulare oprită la 60 min (14:57 UTC), re-rulată (run 43033732360), la 15:05 tot acolo. Problemă externă (serverele de pachete), nu codul.
+  - **Pentru sesiunea următoare:** verifică run 43033732360; verde → Release `os-284`, bifează P6-77. Dacă tot atârnă/oprit → re-rulează (`gh api -X POST repos/Adriancu91/cyber-universe/actions/runs/<id>/rerun`); la a doua oprire, propune în pasul apt `timeout-minutes` + `-o Acquire::Retries=3` ca să pice repede în loc de 60 min. `os-283` are deja reparația principală (`bDmemStack`); Adrian e plecat până joi 13 nov (C-106), deci nu e grabă.
 - 2026-11-11 ~13:00–13:50 UTC (15:00–15:50 ora României) — sesiune programată, fără Adrian, în paralel cu sesiunea care a închis P6-75 — **P6-76 GATA (C-102 completare, după C-107).**
   - cyber-gpu (sesiunea 87): jurnalul `os-280` → tot `0x59`; comparația cu patru drivere (RM 570.144, tinygrad, nouveau r570, nova-core) → singura diferență `bDmemStack` (0 la noi, 1 la toți) → `b3ac503` pune 1 (DEDUS, neprobat). Legat vârful `2bbd0b3` (include și rezumatul NOCAT `a669387`).
   - `env-check --install` OK; `tools/build.sh` OK; `tools/test.sh gpu gpu-sim gpu-i6 gpu-rec gpu-scrie gpu-ro gpu-tur kronos-gpu boot shell` → 10/10 TRECUT; după rebase peste P6-75: `gpu gpu-sim update ghpush` → TRECUT.
