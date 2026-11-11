@@ -3,6 +3,12 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-11 ~18:40–19:05 UTC (20:40–21:05 ora RO) — sesiune programată (a doua, în paralel cu sesiunea de 17:40 care a închis P6-79) — **nicio sarcină nouă; reparația CI copiată în `stress.yml`.**
+  - `git clone`/`pull` OK pentru ambele depozite; `tools/env-check.sh --install` OK; build + `boot fara-pit smp shell auto-ceas` → 5/5 TRECUT local pe `c0e4a06`.
+  - CI 290 verde → `os-290` (P6-79 bifat de cealaltă sesiune; bifa mea a adăugat doar „Gata: … os-290” pe rândul sarcinii).
+  - `.github/workflows/stress.yml`: pasul apt are acum aceeași reparație ca `ci.yml` (limită 25 min, `apt-get update` 150 s, oglinda kernel.org). Commit `255be49` → CI 291 pornit 18:55 UTC (dacă iese verde apare `os-291` = **același cod** ca `os-290`, doar fișierul CI diferă).
+  - P6-12 (diagnostic `map_mmio`) lăsat intenționat după testul GPU de joi, ca Release-ul de test să nu se schimbe. Coada rămâne: P6-10/P6-12 după teste; P3-10 Adrian; P5-07 BLOCAT.
+  - **Pentru sesiunea următoare:** verifică CI 291 (roșu → reparat întâi); apoi jurnalele de joi (C-108) și poza de pe ASUS cu `os-290` (C-109).
 - 2026-11-11 ~15:40–18:30 UTC (17:40–20:30 ora RO) — sesiune programată, fără Adrian — **CI reparat; P6-77 GATA (`os-288`); P6-78 GATA (C-108, `os-289`); P6-79 (C-109) cod gata, CI rulează.**
   - **CI atârna din cauza serverelor de pachete Ubuntu** (`azure.archive.ubuntu.com`, `archive.ubuntu.com` nu răspund; în cloud la fel: `resolve_no_records`). Pasul „Unelte sistem”: limită 25 min, `apt-get update` limită 150 s, la eșec doar sursele Ubuntu + `/etc/apt/apt-mirrors.txt` = `https://mirrors.edge.kernel.org/ubuntu/` (mașina GitHub folosește `mirror+file:`). `tools/env-check.sh --install` are aceeași rezervă. `.github/workflows/stress.yml` are încă pasul apt vechi.
   - **P6-77:** CI verde (run 43058582536) → `os-288`.
