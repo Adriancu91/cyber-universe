@@ -9,6 +9,8 @@ use crate::drivers::keyboard::{self, Key, push_key};
 use crate::mem::{frame, map::phys_to_virt};
 
 static FIRST_KEY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+/// Reports received from USB mice since start-up (the tests check that mouse events really came over USB).
+pub static MOUSE_REPORTS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 pub struct Keyboard {
     /// A mouse instead of a keyboard (same protocol family, different reports).
@@ -67,17 +69,44 @@ fn key_for(usage: u8, shift: bool, ctrl: bool, altgr: bool) -> Option<Key> {
 }
 
 impl Keyboard {
-    /// Configures `dev` (a boot-protocol keyboard or mouse) and starts listening for reports.
-    pub fn start(x: &mut Xhci, dev: &UsbDevice) -> Option<Keyboard> {
+    /// Configures every HID boot interface of `dev` (a keyboard, a mouse, or both on one wireless receiver; P6-80) and
+    /// starts listening for their reports: SET_CONFIGURATION once, SET_PROTOCOL(boot) on each interface, one Configure
+    /// Endpoint with all their interrupt endpoints.
+    pub fn start_all(x: &mut Xhci, dev: &UsbDevice) -> Option<alloc::vec::Vec<Keyboard>> {
+        let hids: alloc::vec::Vec<_> = dev.hid.iter().flatten().copied().collect();
+        if hids.is_empty() {
+            return None;
+        }
         x.control_out(dev.slot, [0x00, 9, dev.config, 0, 0, 0, 0, 0]).ok()?; // SET_CONFIGURATION
-        x.control_out(dev.slot, [0x21, 0x0B, 0, 0, dev.interface, 0, 0, 0]).ok()?; // SET_PROTOCOL(boot)
-        let ep = dev.endpoint(super::xhci::INTERRUPT, true)?;
-        let (dci, ring) = x.configure_endpoints(dev, &[ep])?.pop()?;
-        let buffer = frame::alloc_frame()?;
-        let mouse = dev.class == (0x03, 0x01, 0x02);
-        let mut k = Keyboard { mouse, slot: dev.slot, dci, ring, buffer, previous: [0; 8] };
-        x.queue(k.slot, k.dci, &mut k.ring, k.buffer, 8);
-        Some(k)
+        for &(num, _, _) in &hids {
+            x.control_out(dev.slot, [0x21, 0x0B, 0, 0, num, 0, 0, 0]).ok()?; // SET_PROTOCOL(boot)
+        }
+        let eps: alloc::vec::Vec<_> = hids.iter().map(|h| h.2).collect();
+        let rings = x.configure_endpoints(dev, &eps)?;
+        let mut out = alloc::vec::Vec::new();
+        for ((_, protocol, _), (dci, ring)) in hids.into_iter().zip(rings) {
+            let buffer = frame::alloc_frame()?;
+            let mut k = Keyboard { mouse: protocol == 2, slot: dev.slot, dci, ring, buffer, previous: [0; 8] };
+            x.queue(k.slot, k.dci, &mut k.ring, k.buffer, 8);
+            out.push(k);
+        }
+        Some(out)
+    }
+
+    /// The device slot this driver listens to (to stop it when the device is unplugged).
+    pub fn slot(&self) -> u8 {
+        self.slot
+    }
+
+    /// A mouse (otherwise a keyboard).
+    pub fn is_mouse(&self) -> bool {
+        self.mouse
+    }
+
+    /// Frees the transfer ring and the report buffer after the device was unplugged (its slot is already disabled).
+    pub fn release(self) {
+        frame::free_frame(self.ring.base);
+        frame::free_frame(self.buffer);
     }
 
     /// Handles every finished report: new keys go to the keyboard queue; the next report is queued.
@@ -91,6 +120,7 @@ impl Keyboard {
         // SAFETY: the report buffer frame belongs to this driver; the controller finished writing it.
         let report: [u8; 8] = unsafe { *(phys_to_virt(self.buffer) as *const [u8; 8]) };
         if self.mouse {
+            MOUSE_REPORTS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             let e = crate::input::MouseEvent { dx: report[1] as i8 as i16, dy: report[2] as i8 as i16, buttons: report[0] & 7 };
             crate::input::push_mouse(e);
             x.queue(self.slot, self.dci, &mut self.ring, self.buffer, 8);

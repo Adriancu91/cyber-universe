@@ -19,6 +19,7 @@ const TRB_ENABLE_SLOT: u32 = 9;
 const TRB_CONFIGURE_ENDPOINT: u32 = 12;
 const TRB_ADDRESS_DEVICE: u32 = 11;
 const TRB_EVALUATE_CONTEXT: u32 = 13;
+const TRB_DISABLE_SLOT: u32 = 10;
 const TRB_RESET_ENDPOINT: u32 = 14;
 const TRB_SET_TR_DEQUEUE: u32 = 16;
 const EVT_TRANSFER: u32 = 32;
@@ -197,6 +198,20 @@ pub struct UsbDevice {
     /// For a hub, after `explore_hub`: its number of ports and TT think time (slot context fields); 0 otherwise.
     pub hub_ports: u8,
     pub hub_ttt: u8,
+    /// HID "boot" interfaces anywhere in the configuration (P6-80): keyboard (protocol 1) or mouse (protocol 2), with
+    /// their interrupt IN endpoint. A wireless keyboard + mouse receiver has both.
+    pub hid: [Option<HidInterface>; 2],
+}
+
+/// A HID boot interface: (interface number, protocol 1 = keyboard / 2 = mouse, interrupt IN endpoint).
+pub type HidInterface = (u8, u8, (u8, u8, u16, u8));
+
+/// What changed on a root port since the last look (P6-80).
+pub enum PortChange {
+    /// Devices found on a newly connected port (the device, and the ones behind it if it is a hub).
+    Connected(Vec<UsbDevice>),
+    /// Slots of the devices that were on a port that is now empty.
+    Disconnected(Vec<u8>),
 }
 
 /// Endpoint transfer types (USB attributes bits 0-1).
@@ -568,12 +583,17 @@ impl Xhci {
         let (mut interface, mut endpoints, mut found, mut in_first) = (0, [None; 4], 0, false);
         let mut bursts = [0u8; 4];
         let mut seen_interface = false;
+        let mut hid: [Option<HidInterface>; 2] = [None; 2];
+        // The HID boot interface being read (number, protocol) until its interrupt IN endpoint is found.
+        let mut hid_open: Option<(u8, u8)> = None;
         let mut i = 0;
         while i + 2 <= cfg.len() && cfg[i] >= 2 {
             match cfg[i + 1] {
                 4 if i + 9 <= cfg.len() => {
                     // Interface descriptor: only the first one is used for now.
                     in_first = !seen_interface;
+                    let (c, sc, p) = (cfg[i + 5], cfg[i + 6], cfg[i + 7]);
+                    hid_open = if c == 0x03 && sc == 0x01 && (p == 1 || p == 2) { Some((cfg[i + 2], p)) } else { None };
                     if !seen_interface {
                         seen_interface = true;
                         interface = cfg[i + 2];
@@ -582,11 +602,22 @@ impl Xhci {
                         }
                     }
                 }
-                5 if i + 7 <= cfg.len() && in_first && found < endpoints.len() => {
+                5 if i + 7 <= cfg.len() => {
                     // Endpoint descriptor: address, attributes, max packet size, interval.
                     let mps = u16::from_le_bytes([cfg[i + 4], cfg[i + 5]]) & 0x7FF;
-                    endpoints[found] = Some((cfg[i + 2], cfg[i + 3], mps, cfg[i + 6]));
-                    found += 1;
+                    let ep = (cfg[i + 2], cfg[i + 3], mps, cfg[i + 6]);
+                    if in_first && found < endpoints.len() {
+                        endpoints[found] = Some(ep);
+                        found += 1;
+                    }
+                    if let Some((num, protocol)) = hid_open {
+                        if ep.1 & 3 == INTERRUPT && ep.0 & 0x80 != 0 {
+                            if let Some(free) = hid.iter_mut().find(|h| h.is_none()) {
+                                *free = Some((num, protocol, ep));
+                            }
+                            hid_open = None;
+                        }
+                    }
                 }
                 0x30 if i + 3 <= cfg.len() && in_first && found > 0 => {
                     // SuperSpeed endpoint companion of the endpoint just read: bMaxBurst.
@@ -598,6 +629,13 @@ impl Xhci {
         }
         frame::free_frame(buf);
         frame::free_frame(input);
+        // A keyboard or mouse whose first interface is something else: show it as what it is (P6-80).
+        if let Some((num, protocol, _)) = hid[0] {
+            if class != (0x03, 0x01, protocol) && (class.0 == 0 || class.0 == 0x03 || class.0 == 0xFF) {
+                crate::info!("usb: port {}: interfata HID boot {} ({}) folosita", at, num, if protocol == 1 { "tastatura" } else { "mouse" });
+                class = (0x03, 0x01, protocol);
+            }
+        }
         crate::info!(
             "usb: port {}: slot {}, viteza {}, pachet maxim EP0 {}, configuratia {} ({} octeti), endpoint-uri {}",
             at, slot, speed, if speed < 3 && mps0 != 0 { mps0 } else { max_packet }, config, total,
@@ -606,7 +644,7 @@ impl Xhci {
         );
         Some(UsbDevice {
             slot, port, speed, vendor, product, class, interface, config, endpoints, bursts,
-            ctrl: self.index, route, tier, tt, hub_ports: 0, hub_ttt: 0,
+            ctrl: self.index, route, tier, tt, hub_ports: 0, hub_ttt: 0, hid,
         })
     }
 
@@ -623,6 +661,100 @@ impl Xhci {
         // SAFETY: the buffer frame belongs to the driver; 4 bytes were written.
         let b = unsafe { core::slice::from_raw_parts(phys_to_virt(buf), 4) };
         Some((u16::from_le_bytes([b[0], b[1]]), u16::from_le_bytes([b[2], b[3]])))
+    }
+
+    /// Looks at every root port for a connect status change (P6-80, xHCI 1.2 §5.4.8): a new device gets an address (and,
+    /// for a hub, its devices too); the devices of a port that became empty lose their slot. Ports whose change bit is
+    /// set but whose state matches what is known (a device found at start-up) are only acknowledged.
+    pub fn port_changes(&mut self) -> Vec<PortChange> {
+        let mut out = Vec::new();
+        for port in 1..=self.ports {
+            let reg = self.port_reg(port);
+            let sc = rd(reg);
+            if sc & (1 << 17) == 0 {
+                continue;
+            }
+            // Acknowledge: write 1 only to the change bit (bit 1 would disable the port), keep the port powered.
+            wr(reg, 1 << 9 | 1 << 17);
+            let known = self.devices.iter().any(|d| d.port == port);
+            if sc & 1 != 0 && !known {
+                crate::sched::sleep_ms(100); // connection debounce (USB 2.0 §7.1.7.3)
+                if rd(reg) & 1 == 0 {
+                    continue;
+                }
+                let found = self.attach_all(port);
+                if !found.is_empty() {
+                    out.push(PortChange::Connected(found));
+                }
+            } else if sc & 1 == 0 && known {
+                let slots: Vec<u8> = self.devices.iter().filter(|d| d.port == port).map(|d| d.slot).collect();
+                self.devices.retain(|d| d.port != port);
+                for &slot in &slots {
+                    self.release_slot(slot);
+                }
+                crate::info!(
+                    "usb: port {}{}: deconectat (slot {} eliberat)",
+                    if self.index == 0 { alloc::string::String::new() } else { alloc::format!("c{}/", self.index + 1) },
+                    port,
+                    slots.iter().map(|s| alloc::format!("{}", s)).collect::<Vec<_>>().join(", ")
+                );
+                out.push(PortChange::Disconnected(slots));
+            }
+        }
+        out
+    }
+
+    /// Gives an address to the device on root port `port` and, if it is a hub, to the devices behind it; logs them
+    /// and adds them to `devices`.
+    fn attach_all(&mut self, port: u8) -> Vec<UsbDevice> {
+        let Some(first) = self.attach(port) else {
+            crate::warn!("usb: port {}: conectat, dar dispozitivul nu raspunde", port);
+            return Vec::new();
+        };
+        let mut found = alloc::vec![first];
+        let mut i = 0;
+        while i < found.len() {
+            if found[i].class.0 == 0x09 {
+                let mut hub = found[i];
+                let behind = self.explore_hub(&mut hub);
+                found[i] = hub;
+                found.extend(behind);
+            }
+            i += 1;
+        }
+        for d in &found {
+            crate::info!(
+                "usb: port {}: conectat {:04x}:{:04x} {} (clasa {:02x}:{:02x}:{:02x}, viteza {})",
+                d.location(), d.vendor, d.product, d.kind(), d.class.0, d.class.1, d.class.2, d.speed
+            );
+        }
+        self.devices.extend(found.iter().copied());
+        found
+    }
+
+    /// Frees `slot` after its device was unplugged: Disable Slot, its endpoint-0 ring, its device context and any
+    /// transfer events still kept for it.
+    fn release_slot(&mut self, slot: u8) {
+        if let Err(code) = self.command([0, 0, 0, TRB_DISABLE_SLOT << 10 | (slot as u32) << 24]) {
+            crate::warn!("usb: Disable Slot {} a esuat (cod {}: {})", slot, code, cc_name(code));
+        }
+        let keep: Vec<Transfer> = self.pending[..self.pending_len].iter().copied().filter(|t| t.0 != slot).collect();
+        self.pending_len = keep.len();
+        self.pending[..keep.len()].copy_from_slice(&keep);
+        if let Some(k) = self.ep0.iter().position(|(s, _)| *s == slot) {
+            let (_, ring) = self.ep0.remove(k);
+            frame::free_frame(ring.base);
+        }
+        // SAFETY: DCBAA has 256 entries of 8 bytes in its frame; slot < 256. The slot is disabled, so the controller no
+        // longer uses its device context.
+        unsafe {
+            let entry = (phys_to_virt(self.dcbaa) as *mut u64).add(slot as usize);
+            let output = entry.read_volatile();
+            entry.write_volatile(0);
+            if output != 0 {
+                frame::free_frame(output);
+            }
+        }
     }
 
     /// Turns `hub` into a hub for the controller and gives an address to every device on its ports (USB 2.0 chapter 11,

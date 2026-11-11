@@ -335,6 +335,9 @@ fn run_tests() -> ! {
     #[cfg(feature = "test-mouse")]
     test_mouse();
 
+    #[cfg(feature = "test-usb-hotplug")]
+    test_usb_hotplug();
+
     #[cfg(feature = "test-windows")]
     test_windows();
 
@@ -2194,6 +2197,41 @@ fn test_mouse() {
     }
     assert!(got.len() == 2, "test: {} evenimente de mouse primite (asteptat 2)", got.len());
     info!("test: mouse OK");
+}
+
+/// P6-80: the harness plugs a USB mouse in after start-up, moves it and clicks, then unplugs it. The mouse must be
+/// found and started by the port watch, both events must come over USB, and the unplug must free its slot.
+#[cfg(feature = "test-usb-hotplug")]
+fn test_usb_hotplug() {
+    use core::sync::atomic::Ordering;
+    let usb_mice = || drivers::usb::devices().iter().filter(|d| d.class == (0x03, 0x01, 0x02)).count();
+    assert!(usb_mice() == 0, "test: mouse USB prezent inainte de conectare");
+    serial_println!("TASTATURA: astept taste"); // the harness sends its monitor commands now
+    let hz = arch::x86_64::apic::HZ;
+    let deadline = arch::x86_64::apic::ticks() + 15 * hz;
+    while usb_mice() == 0 && arch::x86_64::apic::ticks() < deadline {
+        sched::sleep_ms(50);
+    }
+    assert!(usb_mice() == 1, "test: mouse-ul USB conectat dupa pornire nu a fost gasit");
+    info!("test: mouse USB conectat dupa pornire gasit");
+    let mut got = 0;
+    while got < 2 && arch::x86_64::apic::ticks() < deadline {
+        match input::read_mouse() {
+            Some(e) => {
+                info!("MOUSE: dx={} dy={} butoane={}", e.dx, e.dy, e.buttons);
+                got += 1;
+            }
+            None => sched::sleep_ms(10),
+        }
+    }
+    let reports = drivers::usb::hid::MOUSE_REPORTS.load(Ordering::Relaxed);
+    assert!(got == 2 && reports >= 2, "test: {} evenimente de mouse, {} rapoarte USB (asteptat 2 si 2)", got, reports);
+    info!("test: {} rapoarte de la mouse-ul USB", reports);
+    while usb_mice() != 0 && arch::x86_64::apic::ticks() < deadline {
+        sched::sleep_ms(50);
+    }
+    assert!(usb_mice() == 0, "test: mouse-ul USB scos nu a disparut din lista");
+    info!("test: usb conectare/deconectare OK");
 }
 
 /// Two windows; the harness types two keys (they must reach the focused window) and drags the top window by
