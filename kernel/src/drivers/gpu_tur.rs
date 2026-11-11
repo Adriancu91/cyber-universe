@@ -189,10 +189,41 @@ pub fn tour() -> Vec<String> {
     finish(lines)
 }
 
+/// The line naming the chosen I8 variant (P6-78, C-108), for the screen and the result lines.
+pub fn variant_line(nr: Option<u8>) -> String {
+    match nr.and_then(nvidia_ga104::gsp::variants::get) {
+        Some(v) => format!("varianta I8 {}: {} — {} (sursa: {})", v.nr, v.name, v.changes, v.source),
+        None => String::from("varianta I8: niciuna (ca os-283)"),
+    }
+}
+
+/// `gpu variante` (P6-78, C-108): the numbered I8 variants from Cyber-GPU. No card access.
+pub fn variants_list() -> Vec<String> {
+    let mut l = Vec::new();
+    l.push(format!(
+        "variantele I8 (C-108, cyber-gpu {}): una pe pornire rece, cu `gpu lant --varianta N`; fara --varianta = ca os-283",
+        gpu::CYBER_GPU_REV
+    ));
+    for v in nvidia_ga104::gsp::variants::list() {
+        l.push(format!("{}. {} — {} (sursa: {})", v.nr, v.name, v.changes, v.source));
+    }
+    l.push(String::from("(nicio placa atinsa)"));
+    l
+}
+
 /// `gpu lant` on the real board (the shell asked for `DA` first). Writes only in the `gpu-scrie` build.
-pub fn chain() -> Vec<String> {
+/// P6-78 (C-108): `variant` = `--varianta N` (already checked by the shell); `None` = os-283.
+pub fn chain(variant: Option<u8>) -> Vec<String> {
     let p = "gpu0";
     let mut lines = Vec::new();
+    let settings = match nvidia_ga104::gsp::variants::settings(variant) {
+        Ok(x) => x,
+        Err(e) => {
+            lines.push(format!("{}: {}; nimic scris in placa", p, e));
+            return finish(lines);
+        }
+    };
+    lines.push(format!("{}: {}", p, variant_line(variant)));
     let Some((d, bar0)) = gpu_i6::board(&mut lines) else { return finish(lines) };
     let writes_allowed = cfg!(feature = "gpu-scrie");
     #[cfg(feature = "gpu-scrie")]
@@ -221,6 +252,7 @@ pub fn chain() -> Vec<String> {
         }
     };
     let mut j = gpu_i6::journal(live);
+    settings.journal(variant, &mut j);
     let mut clock = TscClock;
     let addr = PciAddress { segment: 0, bus: d.bus, dev: d.dev, func: d.func };
     let _guard = WINDOW_LOCK.lock();
@@ -297,9 +329,10 @@ pub fn chain() -> Vec<String> {
             // failure there stops the chain before the first SEC2 write.
             let Some((_, c)) = prepared.as_ref() else { return Err(step_failed("lipseste pregatirea I6")) };
             let fw = gpu_i7::stick_firmware(p, j, &mut lines)?;
+            let sys = gpu_i8::system_info(&d)?;
             let prep = {
                 let mut win = ReadOnlyBar0Window::with_len(bar0, nvidia_ga104::fuse::FUSE_WINDOW);
-                let r = gpu_i7::prepare(p, &mut win, j, &fw, c, &mut lines);
+                let r = gpu_i7::prepare(p, &mut win, j, &fw, c, settings, &sys, &mut lines);
                 refused += win.refused;
                 r?
             };
@@ -534,7 +567,7 @@ pub fn tour_sim() -> Vec<String> {
 /// an error (the chain must stop there and still put Bus Master back). `writes_allowed` false = the read-only chain of
 /// every build without `gpu-scrie`: it must stop before Bus Master and still run the tour.
 #[cfg(feature = "test-gpu-sim")]
-pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
+pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>) -> Vec<String> {
     use gpu_pci::bus_master::{restore_command, set_bus_master, BusMasterPermit};
     use gpu_sim::fake_gsp::{FakeGsp, SimFault, SimHsImage, SimUcode, GSP_BASE};
     use nvidia_ga104::gsp::hs_load::{self, HsUcode};
@@ -550,6 +583,15 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
         return gpu_i6::sim_lines(lines, "gpu lant");
     }
     let mut j = gpu_i6::journal(true);
+    let settings = match nvidia_ga104::gsp::variants::settings(variant) {
+        Ok(x) => x,
+        Err(e) => {
+            lines.push(format!("{}: {}; nimic scris", p, e));
+            return gpu_i6::sim_lines(lines, "gpu lant");
+        }
+    };
+    lines.push(format!("{}: {}", p, variant_line(variant)));
+    settings.journal(variant, &mut j);
     let mut clock = gpu_sim::clock::SimClock::default();
     let mut ro = gpu_i6::sim_board();
     let mut cfg = gpu_sim::observed::observed_config();
@@ -622,7 +664,7 @@ pub fn chain_sim(fault: bool, writes_allowed: bool) -> Vec<String> {
             let Some(c) = i6c.as_ref() else { return Err(step_failed("lipseste pregatirea I6")) };
             let fw = gpu_i7::sim_firmware(j)?;
             lines.push(format!("{}: I7: fisierele de proba gpu-sim (NU fisierele NVIDIA) verificate", p));
-            let prep = gpu_i7::prepare(p, &mut ro, j, &fw, c, &mut lines)?;
+            let prep = gpu_i7::prepare(p, &mut ro, j, &fw, c, settings, &sim_system_info(), &mut lines)?;
             gpu_i7::sim_expect(&mut g, &prep);
             let r = gpu_i7::booter(p, &mut g, &mut clock, j, &prep, None, &mut lines);
             // C-75: the model drops GSP mailbox writes after FWSEC (as the board did on 5 nov) until GSP is reset;
@@ -831,11 +873,11 @@ static KRONOS_LINES: crate::sched::Mutex<Option<Vec<String>>> = crate::sched::Mu
 fn kronos_chain_thread() {
     let sim = KRONOS_SIM.load(core::sync::atomic::Ordering::SeqCst);
     #[cfg(feature = "test-gpu-sim")]
-    let lines = if sim { chain_sim(false, true) } else { chain() };
+    let lines = if sim { chain_sim(false, true, None) } else { chain(None) };
     #[cfg(not(feature = "test-gpu-sim"))]
     let lines = {
         let _ = sim;
-        chain()
+        chain(None)
     };
     if let Some((used, size)) = crate::sched::stack_used() {
         crate::info!("gpu: kronos --gpu: stiva firului lantului: {} KiB folositi din {} KiB", used.div_ceil(1024), size / 1024);

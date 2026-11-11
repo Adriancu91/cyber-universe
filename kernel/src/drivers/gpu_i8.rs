@@ -22,8 +22,8 @@ use nvidia_ga104::gsp::falcon::{self, GuardedBar0};
 use nvidia_ga104::gsp::msgq::SharedMem;
 use nvidia_ga104::gsp::rpc::function;
 use nvidia_ga104::gsp::sequencer::{self, SeqContext};
-use nvidia_ga104::gsp::sysinfo::{self, SystemInfoInput};
-use nvidia_ga104::gsp::{registry, HardwareWritePermit};
+use nvidia_ga104::gsp::sysinfo::SystemInfoInput;
+use nvidia_ga104::gsp::HardwareWritePermit;
 
 use super::gpu_i7::I7Prep;
 
@@ -72,13 +72,18 @@ pub(super) fn init<W: Mmio + ?Sized, K: Clock + ?Sized>(
     mut poll: impl FnMut(&mut dyn SharedMem),
 ) -> GpuResult<()> {
     let r = (|| {
-        let info = sysinfo::encode(sys)?;
-        let reg = registry::encode(&registry::boot_entries())?;
-        prep.queues.send_rpc(&mut prep.shared, function::GSP_SET_SYSTEM_INFO, &info)?;
-        prep.queues.send_rpc(&mut prep.shared, function::SET_REGISTRY, &reg)?;
+        // P6-78 (C-108): the variant decides whether I7 already queued them (before Booter) or I8 does it now.
+        let s = prep.settings;
+        let ready = s.init_rpcs_ready_for_i8(&prep.queues)?;
+        if !ready {
+            prep.queues.send_rpc(&mut prep.shared, function::GSP_SET_SYSTEM_INFO, &s.encode_sysinfo(sys)?)?;
+            prep.queues.send_rpc(&mut prep.shared, function::SET_REGISTRY, &s.encode_registry()?)?;
+        }
         lines.push(format!(
-            "{}: I8: in coada: SetSystemInfo (BAR0 {:#x}, BAR1 {:#x}, BAR3 {:#x}, {:04x}:{:04x} sub {:04x}:{:04x} rev {:#04x}) + SetRegistry (2 intrari)",
-            p, sys.bar0, sys.bar1, sys.bar3, sys.vendor, sys.device, sys.subsys_vendor, sys.subsys_device, sys.revision
+            "{}: I8: in coada: SetSystemInfo (BAR0 {:#x}, BAR1 {:#x}, BAR3 {:#x}, {:04x}:{:04x} sub {:04x}:{:04x} rev {:#04x}) + SetRegistry ({} intrari){}",
+            p, sys.bar0, sys.bar1, sys.bar3, sys.vendor, sys.device, sys.subsys_vendor, sys.subsys_device, sys.revision,
+            s.registry_entries().len(),
+            if ready { " (puse la I7, inainte de Booter)" } else { "" }
         ));
         let mut b = GuardedBar0::new(&mut *rw, journal, permit)?;
         falcon::ring_doorbell(&mut b)?;

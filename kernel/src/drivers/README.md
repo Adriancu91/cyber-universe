@@ -160,6 +160,16 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
     `--eroare` oprit la I6, Bus Master tot înapoi; `--doar-citire` 0 scrieri; `tools/after-gpu-tur.sh` verifică jurnalele de pe disc),
     `gpu-scrie` (`gpu lant` → „nicio placa NVIDIA”), `tools/after-gpu.sh` (în `gpu_tur.rs` tot ce poate scrie e doar în build-ul `gpu-scrie`).
     **Nimic nu a rulat pe placa reală.**
+- **Variantele I8: `gpu variante` și `gpu lant --varianta N` (P6-78, comanda C-108):** cyber-gpu `49e6685` (`20830f5` + docs) dă
+  `nvidia_ga104::gsp::variants` — 10 variante numerotate (nume, „ce schimbă”, sursa publică) pentru ce primește GSP-RM la prima pornire.
+  `gpu variante` = lista (fără placă; permisă și în bucla automată). `gpu lant --varianta N` (număr verificat înainte de `DA`; greșit → nimic
+  scris) arată varianta pe ecran și o scrie în jurnal (`valoare varianta I8 (C-108): …`); `gpu_i7::prepare` folosește setările variantei
+  (`GspFwWprMeta.flags`, `bDmemStack`) și, dacă varianta vrea RPC-urile de pornire înainte de Booter, le pune în coadă (RAM), iar
+  `gpu_i7::booter` sună soneria (același registru ca la I8) înainte de Booter; `gpu_i8::init` le trimite doar dacă nu sunt deja în coadă.
+  Fără `--varianta` = exact os-283. Refuzat în bucla automată și din hub, ca orice `gpu lant`.
+  - Test: `gpu-var` (lista; 99 și număr lipsă refuzate; varianta 1 fără `DA` oprită; cu `DA` în SIMULARE: RPC-urile puse la I7, soneria
+    înainte de Booter, I8 „(puse la I7)”, `GSP_INIT_DONE`, modelul a primit [72, 73]; `gpu lant --varianta 2` fără placă → „nicio placa NVIDIA”).
+    **Pe placă: neîncercat.**
 - **`gpu recupereaza` (P6-74, comanda C-103, fișierul `gpu_rec.rs`):** după un lanț oprit (ex. la I8), placa rămâne cu WPR2 ridicat și
   cere pornire rece. Calea publică a driverului NVIDIA 570.144 (MIT) și a nouveau: programul semnat `booter_unload-570.144.bin` (de pe
   stick, al 4-lea fișier I4) pe SEC2 cu cutiile (0xFF, 0xFF) — `falcon::booter_unload_dma` din cyber-gpu `bcc314e` (reset GSP, reset SEC2,

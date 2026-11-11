@@ -658,21 +658,50 @@ fn gpu(args: &[&str]) {
             }
         }
         Some("lant") => lant(&args[1..]),
+        Some("variante") => {
+            // P6-78 (C-108): the numbered I8 variants; no card access.
+            for l in crate::drivers::gpu_tur::variants_list() {
+                out!("{}\n", l);
+            }
+        }
         Some("recupereaza") => recupereaza(&args[1..]),
         Some("plan") => {
             for l in crate::drivers::gpu::PLAN {
                 out!("{}\n", l);
             }
         }
-        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios [--detalii] | gpu fwsec | gpu firmware | gpu pregatire-i6 | gpu i6 --scrie | gpu tur | gpu lant | gpu recupereaza | gpu plan)\n", other),
+        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios [--detalii] | gpu fwsec | gpu firmware | gpu pregatire-i6 | gpu i6 --scrie | gpu tur | gpu lant [--varianta N] | gpu variante | gpu recupereaza | gpu plan)\n", other),
     }
 }
 
 /// P6-42 (C-55): `gpu lant [--sim] [--eroare]` — the window steps in a chain. Asks for `DA` before anything; refused by
 /// the automatic loop (shell/auto.rs). Writes only in the test-stick build; elsewhere the chain runs read only.
 fn lant(rest: &[&str]) {
+    // P6-78 (C-108): `--varianta N` picks one of Cyber-GPU's numbered I8 variants (`gpu variante`); checked here,
+    // before the warning and the `DA`, so a wrong number writes nothing.
+    let mut variant: Option<u8> = None;
+    let mut opts: Vec<&str> = Vec::new();
+    let mut it = rest.iter();
+    while let Some(a) = it.next() {
+        if *a == "--varianta" {
+            let n = it.next().and_then(|v| v.parse::<u8>().ok());
+            match n.filter(|n| nvidia_ga104::gsp::variants::get(*n).is_some()) {
+                Some(n) if variant.is_none() => variant = Some(n),
+                _ => {
+                    out!(
+                        "gpu lant: --varianta cere un numar din `gpu variante` (1-{}); nimic scris in placa\n",
+                        nvidia_ga104::gsp::variants::list().len()
+                    );
+                    return;
+                }
+            }
+        } else {
+            opts.push(a);
+        }
+    }
+    let rest = &opts[..];
     if let Some(bad) = rest.iter().find(|a| !matches!(**a, "--sim" | "--eroare" | "--doar-citire")) {
-        out!("gpu lant: optiune necunoscuta: {} (folosire: gpu lant)\n", bad);
+        out!("gpu lant: optiune necunoscuta: {} (folosire: gpu lant [--varianta N])\n", bad);
         return;
     }
     let sim = rest.contains(&"--sim");
@@ -683,6 +712,7 @@ fn lant(rest: &[&str]) {
     for l in crate::drivers::gpu::LANT_WARNING {
         out!("{}\n", l);
     }
+    out!("{}\n", crate::drivers::gpu_tur::variant_line(variant));
     if !sim && !cfg!(feature = "gpu-scrie") {
         out!("(acest sistem nu poate scrie in placa: lantul va rula doar citire, oprit inainte de primul pas care scrie)\n");
     }
@@ -693,15 +723,19 @@ fn lant(rest: &[&str]) {
         crate::info!("gpu: lant: oprit la confirmare (nimic scris)");
         return;
     }
-    crate::info!("gpu: lant: confirmat cu DA{}", if sim { " (SIMULARE)" } else { "" });
+    crate::info!(
+        "gpu: lant: confirmat cu DA{}; {}",
+        if sim { " (SIMULARE)" } else { "" },
+        crate::drivers::gpu_tur::variant_line(variant)
+    );
     #[cfg(feature = "test-gpu-sim")]
     if sim {
-        for l in crate::drivers::gpu_tur::chain_sim(rest.contains(&"--eroare"), !rest.contains(&"--doar-citire")) {
+        for l in crate::drivers::gpu_tur::chain_sim(rest.contains(&"--eroare"), !rest.contains(&"--doar-citire"), variant) {
             out!("{}\n", l);
         }
         return;
     }
-    for l in crate::drivers::gpu_tur::chain() {
+    for l in crate::drivers::gpu_tur::chain(variant) {
         out!("{}\n", l);
     }
     // C-84 item 1: the chain's journal (/usb/raport/gpu-jurnal-NNN.txt) goes to the hub when there is a token.

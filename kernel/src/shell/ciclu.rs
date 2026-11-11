@@ -255,7 +255,7 @@ fn test(s: &mut State) -> String {
         text.push('\n');
     }
     text.push_str("\n-- gpu lant\n");
-    let chain = crate::drivers::gpu_tur::chain();
+    let chain = crate::drivers::gpu_tur::chain(None);
     for l in &chain {
         text.push_str(l);
         text.push('\n');

@@ -29,8 +29,10 @@ use nvidia_ga104::fw_hdr::{HsV2, RiscvBootloader};
 use nvidia_ga104::gsp::falcon::{self, GuardedBar0, I7Status};
 use nvidia_ga104::gsp::HardwareWritePermit;
 use nvidia_ga104::gsp::hs_load::{self, BooterMeta, DmaImage, HsUcode};
-use nvidia_ga104::gsp::libos;
 use nvidia_ga104::gsp::msgq::{CpuQueues, QueueLayout, SharedMem};
+use nvidia_ga104::gsp::libos;
+use nvidia_ga104::gsp::sysinfo::SystemInfoInput;
+use nvidia_ga104::gsp::variants::Settings;
 use nvidia_ga104::gsp::{elf, wpr_meta};
 use nvidia_ga104::i6_check::I6Check;
 use nvidia_ga104::radix3::{Radix3, Radix3Shape, PAGE};
@@ -47,6 +49,8 @@ pub(super) struct I7Prep {
     /// P6-56 step 2: the shared area with the command/status queues (inside the pinned area) and its driver side.
     pub shared: DmaShared,
     pub queues: CpuQueues,
+    /// P6-78 (C-108): the I8 variant's settings (`variants::OS_283` without `--varianta`).
+    pub settings: Settings,
 }
 
 /// The queue area inside the pinned DMA area, seen by `msgq` (volatile accesses through the HHDM).
@@ -177,12 +181,17 @@ pub(super) fn layout_for(fb_size: u64) -> GpuResult<FbLayout> {
 }
 
 /// Builds everything I7 needs in RAM. `bar0` is read only (one fuse read). Nothing is written to the card.
+/// P6-78 (C-108): `settings` = the chosen I8 variant; when it wants the init RPCs before Booter, they are put in the
+/// command queue here (RAM only, from `sys`), and [`booter`] rings the doorbell before starting Booter.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn prepare<M: Mmio + ?Sized>(
     p: &str,
     bar0: &mut M,
     journal: &mut Journal,
     fw: &GspFirmware,
     c: &I6Check,
+    settings: Settings,
+    sys: &SystemInfoInput,
     lines: &mut Vec<String>,
 ) -> GpuResult<I7Prep> {
     // 1. The pieces, from the verified files.
@@ -242,21 +251,30 @@ pub(super) fn prepare<M: Mmio + ?Sized>(
         signature_addr: at(pl.signature),
         signature_size: signature.len() as u64,
     };
-    let m = wpr_meta::encode(&fb, &inputs)?;
+    let m = settings.encode_wpr_meta(&fb, &inputs)?;
     put(pl.meta, &m);
 
     // 4b. P6-56 step 2: the message queues (page table + command-queue header) and the LibOS arguments that tell
     // GSP-RM where they are (RMARGS = GSP_ARGUMENTS_CACHED). RAM only.
     let ql = QueueLayout::standard();
     let qpages: Vec<u64> = (0..ql.page_table_entries).map(|k| at(pl.queues + k)).collect();
-    let args = libos::encode_gsp_args(&ql, at(pl.queues))?;
+    let args = settings.encode_gsp_args(&ql, at(pl.queues))?;
     put(pl.rmargs, &args);
     let regions = libos::standard_regions(at(pl.logs[0]), at(pl.logs[1]), at(pl.logs[2]), at(pl.rmargs));
     let libos_page = libos::encode_region_args(&regions)?;
     put(pl.libos, &libos_page);
     // (the slice above is not used again; the queue area is written through its own volatile view)
     let mut shared = DmaShared { phys: at(pl.queues), len: ql.total_size };
-    let queues = CpuQueues::init(&mut shared, ql, &qpages)?;
+    let mut queues = CpuQueues::init(&mut shared, ql, &qpages)?;
+    // P6-78 (C-108): the variant may want SetSystemInfo + SetRegistry in the queue before Booter starts GSP-RM.
+    if settings.init_rpcs_before_booter {
+        settings.queue_init_rpcs(&mut queues, &mut shared, sys)?;
+        lines.push(format!(
+            "{}: I7 pregatire (varianta C-108): SetSystemInfo + SetRegistry ({} intrari) puse in coada INAINTE de Booter; nimic scris in placa",
+            p,
+            settings.registry_entries().len()
+        ));
+    }
 
     // 5. Read back: the area must hold exactly what was put there (and the table must lead to the image).
     let all = bytes(base, pl.total * PAGE_US);
@@ -283,7 +301,7 @@ pub(super) fn prepare<M: Mmio + ?Sized>(
         "{}: I7 pregatire: cozile GSP ({} KiB) la {:#x}, argumentele LibOS la {:#x} (RMARGS {:#x}); nimic scris in placa",
         p, ql.total_size >> 10, at(pl.queues), at(pl.libos), at(pl.rmargs)
     ));
-    Ok(I7Prep { ucode, image, wpr_meta: at(pl.meta), libos: at(pl.libos), shared, queues })
+    Ok(I7Prep { ucode, image, wpr_meta: at(pl.meta), libos: at(pl.libos), shared, queues, settings })
 }
 
 
@@ -318,9 +336,18 @@ pub(super) fn booter<W: Mmio + ?Sized, K: Clock + ?Sized>(
     // 0), so GSP-RM started without its queues. Cyber-GPU's `booter_load_dma_libos` does I7 in the order the board
     // needs: GSP reset into RISC-V, LibOS address in the GSP mailboxes read back (stop before Booter if they did not
     // keep it), Booter on SEC2, GSP-RM version in FALCON_OS, wait for RISC-V. Through the same guard (GSP + SEC2).
+    // P6-78 (C-108): with the init RPCs already queued, the doorbell comes first (RM's order: doorbell, GSP reset in
+    // RISC-V, LibOS mailboxes, Booter), through the same guard and the same register as at I8.
+    let early = prep.settings.init_rpcs_before_booter;
     let r = GuardedBar0::new(rw, journal, permit).and_then(|mut b| {
+        if early {
+            falcon::ring_doorbell(&mut b)?;
+        }
         falcon::booter_load_dma_libos(&mut b, clock, &prep.ucode, &prep.image, prep.wpr_meta, prep.libos)
     });
+    if early {
+        lines.push(format!("{}: I7 (varianta C-108): soneria cozii de comenzi inainte de Booter", p));
+    }
     match &r {
         Ok(()) => lines.push(format!(
             "{}: pas I7 GSP resetat in RISC-V + Booter: ok (GspFwWprMeta {:#x}; cutiile GSP = pagina LibOS {:#x}, recitite; versiunea {})",

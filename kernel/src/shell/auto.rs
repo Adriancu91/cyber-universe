@@ -156,7 +156,7 @@ pub fn allowed(line: &str) -> Result<(), &'static str> {
         ["cpu", ..] => Ok(()),
         ["gpu"] => Ok(()),
         ["gpu", sub, ..] => match *sub {
-            "identifica" | "gfw" | "vbios" | "fwsec" | "firmware" | "pregatire-i6" | "tur" | "plan" => Ok(()),
+            "identifica" | "gfw" | "vbios" | "fwsec" | "firmware" | "pregatire-i6" | "tur" | "plan" | "variante" => Ok(()),
             "lant" => Err("gpu lant scrie in placa video: doar cu Adrian de fata"),
             "i6" => Err("gpu i6 scrie in placa video: doar cu Adrian de fata"),
             "recupereaza" => Err("gpu recupereaza scrie in placa video: doar cu Adrian de fata"),
