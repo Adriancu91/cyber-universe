@@ -31,8 +31,17 @@ if (( INSTALL )); then
     if ! command -v qemu-system-x86_64 >/dev/null || ! command -v xorriso >/dev/null || ! ovmf_code >/dev/null \
         || ! command -v mkfs.fat >/dev/null || ! command -v mcopy >/dev/null || ! command -v sfdisk >/dev/null; then
         echo "Instalez QEMU, OVMF, xorriso, unelte FAT..."
-        $SUDO apt-get update -qq && $SUDO apt-get install -y -qq qemu-system-x86 ovmf xorriso make curl python3 \
-            dosfstools mtools fdisk >/dev/null
+        apt_tools() {
+            $SUDO apt-get update -qq -o Acquire::Retries=3 && $SUDO apt-get install -y -qq qemu-system-x86 ovmf xorriso \
+                make curl python3 dosfstools mtools fdisk >/dev/null
+        }
+        if ! apt_tools; then
+            # The main Ubuntu archive is sometimes unreachable (11 Nov 2026); fall back to the kernel.org mirror.
+            echo "Arhiva Ubuntu nu răspunde; încerc oglinda kernel.org..."
+            $SUDO sed -i -E 's#https?://([a-z0-9.-]*\.)?(archive|security)\.ubuntu\.com/ubuntu/?#https://mirrors.edge.kernel.org/ubuntu/#g' \
+                /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null || true
+            apt_tools
+        fi
     fi
     if ! command -v rustup >/dev/null; then
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
