@@ -3,6 +3,12 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-11 ~15:40–18:30 UTC (17:40–20:30 ora RO) — sesiune programată, fără Adrian — **CI reparat; P6-77 GATA (`os-288`); P6-78 GATA (C-108, `os-289`); P6-79 (C-109) cod gata, CI rulează.**
+  - **CI atârna din cauza serverelor de pachete Ubuntu** (`azure.archive.ubuntu.com`, `archive.ubuntu.com` nu răspund; în cloud la fel: `resolve_no_records`). Pasul „Unelte sistem”: limită 25 min, `apt-get update` limită 150 s, la eșec doar sursele Ubuntu + `/etc/apt/apt-mirrors.txt` = `https://mirrors.edge.kernel.org/ubuntu/` (mașina GitHub folosește `mirror+file:`). `tools/env-check.sh --install` are aceeași rezervă. `.github/workflows/stress.yml` are încă pasul apt vechi.
+  - **P6-77:** CI verde (run 43058582536) → `os-288`.
+  - **P6-78 (C-108):** cyber-gpu `49e6685` (`gsp::variants`, 10 variante); `gpu variante`, `gpu lant --varianta N`; I7 pune RPC-urile în coadă + soneria înainte de Booter când varianta cere; scenariul `gpu-var`; CI verde (run 43068236106) → **`os-289`** (procedura pentru joi 07:00 în hub, `stare/cyber-universe.md`). Cyber-GPU (sesiunea 89) a verificat legarea: conformă.
+  - **P6-79 (C-109, ASUS TUF blocat după `acpi: MADT`):** `pit_wait_ms` cu limită (TSC, socotit pentru 10 GHz); calibrarea încearcă PIT → ACPI PM (`acpi::fadt::pm_timer`) → CPUID 0x15/0x16, respinge rezultate fără sens (TSC în afara 200 MHz–10 GHz); fără niciun ceas → mesaj și pornire fără ceas; x2APIC prin MSR (detectat din IA32_APIC_BASE; procesoarele suplimentare trec și ele); rânduri noi `apic: mod …`, `apic: calibrez ceasul …`, `apic: ceasul de referinta: …`. Scenariul nou `fara-pit` (QEMU `-machine pit=off`: PIT-ul „termină” imediat → respins → ACPI PM). x2APIC nu se poate încerca în QEMU 8.2 TCG (am încercat `-cpu qemu64,+x2apic`: „TCG doesn't support … x2apic”) — scenariul a fost scos. Local **99 trecute / 0 eșuate**; commit `c0e4a06`, CI pornit la 18:27 UTC.
+  - **Pentru sesiunea următoare:** CI pentru `c0e4a06` verde → `os-290` → bifează P6-79, în hub C-109 `gata` + rândul pentru Adrian (stick normal pe ASUS, poze la rândurile `apic: …`). Roșu → reparat întâi.
 - 2026-11-11 ~15:40–17:05 UTC (17:40–19:05 ora RO) — sesiune programată, fără Adrian — **P6-77 GATA (Release `os-288`); CI reparat; C-108 preluat (P6-78).**
   - **CI atârna din cauza serverelor de pachete Ubuntu** (`azure.archive.ubuntu.com` și `archive.ubuntu.com` nu răspund; la fel și în sesiunea cloud: `resolve_no_records`). Run 284 anulat; pasul „Unelte sistem” are acum limită de 25 min, `apt-get update` cu limită 150 s, iar la eșec: doar sursele Ubuntu + `/etc/apt/apt-mirrors.txt` = `https://mirrors.edge.kernel.org/ubuntu/` (mașina GitHub folosește `mirror+file:`). 4 încercări (285–288), a patra verde (run 43058582536) → **Release `os-288`** = P6-77 (`d3c5351`, conținutul PMU în jurnal) peste `os-283`.
   - `tools/env-check.sh --install`: aceeași rezervă (oglinda kernel.org) dacă arhiva Ubuntu nu răspunde. Local: `tools/test.sh` → 97 trecute, 0 eșuate, 1 sărit (fără internet).
@@ -1272,7 +1278,7 @@
   lanțurile cu `openssl verify` — zero diferențe. CI verde pe toate commit-urile terminate (ultimele încă rulau la final).
 
 ## Următoarea sarcină
-**P6-78 (C-108, URGENT):** variantele de setări I8 de la Cyber-GPU — `gpu variante` + `gpu lant --varianta N`, Release până la ~06:00 ora RO pe 12 nov. Plan: `docs/plans/P6-78.md`. Dacă Cyber-GPU nu a livrat încă variantele: nimic de făcut în OS până atunci.
+**P6-79 (C-109):** verifică CI-ul pentru `c0e4a06` → Release `os-290` → bifează. Apoi: jurnalele testului de joi (C-108, variantele I8) → ce cere Cyber-GPU. `os-289` rămâne Release-ul pentru testul GPU de joi (os-290 îl conține și pe el).
 
 (Istoric, mai jos:)
 **C-55 (comandă nouă în hub, `nou`): `gpu tur` + `gpu lant`** — exact `idei/2026-11-01_cyber-gpu-tur-si-lant.md`: fixarea cyber-gpu ≥ `911e6d0`
