@@ -3,6 +3,12 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-11 ~21:40–23:20 UTC (23:40–01:20 ora RO) — sesiune programată, fără Adrian — **P6-80 (mouse USB) cod gata pe `wip/P6-80`, CI verde; nimic schimbat pe `main` în afară de documente.**
+  - `git pull` OK pentru ambele (hub: `main` local vechi divergent → păstrat pe ramura locală `backup-local-20261111`, `main` din `origin/main`; nimic forțat). `env-check --install` OK. CI 291 (`stress.yml`) verde.
+  - Hub: nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou de pe placă. Rezultatul Lenovo (`rezultate/2026-11-11-laptop-lenovo-i5/`, 18:14–18:33): pornește complet; touchpad (I2C) nu merge; **mouse-ul USB nu merge** și nu apare deloc în `hw`.
+  - **P6-80 (nou, plan `docs/plans/P6-80.md`):** din cod, mouse-ul era văzut doar dacă era băgat ÎNAINTE de pornire și doar dacă prima lui interfață e mouse. Acum: porturile verificate la ~250 ms (conectare → adresă + driver; deconectare → `Disable Slot`), firul USB merge mereu când există controler, interfețele HID „boot” căutate în toată configurația (receptor tastatură+mouse → ambele). `qemutest.py`: `pauza=N` și `~` (virgulă) în comenzile de monitor. Scenariu nou `usb-hotplug`. Local `tools/test.sh` → **100 trecute, 0 eșuate, 1 sărit**; CI verde pe ramură (run 43113989284, fără Release).
+  - **De ce nu pe `main` încă:** ca Release-ul să nu se schimbe înaintea testului GPU de joi 07:00 (aceeași regulă ca P6-12).
+  - **Pentru sesiunea următoare:** jurnalele de joi (C-108, `os-289`) și poza ASUS cu `os-290` (C-109) au întâietate. După test: `git merge wip/P6-80` în `main` (conflict posibil doar în `tests/screens/*.png` — ia-le pe cele din `main`) → CI → Release → bifează P6-80. Apoi P6-12.
 - 2026-11-11 ~18:40–19:05 UTC (20:40–21:05 ora RO) — sesiune programată (a doua, în paralel cu sesiunea de 17:40 care a închis P6-79) — **nicio sarcină nouă; reparația CI copiată în `stress.yml`.**
   - `git clone`/`pull` OK pentru ambele depozite; `tools/env-check.sh --install` OK; build + `boot fara-pit smp shell auto-ceas` → 5/5 TRECUT local pe `c0e4a06`.
   - CI 290 verde → `os-290` (P6-79 bifat de cealaltă sesiune; bifa mea a adăugat doar „Gata: … os-290” pe rândul sarcinii).
