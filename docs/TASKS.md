@@ -409,6 +409,7 @@ Comanda C-29 (Kronos în OS corect pe workstation, dar lent), din 28 oct:
 - [x] **P6-77** C-102 continuare 2: cyber-gpu `d3c5351` (conținutul celor 2 jurnale PMU `UCODE_LIBOS_PRINT` scris în jurnal ca atare, doar citiri; peste `2bbd0b3`) în OS + Release nou. Nimic de schimbat în codul OS. Plan: `docs/plans/P6-77.md`. Dep: P6-76
   Rezultat (2026-11-11 ~16:58 UTC): `61a308d` (cod) + reparația CI (`c358b43`…`97a2079`: pasul apt cu limită de timp, reîncercări și oglinda kernel.org — `azure.archive.ubuntu.com` și `archive.ubuntu.com` nu răspundeau); local 97 trecute / 0 eșuate; CI verde (run 43058582536) → **Release `os-288`** (cuprinde `d3c5351`). Pe placă netestat (Adrian, `gpu lant` + DA: rândurile `UCODE_LIBOS_PRINT: continut …`).
 - [~] **P6-78** C-108 (cerut de Adrian, URGENT pentru joi 12 nov ~07:00): `gpu variante` + `gpu lant --varianta N` — 5–10 variante de setări I8 de la Cyber-GPU pe același stick, numărul variantei în ecran, jurnal și raport. Release până la ~06:00 ora RO. Plan: `docs/plans/P6-78.md`. Dep: P6-77 + commit-ul Cyber-GPU cu variantele (rularea lui de 19:25 ora RO).
+- [ ] **P6-79** C-109 (cerut de Adrian): OS-ul blocat pe ASUS TUF F15 după `acpi: MADT` — așteptarea PIT cu limită + ceas de rezervă (ACPI PM, CPUID TSC) + x2APIC prin MSR + rânduri de jurnal în `apic::init`. Plan: `docs/plans/P6-79.md`. Dep: P6-78
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
