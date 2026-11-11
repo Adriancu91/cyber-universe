@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Imitation of GitHub for the `update` QEMU scenario (P6-08): the REST API that /bin/actualizeaza talks to and the file
 storage the API redirects to, both HTTPS (TLS 1.3, certificate for test.cyber.local from tls/tests/data).
-  - API on 127.0.0.1:18445 (guest: 10.0.2.2:18445): GET /repos/Adriancu91/cyber-universe/releases/latest (JSON, sent
-    chunked) and GET /repos/.../releases/assets/<n> (with Accept: application/octet-stream) -> 302 to the storage.
+  - API on 127.0.0.1:18445 (guest: 10.0.2.2:18445): GET /repos/Adriancu91/cyber-universe/releases/latest or
+    .../releases/tags/os-42 (JSON, sent chunked) and GET /repos/.../releases/assets/<n> (with Accept: application/octet-stream) -> 302 to the storage.
     Like GitHub for a private repository: no token -> 404, unknown token -> 401.
   - storage on 127.0.0.1:18446: the file, with Content-Length; refuses requests that still carry the token (the real
     storage refuses them too) and the whole stick image (the update must not download it).
@@ -91,7 +91,8 @@ def api(conn):
     token = auth.removeprefix("Bearer ")
     if token not in TOKENS:
         return reply(conn, 401, b'{"message":"Bad credentials"}', "application/json"), "401 token necunoscut"
-    if line == f"GET /repos/{REPO}/releases/latest HTTP/1.1":
+    # P6-75 (C-105): `actualizeaza --versiune os-42` asks for the tag; any other tag is 404, as on GitHub.
+    if line in (f"GET /repos/{REPO}/releases/latest HTTP/1.1", f"GET /repos/{REPO}/releases/tags/{TAG} HTTP/1.1"):
         if h.get("accept") != "application/vnd.github+json":
             return reply(conn, 400, b"Accept gresit"), "400 accept"
         assets = [{"url": f"https://test.cyber.local:18445/repos/{REPO}/releases/assets/{100 + i}", "id": 100 + i,

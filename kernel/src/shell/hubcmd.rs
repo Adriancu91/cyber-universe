@@ -12,9 +12,12 @@
 //! C-104 (P6-73): `hub asculta [--la N]` = the same, every N minutes (default 2), until Esc; started at boot when
 //! `/usb/hub/asculta` exists (then `hub opreste` stops it). Every command also gets its own answer file in the hub,
 //! `integrare/cyber-universe/raspunsuri/K-<nr>.txt` (`gh-trimite --raspuns`), so the command centre reads it easily.
+//! C-105 (P6-75): `ciclu-test os-<N>` is not on the allow-list; it goes to shell/ciclu.rs, which refuses it unless Adrian
+//! put both keys (a file on the stick + a decision in the hub's DECIZII.md). A cycle in progress at boot is finished
+//! (ciclu::resume) before listening starts.
 //! Idea: remotely queued jobs of hardware test labs; our own code.
 
-use super::{auto, raport};
+use super::{auto, ciclu, raport};
 use crate::fs::{self, Kind};
 use alloc::{format, string::String, vec::Vec};
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -25,7 +28,7 @@ pub const HUB_FILE: &str = "integrare/cyber-universe/os-comenzi.md";
 const MAX_RUN: usize = 20;
 
 /// Where the local copy and the list of IDs that ran live: the stick; in the `ghpush` test build /etc (no stick there).
-fn dir() -> &'static str {
+pub(super) fn dir() -> &'static str {
     #[cfg(feature = "test-ghpush")]
     return "/etc/hub";
     #[cfg(not(feature = "test-ghpush"))]
@@ -190,6 +193,20 @@ fn listen(interval_ms: u64, max_rounds: Option<u32>, by_hand: bool, mut before_r
 /// C-104: when `/usb/hub/asculta` exists, a system thread listens instead (minutes = the number in that file, default 2).
 pub fn start_if_asked() {
     let d = dir();
+    // C-105 (P6-75): a test cycle in progress is finished first, on its own system thread, then the usual start below.
+    if ciclu::in_progress() {
+        crate::info!("hub: un ciclu-test e in lucru ({}/ciclu.txt): il termin inainte de comenzile din hub", d);
+        crate::sched::spawn_system(|| {
+            ciclu::resume();
+            start_listening_or_run();
+        });
+        return;
+    }
+    start_listening_or_run();
+}
+
+fn start_listening_or_run() {
+    let d = dir();
     if let Ok(text) = fs::read_all(&format!("{}/asculta", d)) {
         let minutes = String::from_utf8_lossy(&text)
             .trim()
@@ -260,6 +277,10 @@ fn run_inner(only_show: bool, quiet: bool) {
     if only_show {
         super::emit(&format!("hub ruleaza --arata: {} comenzi noi (nimic rulat, nimic notat):\n", orders.len()));
         for o in now {
+            if ciclu::is_cycle(&o.command) {
+                super::emit(&format!("  {}: {}  -> ciclu de test: ruleaza doar cu cheile lui Adrian (permite-test-placa + decizie)\n", o.id, o.command));
+                continue;
+            }
             match allowed(&o.command) {
                 Ok(()) => super::emit(&format!("  {}: {}  -> s-ar rula\n", o.id, o.command)),
                 Err(why) => super::emit(&format!("  {}: {}  -> REFUZAT: {}\n", o.id, o.command, why)),
@@ -288,7 +309,13 @@ fn run_inner(only_show: bool, quiet: bool) {
     let (mut ran, mut refused) = (0usize, 0usize);
     for (i, o) in now.iter().enumerate() {
         out.add(&format!("\n== [{}/{}] {}: {} ==\n", i + 1, now.len(), o.id, o.command));
-        if let Err(why) = allowed(&o.command) {
+        // C-105 (P6-75): the test cycle has its own keys instead of the allow-list.
+        let verdict: Result<Option<String>, String> = if ciclu::is_cycle(&o.command) {
+            ciclu::gate(&o.command).map(Some)
+        } else {
+            allowed(&o.command).map(|()| None).map_err(String::from)
+        };
+        if let Err(why) = &verdict {
             refused += 1;
             auto::say(&format!("hub: [{}/{}] {} REFUZAT: {} ({})\n", i + 1, now.len(), o.id, o.command, why));
             out.add(&format!("REFUZAT: {} (nimic nu s-a rulat)\n", why));
@@ -301,11 +328,16 @@ fn run_inner(only_show: bool, quiet: bool) {
         // Noted before it runs: a command that hangs or restarts the machine is not run again at the next boot.
         note_done(&o.id, "rulat");
         let t0 = crate::time::uptime_ms().unwrap_or(0);
-        super::emit_capture_begin();
-        super::program_capture_begin();
-        super::dispatch(&o.command);
-        let mut text = super::emit_capture_end();
-        text.push_str(&super::program_capture_end());
+        let text = if let Ok(Some(tag)) = verdict {
+            ciclu::start(&o.id, &tag) // restarts the machine when a new version was put in place
+        } else {
+            super::emit_capture_begin();
+            super::program_capture_begin();
+            super::dispatch(&o.command);
+            let mut text = super::emit_capture_end();
+            text.push_str(&super::program_capture_end());
+            text
+        };
         let ms = crate::time::uptime_ms().unwrap_or(0).saturating_sub(t0);
         auto::say(&text);
         out.add(&text);
@@ -325,7 +357,7 @@ fn run_inner(only_show: bool, quiet: bool) {
 
 /// C-104: the answer to one command, its own file in the hub (`integrare/cyber-universe/raspunsuri/K-<nr>.txt`), kept
 /// on the stick too (`<dir>/raspunsuri/`). Returns what to note in the report.
-fn send_answer(o: &Order, body: &str, ms: Option<u64>) -> String {
+pub(super) fn send_answer(o: &Order, body: &str, ms: Option<u64>) -> String {
     let folder = format!("{}/raspunsuri", dir());
     if fs::kind(&folder).is_err() && fs::create(&folder, Kind::Dir).is_err() {
         return format!("NU (nu pot face {})", folder);

@@ -12,6 +12,8 @@
 //! P6-50 (C-68 F3): before the swap, the running version is copied to `boot/vechi/` (kernel, initrd.tar, VERSIUNE); after
 //! it, `boot/incercare.txt` = "de-incercat" + the tag: the next boot is a trial, and the kernel (kernel/src/revenire.rs)
 //! puts the old version back if the new one never confirms.
+//! P6-75 (C-105): `actualizeaza --versiune os-<N>` asks for exactly that release (`/releases/tags/os-<N>`) instead of the
+//! latest one; everything else is the same.
 //! Exit code 0 = updated or already up to date, 1 = nothing changed because of an error.
 #![no_std]
 #![no_main]
@@ -115,6 +117,9 @@ fn get_api(c: &Config, token: Option<&str>, path: &str, accept: &str) -> Result<
             404 if token.is_none() => {
                 return Err(format!("nu gasesc versiunea (404): depozitul e privat, pune tokenul GitHub in {}", c.token));
             }
+            404 if target.2.contains("/releases/tags/") => {
+                return Err(format!("versiunea ceruta nu exista pe GitHub (404 la {})", target.2));
+            }
             s => return Err(format!("eroare {} la {}", s, target.2)),
         }
     }
@@ -195,9 +200,32 @@ fn cleanup(c: &Config) {
 }
 
 fn main() -> i64 {
-    let force = cyber_user::args().skip(1).any(|a| a == "--forteaza");
+    let args: Vec<String> = cyber_user::args().skip(1).map(|a| a.to_string()).collect();
+    let force = args.iter().any(|a| a == "--forteaza");
+    // P6-75 (C-105): `--versiune os-<N>` = that release, not the latest.
+    let mut wanted: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--forteaza" => {}
+            "--versiune" => {
+                let tag = args.get(i + 1).cloned().unwrap_or_default();
+                if !valid_tag(&tag) {
+                    println!("actualizeaza: --versiune cere un nume de forma os-<numar> (de exemplu os-281)");
+                    return 1;
+                }
+                wanted = Some(tag);
+                i += 1;
+            }
+            other => {
+                println!("actualizeaza: optiune necunoscuta: {} (folosire: actualizeaza [--forteaza] [--versiune os-<numar>])", other);
+                return 1;
+            }
+        }
+        i += 1;
+    }
     let c = config();
-    match run(&c, force) {
+    match run(&c, force, wanted.as_deref()) {
         Ok(()) => 0,
         Err(e) => {
             cleanup(&c);
@@ -212,7 +240,12 @@ fn main() -> i64 {
     }
 }
 
-fn run(c: &Config, force: bool) -> Result<(), String> {
+/// `os-` followed by 1..6 digits (the tags CI gives the releases).
+fn valid_tag(tag: &str) -> bool {
+    tag.strip_prefix("os-").is_some_and(|n| !n.is_empty() && n.len() <= 6 && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+fn run(c: &Config, force: bool, wanted: Option<&str>) -> Result<(), String> {
     if !exists(&path_of(c, "cyber.rw")) {
         return Err(format!(
             "stick-ul ({}) nu e marcat pentru scriere: pune pe el, in radacina, un fisier gol numit cyber.rw",
@@ -224,11 +257,26 @@ fn run(c: &Config, force: bool) -> Result<(), String> {
     let _ = cyber_user::rights::ask_secret(&c.token);
     let token = read_file(&c.token, 512).map(|t| String::from_utf8_lossy(&t).trim().to_string()).filter(|t| !t.is_empty());
     let _ = cyber_user::rights::drop_secrets();
-    println!("actualizeaza: intreb GitHub de ultima versiune ({}{})", c.repo, if token.is_some() { ", cu token" } else { "" });
-    let json = get_api(c, token.as_deref(), &format!("/repos/{}/releases/latest", c.repo), "application/vnd.github+json")?;
+    let with = if token.is_some() { ", cu token" } else { "" };
+    let api_path = match wanted {
+        Some(tag) => {
+            println!("actualizeaza: intreb GitHub de versiunea {} ({}{})", tag, c.repo, with);
+            format!("/repos/{}/releases/tags/{}", c.repo, tag)
+        }
+        None => {
+            println!("actualizeaza: intreb GitHub de ultima versiune ({}{})", c.repo, with);
+            format!("/repos/{}/releases/latest", c.repo)
+        }
+    };
+    let json = get_api(c, token.as_deref(), &api_path, "application/vnd.github+json")?;
     let release = core::str::from_utf8(&json).ok().and_then(|t| cyber_json::parse(t).ok()).ok_or("raspunsul GitHub nu e JSON")?;
     drop(json);
     let tag = release.get("tag_name").and_then(Value::as_str).unwrap_or("?").to_string();
+    if let Some(w) = wanted
+        && tag != w
+    {
+        return Err(format!("am cerut {} dar GitHub a dat {}", w, tag));
+    }
     let assets = release.get("assets").and_then(Value::as_array).ok_or("versiunea nu are fisiere")?;
     let url_of = |name: &str| -> Result<String, String> {
         let a = assets.iter().find(|a| a.get("name").and_then(Value::as_str) == Some(name));
@@ -254,7 +302,7 @@ fn run(c: &Config, force: bool) -> Result<(), String> {
     }
     let commit = |v: &[u8]| String::from_utf8_lossy(v).lines().next().unwrap_or("").to_string();
     let current = read_file(&path_of(c, "VERSIUNE"), 4096);
-    println!("actualizeaza: ultima versiune: {} ({})", tag, commit(&version));
+    println!("actualizeaza: {}: {} ({})", if wanted.is_some() { "versiunea ceruta" } else { "ultima versiune" }, tag, commit(&version));
     if !force && current.as_deref() == Some(&version[..]) {
         println!("actualizeaza: stick-ul are deja aceasta versiune, nimic de facut");
         return Ok(());

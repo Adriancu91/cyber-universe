@@ -1774,19 +1774,22 @@ fn test_update() {
     let _ = fs::create("/etc/update.conf", fs::Kind::File);
     fs::write("/etc/update.conf", 0, conf).expect("test: /etc/update.conf");
     let old_kernel = fs::read_all("/disk/boot/kernel").expect("test: /disk/boot/kernel");
-    let run = |token: Option<&[u8]>, what: &str| {
+    let run_with = |token: Option<&[u8]>, args: &[&str], what: &str| {
         let _ = fs::remove("/etc/update-test.token");
         if let Some(t) = token {
             fs::create("/etc/update-test.token", fs::Kind::File).expect("test: tokenul");
             fs::write("/etc/update-test.token", 0, t).expect("test: tokenul");
         }
         let start = arch::x86_64::apic::ticks();
-        let id = proc::spawn_path("/bin/actualizeaza", &["actualizeaza"]).expect("test: /bin/actualizeaza");
+        let mut all = alloc::vec!["actualizeaza"];
+        all.extend_from_slice(args);
+        let id = proc::spawn_path("/bin/actualizeaza", &all).expect("test: /bin/actualizeaza");
         let code = proc::wait_child(id);
         let ms = (arch::x86_64::apic::ticks() - start) * 1000 / arch::x86_64::apic::HZ;
         info!("test: actualizeaza ({}) a iesit cu codul {} in {} ms", what, code, ms);
         code
     };
+    let run = |token: Option<&[u8]>, what: &str| run_with(token, &[], what);
     assert!(run(None, "fara token") == 1, "test: fara token trebuia sa pice");
     // An update that stopped between "old -> .vechi" and ".nou -> name".
     fs::rename("/disk/boot/initrd.tar", "/disk/boot/initrd.tar.vechi").expect("test: redenumire");
@@ -1802,8 +1805,13 @@ fn test_update() {
     assert!(fs::read_all("/disk/boot/incercare.txt").is_ok_and(|m| m.starts_with(b"de-incercat\nos-42")), "test: marcajul de incercare lipseste");
     info!("test: actualizare: versiunea veche pastrata in boot/vechi/, marcaj de-incercat os-42");
     assert!(run(Some(b"tok-bun"), "a doua oara") == 0, "test: a doua rulare a esuat");
+    // P6-75 (C-105): an exact release: one that does not exist changes nothing; os-42 is already there.
+    assert!(run_with(Some(b"tok-bun"), &["--versiune", "os-41"], "versiune inexistenta") == 1, "test: os-41 trebuia sa pice");
+    assert!(run_with(Some(b"tok-bun"), &["--versiune", "42"], "versiune scrisa gresit") == 1, "test: `42` trebuia refuzat");
+    assert!(run_with(Some(b"tok-bun"), &["--versiune", "os-42"], "versiunea os-42") == 0, "test: --versiune os-42 a esuat");
+    assert!(fs::read_all("/disk/boot/kernel").is_ok_and(|k| k.len() == 1_300_007), "test: --versiune a stricat nucleul");
     assert!(fs::read_all("/disk/boot/kernel").is_ok_and(|k| k != old_kernel && k.len() == 1_300_007), "test: nucleul nu e cel nou");
-    info!("test: actualizarea OK (fara token refuzat, suma gresita fara schimbari, copie veche refacuta, la zi a doua oara)");
+    info!("test: actualizarea OK (fara token refuzat, suma gresita fara schimbari, copie veche refacuta, la zi a doua oara, --versiune)");
 }
 
 /// Sending files to GitHub (P6-09): /bin/gh-trimite against the imitation of the contents API
@@ -1948,6 +1956,43 @@ fn test_ghpush() {
     assert!(a2.contains("REFUZAT: gpu lant scrie in placa video") && a2.contains("-- nerulat"), "test: K-2: {}", a2);
     assert!(run(good, &["--raspuns", "/etc/raspuns-K-5.txt", "K-../x"], "raspuns cu ID gresit") == 1);
     info!("test: hub asculta OK");
+    // C-105 (P6-75): `ciclu-test os-<N>` is refused without both of Adrian's keys (the file on the stick, the decision in
+    // DECIZII.md) and for a bad form; with both keys, an update that fails stops the cycle with nothing changed.
+    shell::ciclu::self_test();
+    let mut cmds = alloc::format!("{}- [ ] K-6: mem\n- [ ] K-7: ciclu-test os-42\n", base);
+    let push_cmds = |text: &str| {
+        put("/etc/os-comenzi-nou.md", text.as_bytes());
+        assert!(run(good, &["/etc/os-comenzi-nou.md", R, shell::hubcmd::HUB_FILE], "comanda noua in hub") == 0);
+    };
+    let _ = fs::remove("/etc/hub/permite-test-placa");
+    push_cmds(&cmds);
+    shell::hubcmd::command(&[]);
+    let a7 = answer("K-7");
+    assert!(a7.contains("REFUZAT: ciclul de test e DEZACTIVAT: lipseste /etc/hub/permite-test-placa") && a7.contains("-- nerulat"), "test: K-7: {}", a7);
+    put("/etc/hub/permite-test-placa", b"");
+    cmds.push_str("- [ ] K-8: ciclu-test os-42\n- [ ] K-9: ciclu-test 42\n");
+    push_cmds(&cmds);
+    shell::hubcmd::command(&[]);
+    let a8 = answer("K-8");
+    assert!(a8.contains("REFUZAT: ciclul de test e DEZACTIVAT: in DECIZII.md din hub nu e nicio decizie cu `ciclu-test activat`"), "test: K-8: {}", a8);
+    assert!(answer("K-9").contains("REFUZAT: forma corecta: `ciclu-test os-<numar>`"), "test: K-9");
+    put("/etc/decizii-nou.md", b"# Decizii\n- 2026-11-30 \xe2\x80\x94 ciclu-test activat (proba din QEMU)\n");
+    assert!(run(good, &["/etc/decizii-nou.md", R, "DECIZII.md"], "decizia de proba in hub") == 0);
+    put("/etc/update.conf", b"dir = /etc/stick-lipsa\ntoken = /etc/github.token\n");
+    cmds.push_str("- [ ] K-10: ciclu-test os-42\n");
+    push_cmds(&cmds);
+    shell::hubcmd::command(&[]);
+    let a10 = answer("K-10");
+    assert!(
+        a10.contains("== ciclu-test os-42 ==") && a10.contains("actualizeaza --versiune os-42 (codul 1)") && a10.contains("nu e marcat pentru scriere")
+            && a10.contains("CICLU OPRIT la actualizare") && a10.contains("-- gata in "),
+        "test: K-10: {}",
+        a10
+    );
+    assert!(!shell::ciclu::in_progress(), "test: ciclu.txt a ramas dupa un ciclu oprit");
+    let _ = fs::remove("/etc/update.conf");
+    let _ = fs::remove("/etc/hub/permite-test-placa");
+    info!("test: ciclu-test: refuzat fara cheile lui Adrian, oprit curat la actualizare OK");
     // P6-61 step 4 (F8): commits on a branch `os/...` (made from main), never on main; folders listed.
     let push = |args: &[&str], what: &str| {
         let mut all = alloc::vec!["gh-trimite"];

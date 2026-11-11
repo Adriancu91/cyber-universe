@@ -146,6 +146,17 @@ fn put_back(dir: &str) -> Result<(), String> {
     fs::flush(&path(dir, "boot")).map_err(|e| format!("golirea discului: {}", e.message()))
 }
 
+/// P6-75 (C-105): the old version from `boot/vechi/` back in place on purpose (the test cycle failed with the new one);
+/// the story in `boot/revenit.txt` and a report, as for a return at boot. The caller restarts.
+pub fn return_to_old(dir: &str, why: &str) -> Result<(), String> {
+    put_back(dir)?;
+    let _ = fs::remove(&path(dir, MARKER));
+    let note = format!("{};\ns-a revenit la versiunea veche din boot/vechi/ ({})\n", why, now_text());
+    let _ = write_file(&path(dir, STORY), note.as_bytes());
+    report(dir, &format!("REVENIRE: {}", note));
+    Ok(())
+}
+
 /// The system reached the desktop / shell (called by `main`): the trial thread may confirm the new version.
 pub fn system_ready() {
     READY.store(true, Ordering::Release);

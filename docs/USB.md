@@ -129,6 +129,16 @@ Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet 
     *Contents*: **Read and write** (nimic altceva). *Generate*, copiezi tokenul și îl pui ca singur rând în fișierul
     `github.token` din rădăcina stick-ului. **Tokenul stă DOAR pe stick** — nu-l pui niciodată în depozit, în hub sau în chat
     (OS-ul nu-l afișează și îl ascunde din rapoarte).
+16. **Ciclul de test complet automat — `ciclu-test os-<N>` (P6-75, comanda C-105) — PREGĂTIT, DAR OPRIT.**
+    Când va fi pornit: centrul de comandă scrie în hub `- [ ] K-<nr>: ciclu-test os-<N>`; Cyber Universe (cu `hub asculta`
+    pornit) descarcă exact versiunea `os-<N>` (fiecare fișier verificat cu SHA256SUMS; versiunea de acum păstrată în `boot/vechi/`),
+    repornește în ea, apoi readuce placa la starea de pornire (`gpu recupereaza`), rulează `gpu lant` **fără „DA”**, scrie
+    raportul și răspunsul în hub (`raspunsuri/K-<nr>.txt`) și ascultă din nou. Dacă ciclul în sine pică (actualizarea nu merge,
+    versiunea nouă nu pornește, sistemul cade în timpul testului), revine singur la versiunea veche și scrie de ce.
+    **Azi e refuzat.** Pornește doar cu **ambele chei**, puse de tine: (a) pe stick, în dosarul `hub`, un fișier gol
+    `permite-test-placa`; (b) o decizie nouă a ta în `DECIZII.md` din hub, un rând care conține exact `ciclu-test activat`.
+    Fără una din ele, comanda primește în hub „REFUZAT: ciclul de test e DEZACTIVAT” și nu se întâmplă nimic. Ca să-l oprești
+    din nou: ștergi fișierul `permite-test-placa` de pe stick (ajunge una din chei).
 
 ## Pentru Claude (tehnic)
 - Varianta B merge pentru că firmware-ul UEFI caută `EFI/BOOT/BOOTX64.EFI` pe orice partiție FAT32, iar Limine își citește

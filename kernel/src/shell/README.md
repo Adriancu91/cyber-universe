@@ -41,6 +41,12 @@
   (1–60, implicit 2), până la Esc; `/usb/hub/asculta` (gol sau cu numărul de minute) = pornită la pornire pe un fir al sistemului,
   oprită cu `hub opreste`. Fiecare comandă (și cele refuzate) primește răspunsul ei în hub, `integrare/cyber-universe/raspunsuri/K-<nr>.txt`
   (`gh-trimite --raspuns`, doar acel dosar), copie pe stick în `/usb/hub/raspunsuri/`. Test: `ghpush` (3 runde la 1 s, K-5 apoi K-6).
+- **`ciclu-test os-<N>` din hub (P6-75, comanda C-105) — DEZACTIVAT implicit:** `ciclu.rs` — actualizare la exact acel Release
+  (`actualizeaza --versiune`), repornire (încercare + confirmare, `revenire.rs`), `gpu recupereaza` + `gpu lant` fără DA, raport +
+  răspuns în hub; fazele în `/usb/hub/ciclu.txt` (`actualizare` → `test` → `test-pornit`); eșecul ciclului = versiunea veche înapoi
+  (`revenire::return_to_old`). Rulează doar cu ambele chei: `/usb/hub/permite-test-placa` + un rând de decizie cu `ciclu-test activat`
+  în `DECIZII.md` din hub; altfel REFUZAT. Test: `ghpush` (refuzuri, oprire curată la actualizare, toate deciziile de după repornire) +
+  `update` (`--versiune`).
 - **`test tot` (P6-61, F9):** `testtot.rs` — autotestul pe calculatorul real (procesor, ceas, temporizator, stick, rețea, placa
   video doar prin ID-urile PCI); `PASS`/`FAIL`/`LIPSA`, raport `raport/test-tot-*.txt`, apoi `trimite`. Test: scenariul `testtot`.
 - **`ora [server [port]]` (P6-61):** SNTP (`net/sntp.rs`, RFC 4330): ora din rețea în UTC și ora României (regula UE pentru

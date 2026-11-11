@@ -126,3 +126,20 @@ else:
     print(f"[after-gpu] ok: {name} scrie doar în build-ul gpu-scrie (C-103: fără gpu-scrie nicio scriere)")
 PY
 done
+
+# P6-75 (C-105): the chain and the recovery run only behind Adrian's typed DA (shell/mod.rs) or behind the two keys of the
+# hub test cycle (shell/ciclu.rs, which hubcmd.rs calls only with what ciclu::gate returned). Nobody else may call them.
+callers="$(grep -rnE 'gpu_tur::chain\(\)|gpu_rec::recover\(\)' "$ROOT/kernel/src" --include=*.rs \
+    | grep -vE '^[^:]*/kernel/src/(drivers/|shell/mod\.rs:|shell/ciclu\.rs:)' || true)"
+if [[ -n "$callers" ]]; then
+    echo "[after-gpu] EȘUAT: lanțul / recuperarea chemate din afara DA-ului și a ciclului cu chei:"; echo "$callers"; exit 1
+fi
+if ! grep -qE 'ciclu::gate\(&o\.command\)' "$ROOT/kernel/src/shell/hubcmd.rs" \
+    || [[ "$(grep -cE 'ciclu::start\(' "$ROOT/kernel/src/shell/hubcmd.rs")" != 1 ]] \
+    || ! grep -B1 -E 'ciclu::start\(' "$ROOT/kernel/src/shell/hubcmd.rs" | grep -qE 'if let Ok\(Some\(tag\)\) = verdict'; then
+    echo "[after-gpu] EȘUAT: în hubcmd.rs ciclu::start trebuie chemat o singură dată, doar cu ce a dat ciclu::gate"; exit 1
+fi
+if grep -rnE 'ciclu::start\(' "$ROOT/kernel/src" --include=*.rs | grep -vq 'shell/hubcmd.rs'; then
+    echo "[after-gpu] EȘUAT: ciclu::start chemat din afara hubcmd.rs"; exit 1
+fi
+echo "[after-gpu] ok: lanțul fără DA doar în ciclul din hub, după cele două chei (C-105)"

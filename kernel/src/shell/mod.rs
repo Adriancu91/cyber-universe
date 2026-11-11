@@ -6,6 +6,7 @@ use crate::fs::{self, Kind};
 use alloc::{format, string::String, vec::Vec};
 
 pub mod auto;
+pub mod ciclu;
 pub mod compara;
 pub mod hubcmd;
 pub mod raport;
