@@ -3,6 +3,12 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-11 ~15:40–17:05 UTC (17:40–19:05 ora RO) — sesiune programată, fără Adrian — **P6-77 GATA (Release `os-288`); CI reparat; C-108 preluat (P6-78).**
+  - **CI atârna din cauza serverelor de pachete Ubuntu** (`azure.archive.ubuntu.com` și `archive.ubuntu.com` nu răspund; la fel și în sesiunea cloud: `resolve_no_records`). Run 284 anulat; pasul „Unelte sistem” are acum limită de 25 min, `apt-get update` cu limită 150 s, iar la eșec: doar sursele Ubuntu + `/etc/apt/apt-mirrors.txt` = `https://mirrors.edge.kernel.org/ubuntu/` (mașina GitHub folosește `mirror+file:`). 4 încercări (285–288), a patra verde (run 43058582536) → **Release `os-288`** = P6-77 (`d3c5351`, conținutul PMU în jurnal) peste `os-283`.
+  - `tools/env-check.sh --install`: aceeași rezervă (oglinda kernel.org) dacă arhiva Ubuntu nu răspunde. Local: `tools/test.sh` → 97 trecute, 0 eșuate, 1 sărit (fără internet).
+  - `.github/workflows/stress.yml` are încă pasul apt vechi (nereparat, ca să nu oprească rularea CI 288) — de copiat reparația la nevoie.
+  - **C-108 (URGENT pentru joi 12 nov ~07:00 ora RO, Release până la ~06:00):** preluat în hub (partea OS) ca **P6-78**, plan `docs/plans/P6-78.md`. Depinde de commit-ul Cyber-GPU cu variantele (rularea lui de 19:25 ora RO; rezervă 01:25). La 17:00 UTC încă nimic nou în `cyber-gpu` (vârful `d3c5351`).
+  - **Pentru sesiunea următoare:** verifică `cyber-gpu` (nota din `integration/cyber-universe/`); dacă variantele există → P6-78 (legare + `gpu variante` + `gpu lant --varianta N` + scenariu QEMU) → CI verde → Release, apoi procedura pentru Adrian în `stare/cyber-universe.md`.
 - 2026-11-11 ~13:45–15:05 UTC (aceeași sesiune ca mai jos, partea a doua) — **P6-77 în lucru (cod gata, așteaptă CI).**
   - cyber-gpu `d3c5351` (C-102 continuare 2: conținutul celor 2 mesaje PMU `UCODE_LIBOS_PRINT` scris în jurnal ca atare, doar citiri) legat: commit `61a308d`; 10/10 scenarii GPU locale TRECUT. (Cealaltă sesiune OS preluase și ea P6-77 la 15:46 ora RO — notat în hub că e deja împins.)
   - **CI 284:** toate trei părțile atârnă la pasul „Unelte sistem” (`apt-get install` pe mașina GitHub) — prima rulare oprită la 60 min (14:57 UTC), re-rulată (run 43033732360), la 15:05 tot acolo. Problemă externă (serverele de pachete), nu codul.
@@ -1266,6 +1272,9 @@
   lanțurile cu `openssl verify` — zero diferențe. CI verde pe toate commit-urile terminate (ultimele încă rulau la final).
 
 ## Următoarea sarcină
+**P6-78 (C-108, URGENT):** variantele de setări I8 de la Cyber-GPU — `gpu variante` + `gpu lant --varianta N`, Release până la ~06:00 ora RO pe 12 nov. Plan: `docs/plans/P6-78.md`. Dacă Cyber-GPU nu a livrat încă variantele: nimic de făcut în OS până atunci.
+
+(Istoric, mai jos:)
 **C-55 (comandă nouă în hub, `nou`): `gpu tur` + `gpu lant`** — exact `idei/2026-11-01_cyber-gpu-tur-si-lant.md`: fixarea cyber-gpu ≥ `911e6d0`
 (ramura `g0-g2-fundatie`, copia din hub), `gpu tur` (0 scrieri) pus pe lista albă din `shell/auto.rs`, `gpu lant` doar cu „DA” tastat și refuzat
 în modul automat. După C-55: watchdog-ul chipsetului (dacă Adrian vrea) și fereastra cu Adrian (I6 + prima tură a buclei, ~3 nov).
