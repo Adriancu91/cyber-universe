@@ -3,6 +3,11 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-11 ~08:57–09:55 UTC (10:57–11:55 ora României) — sesiune programată, fără Adrian — **oprirea (regula 5) ridicată**: jurnalul testului cu `os-278` + comanda **C-102** (URGENT, Adrian la workstation până ~12:15).
+  - Testul `os-278` (hub `rezultate/2026-11-11-workstation-os278/`): C-99 a mers (SEC2 pornit prin `0x840130`, toate 420 comenzi trec, GSP RISC-V activ), apoi I8 „eroare hardware 0x59” ~150 ms după secvențiator. cyber-gpu: `d31ad8d` (+ nota `f96c0ee`) — doar rânduri noi de jurnal (`valoare …`, „I8: eroarea vine din …”), nu o reparație.
+  - **P6-71 gata:** `kernel/Cargo.toml` pe `f96c0ee` (commit `4b57855`). `env-check --install` OK; `tools/build.sh` OK; `tools/test.sh gpu gpu-sim gpu-i6 gpu-scrie gpu-ro gpu-tur kronos-gpu boot shell` → 9/9 TRECUT (SIMULARE). CI verde (run 42994306895) → **Release `os-279`** (09:48 UTC, 12 fișiere). Push notificare către Adrian.
+  - Notă: `user/Cargo.toml` are `gpu-compute` fixat separat pe `a2f9736` (din sesiuni vechi, neschimbat aici).
+  - **Următoarea:** jurnalul cu `os-279` din `rezultate/` → după `secv #419 CORE_RESUME`: valorile dinainte de pornirea SEC2 (SCRATCH_14 = `0x04000000` deja?), apoi „I8: eroarea vine din …”; reparația vine de la cyber-gpu. Coada: P6-10 după test; P3-10 Adrian; P5-07 BLOCAT.
 - 2026-11-11 ~06:40–06:50 UTC (08:40–08:50 ora României) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5, rămâne); nicio schimbare de cod.
   - Hub: nicio comandă nouă pentru `cyber-universe` (de la 05:45 doar stările cyber-gpu și kronos; placa e liberă din nou, Kronos lucrează pe procesor la S98); niciun jurnal cu `os-278` în `rezultate/` (ultimul: `2026-11-10-workstation-os277`). CI pe `main` verde (run 42850183459, `os-278`). Copiile locale la zi cu `origin/main` (fast-forward). `env-check --install` nerulat (nicio sarcină de cod).
   - **Ce ridică oprirea:** jurnalul testului cu `os-278` în `rezultate/` sau o comandă nouă de la Adrian. **Următoarea:** la `secv #419 CORE_RESUME`: `bar0 w 0x840130`, rândurile `asteptat …`, apoi `GSP_INIT_DONE` sau prima eroare. Coada: P6-10/P6-12 după test; P3-10 Adrian; P5-07 BLOCAT.
