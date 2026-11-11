@@ -63,7 +63,7 @@ jobs:
             done
             # CI 286: the runner's Ubuntu sources are `mirror+file:/etc/apt/apt-mirrors.txt` (azure.archive.ubuntu.com,
             # unreachable on 11 Nov 2026) — put the kernel.org mirror first in that list.
-            printf 'https://mirrors.edge.kernel.org/ubuntu/\nhttp://archive.ubuntu.com/ubuntu/\n' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+            printf 'https://mirrors.edge.kernel.org/ubuntu/\n' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
             sudo sed -i -E 's#https?://([a-z0-9.-]*\.)?(archive|security)\.ubuntu\.com/ubuntu/?#https://mirrors.edge.kernel.org/ubuntu/#g' \
               /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null || true
             grep -h '^URIs' /etc/apt/sources.list.d/*.sources 2>/dev/null || true; cat /etc/apt/apt-mirrors.txt
