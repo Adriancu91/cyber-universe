@@ -51,12 +51,19 @@ jobs:
         run: |
           APT_OPTS="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
           for i in 1 2 3; do
-            timeout 180 sudo -E apt-get update -qq $APT_OPTS && \
+            timeout 150 sudo -E apt-get update $APT_OPTS && \
             timeout 300 sudo -E apt-get install -y -qq $APT_OPTS \
               qemu-system-x86 ovmf xorriso dosfstools mtools fdisk && exit 0
-            echo "apt attempt $i failed; switching to the kernel.org Ubuntu mirror and retrying in 15 s"
+            # CI 284/285: `apt-get update` hung even with a second Ubuntu mirror, so keep only the Ubuntu sources
+            # (the runner's extra repositories are not needed here) and use the kernel.org mirror.
+            echo "apt attempt $i failed; only Ubuntu sources from the kernel.org mirror, retrying in 15 s"
+            sudo mkdir -p /etc/apt/oprite
+            for f in /etc/apt/sources.list.d/*; do
+              [ "$(basename "$f")" = ubuntu.sources ] || sudo mv "$f" /etc/apt/oprite/ 2>/dev/null || true
+            done
             sudo sed -i -E 's#https?://([a-z0-9.-]*\.)?(archive|security)\.ubuntu\.com/ubuntu/?#https://mirrors.edge.kernel.org/ubuntu/#g' \
-              /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null || true
+              /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null || true
+            ls /etc/apt/sources.list.d/; grep -h '^URIs' /etc/apt/sources.list.d/*.sources 2>/dev/null || true
             sleep 15
           done
           exit 1
