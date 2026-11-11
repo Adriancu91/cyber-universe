@@ -13,15 +13,15 @@ cyber_crypto = { path = "../crypto" }
 cyber_rtl8168 = { path = "../rtl8168" }
 # P6-16: Intel e1000/82574/I219 driver logic (tested on the host against a model).
 cyber_e1000e = { path = "../e1000e" }
-# P6-19 (C-16): the Cyber-GPU libraries (MIT, same author), pinned to one commit (P6-70: 3aed5eb, C-99 CORE_RESUME through CPUCTL_ALIAS + 60 s waits that Esc can stop; P6-69: 2d66deb, C-96 GSP reset tolerant of 0xbadf; P6-68: bbbdb2f; P6-56: 20b4a3b, C-75 booter_load_dma_libos + push::DOORBELL; P6-55: a2f9736, C-71 WINDOW_CHAIN_FULL + run_chain_ready; P6-46: 9ac89b8, C-66 WPR2 HI last 128 KiB block; P6-35: 2c9c90c, with fw_check + FwsecLocation::lines; P6-31: 8313973 on their branch g0-g2-fundatie, with vbios_diag; P6-21: dac2e32; was 41e44ba = tag `stabil-2026-10-23`).
+# P6-19 (C-16): the Cyber-GPU libraries (MIT, same author), pinned to one commit (P6-71: f96c0ee, C-102 read-only diagnostic lines in I8 (valoare ...); P6-70: 3aed5eb, C-99 CORE_RESUME through CPUCTL_ALIAS + 60 s waits that Esc can stop; P6-69: 2d66deb, C-96 GSP reset tolerant of 0xbadf; P6-68: bbbdb2f; P6-56: 20b4a3b, C-75 booter_load_dma_libos + push::DOORBELL; P6-55: a2f9736, C-71 WINDOW_CHAIN_FULL + run_chain_ready; P6-46: 9ac89b8, C-66 WPR2 HI last 128 KiB block; P6-35: 2c9c90c, with fw_check + FwsecLocation::lines; P6-31: 8313973 on their branch g0-g2-fundatie, with vbios_diag; P6-21: dac2e32; was 41e44ba = tag `stabil-2026-10-23`).
 # Read-only use: PCI decoding, the GA104 level-0 probe. The kernel's ConfigSpace adapter refuses every write (drivers/gpu.rs).
-gpu-core = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "3aed5eb" }
-gpu-pci = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "3aed5eb" }
-nvidia-ga104 = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "3aed5eb" }
+gpu-core = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "f96c0ee" }
+gpu-pci = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "f96c0ee" }
+nvidia-ga104 = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "f96c0ee" }
 # P6-56 step 3 (I10): the CPU reference of `add64` (already a dependency of nvidia-ga104, same commit).
-gpu-compute = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "3aed5eb" }
+gpu-compute = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "f96c0ee" }
 # SIMULATION only (`gpu identifica --sim` in test builds); never compiled into the kernel people boot.
-gpu-sim = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "3aed5eb", optional = true }
+gpu-sim = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "f96c0ee", optional = true }
 
 [features]
 # P6-40 (C-52): the TEST STICK for the I6 window with Adrian: `gpu i6 --scrie` may write to the card (Bus Master, GSP
