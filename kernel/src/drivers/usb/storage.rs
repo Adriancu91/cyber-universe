@@ -42,6 +42,67 @@ fn alloc_big() -> Option<u64> {
     Some(start)
 }
 
+/// P6-83 (C-113): how long WRITE(10) and SYNCHRONIZE CACHE take on the sticks (count, total, longest, in µs), so a
+/// journal that slows to ~1 s per line shows where the time goes (`usb timp`, and the `gpu` journal's last line).
+pub struct Timing {
+    count: core::sync::atomic::AtomicU64,
+    total_us: core::sync::atomic::AtomicU64,
+    max_us: core::sync::atomic::AtomicU64,
+}
+
+impl Timing {
+    const fn new() -> Self {
+        use core::sync::atomic::AtomicU64;
+        Self { count: AtomicU64::new(0), total_us: AtomicU64::new(0), max_us: AtomicU64::new(0) }
+    }
+
+    fn add(&self, us: u64) {
+        use core::sync::atomic::Ordering::Relaxed;
+        self.count.fetch_add(1, Relaxed);
+        self.total_us.fetch_add(us, Relaxed);
+        self.max_us.fetch_max(us, Relaxed);
+    }
+
+    /// (count, total µs, longest µs).
+    pub fn get(&self) -> (u64, u64, u64) {
+        use core::sync::atomic::Ordering::Relaxed;
+        (self.count.load(Relaxed), self.total_us.load(Relaxed), self.max_us.load(Relaxed))
+    }
+}
+
+pub static WRITE_TIME: Timing = Timing::new();
+pub static SYNC_TIME: Timing = Timing::new();
+
+/// One line for people: "scrieri 600 (total 1.2 s, cea mai lunga 8 ms), sincronizari 600 (…)".
+pub fn timing_line() -> alloc::string::String {
+    let part = |name: &str, t: &Timing| {
+        let (n, total, max) = t.get();
+        let avg = if n == 0 { 0 } else { total / n };
+        let ms = |us: u64| alloc::format!("{}.{} ms", us / 1000, us % 1000 / 100);
+        alloc::format!("{} {} (total {}, in medie {}, cea mai lunga {})", name, n, ms(total), ms(avg), ms(max))
+    };
+    let refused = if SYNC_REFUSED.load(core::sync::atomic::Ordering::Relaxed) { "; stick fara sincronizare (refuzata, tolerata)" } else { "" };
+    alloc::format!("usb: {}, {}{}", part("scrieri", &WRITE_TIME), part("sincronizari", &SYNC_TIME), refused)
+}
+
+/// Some stick answered SYNCHRONIZE CACHE with ILLEGAL REQUEST (shown by `timing_line`; each stick remembers it in
+/// `Bot::no_sync`).
+static SYNC_REFUSED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Test builds only: SYNCHRONIZE CACHE is sent with an opcode no device knows (QEMU then answers ILLEGAL REQUEST,
+/// sense 5/20/00, exactly like a stick without the command), to exercise the tolerated-refusal path.
+#[cfg(feature = "qemu-test")]
+static TEST_UNKNOWN_SYNC: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+#[cfg(feature = "qemu-test")]
+pub fn test_unknown_sync(on: bool) {
+    TEST_UNKNOWN_SYNC.store(on, core::sync::atomic::Ordering::Relaxed);
+}
+
+fn now_us() -> u64 {
+    crate::time::since_boot_us().unwrap_or(0)
+}
+
 struct Bot {
     /// Index of the controller the stick is on (P6-25).
     ctrl: u8,
@@ -62,6 +123,9 @@ struct Bot {
     last_csw: Option<u8>,
     /// 64 KiB data buffer for `usb citire mare` (physical, 64 KiB aligned), allocated at the first big read; 0 = none.
     big: u64,
+    /// P6-83: the stick answered SYNCHRONIZE CACHE with ILLEGAL REQUEST (it has no such command, common on USB sticks):
+    /// later syncs are skipped. Its WRITE(10)s already finished with success; the stick commits them to flash itself.
+    no_sync: bool,
 }
 
 pub struct UsbDisk {
@@ -192,7 +256,7 @@ impl UsbDisk {
         let (dci_in, ring_in) = rings.pop()?;
         let mut bot = Bot {
             ctrl: dev.ctrl, slot: dev.slot, port, ep_in: ep_in.0, ep_out: ep_out.0, dci_in, dci_out, ring_in, ring_out,
-            cmd: frame::alloc_frame()?, data: frame::alloc_frame()?, tag: 0, last_csw: None, big: 0,
+            cmd: frame::alloc_frame()?, data: frame::alloc_frame()?, tag: 0, last_csw: None, big: 0, no_sync: false,
         };
         // INQUIRY; right after power-up a real stick may answer "command failed" (CSW 1, unit attention) until a
         // REQUEST SENSE clears it (SPC): up to 10 tries, 100 ms apart.
@@ -320,16 +384,73 @@ impl BlockDevice for UsbDisk {
             bot.data_mut(bytes).copy_from_slice(&buf[done as usize * SECTOR..done as usize * SECTOR + bytes]);
             let s = ((lba + done) as u32).to_be_bytes();
             let cmd = [0x2A, 0, s[0], s[1], s[2], s[3], 0, (n >> 8) as u8, n as u8, 0]; // WRITE(10)
-            super::with_controller(bot.ctrl, |x| bot.scsi(x, &cmd, n * SECTOR as u32, true)).ok_or(BlockError::OutOfRange)??;
+            let t0 = now_us();
+            let r = super::with_controller(bot.ctrl, |x| {
+                let r = bot.scsi(x, &cmd, n * SECTOR as u32, true);
+                if r.is_err() {
+                    // The reason goes to the log (P6-83); REQUEST SENSE also clears the stick's error state.
+                    let csw = bot.last_csw;
+                    let sense = if csw == Some(1) { bot.request_sense(x) } else { None };
+                    crate::warn!("usb: port {}: WRITE(10) la sectorul {} ({} sectoare) refuzat: {}", bot.port, lba + done, n, Bot::why(csw, sense));
+                }
+                r
+            });
+            WRITE_TIME.add(now_us().saturating_sub(t0));
+            r.ok_or(BlockError::OutOfRange)??;
             done += n as u64;
         }
         Ok(())
     }
 
     /// SYNCHRONIZE CACHE(10) for the whole stick (SBC-3): writes held in the stick's memory go to its flash.
+    /// P6-83 (C-113): many sticks do not have this command and answer ILLEGAL REQUEST (CSW 1, sense key 5); that is
+    /// not a disk error — it is noted once and later syncs are skipped. "Unit attention" (key 6) gets one more try.
+    /// Any other refusal is an error, with its reason in the log.
     fn flush(&self) -> Result<(), BlockError> {
+        use core::sync::atomic::Ordering::Relaxed;
         let mut bot = self.bot.lock();
-        let cmd = [0x35, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        super::with_controller(bot.ctrl, |x| bot.scsi(x, &cmd, 0, false)).ok_or(BlockError::OutOfRange)?
+        if bot.no_sync {
+            return Ok(());
+        }
+        #[allow(unused_mut)]
+        let mut cmd = [0x35, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        #[cfg(feature = "qemu-test")]
+        if TEST_UNKNOWN_SYNC.load(Relaxed) {
+            cmd[0] = 0xFF; // an opcode no device has (see `test_unknown_sync`)
+        }
+        let t0 = now_us();
+        let r = super::with_controller(bot.ctrl, |x| {
+            let mut last = None;
+            for attempt in 0..2 {
+                if bot.scsi(x, &cmd, 0, false).is_ok() {
+                    return Ok(());
+                }
+                let csw = bot.last_csw;
+                let sense = if csw == Some(1) { bot.request_sense(x) } else { None };
+                let why = Bot::why(csw, sense);
+                match sense {
+                    Some([5, ..]) => {
+                        bot.no_sync = true;
+                        SYNC_REFUSED.store(true, Relaxed);
+                        crate::warn!(
+                            "usb: port {}: stick-ul nu are SYNCHRONIZE CACHE ({}): sincronizarea se sare de acum (scrierile s-au terminat deja cu succes)",
+                            bot.port, why
+                        );
+                        return Ok(());
+                    }
+                    Some([6, ..]) if attempt == 0 => {
+                        crate::warn!("usb: port {}: SYNCHRONIZE CACHE: {}: inca o incercare", bot.port, why);
+                    }
+                    _ => {
+                        last = Some(why);
+                        break;
+                    }
+                }
+            }
+            crate::warn!("usb: port {}: SYNCHRONIZE CACHE refuzat: {}", bot.port, last.as_deref().unwrap_or("unit attention de doua ori"));
+            Err(BlockError::OutOfRange)
+        });
+        SYNC_TIME.add(now_us().saturating_sub(t0));
+        r.ok_or(BlockError::OutOfRange)?
     }
 }

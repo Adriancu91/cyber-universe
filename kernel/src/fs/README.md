@@ -15,6 +15,10 @@
     parcurgea lanțul de ~1700 de ori); clusterele consecutive se cer împreună (până la 64 KiB pe cerere). Orice schimbare în
     FAT șterge poziția ținută minte. Apelul de sistem `read` dă până la 1 MiB odată (era 64 KiB).
     Test: `test_disk_files` citește și în bucăți de 7000 de octeți, apoi înapoi (de la 90.000, 3, 40.960, 0).
+    **Scriere pe sectoare (P6-83, C-113):** o scriere citește și rescrie doar sectoarele atinse, nu tot clusterul (un rând
+    de jurnal pe un stick cu clustere de 32 KiB = 1–2 sectoare, nu 64 citite + 64 scrise). Scenariul `fat-mare`: stick USB de
+    64 GiB fără tabelă, clustere de 32 KiB, primul cluster liber = ultimul de pe disc (offset > 4 GiB, apoi căutarea trece
+    la începutul FAT-ului); 800 de rânduri scrise ca jurnalul `gpu`, fiecare sincronizat; `tools/after-fat-mare.sh` = `fsck.fat`.
     **Siguranță:** se scrie DOAR pe partițiile care au în rădăcină un fișier numit `cyber.rw` (pe celelalte: „doar citire”);
     ordinea e mereu date → FAT → intrarea din director (la ștergere: întâi intrarea), deci o oprire bruscă poate lăsa cel mult
     clustere pierdute, pe care `fsck`/`chkdsk` le eliberează.

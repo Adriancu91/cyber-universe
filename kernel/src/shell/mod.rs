@@ -267,6 +267,7 @@ fn help() {
     out!("  remote porneste [port]|opreste|stare  consola text prin retea (cheia din remote.cheie; implicit portul 2323)\n");
     out!("  cpu [porneste]   nucleele procesorului (porneste = porneste-le pe celelalte)\n");
     out!("  usb citire [mare|mica]  citirea de pe stick: 64 KiB pe comanda (varianta noua) sau 4 KiB (implicit)\n");
+    out!("  usb timp                cat au durat scrierile si sincronizarile pe stick de la pornire\n");
     out!("  reboot [acpi|cf9|8042|triplu]  reporneste (implicit: toate metodele, pe rand)\n");
     out!("  exit             inchide terminalul (doar in fereastra Terminal)\n");
 }
@@ -1200,7 +1201,9 @@ fn usb(args: &[&str]) {
             crate::drivers::usb::storage::set_big_reads(false);
             out!("usb: citire 4 KiB pe comanda (ca pana acum)\n");
         }
-        _ => out!("usb: folosire: usb citire [mare|mica]\n"),
+        // P6-83 (C-113): how long the stick's writes and syncs took since power-on.
+        ["timp"] => out!("{}\n", crate::drivers::usb::storage::timing_line()),
+        _ => out!("usb: folosire: usb citire [mare|mica] | usb timp\n"),
     }
 }
 

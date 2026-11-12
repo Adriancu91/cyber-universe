@@ -140,6 +140,13 @@ Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet 
     Fără una din ele, comanda primește în hub „REFUZAT: ciclul de test e DEZACTIVAT” și nu se întâmplă nimic. Ca să-l oprești
     din nou: ștergi fișierul `permite-test-placa` de pe stick (ajunge una din chei).
 
+17. **Stick-uri mari și jurnalul `gpu` (P6-83, comanda C-113):** stick-urile FAT32 mari (testat în QEMU: 64 GB, clustere de
+    32 KiB, cum le formatează Windows) merg pentru jurnal. Unele stick-uri (probabil și Kingston-ul de 64 GB) nu știu comanda
+    de „sincronizare” pe care o trimite OS-ul după fiecare rând; până la os-295 asta oprea jurnalul după antet. Acum OS-ul
+    scrie o dată în `log usb` „stick-ul nu are SYNCHRONIZE CACHE …” și merge mai departe. **`usb timp`** arată cât au durat
+    scrierile și sincronizările pe stick de la pornire (același rând apare la finalul raportului `gpu lant`) — dacă un stick
+    e lent (~1 s pe rând), aici se vede unde se duce timpul. Un rând de jurnal rescrie acum 1–2 sectoare, nu un cluster întreg.
+
 ## Pentru Claude (tehnic)
 - Varianta B merge pentru că firmware-ul UEFI caută `EFI/BOOT/BOOTX64.EFI` pe orice partiție FAT32, iar Limine își citește
   `boot/limine/limine.conf` și fișierele de pe aceeași partiție (`limine-uefi-cd.bin` nu e necesar la pornirea de pe stick,

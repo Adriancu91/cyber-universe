@@ -716,27 +716,33 @@ impl FileSystem for Fat32 {
             }
         }
         // 2. Data: every cluster touched by the write, or by the gap between the old end and `offset`
-        //    (old bytes after the old end are cleared, so the gap reads as zeros).
+        //    (old bytes after the old end are cleared, so the gap reads as zeros). Only the sectors in that range are
+        //    read and written (P6-83: one journal line = 1–2 sectors, not a whole 32 KiB cluster each time).
         let from = offset.min(old_size);
+        let upto = end.max(from);
         let mut buf = vec![0u8; cb as usize];
         for (i, &c) in chain.iter().enumerate() {
             let pos = i as u64 * cb;
-            if pos + cb <= from || pos >= end.max(from) {
+            if pos + cb <= from || pos >= upto {
                 continue;
             }
+            let lo = (from.max(pos) - pos) as usize / SECTOR * SECTOR;
+            let hi = ((upto.min(pos + cb) - pos) as usize).next_multiple_of(SECTOR);
+            let part = &mut buf[lo..hi];
+            let lba = self.cluster_lba(c) + (lo / SECTOR) as u64;
             if i < old_len {
-                self.read_cluster(c, &mut buf)?;
-                if pos + cb > old_size {
-                    buf[old_size.saturating_sub(pos) as usize..].fill(0);
+                self.dev.read(lba, part).map_err(io)?;
+                if pos + hi as u64 > old_size {
+                    part[(old_size.saturating_sub(pos) as usize).saturating_sub(lo)..].fill(0);
                 }
             } else {
-                buf.fill(0);
+                part.fill(0); // a new cluster: `alloc` already wrote zeros over all of it
             }
             let (s, t) = (offset.max(pos), end.min(pos + cb));
             if s < t {
-                buf[(s - pos) as usize..(t - pos) as usize].copy_from_slice(&data[(s - offset) as usize..(t - offset) as usize]);
+                part[(s - pos) as usize - lo..(t - pos) as usize - lo].copy_from_slice(&data[(s - offset) as usize..(t - offset) as usize]);
             }
-            self.write_cluster(c, &buf)?;
+            self.dev.write(lba, part).map_err(io)?;
         }
         // 3. FAT: link the new clusters after the old ones.
         for i in old_len.max(1)..chain.len() {

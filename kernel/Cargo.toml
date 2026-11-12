@@ -94,6 +94,8 @@ test-appwindow = ["qemu-test"]
 test-desktop = ["qemu-test"]
 # P4-07: writing on a copy of the test disk marked for writing (the harness checks it with fsck.fat).
 test-fatwrite = ["qemu-test"]
+# P6-83 (C-113): a 64 GiB FAT32 stick (32 KiB clusters): journal-like appends with a sync each, a refused sync tolerated.
+test-fat-mare = ["qemu-test"]
 # P4-08: module manager on a copy of the test disk marked for writing; then `mod list` in the shell.
 test-modules = ["qemu-test"]
 # P4-09: system monitor and file manager driven with simulated clicks and keys.

@@ -350,6 +350,9 @@ fn run_tests() -> ! {
     #[cfg(feature = "test-fatwrite")]
     test_fat_write();
 
+    #[cfg(feature = "test-fat-mare")]
+    test_fat_mare();
+
     #[cfg(feature = "test-modules")]
     test_modules();
 
@@ -1046,6 +1049,47 @@ fn test_fat_write() {
     fs::rename("/disk/scris/gol2", "/disk/scris/multe/gol2").expect("test: mutare director gol");
     assert!(fs::read_all("/disk/salut.txt").unwrap() == b"salut de pe disc\n", "fisierele vechi s-au stricat");
     info!("test: scriere FAT32 OK (nume scurte si lungi, 10000 octeti peste clustere, gol, stergere, director marit, director redenumit si mutat)");
+}
+
+/// P6-83 (C-113): the `gpu` journal's way of writing (a header, then one line at a time, each followed by a sync) on a
+/// 64 GiB FAT32 stick with 32 KiB clusters, whose first free cluster is the last one of the disk (offsets past 4 GiB,
+/// then the search wraps to the start of the FAT). Then a sync the stick refuses as an unknown command (as Adrian's
+/// Kingston may) must be tolerated. tools/after-fat-mare.sh checks the image with fsck.fat and reads the journal back.
+#[cfg(feature = "test-fat-mare")]
+fn test_fat_mare() {
+    use crate::drivers::usb::storage;
+    use fs::Kind;
+    let dir = "/usb/raport";
+    fs::create(dir, Kind::Dir).expect("test: fat mare: dosarul raport");
+    let path = "/usb/raport/gpu-jurnal-001.txt";
+    fs::create(path, Kind::File).expect("test: fat mare: fisierul jurnal");
+    let head = b"# jurnal de proba P6-83 (C-113)\n";
+    fs::write(path, 0, head).expect("test: fat mare: antetul");
+    fs::flush(path).expect("test: fat mare: sincronizarea dupa antet");
+    let mut want = head.to_vec();
+    for i in 0..800 {
+        let line = alloc::format!("[{:5}.000000] gpu: rand de proba {:04} pe stick-ul FAT32 de 64 GB\n", i, i);
+        let n = fs::write(path, want.len() as u64, line.as_bytes()).unwrap_or_else(|e| panic!("test: fat mare: randul {}: {}", i + 1, e.message()));
+        fs::flush(path).unwrap_or_else(|e| panic!("test: fat mare: sincronizarea randului {}: {}", i + 1, e.message()));
+        assert!(n == line.len(), "randul {}: {} octeti scrisi", i + 1, n);
+        want.extend_from_slice(line.as_bytes());
+    }
+    assert!(want.len() > 32 * 1024, "jurnalul trebuie sa treaca de un cluster");
+    assert!(fs::read_all(path).unwrap() == want, "test: fat mare: jurnalul citit inapoi difera");
+    info!("test: fat mare: 800 de randuri ({} octeti, peste {} clustere de 32 KiB), fiecare sincronizat", want.len(), want.len().div_ceil(32 * 1024));
+    info!("test: fat mare: {}", storage::timing_line());
+    // A stick without SYNCHRONIZE CACHE: refused once (ILLEGAL REQUEST), noted, then skipped; writing goes on.
+    storage::test_unknown_sync(true);
+    fs::flush(path).expect("test: fat mare: sincronizarea refuzata trebuie tolerata");
+    fs::flush(path).expect("test: fat mare: a doua sincronizare (sarita)");
+    storage::test_unknown_sync(false);
+    let tail = b"# dupa sincronizarea refuzata\n";
+    fs::write(path, want.len() as u64, tail).expect("test: fat mare: scriere dupa refuz");
+    fs::flush(path).expect("test: fat mare: sincronizare dupa refuz");
+    want.extend_from_slice(tail);
+    assert!(fs::read_all(path).unwrap() == want, "test: fat mare: jurnalul final difera");
+    info!("test: fat mare: {}", storage::timing_line());
+    info!("test: fat mare OK (64 GB, clustere de 32 KiB, sincronizare refuzata tolerata)");
 }
 
 /// Module manager on a copy of the test disk marked for writing: dependency checks, install, start

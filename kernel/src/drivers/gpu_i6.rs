@@ -99,7 +99,7 @@ pub(super) fn live_open(what: &str) -> Result<String, String> {
         // The header has no "bar"/"cfg " words: `i6_log::parse_line` must skip it.
         let head = format!("# jurnal gpu P6-40, cyber-gpu {}, comanda: {}\n", CYBER_GPU_REV, what);
         fs::write(&path, 0, head.as_bytes()).map_err(|e| format!("{}: {}", path, e.message()))?;
-        fs::flush(&path).map_err(|e| format!("{}: {}", path, e.message()))?;
+        fs::flush(&path).map_err(|e| format!("{}: sincronizarea stick-ului dupa antet: {} (motivul in `log usb`)", path, e.message()))?;
         *LIVE.lock() = Some(Live { path: path.clone(), off: head.len() as u64, lines: 0, failed: None });
         crate::info!("gpu: jurnalul pe loc: {}", path);
         return Ok(path);
@@ -118,13 +118,15 @@ fn sink(e: &Event) {
     if l.failed.is_some() {
         return;
     }
-    let r = fs::write(&l.path, l.off, line.as_bytes()).and_then(|n| fs::flush(&l.path).map(|_| n));
+    let r = fs::write(&l.path, l.off, line.as_bytes())
+        .map_err(|e| ("scriere", e))
+        .and_then(|n| fs::flush(&l.path).map(|_| n).map_err(|e| ("sincronizare", e)));
     match r {
         Ok(n) => {
             l.off += n as u64;
             l.lines += 1;
         }
-        Err(err) => l.failed = Some(format!("randul {}: {}", l.lines + 1, err.message())),
+        Err((step, err)) => l.failed = Some(format!("randul {} ({}): {}", l.lines + 1, step, err.message())),
     }
 }
 
@@ -149,6 +151,10 @@ pub(super) fn close_and_check(p: &str, check_i6: bool, lines: &mut Vec<String>) 
     match failed {
         None => lines.push(format!("{}: jurnalul pe loc: {} ({} randuri, fiecare scris pe loc)", p, path, n)),
         Some(why) => lines.push(format!("{}: jurnalul pe loc: {}: scrierea a ESUAT la {}", p, path, why)),
+    }
+    // P6-83 (C-113): where the stick's time went (since power-on), to tell a slow stick from a slow driver.
+    if path.starts_with("/usb") {
+        lines.push(format!("{}: {}", p, crate::drivers::usb::storage::timing_line()));
     }
     if !check_i6 {
         return true;

@@ -158,6 +158,27 @@ MTOOLS_SKIP_CHECK=1 mcopy -o -i "$FWSTICK" "$BUILD/cyber.rw.pick" ::/cyber.rw
 MTOOLS_SKIP_CHECK=1 mmd -i "$FWSTICK" ::/firmware ::/firmware/nvidia ::/firmware/nvidia/ga102 ::/firmware/nvidia/ga102/gsp
 echo "proba C-74, NU fisierul NVIDIA" > "$BUILD/booter_load.proba"
 MTOOLS_SKIP_CHECK=1 mcopy -o -i "$FWSTICK" "$BUILD/booter_load.proba" ::/firmware/nvidia/ga102/gsp/booter_load-570.144.bin
+# P6-83 (C-113): a 64 GiB stick like Adrian's Kingston (FAT32 from Windows: 32 KiB clusters, ~2 million of them, FAT
+# of ~16 MB), as a sparse file (a few MB on disk). FSInfo's "next free" hint points at the last cluster, so the first
+# allocations land more than 4 GiB into the disk and then wrap to the start of the FAT (scenario fat-mare).
+if [[ ",$EXTRA_FEATURES," == *",test-fat-mare,"* ]]; then
+    BIG="$BUILD/fat-mare.img"
+    rm -f "$BIG" && truncate -s 64G "$BIG"
+    PATH="$PATH:/usr/sbin:/sbin" mkfs.fat -F 32 -s 64 -S 512 -n CYBER-UNIV "$BIG" >/dev/null
+    echo "scriere permisa" > "$BUILD/cyber.rw.mare"
+    MTOOLS_SKIP_CHECK=1 mcopy -o -i "$BIG" "$BUILD/cyber.rw.mare" ::/cyber.rw
+    python3 - "$BIG" <<'PY2'
+import struct, sys
+with open(sys.argv[1], "r+b") as f:
+    bs = f.read(512)
+    spc, reserved, fats = bs[13], struct.unpack_from("<H", bs, 14)[0], bs[16]
+    total, fat_size = struct.unpack_from("<I", bs, 32)[0], struct.unpack_from("<I", bs, 36)[0]
+    fsinfo = struct.unpack_from("<H", bs, 48)[0]
+    clusters = (total - reserved - fats * fat_size) // spc
+    f.seek(fsinfo * 512 + 492)
+    f.write(struct.pack("<I", clusters + 1))  # the last cluster (clusters are numbered from 2)
+PY2
+fi
 if [[ ",$EXTRA_FEATURES," == *",test-disk,"* ]]; then
     cp "$DISK" "$ISO_ROOT/boot/disk.img"
     echo "    module_path: boot():/boot/disk.img" >> "$ISO_ROOT/boot/limine/limine.conf"
