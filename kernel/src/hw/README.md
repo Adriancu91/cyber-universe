@@ -52,3 +52,9 @@ Test: scenariul `analiza` (QEMU cu `-smbios type=1,...,serial=SERIE-TEST-4242`):
 (JSON valid, câte o componentă pe funcție PCI, 4096 octeți de configurație fiecare, DSDT în plus, seria în `inventory.json` și ascunsă în varianta
 de trimis, „0 scrieri”), `uhl::self_test()` la pornire (SMBIOS, nume de dosar, ascunderea); scenariul `ghpush`: dintr-un dosar `uhl/` pleacă
 doar cele 2 fișiere. Surse: specificațiile PCI/PCIe (Resizable BAR, Device Serial Number, Link Capabilities 2), DMTF SMBIOS 3.x, ACPI 6.5. Cod propriu.
+
+**Partea NVIDIA (P6-87, C-117 pasul 2):** când există o placă NVIDIA, `analiza` rulează turul de citire Cyber-GPU (același drum ca `gpu tur`:
+lista sigură C-54, adaptorul refuză orice scriere) și pune faptele lui (`fapt <cheie> = <valoare>`: `chip.nume`, `pci.id`, `gfw.progres`,
+`vbios.*`, `fwsec.*`, `i6.*`) în componenta `gpu:0000:<adresă>` (`facts`, `fact_count`, `writes_to_board` = 0 confirmat din rândul turului,
+`tour_lines`); imaginea VBIOS nu intră în inventar. Pe laptopul GA106 fără `gpu tur --trezire` placa nu se poate citi → faptele lipsesc, motivul e
+în `why_no_facts`. Test: scenariul `analiza-gpu` (`analiza --sim`, doar în build-urile de test: turul pe modelul gpu-sim al plăcii workstation).

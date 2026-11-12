@@ -20,6 +20,12 @@ use alloc::vec::Vec;
 use alloc::string::ToString;
 use cyber_json::Value as J;
 
+
+/// Builds the props list with less noise: `props!(v; "key" => prop, ...)`.
+macro_rules! props {
+    ($v:ident; $($k:expr => $e:expr),* $(,)?) => {{ $( $v.push((String::from($k), $e)); )* }};
+}
+
 pub const SCHEMA: &str = "uhl-inventory/0.1";
 pub const HIDDEN: &str = "[ascuns]";
 
@@ -45,7 +51,60 @@ const SOURCES: &[(&str, &str, &str)] = &[
     ("xhci", "hardware", "Dispozitivele USB enumerate de driverul XHCI al Cyber Universe"),
     ("cu-names", "documentation", "Tabelul de nume al Cyber Universe (kernel/src/hw/names.rs), scris dupa paginile publice"),
     ("cu-drivers", "software", "Driverele Cyber Universe pornite la boot"),
+    ("cyber-gpu", "hardware", "Turul de citire Cyber-GPU (lista sigura C-54): registrele placii NVIDIA prin adaptorul care refuza orice scriere"),
+    ("gpu-sim", "simulation", "Modelele gpu-sim ale Cyber-GPU (doar in build-urile de test; NU e placa reala)"),
 ];
+
+/// P6-87 (C-117 step 2): the read-only tour of the NVIDIA board (`gpu tur`), given by the shell.
+pub struct GpuTour {
+    /// PCI address of the board ("00:01.0"); None for the simulation.
+    pub address: Option<String>,
+    pub simulated: bool,
+    pub lines: Vec<String>,
+}
+
+/// `fapt <key> = <value>` lines -> (key, value); the order is kept.
+pub fn tour_facts(lines: &[String]) -> Vec<(String, String)> {
+    lines
+        .iter()
+        .filter_map(|l| {
+            let rest = &l[l.find("fapt ")? + 5..];
+            let (k, v) = rest.split_once(" = ")?;
+            Some((String::from(k.trim()), String::from(v.trim())))
+        })
+        .collect()
+}
+
+fn gpu_component(t: &GpuTour) -> J {
+    let refs: &[&str] = if t.simulated { &["gpu-sim"] } else { &["cyber-gpu"] };
+    let facts = tour_facts(&t.lines);
+    let state = if facts.is_empty() { "UNKNOWN" } else { "MEASURED" };
+    // The tour's own count: "0 scrieri in placa (..." or "... cerut N scrieri, toate REFUZATE de adaptor".
+    let refused = t.lines.iter().find(|l| l.contains("0 scrieri in placa")).map(|l| {
+        l.split_whitespace().zip(l.split_whitespace().skip(1)).find(|(_, b)| *b == "scrieri,").and_then(|(a, _)| a.parse::<u64>().ok()).unwrap_or(0)
+    });
+    let mut v = Vec::new();
+    props!(v;
+        "simulated" => p(J::Bool(t.simulated), "MEASURED", refs),
+        "facts" => p(J::Object(facts.iter().map(|(k, x)| (k.clone(), J::String(x.clone()))).collect()), state, refs),
+        "fact_count" => p(int(facts.len() as u64), state, refs),
+        "writes_to_board" => match refused {
+            Some(r) => p(J::String(format!("0 (adaptorul a refuzat {} cereri de scriere)", r)), "CONFIRMED", refs),
+            None => p(J::Null, "UNKNOWN", refs),
+        },
+        "tour_lines" => p(J::Array(t.lines.iter().map(|l| J::String(l.clone())).collect()), "MEASURED", refs),
+        "vbios_image" => not_tested("imaginea VBIOS nu se copiaza in inventar (doar antetele, din fapte)"),
+    );
+    if facts.is_empty() {
+        props!(v; "why_no_facts" => p(J::String(t.lines.iter().rev().find(|l| !l.trim().is_empty()).cloned().unwrap_or_default()), "MEASURED", refs));
+    }
+    let id = match &t.address {
+        Some(a) => format!("gpu:0000:{}", a),
+        None => String::from("gpu:simulare"),
+    };
+    let name = facts.iter().find(|(k, _)| k == "chip.nume").map(|(_, x)| format!("NVIDIA {}", x)).unwrap_or_else(|| String::from("NVIDIA"));
+    component(id, "gpu_registers", if t.simulated { format!("{} (SIMULARE gpu-sim)", name) } else { name }, v)
+}
 
 /// One property.
 fn p(value: J, status: &str, refs: &[&str]) -> J {
@@ -92,10 +151,6 @@ fn component(id: String, kind: &str, name: String, props: Vec<(String, J)>) -> J
     ])
 }
 
-/// Builds the props list with less noise: `props!(v; "key" => prop, ...)`.
-macro_rules! props {
-    ($v:ident; $($k:expr => $e:expr),* $(,)?) => {{ $( $v.push((String::from($k), $e)); )* }};
-}
 
 /// What the shell writes: the full inventory, the redacted one, the short report, and the folder name of the machine.
 pub struct Inventory {
@@ -106,7 +161,7 @@ pub struct Inventory {
 }
 
 /// Builds the inventory. `driver_of` = which of our drivers handles a function; `stamp` = "AAAA-LL-ZZTHH:MM:SS".
-pub fn build(driver_of: &dyn Fn(&Device) -> &'static str, cpu_name: &str, stamp: &str, session: &str) -> Inventory {
+pub fn build(driver_of: &dyn Fn(&Device) -> &'static str, cpu_name: &str, stamp: &str, session: &str, gpu: Option<&GpuTour>) -> Inventory {
     let smb = smbios_structs();
     let machine = machine_name(&smb);
     let mut comps: Vec<J> = Vec::new();
@@ -115,7 +170,11 @@ pub fn build(driver_of: &dyn Fn(&Device) -> &'static str, cpu_name: &str, stamp:
     comps.push(memory_component());
     let pci = crate::pci::devices();
     for d in &pci {
-        comps.push(pci_component(d, driver_of));
+        let toured = gpu.is_some_and(|g| g.address.as_deref() == Some(d.address().as_str()));
+        comps.push(pci_component(d, driver_of, toured));
+    }
+    if let Some(g) = gpu {
+        comps.push(gpu_component(g));
     }
     let acpi_count = acpi_components(&mut comps);
     let usb = crate::drivers::usb::devices();
@@ -639,7 +698,7 @@ fn ext_capabilities(d: &Device) -> Vec<(u16, u16, u8)> {
     out
 }
 
-fn pci_component(d: &Device, driver_of: &dyn Fn(&Device) -> &'static str) -> J {
+fn pci_component(d: &Device, driver_of: &dyn Fn(&Device) -> &'static str, toured: bool) -> J {
     const R: &[&str] = &["pci-config", "pcie-spec"];
     let mut config = [0u8; 4096];
     for o in (0..4096u16).step_by(4) {
@@ -843,7 +902,11 @@ fn pci_component(d: &Device, driver_of: &dyn Fn(&Device) -> &'static str) -> J {
     }
     props!(v; "config_space_bytes" => p(int(4096), "MEASURED", &["pci-config"]));
     if d.vendor == 0x10DE && d.class == 0x03 {
-        props!(v; "nvidia_registers" => not_tested("BOOT_0/BOOT_42, GFW, antetele VBIOS, VRAM, WPR2: pasul 2 (P6-87), prin cyber-gpu, doar citire"));
+        props!(v; "nvidia_registers" => if toured {
+            p(J::String(format!("componenta gpu:0000:{} (turul de citire cyber-gpu)", d.address())), "MEASURED", &["cyber-gpu"])
+        } else {
+            not_tested("turul de citire cyber-gpu nu a rulat pentru aceasta placa")
+        });
     }
     let name = match (super::names::pci_vendor(d.vendor), super::names::pci_device(d.vendor, d.device)) {
         (Some(a), Some(b)) => format!("{} {}", a, b),
@@ -1016,7 +1079,21 @@ fn report_text(doc: &J, machine: &str, stamp: &str, session: &str, counts: &[usi
     let st: Vec<String> = STATUSES.iter().zip(counts).map(|((k, _), c)| format!("{} {}", k, c)).collect();
     t.push_str(&format!("valori pe statusuri: {}\n", st.join(", ")));
     t.push_str("serii si UUID: doar in inventory.json (ramane pe stick); inventory.redacted.json le are ascunse\n");
-    t.push_str("placa NVIDIA (registre, VBIOS, VRAM): pasul 2 (P6-87), NOT_TESTED aici\n");
+    let gpus: Vec<&J> = kind_of(comps, "gpu_registers").collect();
+    if gpus.is_empty() {
+        t.push_str("placa NVIDIA: niciuna (sau turul nu a rulat)\n");
+    }
+    for c in gpus {
+        let facts = prop_value(c, "facts");
+        let f = |k: &str| facts.and_then(|x| x.get(k)).and_then(|x| x.as_str()).unwrap_or("-");
+        t.push_str(&format!(
+            "placa NVIDIA: {} | {} fapte | cip {} | VRAM {} | GFW {} | scrieri: {}\n",
+            c.get("name").and_then(|x| x.as_str()).unwrap_or("?"),
+            prop_value(c, "fact_count").and_then(|x| x.as_i64()).unwrap_or(0),
+            f("chip.nume"), f("i6.vram"), f("gfw.progres"),
+            prop_value(c, "writes_to_board").and_then(|x| x.as_str()).unwrap_or("necunoscut"),
+        ));
+    }
     t.push_str("0 scrieri in dispozitive\n");
     t
 }
@@ -1058,5 +1135,7 @@ pub fn self_test() {
     assert!(r.contains("\"redacted\":true") && !r.contains("redacted_value"), "uhl: redact marcaj");
     let full = strip_redacted_values(&doc).to_string();
     assert!(full.contains("SERIE") && !full.contains("redacted_value"), "uhl: varianta completa");
+    let f = tour_facts(&[String::from("SIMULARE: fapt chip.nume = GA104"), String::from("gpu0: fapt i6.vram = 8192 MiB"), String::from("fara fapt")]);
+    assert!(f.len() == 2 && f[0] == (String::from("chip.nume"), String::from("GA104")) && f[1].1 == "8192 MiB", "uhl: fapte {:?}", f);
     crate::info!("test: analiza (uhl) OK (SMBIOS, nume de dosar, ascunderea seriilor)");
 }

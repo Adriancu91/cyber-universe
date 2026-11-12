@@ -7,7 +7,8 @@ use crate::fs::{self, FsError, Kind};
 use alloc::{format, string::String};
 
 /// `analiza`: build, write, say where. In test builds also reads the files back and checks them.
-pub fn run() {
+/// `sim` (`analiza --sim`, test builds with gpu-sim only): the NVIDIA part comes from the gpu-sim model, marked SIMULARE.
+pub fn run(sim: bool) {
     super::emit("analiza: citesc SMBIOS, CPUID, memoria, configuratia PCI (4 KiB pe functie), ACPI, USB - doar citire...\n");
     let (stamp, session) = match crate::drivers::rtc::now() {
         Some(t) => (
@@ -21,7 +22,16 @@ pub fn run() {
         return;
     };
     let base = format!("{}/raport/uhl", mount);
-    let inv = crate::hw::uhl::build(&super::driver_of, &super::cpu_name(), &stamp, &session);
+    // P6-87 (C-117 step 2): the NVIDIA board through the read-only tour of Cyber-GPU (`gpu tur`, list C-54, 0 writes).
+    let gpu = if sim {
+        gpu_sim_tour()
+    } else {
+        crate::drivers::gpu::display_devices().into_iter().find(|d| d.vendor == 0x10DE).map(|d| {
+            super::emit(&format!("analiza: placa NVIDIA {}: turul de citire cyber-gpu (gpu tur, 0 scrieri)...\n", d.address()));
+            crate::hw::uhl::GpuTour { address: Some(d.address()), simulated: false, lines: crate::drivers::gpu_tur::tour() }
+        })
+    };
+    let inv = crate::hw::uhl::build(&super::driver_of, &super::cpu_name(), &stamp, &session, gpu.as_ref());
     let machine_dir = format!("{}/{}", base, inv.machine);
     let mut dir = format!("{}/{}", machine_dir, session);
     let made = (|| -> Result<(), String> {
@@ -72,12 +82,22 @@ pub fn run() {
         dir, inv.full.len() / 1024, inv.redacted.len() / 1024
     ));
     #[cfg(feature = "qemu-test")]
-    check_files(&dir);
+    check_files(&dir, sim);
+}
+
+#[cfg(feature = "test-gpu-sim")]
+fn gpu_sim_tour() -> Option<crate::hw::uhl::GpuTour> {
+    Some(crate::hw::uhl::GpuTour { address: None, simulated: true, lines: crate::drivers::gpu_tur::tour_sim() })
+}
+
+#[cfg(not(feature = "test-gpu-sim"))]
+fn gpu_sim_tour() -> Option<crate::hw::uhl::GpuTour> {
+    None
 }
 
 /// Test builds: the written files are read back, parsed with our JSON reader and compared with what the kernel sees.
 #[cfg(feature = "qemu-test")]
-fn check_files(dir: &str) {
+fn check_files(dir: &str, sim: bool) {
     let read = |n: &str| String::from_utf8(fs::read_all(&format!("{}/{}", dir, n)).expect("analiza: fisier lipsa")).expect("utf8");
     let full = cyber_json::parse_limited(&read("inventory.json"), 8 << 20).expect("analiza: inventory.json nu e JSON valid");
     let red_text = read("inventory.redacted.json");
@@ -101,6 +121,13 @@ fn check_files(dir: &str) {
     assert!(full_text.contains("SERIE-TEST-4242"), "analiza: seria lipseste din inventory.json");
     assert!(!red_text.contains("SERIE-TEST-4242") && red_text.contains(crate::hw::uhl::HIDDEN), "analiza: seria NU e ascunsa");
     assert!(read("report.txt").contains("0 scrieri in dispozitive"), "analiza: report.txt");
+    if sim {
+        let g = comps.iter().find(|c| c.get("kind").and_then(|x| x.as_str()) == Some("gpu_registers")).expect("analiza: componenta gpu");
+        let facts = g.get("props").and_then(|p| p.get("facts")).and_then(|p| p.get("value")).expect("analiza: fapte");
+        assert!(facts.get("chip.nume").and_then(|x| x.as_str()) == Some("GA104"), "analiza: chip.nume");
+        assert!(facts.get("pci.id").and_then(|x| x.as_str()) == Some("10de:2482"), "analiza: pci.id");
+        crate::info!("test: analiza --sim: faptele placii (gpu-sim) in inventar OK");
+    }
     crate::info!(
         "test: analiza: JSON valid, {} componente ({} PCI, {} ACPI), seria ascunsa in varianta de trimis OK",
         comps.len(), pci, kind("acpi_table")

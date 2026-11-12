@@ -151,12 +151,14 @@ fn dispatch(line: &str) -> bool {
             [] => hw(),
             ["lista"] => hw_lista(false),
             ["lista", "--detalii"] => hw_lista(true),
-            ["uhl"] => analiza::run(),
+            ["uhl"] => analiza::run(false),
             _ => out!("folosire: hw sau hw lista [--detalii] sau hw uhl (= analiza)\n"),
         },
         "raport" => raport::manual(),
         "analiza" => match args {
-            [] => analiza::run(), // C-117 (P6-86)
+            [] => analiza::run(false), // C-117 (P6-86, P6-87)
+            #[cfg(feature = "test-gpu-sim")]
+            ["--sim"] => analiza::run(true),
             _ => out!("folosire: analiza   (fara optiuni; inventarul ca UHL pe stick, doar citire)\n"),
         },
         "trimite" => raport::send_to_hub(),
