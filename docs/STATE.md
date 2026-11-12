@@ -3,6 +3,13 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-12 ~18:40–20:00 UTC (20:40–22:00 ora RO) — sesiune programată, fără Adrian — **P6-83 + P6-84 gata, Release `os-297` (CI verde, run 43288177513).**
+  - Hub: comenzi noi C-113 (stick Kingston FAT32 64 GB: jurnalul pică la al doilea rând; ~1 s/rând) și C-114 (un singur stick de test). `main` local al hub-ului era iar divergent (copie veche) → mutat pe `origin/main`, nimic forțat.
+  - **P6-83 (C-113):** cauza din cod — mesajul vine din `live_open`, pasul `fs::flush` (SYNCHRONIZE CACHE) imediat după antet; antetul era deja scris (de aceea `trimite` a urcat 57 de octeți). Refuzul „ILLEGAL REQUEST” (sense 5) e acum tolerat per stick (o dată în `log usb`), unit attention → o reîncercare, orice alt refuz are CSW + sense în log; `WRITE(10)` refuzat → CSW + sense în log. `usb timp` + rândul de la finalul jurnalului `gpu` = număr/total/medie/maxim pentru scrieri și sincronizări (răspunde la „de unde ~1 s/rând”). FAT32: o scriere rescrie doar sectoarele atinse (un rând = ~2 scrieri de 1 sector, nu 64+64 + intrarea). Scenariul `fat-mare` (64 GiB rar, 32 KiB/cluster, FSInfo pe ultimul cluster → alocare > 4 GiB și trecere la început, 800 de rânduri sincronizate, opcode necunoscut → tolerat, `fsck.fat` curat).
+  - **P6-84 (C-114):** Release-ul are `stick-test-complet.zip` (fișierele imaginii gpu-scrie + `VERSIUNE` + `CITESTE.txt`); scenariul `stick-complet` pornește de pe stick-ul FAT32 de 64 GiB fără tabelă și scrie jurnalul.
+  - **Cauza C-111 (os-289 dispărut):** CI păstrează doar ultimele 5 Release-uri în afara celor din `docs/RELEASES_PASTRATE.md` → `os-295` (testat azi pe workstation și ASUS) adăugat acolo.
+  - Teste local: `fat-mare fatwrite usb-disk usb-floppy usb-pick files-usb testtot revenire modules gpu-i6 gpu-rec gpu-tur gpu-var boot shell` 15/15, `stick-complet fat-mare usb` 3/3; `release-files.sh` local OK. Regula 5 resetată (2 sarcini terminate).
+  - **Pentru sesiunea următoare:** jurnalul `gpu lant` de pe stick-ul Kingston cu `os-297` (rândul `usb: scrieri …, sincronizari …` + `log usb`) → dacă tot e lent, propunerea „jurnal în RAM, scris în bucăți” (schimbă garanția „fiecare rând pe stick înainte de pasul următor” → cere „da” de la Adrian); P6-12 pasul 2 după `log mmio` real.
 - 2026-11-12 ~15:40–15:55 UTC (17:40–17:55 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
   - Hub: **C-111 — Adrian vine acum (~17:55) la testul cu variante (C-108).** Am găsit că Release-ul **`os-289` nu mai există pe GitHub** (nici `os-292`; există os-290/291/293/294/295) → procedura din `stare/cyber-universe.md` mutată pe **`os-295`** (aceleași 10 variante GPU, construit din `76866fb`), Adrian anunțat pe telefon. Cauza dispariției neinvestigată (de verificat dacă ceva șterge Release-uri vechi).
   - CI: ultimele 3 rulări verzi. Nicio sarcină liberă (P6-12 pasul 2 după `log mmio` real; P6-10/P3-10 cu Adrian; P5-07 BLOCAT). Regula 5: a doua sesiune la rând fără sarcină terminată (după P6-82).
@@ -1323,7 +1330,7 @@
   lanțurile cu `openssl verify` — zero diferențe. CI verde pe toate commit-urile terminate (ultimele încă rulau la final).
 
 ## Următoarea sarcină
-Nicio sarcină liberă fără Adrian. Așteptăm: (1) jurnalele testului GPU de joi 12 nov 07:00 (C-108, `gpu lant --varianta N`) → ce cere Cyber-GPU; (2) poza de pe ASUS TUF cu `os-290` (C-109: rândurile `apic: …`).
+Nicio sarcină liberă fără Adrian. Așteptăm: (1) testul pe stick-ul Kingston de 64 GB cu `os-297` (`gpu lant --varianta 1`, apoi `usb timp` + poză; rezultate în hub) → C-113 confirmat sau pasul următor; (2) jurnalele C-108 → Cyber-GPU; (3) `log mmio` real → P6-12 pasul 2.
 
 (Istoric, mai jos:)
 **C-55 (comandă nouă în hub, `nou`): `gpu tur` + `gpu lant`** — exact `idei/2026-11-01_cyber-gpu-tur-si-lant.md`: fixarea cyber-gpu ≥ `911e6d0`
