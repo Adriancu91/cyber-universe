@@ -3,6 +3,12 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-12 ~09:40–11:10 UTC (11:40–13:10 ora RO) — sesiune programată, fără Adrian — **P6-82 GATA (scenariul `remote` sigur în CI).**
+  - `git pull` OK (hub: clonă superficială cu `main` local vechi divergent → lucru pe ramura locală `lucru-2026-11-12` din `origin/main`, push pe `main`; nimic forțat). `env-check --install` OK.
+  - Hub: nicio comandă `nou` pentru `cyber-universe` (cele vechi C-7/C-11/C-91 sunt deja rezolvate sau depășite). Testul GPU tot amânat (C-110); placa e a lui Kronos.
+  - Nicio sarcină liberă în coadă (P6-12 pasul 2 după `log mmio` de pe un calculator real; P6-10/P3-10 cu Adrian; P5-07 BLOCAT) → am făcut avertismentul din sesiunea trecută: CI 294 picase o dată la `remote`.
+  - **P6-82 (nou, plan `docs/plans/P6-82.md`):** cauza = cursă: clientul de test se conecta înainte ca nucleul să scrie `test: remote: astept clientul`, iar `qemutest.py` caută rândurile în ordine. Acum rândul se scrie înainte ca serviciul să asculte, iar `remote: pornit pe …` înainte de pornirea firului serviciului (doar ordinea mesajelor). Local `remote` 3/3; toată suita **101 trecute, 0 eșuate, 1 sărit** (fără internet). Commit `76866fb`, CI verde (run 43202037669, din prima) → **Release `os-295`** (= os-294 + doar ordinea a două mesaje de test).
+  - **Pentru sesiunea următoare:** `os-295` gata. Coada fără Adrian e goală; regula 5: dacă următoarele sesiuni nu au ce termina, se adună „fără sarcină” — atunci oprire scurtă. Restul neschimbat: testul cu variante (C-108) la următoarea venire, poza `log mmio` de pe un calculator real pentru P6-12.
 - 2026-11-12 ~06:40–08:50 UTC (08:40–10:50 ora RO) — sesiune programată, fără Adrian — **P6-80 GATA (`os-293`), P6-81 GATA (diagnostic `map_mmio`, CI → `os-294`).**
   - `git pull` OK (hub: `main` local vechi divergent → păstrat pe ramura locală `vechi-local`, `main` din `origin/main`; nimic forțat). `env-check --install` OK.
   - Hub: **C-110 (Adrian, 06:49): testul GPU de azi s-a AMÂNAT** la următoarea venire; placa e a lui Kronos. Nicio comandă `nou` pentru noi. `os-289`/`os-290` rămân pe GitHub pentru testul amânat.
