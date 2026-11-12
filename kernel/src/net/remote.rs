@@ -90,9 +90,10 @@ pub fn start(port: u16) -> Result<String, String> {
     FAILS.store(0, Ordering::Relaxed);
     STOP.store(false, Ordering::Release);
     RUNNING.store(true, Ordering::Release);
-    sched::spawn(service);
+    // Logged before the service thread runs, so a client's first messages always come after it (P6-82).
     let addr = super::config().map(|c| ip(c.ip)).unwrap_or_default();
     crate::info!("remote: pornit pe {}:{} (cheia din {})", addr, port, from);
+    sched::spawn(service);
     Ok(format!("remote: pornit pe {}:{}, cheia din {}; `remote opreste` il opreste", addr, port, from))
 }
 

@@ -1510,6 +1510,8 @@ fn test_remote() {
         other => panic!("test: remote a pornit fara cheie: {:?}", other),
     }
     fs::rename("/disk/remote.ascuns", "/disk/remote.cheie").expect("test: cheia inapoi");
+    // Written before the service listens: the harness's client may connect as soon as it does (P6-82).
+    info!("test: remote: astept clientul");
     // The disk also has `remote.porneste` (tools/before-remote.sh): the boot-time start, as in the virtual machine.
     remote::start_if_asked();
     let deadline = arch::x86_64::apic::ticks() + 10 * arch::x86_64::apic::HZ;
@@ -1518,7 +1520,6 @@ fn test_remote() {
         sched::sleep_ms(20);
     }
     assert!(remote::start(remote::PORT_DEFAULT).is_err(), "test: al doilea start trebuia refuzat");
-    info!("test: remote: astept clientul");
     let deadline = arch::x86_64::apic::ticks() + 50 * arch::x86_64::apic::HZ;
     while remote::running() {
         assert!(arch::x86_64::apic::ticks() < deadline, "test: clientul nu a oprit serviciul ({})", remote::status());
