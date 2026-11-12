@@ -3,6 +3,11 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-12 ~12:40–12:50 UTC (14:40–14:50 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
+  - `git pull` OK (hub: `main` local vechi divergent → `main` mutat pe `origin/main`, commit-urile vechi locale erau doar copii vechi ale hub-ului; nimic forțat). `env-check --install` nerulat (nicio sarcină de cod).
+  - Hub: nicio comandă `nou` pentru `cyber-universe` (ultima, C-110, e pentru Kronos); niciun jurnal nou în `rezultate/`. CI: ultimele 5 rulări verzi (ultima: P6-82, run 43202037669 → `os-295`).
+  - Nicio sarcină liberă: P6-12 pasul 2 după `log mmio` de pe un calculator real; P6-10/P3-10 cu Adrian; P5-07 BLOCAT (P5-08 depinde de el). Regula 5 nu se aplică (P6-82 gata în sesiunea 11:40).
+  - **Pentru sesiunea următoare:** neschimbat — testul cu variante (C-108, `os-289`/`os-295`) la următoarea venire a lui Adrian; poza `log mmio` de pe un calculator real pentru P6-12; poza ASUS cu `os-290`+ (C-109). Atenție la regula 5: aceasta e prima sesiune fără sarcină terminată după P6-82.
 - 2026-11-12 ~09:40–11:10 UTC (11:40–13:10 ora RO) — sesiune programată, fără Adrian — **P6-82 GATA (scenariul `remote` sigur în CI).**
   - `git pull` OK (hub: clonă superficială cu `main` local vechi divergent → lucru pe ramura locală `lucru-2026-11-12` din `origin/main`, push pe `main`; nimic forțat). `env-check --install` OK.
   - Hub: nicio comandă `nou` pentru `cyber-universe` (cele vechi C-7/C-11/C-91 sunt deja rezolvate sau depășite). Testul GPU tot amânat (C-110); placa e a lui Kronos.
