@@ -3,6 +3,14 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-12 ~06:40–08:50 UTC (08:40–10:50 ora RO) — sesiune programată, fără Adrian — **P6-80 GATA (`os-293`), P6-81 GATA (diagnostic `map_mmio`, CI → `os-294`).**
+  - `git pull` OK (hub: `main` local vechi divergent → păstrat pe ramura locală `vechi-local`, `main` din `origin/main`; nimic forțat). `env-check --install` OK.
+  - Hub: **C-110 (Adrian, 06:49): testul GPU de azi s-a AMÂNAT** la următoarea venire; placa e a lui Kronos. Nicio comandă `nou` pentru noi. `os-289`/`os-290` rămân pe GitHub pentru testul amânat.
+  - Regula 5 verificată: 3 sesiuni la rând fără sarcină terminată (23:40, 02:40, 05:40) ar fi oprit sesiunea — dar motivul era doar așteptarea testului; testul fiind amânat, am **terminat** P6-80 (sarcină deja începută, nu nouă) → condiția nu mai e valabilă.
+  - **P6-80:** `wip/P6-80` unit în `main` (conflict doar în TASKS.md); local 100 trecute / 0 eșuate / 1 sărit (`kronos-kgr` a depășit 60 s o dată pe mașina cloud cu 2 nuclee, trecut la reluare). CI 293 verde → **Release `os-293`**.
+  - **P6-81 (pasul 1 din P6-12, nou, plan `docs/plans/P6-81.md`):** `map_mmio` numără paginile (noi fără cache cu biții PCD+PWT verificați, deja fără cache, deja CU cache, pagini mari), primele 16 cazuri cu cache în jurnal; `log mmio` = rezumat + acele rânduri. Fără schimbare de comportament. Scenariul nou `mmio`; local `mmio boot shell log net ahci nvme usb-disk gpu gpu-sim usb-hotplug fara-pit smp auto-ceas` → 14/14 TRECUT. În QEMU: 0x80000000 (+4 MiB, ecranul = BAR0 VGA) mapat de Limine CU cache — observația Cyber-GPU se confirmă ca posibilitate. CI 294: prima rulare roșie doar la scenariul `remote` (rândul `test: remote: astept clientul` neprins pe serial, deși sesiunea remote a mers; local trece) → re-rulată partea picată → verde → **Release `os-294`**.
+  - Avertismente noi de compilare (`unnecessary unsafe` la `__cpuid` în `fpu.rs`, nightly 2026-11-11) — vechi, nu blochează build-ul.
+  - **Pentru sesiunea următoare:** `os-294` gata. Dacă `remote` mai pică în CI la fel → de făcut testul mai robust (așteptare după rândul serial). Coada: P6-12 pasul 2 abia după `log mmio` de pe un calculator real; P6-10 cu Adrian; P3-10 Adrian; P5-07 BLOCAT; jurnalele testului GPU amânat (C-108) când vine Adrian.
 - 2026-11-12 ~03:40–03:50 UTC (05:40–05:50 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
   - `git pull` OK (hub: `main` local vechi divergent → păstrat pe ramura locală `local-vechi-20261112`, `main` din `origin/main`; nimic forțat). `env-check --install` nerulat (nicio sarcină de cod).
   - Hub: nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/` (testul GPU e azi la 07:00 ora RO). CI: ultimele 5 rulări verzi (ultima: `wip/P6-80`, run 43113989284).
