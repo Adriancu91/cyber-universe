@@ -424,6 +424,8 @@ Din hub, C-113 (cerut de Adrian, 12 nov 18:28, „înaintea următorului test pe
 Din hub, C-114 (cerut de Adrian, 12 nov 18:42, după C-113):
 - [x] **P6-84** C-114: un singur stick de test — arhiva `stick-test-complet.zip` în Release (sistemul de test ca fișiere + `VERSIUNE` + `CITESTE.txt`), de copiat pe stick-ul FAT32 mare lângă `firmware\`, `kronos\`, `github.token`; scenariul nou `stick-complet` (pornire de pe stick-ul de 64 GiB, jurnal scris). Plan: `docs/plans/P6-84.md`. Dep: P6-83.
   Gata (2026-11-12 ~19:25 UTC): `stick-complet fat-mare usb` 3/3 TRECUT local; `release-files.sh` local → arhiva cu `EFI/BOOT/BOOTX64.EFI`, nucleul gpu-scrie, `cyber.rw`, `VERSIUNE`, `CITESTE.txt` (13 fișiere în Release). CI verde → **Release `os-297`**. Pe Kingston netestat.
+Din hub, C-116 (decizia lui Adrian, 12 nov 20:57: laptopul ASUS TUF F15 = a doua mașină de test):
+- [~] **P6-85** C-116 (partea OS): cyber-gpu `6b6bb38`; `gpu identifica`/`gpu tur` recunosc GA106 (`10de:2520`); `gpu tur --trezire` (stick de test, după DA: Memory Space pornit pentru tur, repus la final); `gpu lant` refuzat pe GA106; `hw` cu modelul calculatorului din SMBIOS. Plan: `docs/plans/P6-85.md`. Dep: —.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
