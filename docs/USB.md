@@ -147,6 +147,13 @@ Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet 
     scrierile și sincronizările pe stick de la pornire (același rând apare la finalul raportului `gpu lant`) — dacă un stick
     e lent (~1 s pe rând), aici se vede unde se duce timpul. Un rând de jurnal rescrie acum 1–2 sectoare, nu un cluster întreg.
 
+18. **Un singur stick de test (P6-84, comanda C-114):** în Release e arhiva **`stick-test-complet.zip`**. Prima dată: o
+    dezarhivezi și copiezi TOT ce e în ea în rădăcina stick-ului FAT32 mare (Kingston 64 GB), apoi adaugi o singură dată
+    `firmware\` (cele 4 fișiere NVIDIA), `kronos\` (modelul) și `github.token`. La un Release nou: copiezi arhiva nouă peste
+    (înlocuiești fișierele; `firmware\`, `kronos\`, `github.token`, `raport\` nu se ating). Instrucțiunile sunt și în
+    `CITESTE.txt` din arhivă. Acesta e stick-ul care POATE scrie în placă (doar după „DA”); stick-ul normal CYBER-UNIV rămâne
+    pentru folosirea obișnuită.
+
 ## Pentru Claude (tehnic)
 - Varianta B merge pentru că firmware-ul UEFI caută `EFI/BOOT/BOOTX64.EFI` pe orice partiție FAT32, iar Limine își citește
   `boot/limine/limine.conf` și fișierele de pe aceeași partiție (`limine-uefi-cd.bin` nu e necesar la pornirea de pe stick,

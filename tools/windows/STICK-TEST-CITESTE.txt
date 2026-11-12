@@ -1,0 +1,14 @@
+Stick-ul de test complet (Cyber Universe, P6-84 / comanda C-114) - un singur stick, fara Rufus
+
+PRIMA DATA (o singura data):
+1. Stick FAT32 mare (de ex. Kingston 64 GB, formatat FAT32).
+2. Dezarhivezi stick-test-complet.zip si copiezi TOT ce e inauntru in radacina stick-ului
+   (dosarele EFI si boot, fisierele cyber.rw, VERSIUNE, CITESTE.txt si dosarul kronos daca exista). Inlocuiesti tot.
+3. Adaugi o data, tot in radacina: dosarul firmware\ (cele 4 fisiere NVIDIA, de pe stick-ul vechi),
+   dosarul kronos\ cu modelul tau si fisierul github.token.
+
+ACTUALIZARE (la un Release nou): dezarhivezi arhiva noua si o copiezi peste, inlocuind fisierele.
+firmware\, kronos\ (modelul tau), github.token si raport\ nu se ating.
+
+ATENTIE: acesta e stick-ul care POATE scrie in placa video (doar dupa "DA").
+Stick-ul normal CYBER-UNIV (fara scriere in placa) ramane pentru folosirea obisnuita.

@@ -17,3 +17,4 @@ Actions → „Republica un Release păstrat” → tag + id-ul rulării (`.gith
 | os-150 | af7cd3d | 39830543552 | Testul 7 pe laptop (2026-10-22): internet prin ICS, rece și cald | republicat (C-17) |
 | os-161 | d2da9e0 | 39891003818 | Prima pornire pe workstation (2026-10-23 09:45) | republicat (C-17) |
 | os-187 | 972fa21 | — | Punct de revenire `stabil-2026-10-23` (C-16): 9f67d7b + o reparație doar în test | da |
+| os-295 | 76866fb | 43202037669 | Testul cu variante pe workstation (C-108/C-111) și ASUS TUF pornit până la desktop (C-109), 2026-11-12 | da |

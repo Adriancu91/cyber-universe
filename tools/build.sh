@@ -211,5 +211,13 @@ if (( USB )) || [[ ",$EXTRA_FEATURES," == *",test-usb,"* ]]; then
         MTOOLS_SKIP_CHECK=1 mmd -i "$USB_IMG@@1M" ::/kronos 2>/dev/null || true
         MTOOLS_SKIP_CHECK=1 mcopy -o -i "$USB_IMG@@1M" "$ROOT/tests/kronos/mic_q8_0.kgr" ::/kronos/mic_q8_0.kgr
     fi
+    # P6-84 (C-114): the "single test stick": every file of this image copied onto the 64 GiB FAT32 stick (as Adrian
+    # does with the stick-test-complet archive); scenario stick-complet boots from it and writes the journal.
+    if [[ ",$EXTRA_FEATURES," == *",test-fat-mare,"* ]]; then
+        ONE="$(mktemp -d)"
+        MTOOLS_SKIP_CHECK=1 mcopy -s -i "$USB_IMG@@1M" ::/EFI ::/boot "$ONE/"
+        MTOOLS_SKIP_CHECK=1 mcopy -s -i "$BUILD/fat-mare.img" "$ONE/EFI" "$ONE/boot" ::/
+        rm -rf "$ONE"
+    fi
     echo "[build] Gata: build/$(basename "$USB_IMG") (de scris pe stick, vezi docs/USB.md)"
 fi
