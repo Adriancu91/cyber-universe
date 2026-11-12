@@ -248,6 +248,7 @@ fn help() {
     out!("  gpu [identifica|plan]  placile video (nivel 0: doar citire; NVIDIA: registrele de identitate)\n");
     out!("  gpu pregatire-i6 pregatirea pasului I6 (doar citire); gpu i6 --scrie = prima scriere (doar stick-ul de test)\n");
     out!("  gpu tur          turul de citire (doar citire, un rand `fapt` pe fapt); gpu lant = pasii ferestrei in lant (cere DA)\n");
+    out!("  gpu tur --trezire  laptopul (GA106): Memory Space pornit pentru tur, repus la final (cere DA; doar stick-ul de test)\n");
     out!("  gpu recupereaza  dupa un lant oprit: Booter Unload coboara WPR2 fara repornire (cere DA; doar stick-ul de test)\n");
     out!("  hw               raport hardware pe o pagina (pentru o singura poza)\n");
     out!("  hw lista [--detalii]  tot hardware-ul: procesor, memorie, PCI, Wi-Fi, USB, ACPI (doar citire)\n");
@@ -641,9 +642,12 @@ fn gpu(args: &[&str]) {
         Some("tur") => {
             // P6-42 (C-55): the read-only tour, one `fapt` line per fact; allowed in the automatic loop.
             let rest = &args[1..];
-            if let Some(bad) = rest.iter().find(|a| **a != "--sim") {
-                out!("gpu tur: optiune necunoscuta: {} (folosire: gpu tur [--sim])\n", bad);
+            if let Some(bad) = rest.iter().find(|a| !matches!(**a, "--sim" | "--trezire")) {
+                out!("gpu tur: optiune necunoscuta: {} (folosire: gpu tur [--trezire])\n", bad);
                 return;
+            }
+            if rest.contains(&"--trezire") {
+                return tur_trezire(rest.contains(&"--sim"));
             }
             if rest.contains(&"--sim") {
                 #[cfg(feature = "test-gpu-sim")]
@@ -671,7 +675,7 @@ fn gpu(args: &[&str]) {
                 out!("{}\n", l);
             }
         }
-        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios [--detalii] | gpu fwsec | gpu firmware | gpu pregatire-i6 | gpu i6 --scrie | gpu tur | gpu lant [--varianta N] | gpu variante | gpu recupereaza | gpu plan)\n", other),
+        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios [--detalii] | gpu fwsec | gpu firmware | gpu pregatire-i6 | gpu i6 --scrie | gpu tur [--trezire] | gpu lant [--varianta N] | gpu variante | gpu recupereaza | gpu plan)\n", other),
     }
 }
 
@@ -740,6 +744,43 @@ fn lant(rest: &[&str]) {
         out!("{}\n", l);
     }
     // C-84 item 1: the chain's journal (/usb/raport/gpu-jurnal-NNN.txt) goes to the hub when there is a token.
+    raport::send_to_hub();
+}
+
+/// P6-85 (C-116): `gpu tur --trezire [--sim]` — the read tour on the laptop's GA106 with the minimal wake-up (one
+/// write in the PCI Command register, put back at the end). Asks for `DA`; refused by the automatic loop and the hub;
+/// outside the test-stick build it refuses before the question.
+fn tur_trezire(sim: bool) {
+    if sim && !cfg!(feature = "test-gpu-sim") {
+        out!("gpu: --sim exista doar in build-ul de test (modelul gpu-sim nu intra in sistemul pornit de pe stick)\n");
+        return;
+    }
+    if !sim && !cfg!(feature = "gpu-scrie") {
+        out!("{}\n", crate::drivers::gpu_tur::TREZIRE_REFUSED);
+        crate::info!("gpu: {}", crate::drivers::gpu_tur::TREZIRE_REFUSED);
+        return;
+    }
+    for l in crate::drivers::gpu_tur::TREZIRE_WARNING {
+        out!("{}\n", l);
+    }
+    out!("Scrie DA (litere mari) si Enter ca sa continui; orice altceva opreste: ");
+    let Some(answer) = read_line() else { return };
+    if answer.trim() != "DA" {
+        out!("gpu tur --trezire: oprit, nimic scris in placa\n");
+        crate::info!("gpu: tur --trezire: oprit la confirmare (nimic scris)");
+        return;
+    }
+    crate::info!("gpu: tur --trezire: confirmat cu DA{}", if sim { " (SIMULARE)" } else { "" });
+    #[cfg(feature = "test-gpu-sim")]
+    if sim {
+        for l in crate::drivers::gpu_tur::tour_awake_sim() {
+            out!("{}\n", l);
+        }
+        return;
+    }
+    for l in crate::drivers::gpu_tur::tour_awake() {
+        out!("{}\n", l);
+    }
     raport::send_to_hub();
 }
 
@@ -1095,6 +1136,9 @@ fn time_command(args: &[&str]) {
 /// One-page hardware report: processor, memory, PCI devices with the driver that handles them, USB, disks, network.
 fn hw() {
     out!("== raport hardware ==\n");
+    for l in crate::hw::smbios::lines() {
+        out!("{}\n", l);
+    }
     out!("procesor: {}\n", cpu_name());
     match crate::gfx::framebuffer::boot_info() {
         Some((phys, size, w, h, pitch, bpp)) => out!(

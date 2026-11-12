@@ -284,7 +284,14 @@ pub fn identify() -> Vec<String> {
 // ---------------------------------------------------------------------------------------------------------------
 
 /// Pinned Cyber-GPU revision (kernel/Cargo.toml), shown in the report.
-pub const CYBER_GPU_REV: &str = "49e6685";
+pub const CYBER_GPU_REV: &str = "6b6bb38";
+
+/// P6-85 (C-116): the line for a board the library knows only for reading (GA106, the ASUS TUF laptop).
+pub const GA106_READ_ONLY: &str =
+    "GA106 (laptop): doar citire; pasii care scriu in placa (gpu i6 / lant / recupereaza) sunt refuzati pana la DA-ul separat al lui Adrian (C-116 pasul 3)";
+/// P6-85 (C-116): what to run on the laptop to read the board at all.
+pub const WAKE_HINT: &str =
+    "pentru citire: `gpu tur --trezire` pe stick-ul de test (o scriere in registrul Command al PCI, repusa la final; cere DA)";
 
 /// Configuration space of one function for the Cyber-GPU libraries: reads only.
 pub(super) struct ReadOnlyConfig<'a> {
@@ -333,16 +340,23 @@ fn probe_with_cyber_gpu(n: usize, d: &Device, lines: &mut Vec<String>) -> LibPro
     use nvidia_ga104::probe;
     let mut cfg = ReadOnlyConfig { dev: d, refused: 0 };
     let addr = gpu_core::PciAddress { segment: 0, bus: d.bus, dev: d.dev, func: d.func };
-    let candidate = probe::probe_config(&mut cfg, Some(addr));
+    // P6-85 (C-116): GA104 (the workstation) or GA106 (the ASUS TUF laptop); the configuration reads are the same.
+    let candidate = probe::probe_config_ampere(&mut cfg, Some(addr));
     let mut out = LibProbe { identified: false, refused: cfg.refused };
-    let c = match candidate {
+    let (c, family) = match candidate {
         Err(e) => {
             lines.push(format!("gpu{}: cyber-gpu {} nvidia-ga104: {}", n, CYBER_GPU_REV, e));
             return out;
         }
-        Ok(c) => c,
+        Ok(x) => x,
     };
-    lines.push(format!("gpu{}: cyber-gpu {} nvidia-ga104: {} (BAR0 {:#x})", n, CYBER_GPU_REV, c.model, c.bar0));
+    lines.push(format!(
+        "gpu{}: cyber-gpu {} nvidia-ga104: {} (BAR0 {:#x}), familia {}",
+        n, CYBER_GPU_REV, c.model, c.bar0, family.name()
+    ));
+    if !family.writes_allowed() {
+        lines.push(format!("gpu{}: {}", n, GA106_READ_ONLY));
+    }
     // C-103 (P6-74): what the board's configuration space says about resets without a power cycle (reads only;
     // the adapter refuses and counts any write).
     match gpu_pci::caps::reset_capabilities(&mut cfg) {
@@ -350,14 +364,17 @@ fn probe_with_cyber_gpu(n: usize, d: &Device, lines: &mut Vec<String>) -> LibPro
         None => lines.push(format!("gpu{}: reset (C-103, doar citire): fara capabilitate PCIe", n)),
     }
     out.refused = cfg.refused;
-    if d.command() & 0b10 == 0 {
-        lines.push(format!("gpu{}: registrele nu s-au citit: Memory Space oprit de firmware (nu il pornim)", n));
+    if !c.memory_space_enabled() {
+        lines.push(format!("gpu{}: registrele nu s-au citit: {}", n, probe::MEMORY_SPACE_OFF));
+        if !family.writes_allowed() {
+            lines.push(format!("gpu{}: {}", n, WAKE_HINT));
+        }
         return out;
     }
     let r = with_readonly_window(c.bar0, |w| {
         let mut win = ReadOnlyWindow { va: w, refused: 0 };
         let mut journal = gpu_core::diag::Journal::new(16);
-        let chip = probe::probe_mmio(&mut win, &mut journal);
+        let chip = probe::probe_mmio_family(&mut win, &mut journal, family);
         (chip, win.refused + journal.writes())
     });
     match r {
@@ -663,18 +680,25 @@ pub fn init_step(step: InitStep) -> Vec<String> {
         let p = format!("gpu{}", n);
         let mut cfg = ReadOnlyConfig { dev: d, refused: 0 };
         let addr = gpu_core::PciAddress { segment: 0, bus: d.bus, dev: d.dev, func: d.func };
-        let candidate = probe::probe_config(&mut cfg, Some(addr));
+        // P6-85 (C-116): reads only, so GA106 (the laptop) is accepted too.
+        let candidate = probe::probe_config_ampere(&mut cfg, Some(addr));
         refused += cfg.refused;
-        let c = match candidate {
-            Ok(c) => c,
+        let (c, family) = match candidate {
+            Ok(x) => x,
             Err(e) => {
                 lines.push(format!("{}: {} cyber-gpu {}: {}", p, d.address(), CYBER_GPU_REV, e));
                 continue;
             }
         };
-        lines.push(format!("{}: {} {} (BAR0 {:#x}), cyber-gpu {}", p, d.address(), c.model, c.bar0, CYBER_GPU_REV));
-        if d.command() & 0b10 == 0 {
-            lines.push(format!("{}: registrele nu s-au citit: Memory Space oprit de firmware (nu il pornim)", p));
+        lines.push(format!(
+            "{}: {} {} (BAR0 {:#x}), familia {}, cyber-gpu {}",
+            p, d.address(), c.model, c.bar0, family.name(), CYBER_GPU_REV
+        ));
+        if !c.memory_space_enabled() {
+            lines.push(format!("{}: registrele nu s-au citit: {}", p, probe::MEMORY_SPACE_OFF));
+            if !family.writes_allowed() {
+                lines.push(format!("{}: {}", p, WAKE_HINT));
+            }
             continue;
         }
         if crate::time::since_boot_us().is_none() {

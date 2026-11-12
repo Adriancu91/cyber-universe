@@ -44,6 +44,9 @@ pub const GSP_HI: u64 = 0x11_3FFF;
 pub(super) const PCI_COMMAND: u16 = 0x04;
 #[cfg_attr(not(feature = "gpu-scrie"), allow(dead_code))]
 const CMD_BUS_MASTER: u16 = 1 << 2;
+/// PCI Command bit 1, Memory Space (P6-85, C-116).
+#[cfg_attr(not(feature = "gpu-scrie"), allow(dead_code))]
+const CMD_MEMORY_SPACE: u16 = 1 << 1;
 /// The DMA area for the FWSEC image: 16 pages (64 KiB) between 16 MiB and 4 GiB; the real image is 0xEA00 bytes.
 const DMA_PAGES: u64 = 16;
 /// Journal capacity in memory (the stick file has everything).
@@ -444,6 +447,12 @@ pub(super) fn board(lines: &mut Vec<String>) -> Option<(crate::pci::Device, u64)
         Ok(c) => c,
         Err(e) => {
             lines.push(format!("gpu0: {} cyber-gpu {}: {}", d.address(), CYBER_GPU_REV, e));
+            // P6-85 (C-116): say why when it is the laptop's GA106 (known to the library, but only for reading).
+            if let Some((fam, m)) = nvidia_ga104::ids::lookup_ampere(d.vendor, d.device) {
+                if !fam.writes_allowed() {
+                    lines.push(format!("gpu0: {} ({}): {}", m.name, fam.name(), gpu::GA106_READ_ONLY));
+                }
+            }
             return None;
         }
     };
@@ -586,6 +595,30 @@ pub(super) mod hw {
                 crate::warn!("gpu: scriere refuzata in configuratia PCI (gardul Bus Master): {:#x} <- {:#010x}", offset, value);
                 return;
             }
+            self.dev.write32(PCI_COMMAND, value);
+        }
+    }
+
+    /// P6-85 (C-116, the "minimal wake-up"): configuration space: reads anywhere; the only write let through is
+    /// Command with nothing but bit 1 (Memory Space) changed. Every other write is refused and counted.
+    pub(crate) struct MemorySpaceOnlyConfig<'a> {
+        pub(crate) dev: &'a crate::pci::Device,
+        pub(crate) refused: usize,
+        pub(crate) written: usize,
+    }
+
+    impl gpu_core::hal::ConfigSpace for MemorySpaceOnlyConfig<'_> {
+        fn read32(&mut self, offset: u16) -> u32 {
+            self.dev.read32(offset & 0xFFC)
+        }
+        fn write32(&mut self, offset: u16, value: u32) {
+            let now = self.dev.command();
+            if offset & 0xFFC != PCI_COMMAND || value >> 16 != 0 || (value as u16 ^ now) & !super::CMD_MEMORY_SPACE != 0 {
+                self.refused += 1;
+                crate::warn!("gpu: scriere refuzata in configuratia PCI (gardul Memory Space): {:#x} <- {:#010x}", offset, value);
+                return;
+            }
+            self.written += 1;
             self.dev.write32(PCI_COMMAND, value);
         }
     }

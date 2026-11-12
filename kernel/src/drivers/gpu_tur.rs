@@ -161,6 +161,10 @@ fn step_failed(what: &'static str) -> GpuError {
 pub fn tour() -> Vec<String> {
     let p = "gpu0";
     let mut lines = Vec::new();
+    // P6-85 (C-116): the laptop's GA106 has its own read-only path (`run_tour_ampere`); GA104 is unchanged.
+    if let Some(d) = ga106_board() {
+        return tour_ampere_board(p, d, false, lines);
+    }
     let Some((d, bar0)) = gpu_i6::board(&mut lines) else { return finish(lines) };
     let live = match gpu_i6::live_open("gpu tur") {
         Ok(_) => true,
@@ -193,7 +197,11 @@ pub fn tour() -> Vec<String> {
 pub fn variant_line(nr: Option<u8>) -> String {
     match nr.and_then(nvidia_ga104::gsp::variants::get) {
         Some(v) => format!("varianta I8 {}: {} — {} (sursa: {})", v.nr, v.name, v.changes, v.source),
-        None => String::from("varianta I8: niciuna (ca os-283)"),
+        // cyber-gpu e49ca76: without `--varianta` the library uses its default variant (1, the one that passed I8 on the board).
+        None => {
+            let d = nvidia_ga104::gsp::variants::default_variant();
+            format!("varianta I8 implicita: {} ({})", d.nr, d.name)
+        }
     }
 }
 
@@ -201,8 +209,9 @@ pub fn variant_line(nr: Option<u8>) -> String {
 pub fn variants_list() -> Vec<String> {
     let mut l = Vec::new();
     l.push(format!(
-        "variantele I8 (C-108, cyber-gpu {}): una pe pornire rece, cu `gpu lant --varianta N`; fara --varianta = ca os-283",
-        gpu::CYBER_GPU_REV
+        "variantele I8 (C-108, cyber-gpu {}): una pe pornire rece, cu `gpu lant --varianta N`; fara --varianta = varianta {} (implicita)",
+        gpu::CYBER_GPU_REV,
+        nvidia_ga104::gsp::variants::DEFAULT
     ));
     for v in nvidia_ga104::gsp::variants::list() {
         l.push(format!("{}. {} — {} (sursa: {})", v.nr, v.name, v.changes, v.source));
@@ -212,7 +221,7 @@ pub fn variants_list() -> Vec<String> {
 }
 
 /// `gpu lant` on the real board (the shell asked for `DA` first). Writes only in the `gpu-scrie` build.
-/// P6-78 (C-108): `variant` = `--varianta N` (already checked by the shell); `None` = os-283.
+/// P6-78 (C-108): `variant` = `--varianta N` (already checked by the shell); `None` = the library's default variant (1 since cyber-gpu e49ca76).
 pub fn chain(variant: Option<u8>) -> Vec<String> {
     let p = "gpu0";
     let mut lines = Vec::new();
@@ -491,6 +500,229 @@ pub fn chain(variant: Option<u8>) -> Vec<String> {
         report.writes
     ));
     finish(lines)
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// P6-85 (C-116): the ASUS TUF laptop (GA106). The library knows it only for reading; its firmware leaves the board
+// with Memory Space off, so nothing can be read until the "minimal wake-up" (`gpu tur --trezire`): one write in the
+// PCI Command register (Memory Space on) for the tour, put back after it — also when the tour fails. No GPU register
+// is ever written: BAR0 is reached through the read-only window.
+// ---------------------------------------------------------------------------------------------------------------
+
+/// The first NVIDIA board, when the library knows it as a family that may not be written (GA106, the laptop).
+fn ga106_board() -> Option<crate::pci::Device> {
+    let d = gpu::display_devices().into_iter().find(|d| d.vendor == gpu::NVIDIA)?;
+    let (fam, _) = nvidia_ga104::ids::lookup_ampere(d.vendor, d.device)?;
+    (!fam.writes_allowed()).then_some(d)
+}
+
+/// The fact lines of a tour and its summary.
+fn tour_lines(p: &str, t: &nvidia_ga104::read_tour::Tour, lines: &mut Vec<String>) {
+    for f in &t.facts {
+        lines.push(format!("{}", f));
+    }
+    lines.push(format!("{}: tur de citire (C-54): {} fapte, {} citiri jurnalizate", p, t.facts.len(), t.reads));
+}
+
+/// The warning shown before `DA` for `gpu tur --trezire`.
+pub const TREZIRE_WARNING: &[&str] = &[
+    "ATENTIE: gpu tur --trezire (C-116) face o singura scriere in configuratia PCI a placii video:",
+    "  pornesc bitul Memory Space din registrul Command, ca sa se poata citi placa (BOOT_0, GFW, VBIOS, FWSEC);",
+    "  la final Command e repus cum l-a lasat firmware-ul (si daca turul pica). Niciun registru al placii nu se scrie.",
+    "  Jurnalul merge pe stick (gpu-jurnal-NNN.txt) si se trimite in hub dupa.",
+];
+
+/// The tour with the minimal wake-up on any configuration / BAR0 (real board or model). `writes_cfg` = the
+/// configuration writes the adapter let through (2 when the wake-up ran, 0 when it was not needed).
+#[cfg_attr(not(any(feature = "gpu-scrie", feature = "test-gpu-sim")), allow(dead_code))]
+fn awake_tour_on<C: ConfigSpace + ?Sized, M: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    cfg: &mut C,
+    addr: Option<PciAddress>,
+    bar0: &mut M,
+    clock: &mut K,
+    journal: &mut Journal,
+    lines: &mut Vec<String>,
+) {
+    let permit = gpu_pci::mem_space::MemorySpacePermit::new("C-116 gpu tur --trezire (P6-85)");
+    match nvidia_ga104::read_tour::run_tour_awake(cfg, addr, bar0, clock, journal, &permit) {
+        Ok((t, wake)) => {
+            tour_lines(p, &t, lines);
+            lines.push(format!(
+                "{}: trezirea minima: {}",
+                p,
+                match wake {
+                    nvidia_ga104::read_tour::Wake::NotNeeded => "nu a fost nevoie (Memory Space era pornit), nicio scriere",
+                    nvidia_ga104::read_tour::Wake::EnabledAndRestored => "Memory Space pornit pentru tur, apoi repus",
+                }
+            ));
+        }
+        Err(e) => lines.push(format!("{}: tur de citire (trezire C-116): {}", p, e)),
+    }
+}
+
+/// `gpu tur` on the laptop (`awake` false: read only; with Memory Space off it stops with the reason) and
+/// `gpu tur --trezire` (`awake` true: only in the test-stick build, after `DA`).
+fn tour_ampere_board(p: &str, d: crate::pci::Device, awake: bool, mut lines: Vec<String>) -> Vec<String> {
+    let addr = PciAddress { segment: 0, bus: d.bus, dev: d.dev, func: d.func };
+    let (c, family) = {
+        let mut cfg = ReadOnlyConfig { dev: &d, refused: 0 };
+        match nvidia_ga104::probe::probe_config_ampere(&mut cfg, Some(addr)) {
+            Ok(x) => x,
+            Err(e) => {
+                lines.push(format!("{}: {} cyber-gpu {}: {}", p, d.address(), gpu::CYBER_GPU_REV, e));
+                return finish(lines);
+            }
+        }
+    };
+    lines.push(format!(
+        "{}: {} {} (BAR0 {:#x}), familia {}, cyber-gpu {}",
+        p, d.address(), c.model, c.bar0, family.name(), gpu::CYBER_GPU_REV
+    ));
+    if !awake && !c.memory_space_enabled() {
+        lines.push(format!("{}: {}", p, nvidia_ga104::probe::MEMORY_SPACE_OFF));
+        lines.push(format!("{}: {}", p, gpu::WAKE_HINT));
+        lines.push(gpu::writes_line(0));
+        return finish(lines);
+    }
+    if crate::time::since_boot_us().is_none() {
+        lines.push(format!("{}: ceasul (TSC) nu e calibrat: limitele de timp nu se pot tine; nimic citit", p));
+        return finish(lines);
+    }
+    let what = if awake { "gpu tur --trezire" } else { "gpu tur" };
+    let live = match gpu_i6::live_open(what) {
+        Ok(_) => true,
+        Err(why) => {
+            lines.push(format!("{}: jurnalul pe loc: nu (stick: {}); doar in log", p, why));
+            false
+        }
+    };
+    let mut j = gpu_i6::journal(live);
+    let (refused, cfg_writes, remaps, map_failed) = {
+        let _guard = WINDOW_LOCK.lock();
+        let mut win = ReadOnlyBar0Window::with_len(c.bar0 & !0xFFF, nvidia_ga104::fuse::FUSE_WINDOW);
+        let (refused, cfg_writes) = if awake {
+            awake_on_board(p, &d, addr, &mut win, &mut j, &mut lines)
+        } else {
+            let mut cfg = ReadOnlyConfig { dev: &d, refused: 0 };
+            match nvidia_ga104::read_tour::run_tour_ampere(&mut cfg, Some(addr), &mut win, &mut TscClock, &mut j) {
+                Ok(t) => tour_lines(p, &t, &mut lines),
+                Err(e) => lines.push(format!("{}: tur de citire: {}", p, e)),
+            }
+            (cfg.refused, 0)
+        };
+        (refused + win.refused, cfg_writes, win.remaps, win.map_failed)
+    };
+    let cmd = d.command();
+    lines.push(format!(
+        "{}: Command acum {:04x} (memorie {}, bus master {})",
+        p, cmd, if cmd & 2 != 0 { "da" } else { "nu" }, if cmd & 4 != 0 { "da" } else { "nu" }
+    ));
+    gpu_i6::close_and_check(p, false, &mut lines);
+    if map_failed {
+        lines.push(format!("{}: maparea ferestrei a esuat (citirile au dat FFFFFFFF)", p));
+    }
+    lines.push(format!("{}: {} pagini mapate pe rand (doar citire, fereastra de 16 MiB)", p, remaps));
+    lines.push(format!(
+        "{}: scrieri: {} in configuratia PCI (registrul Command, trezirea C-116), 0 in registrele placii; {} cereri refuzate de adaptor",
+        p, cfg_writes, refused
+    ));
+    finish(lines)
+}
+
+/// The wake-up on the real board: only the test-stick build has an adapter that can write the Command register.
+/// Returns (refused, configuration writes let through).
+#[cfg(feature = "gpu-scrie")]
+fn awake_on_board(
+    p: &str,
+    d: &crate::pci::Device,
+    addr: PciAddress,
+    win: &mut ReadOnlyBar0Window,
+    j: &mut Journal,
+    lines: &mut Vec<String>,
+) -> (usize, usize) {
+    let mut cfg = gpu_i6::hw::MemorySpaceOnlyConfig { dev: d, refused: 0, written: 0 };
+    awake_tour_on(p, &mut cfg, Some(addr), win, &mut TscClock, j, lines);
+    (cfg.refused, cfg.written)
+}
+
+#[cfg(not(feature = "gpu-scrie"))]
+fn awake_on_board(
+    p: &str,
+    _d: &crate::pci::Device,
+    _addr: PciAddress,
+    _win: &mut ReadOnlyBar0Window,
+    _j: &mut Journal,
+    lines: &mut Vec<String>,
+) -> (usize, usize) {
+    lines.push(format!("{}: {}", p, TREZIRE_REFUSED));
+    (0, 0)
+}
+
+/// The refusal outside the test-stick build.
+pub const TREZIRE_REFUSED: &str =
+    "gpu tur --trezire: acest sistem nu poate scrie in placa (doar stick-ul de test, gpu-scrie); nimic scris";
+
+/// `gpu tur --trezire` on the real board (the shell asked for `DA` first; outside `gpu-scrie` it refuses before).
+pub fn tour_awake() -> Vec<String> {
+    let p = "gpu0";
+    let mut lines = Vec::new();
+    let Some(d) = gpu::display_devices().into_iter().find(|d| d.vendor == gpu::NVIDIA) else {
+        lines.push(String::from("nicio placa NVIDIA"));
+        return finish(lines);
+    };
+    tour_ampere_board(p, d, true, lines)
+}
+
+/// `gpu tur --trezire --sim`: the wake-up and the tour on the gpu-sim model of the laptop (configuration from what
+/// the laptop showed on 12 nov: `10de:2520`, Command 0; BAR0 = the observed workstation BAR0 with GA106 identity,
+/// as in Cyber-GPU's own test), then the same on a model whose BOOT_0 does not answer (Command must still go back),
+/// then the plain read-only tour on the laptop model (refused: Memory Space off).
+#[cfg(feature = "test-gpu-sim")]
+pub fn tour_awake_sim() -> Vec<String> {
+    let p = "model";
+    let mut lines = Vec::new();
+    let live = gpu_i6::live_open("gpu tur --trezire --sim").is_ok();
+    let mut j = gpu_i6::journal(live);
+    let mut clock = gpu_sim::clock::SimClock::default();
+    let mut cfg = gpu_sim::observed::observed_config();
+    cfg.set_device_id(0x2520);
+    cfg.write_raw(0x04, 0x0010_0000);
+    cfg.writes = 0;
+    let mut bar0 = gpu_sim::observed::observed_bar0();
+    bar0.set(0, 0xb760_00a1);
+    bar0.set(0xa00, 0x176a_1000);
+    awake_tour_on(p, &mut cfg, None, &mut bar0, &mut clock, &mut j, &mut lines);
+    lines.push(format!(
+        "{}: laptop: {} scrieri in configuratie, {} in registre, Command dupa = {:04x}",
+        p, cfg.writes, bar0.writes.len(), cfg.read_raw(0x04) & 0xffff
+    ));
+    // BOOT_0 does not answer after the wake-up: the tour fails, Command must still be put back.
+    let mut cfg2 = gpu_sim::pci::SimConfig::ga106_laptop_asus();
+    let mut dead = gpu_sim::mmio::SimMmio::new(16 << 20);
+    dead.set(0, 0xffff_ffff);
+    let mut scratch = Journal::new(256);
+    awake_tour_on("model nu raspunde", &mut cfg2, None, &mut dead, &mut clock, &mut scratch, &mut lines);
+    lines.push(format!(
+        "model nu raspunde: {} scrieri in configuratie, Command dupa = {:04x}",
+        cfg2.writes, cfg2.read_raw(0x04) & 0xffff
+    ));
+    // The plain tour (no wake-up) on the laptop as the firmware leaves it: refused before any BAR0 read.
+    let mut cfg3 = gpu_sim::pci::SimConfig::ga106_laptop_asus();
+    let mut bar3 = gpu_sim::mmio::SimMmio::ga106_bar0();
+    let mut scratch = Journal::new(256);
+    match nvidia_ga104::read_tour::run_tour_ampere(&mut cfg3, None, &mut bar3, &mut clock, &mut scratch) {
+        Ok(_) => lines.push(String::from("model fara trezire: turul a citit (NEASTEPTAT)")),
+        Err(e) => lines.push(format!("model fara trezire: {}; {} citiri BAR0", e, bar3.reads.len())),
+    }
+    // The writing chain stays refused on GA106 (C-116 step 3).
+    let mut cfg4 = gpu_sim::pci::SimConfig::ga106_laptop_asus();
+    match nvidia_ga104::probe::probe_config(&mut cfg4, None) {
+        Ok(_) => lines.push(String::from("model lant: GA106 acceptat de lant (NEASTEPTAT)")),
+        Err(e) => lines.push(format!("model lant: GA106 refuzat de lant: {}", e)),
+    }
+    gpu_i6::close_and_check(p, false, &mut lines);
+    gpu_i6::sim_lines(lines, "gpu tur --trezire")
 }
 
 // ---------------------------------------------------------------------------------------------------------------

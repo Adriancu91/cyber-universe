@@ -17,6 +17,11 @@ pentru Wi-Fi primii 64 de octeți din configurare, pentru USB clasa și punctele
 „Memory Space”/„Bus Master”, nu schimbă starea de alimentare, nu citește registrele MMIO ale plăcii Wi-Fi (ar cere pornirea
 decodării memoriei = o scriere) și nu atinge placa video. Ultimul rând al listei spune mereu „0 scrieri in dispozitive”.
 
+**Modelul calculatorului (P6-85, C-116):** `hw` și `hw lista` încep cu `calculator: <producător> <produs> (versiune …)` și un rând cu
+familia, SKU-ul, placa de bază și versiunea SMBIOS, din tabelele SMBIOS ale firmware-ului (`smbios.rs`: punctele de intrare `_SM3_` / `_SM_`
+date de Limine, structurile de tip 1 și 2; doar citire; numerele de serie și UUID-ul nu se citesc). Fără SMBIOS: „calculator: necunoscut
+(SMBIOS absent)”. Testat în scenariul `gpu-ga106` (QEMU cu `-smbios type=1,...`) și de `smbios::self_test()` la pornirea build-urilor de test.
+
 **Depinde de:** `pci` (lista și spațiul de configurare deja mapat), `drivers::usb` (dispozitivele enumerate), `acpi` (lista de tabele,
 funcția nouă `acpi::tables()`, doar citire), `mem::map` / `mem::frame`, `acpi::madt`, `arch::x86_64::smp`.
 

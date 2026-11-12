@@ -3,7 +3,7 @@
 use limine::BaseRevision;
 use limine::request::{
     ExecutableFileRequest, FramebufferRequest, HhdmRequest, MemoryMapRequest, ModuleRequest, RequestsEndMarker,
-    RequestsStartMarker, RsdpRequest,
+    RequestsStartMarker, RsdpRequest, SmbiosRequest,
 };
 
 /// Highest base revision supported by the `limine` crate (0.5.0).
@@ -30,6 +30,11 @@ pub static HHDM: HhdmRequest = HhdmRequest::new();
 #[used]
 #[unsafe(link_section = ".requests")]
 pub static RSDP: RsdpRequest = RsdpRequest::new();
+
+/// SMBIOS entry points (P6-85, C-116: the computer's model in `hw`).
+#[used]
+#[unsafe(link_section = ".requests")]
+pub static SMBIOS: SmbiosRequest = SmbiosRequest::new();
 
 /// Files Limine loads next to the kernel (`module_path` in limine.conf): the user programs.
 #[used]

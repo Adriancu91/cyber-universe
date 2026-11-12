@@ -110,6 +110,8 @@ extern "C" fn kernel_main() -> ! {
     sched::init();
 
     let has_acpi = acpi::init();
+    // P6-85 (C-116): the computer's model from SMBIOS (read only; independent of ACPI).
+    hw::smbios::init();
     if has_acpi {
         acpi::fadt::init();
     }
@@ -262,6 +264,7 @@ fn run_tests() -> ! {
     proc::rights::self_test();
     assert!(acpi::fadt::self_test(), "acpi: FADT RESET_REG decodat gresit");
     info!("test: FADT RESET_REG decodare OK");
+    hw::smbios::self_test();
     assert!(hw::names::self_test(), "hw: tabelul de nume hardware gresit");
     info!("test: tabelul de nume hardware OK (Wi-Fi recunoscut dupa clasa si id)");
     if let Err(e) = net::sntp::self_test() {

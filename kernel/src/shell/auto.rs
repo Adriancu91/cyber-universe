@@ -155,6 +155,10 @@ pub fn allowed(line: &str) -> Result<(), &'static str> {
         ["timp", rest @ ..] if !rest.is_empty() => allowed(&rest.join(" ")),
         ["cpu", ..] => Ok(()),
         ["gpu"] => Ok(()),
+        // P6-85 (C-116): the minimal wake-up writes the PCI Command register: only with Adrian there.
+        ["gpu", "tur", rest @ ..] if rest.contains(&"--trezire") => {
+            Err("gpu tur --trezire scrie in configuratia PCI a placii: doar cu Adrian de fata")
+        }
         ["gpu", sub, ..] => match *sub {
             "identifica" | "gfw" | "vbios" | "fwsec" | "firmware" | "pregatire-i6" | "tur" | "plan" | "variante" => Ok(()),
             "lant" => Err("gpu lant scrie in placa video: doar cu Adrian de fata"),
@@ -305,7 +309,7 @@ pub fn self_test() {
     for ok in ["hw", "gpu", "gpu identifica", "gpu pregatire-i6", "gpu tur", "gpu plan", "run kronos --profil --n 64 Buna", "run kronos-calcul --cauta", "cpu porneste", "raport", "log gpu 40", "compara /usb/a.txt /usb/b.txt", "log --sumar", "log --avertismente 50", "timp uptime", "timp run kronos --n 16 Buna"] {
         assert!(allowed(ok).is_ok(), "auto: `{}` trebuia permis", ok);
     }
-    for bad in ["gpu i6 --scrie", "gpu i6", "gpu lant", "gpu recupereaza", "gpu recupereaza --sim", "gpu lant --sim", "gpu pregatire-i6 --scrie", "reboot", "run fetch https://x", "http get x", "rtl", "run editor", "mod incarca x", "exit", "test-gata", "timp", "timp reboot", "timp gpu i6 --scrie", "timp timp uptime", "timp run editor", "run kronos --gpu Ana", "run kronos --n 3 --gpu-sim x", "timp run kronos --gpu", "run kronos --conversatie"] {
+    for bad in ["gpu i6 --scrie", "gpu i6", "gpu lant", "gpu recupereaza", "gpu recupereaza --sim", "gpu lant --sim", "gpu pregatire-i6 --scrie", "reboot", "run fetch https://x", "http get x", "rtl", "run editor", "mod incarca x", "exit", "test-gata", "timp", "timp reboot", "timp gpu i6 --scrie", "timp timp uptime", "timp run editor", "run kronos --gpu Ana", "run kronos --n 3 --gpu-sim x", "timp run kronos --gpu", "run kronos --conversatie", "gpu tur --trezire", "timp gpu tur --trezire", "gpu tur --trezire --sim"] {
         assert!(allowed(bad).is_err(), "auto: `{}` trebuia refuzat", bad);
     }
     crate::info!("test: lista alba a modului automat OK");

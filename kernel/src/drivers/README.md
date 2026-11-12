@@ -170,6 +170,21 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   - Test: `gpu-var` (lista; 99 și număr lipsă refuzate; varianta 1 fără `DA` oprită; cu `DA` în SIMULARE: RPC-urile puse la I7, soneria
     înainte de Booter, I8 „(puse la I7)”, `GSP_INIT_DONE`, modelul a primit [72, 73]; `gpu lant --varianta 2` fără placă → „nicio placa NVIDIA”).
     **Pe placă: neîncercat.**
+- **Laptopul ASUS TUF F15 (GA106) și „trezirea minimă”: `gpu tur --trezire` (P6-85, comanda C-116):** cyber-gpu `6b6bb38`
+  (`ids::lookup_ampere`, `probe::probe_config_ampere`, `read_tour::run_tour_ampere` / `run_tour_awake`, `gpu_pci::mem_space`).
+  Placa laptopului (`10de:2520`, RTX 3060 Laptop) e recunoscută **doar pentru citire**: `gpu identifica`, `gpu gfw/vbios/fwsec` și
+  `gpu tur` o arată cu „familia GA106”; firmware-ul laptopului lasă bitul Memory Space oprit, deci fără trezire nu se citește nimic
+  (mesajul vine din bibliotecă). `gpu tur --trezire` — doar în build-ul stick-ului de test (`gpu-scrie`), după `DA`, refuzat în bucla
+  automată și din hub — pornește bitul 1 din registrul Command al PCI printr-un gard nou (`gpu_i6::hw::MemorySpaceOnlyConfig`: doar
+  Command, doar bitul 1), face turul de citire prin fereastra BAR0 doar-citire și repune Command la final (și când turul pică).
+  Rezultat: 2 scrieri în configurația PCI, 0 în registrele plăcii; jurnalul pe stick + `trimite`. `gpu lant` / `gpu i6` /
+  `gpu recupereaza` refuză GA106 cu motivul (pasul 3 din C-116 cere un „DA” separat). Fără `--varianta`, `gpu lant` folosește acum
+  varianta implicită a bibliotecii (1, `rpc-inainte`, cea care a trecut I8 pe placă). În I9 (`gpu_golden.rs`) mesajele GSP-RM primite
+  în așteptarea răspunsului intră în jurnal (`QueueTransportBellKeep` + `journal_skipped`, propunerea cyber-gpu).
+  - Test: `gpu-ga106` (`hw` cu modelul din SMBIOS; `gpu tur --trezire` refuzat fără `gpu-scrie`; `--sim` fără `DA` oprit; cu `DA`:
+    `chip.familie = GA106`, `pci.trezire`, 2 scrieri în configurație, 0 în registre, Command repus 0000, și la fel când BOOT_0 nu
+    răspunde; turul fără trezire oprit înainte de orice citire BAR0; lanțul refuză GA106). `tools/after-gpu.sh` verifică gardul nou și
+    că `tour_awake()` e chemat doar după `DA`. **Pe laptop: neîncercat.**
 - **`gpu recupereaza` (P6-74, comanda C-103, fișierul `gpu_rec.rs`):** după un lanț oprit (ex. la I8), placa rămâne cu WPR2 ridicat și
   cere pornire rece. Calea publică a driverului NVIDIA 570.144 (MIT) și a nouveau: programul semnat `booter_unload-570.144.bin` (de pe
   stick, al 4-lea fișier I4) pe SEC2 cu cutiile (0xFF, 0xFF) — `falcon::booter_unload_dma` din cyber-gpu `bcc314e` (reset GSP, reset SEC2,

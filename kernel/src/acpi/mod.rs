@@ -30,7 +30,7 @@ static mut TABLE_COUNT: usize = 0;
 
 /// Makes sure `[phys, phys + len)` is reachable through the HHDM and returns its virtual address.
 /// Limine's HHDM does not have to cover firmware-reserved memory, so missing pages are mapped read-only.
-fn reach(phys: u64, len: u64) -> *const u8 {
+pub(crate) fn reach(phys: u64, len: u64) -> *const u8 {
     let virt = phys_to_virt(phys) as u64;
     let first = virt & !(PAGE_SIZE - 1);
     let last = (virt + len.max(1) - 1) & !(PAGE_SIZE - 1);

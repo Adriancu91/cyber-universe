@@ -31,7 +31,7 @@ use gpu_core::error::{GpuError, GpuResult};
 use gpu_core::hal::{checked_read32, Clock, Mmio};
 use nvidia_ga104::fb_layout::FbLayout;
 use nvidia_ga104::gsp::falcon::{self, GuardedBar0};
-use nvidia_ga104::gsp::golden::{self, GoldenImage, QueueTransportBell, RmTransport, RM_REPLY_US};
+use nvidia_ga104::gsp::golden::{self, GoldenImage, QueueTransportBellKeep, RmTransport, RM_REPLY_US};
 use nvidia_ga104::gsp::msgq::SharedMem;
 use nvidia_ga104::gsp::user_space::{self, UserSpace, WorkChannel};
 use nvidia_ga104::gsp::work_queue::ChannelMemory;
@@ -191,21 +191,29 @@ impl<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized, P: FnMut(&mut dyn Sh
 {
     fn call(&mut self, function: u32, payload: &[u8]) -> GpuResult<Vec<u8>> {
         flush(&mut *self.vbar, &mut *self.journal, self.permit, self.zone, self.pending, &mut *self.words)?;
-        let mut b = GuardedBar0::new(&mut *self.bar, &mut *self.journal, self.permit)?;
-        let poll = &mut self.poll;
-        let prep = &mut *self.prep;
-        let mut t = QueueTransportBell {
-            q: &mut prep.queues,
-            mem: &mut prep.shared,
-            clock: &mut *self.clock,
-            timeout_us: RM_REPLY_US,
-            poll: |m: &mut dyn SharedMem| poll(m),
-            events: Vec::new(),
-            bell: || falcon::ring_doorbell(&mut b),
-            rung: 0,
+        // P6-85 (cyber-gpu note os-295_i9-motiv-in-jurnal.md, item 2): `QueueTransportBellKeep` keeps the GSP-RM
+        // messages skipped while waiting for the reply, so they can be journaled after the call (the journal is no
+        // longer borrowed by `GuardedBar0` then). Same doorbell, same queue protocol, no new write.
+        let (r, rung, skipped) = {
+            let mut b = GuardedBar0::new(&mut *self.bar, &mut *self.journal, self.permit)?;
+            let poll = &mut self.poll;
+            let prep = &mut *self.prep;
+            let mut t = QueueTransportBellKeep {
+                q: &mut prep.queues,
+                mem: &mut prep.shared,
+                clock: &mut *self.clock,
+                timeout_us: RM_REPLY_US,
+                poll: |m: &mut dyn SharedMem| poll(m),
+                events: Vec::new(),
+                bell: || falcon::ring_doorbell(&mut b),
+                rung: 0,
+                skipped: Vec::new(),
+            };
+            let r = t.call(function, payload);
+            (r, t.rung, t.skipped)
         };
-        let r = t.call(function, payload);
-        *self.calls += t.rung;
+        *self.calls += rung;
+        golden::journal_skipped(&mut *self.journal, "apel RM", &skipped);
         r
     }
 }

@@ -8,6 +8,7 @@
 //! Link Status), ACPI 6.5 chapter 5 (MCFG, HPET, FADT) and the Intel/AMD CPUID documentation.
 
 pub mod names;
+pub mod smbios;
 
 use crate::pci::Device;
 use alloc::format;
@@ -18,6 +19,7 @@ use alloc::vec::Vec;
 pub fn lista(detalii: bool, driver_of: &dyn Fn(&Device) -> &'static str, cpu_name: &str) -> Vec<String> {
     let mut out = Vec::new();
     out.push(String::from("== hw lista (doar citiri, nicio scriere in dispozitive) =="));
+    out.extend(smbios::lines());
     cpu(&mut out, detalii, cpu_name);
     memory(&mut out, detalii);
     let pci = crate::pci::devices();
