@@ -85,6 +85,7 @@ test-update = ["qemu-test"]
 test-ghpush = ["qemu-test"]
 # P4-01: the harness moves the mouse and clicks; the kernel must receive both events.
 test-mouse = ["qemu-test"]
+test-usb-hotplug = ["qemu-test"]
 # P4-04: two windows; the harness types keys and drags the top one by its title bar with the mouse.
 test-windows = ["qemu-test"]
 # P4-05: /bin/demo opens a window through system calls; the harness clicks in it and types q.

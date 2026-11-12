@@ -74,7 +74,7 @@ def main():
     ap.add_argument("--log", default="build/serial.log")
     ap.add_argument("--keys", help="QEMU key names to type (space-separated) once the kernel prints --keys-when")
     ap.add_argument("--keys-when", default="TASTATURA: astept taste")
-    ap.add_argument("--monitor", help="QEMU monitor commands to send at --keys-when, separated by ',' (':' = space)")
+    ap.add_argument("--monitor", help="QEMU monitor commands to send at --keys-when, separated by ',' (':' = space, '~' = comma, pauza=N)")
     ap.add_argument("--expect-exit", choices=["success", "failed", "reset"], default="success",
                     help="how the kernel must end: success (code 33), a reported failure (code 35) "
                          "or a machine reset (QEMU runs with -no-reboot, so a reset ends it with code 0)")
@@ -117,7 +117,9 @@ def main():
             # `pauza=N` in --keys (P6-56): wait N seconds before the next key, still reading the serial port, so a
             # long command does not get the following keys while it runs (the kernel's key buffer is small).
             pending = [k if k.startswith("pauza=") else f"sendkey {k}" for k in (a.keys or "").split()]
-            pending += [c.replace(":", " ") for c in (a.monitor or "").split(",") if c]
+            # Monitor commands: ':' = space, '~' = a literal comma (device_add usb-mouse~id=m1), `pauza=N` as in --keys.
+            pending += [c if c.startswith("pauza=") else c.replace(":", " ").replace("~", ",")
+                        for c in (a.monitor or "").split(",") if c]
             next_at = time.time()
             keys_sent = True
             mon_sock = socket.socket(socket.AF_UNIX)  # kept open until the end (closing it early drops the last key)

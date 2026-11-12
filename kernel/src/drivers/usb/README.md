@@ -28,3 +28,14 @@
   `fs::mount_best` mounts at `/usb` the stick with `cyber.rw` and `VERSIUNE`. Test: `usb-pick`.
 - **Mai multe controlere (P6-25):** toate controlerele xHCI de pe PCI pornesc (Tiger Lake are două: Thunderbolt și USB-A);
   dispozitivele de pe al doilea apar ca „c2/<port>”. Test: `usb-2xhci`.
+
+## Plugged in after start-up; every HID boot interface (P6-80)
+- `Xhci::port_changes` (called by the USB thread every ~250 ms) reads the "connect status change" bit of each root port:
+  a new device gets an address (a hub: its devices too) and a keyboard/mouse starts; the devices of an emptied port lose
+  their slot (`Disable Slot`, rings and context freed). The USB thread now runs whenever there is a controller.
+  Not yet: devices plugged in later **behind a hub** (needs the hub's status endpoint).
+- `UsbDevice::hid`: up to two HID boot interfaces from the whole configuration (a wireless keyboard + mouse receiver,
+  or a mouse whose first interface is something else); `hid::Keyboard::start_all` starts all of them with one
+  `SET_CONFIGURATION` and one `Configure Endpoint`.
+- Test: scenario `usb-hotplug` — QEMU `device_add usb-mouse` after start-up, movement + click (counted as USB reports),
+  `device_del` → slot freed. Sources: xHCI 1.2 §4.19.2, §5.4.8; USB 2.0 §7.1.7.3; HID 1.11 §7.2.6.

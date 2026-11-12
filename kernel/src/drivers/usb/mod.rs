@@ -15,6 +15,8 @@ static DISKS: crate::sched::Mutex<Vec<storage::UsbDisk>> = crate::sched::Mutex::
 
 /// How often the USB keyboards are checked for new reports.
 const POLL_MS: u64 = 8;
+/// How often the root ports are checked for devices plugged in or out (P6-80): every this many polls (~250 ms).
+const PORT_EVERY: u32 = 32;
 
 /// Starts every USB controller, enumerates the connected devices and starts the keyboards (with a thread that
 /// collects their key presses) and the sticks.
@@ -24,14 +26,8 @@ pub fn init() {
     let mut disks = Vec::new();
     for (c, x) in controllers.iter_mut().enumerate() {
         let devices = x.devices.clone();
-        for d in devices.iter().filter(|d| d.class == (0x03, 0x01, 0x01) || d.class == (0x03, 0x01, 0x02)) {
-            match hid::Keyboard::start(x, d) {
-                Some(k) => {
-                    crate::info!("usb: {} de pe portul {} pornit(a)", d.kind(), d.location());
-                    keyboards.push((c, k));
-                }
-                None => crate::warn!("usb: {} de pe portul {} nu porneste", d.kind(), d.location()),
-            }
+        for d in devices.iter().filter(|d| d.hid[0].is_some()) {
+            start_hid(c, x, d, &mut keyboards);
         }
         for d in devices.iter().filter(|d| d.class == (0x08, 0x06, 0x50)) {
             match storage::UsbDisk::start(x, d) {
@@ -46,15 +42,32 @@ pub fn init() {
         }
     }
     *DISKS.lock() = disks;
+    let any = !controllers.is_empty();
     *CONTROLLERS.lock() = controllers;
-    if !keyboards.is_empty() {
-        *KEYBOARDS.lock() = keyboards;
+    *KEYBOARDS.lock() = keyboards;
+    // Always, when there is a controller: a keyboard or mouse may be plugged in later (P6-80).
+    if any {
         crate::sched::spawn_system(poll_loop);
     }
 }
 
-/// Runs forever: hands finished transfers to the keyboard drivers.
+/// Starts the keyboard and/or mouse interfaces of `d` (on controller `c`) and adds them to `keyboards`.
+fn start_hid(c: usize, x: &mut xhci::Xhci, d: &xhci::UsbDevice, keyboards: &mut Vec<(usize, hid::Keyboard)>) {
+    match hid::Keyboard::start_all(x, d) {
+        Some(ks) => {
+            for k in ks {
+                crate::info!("usb: {} de pe portul {} pornit(a)", if k.is_mouse() { "mouse (HID)" } else { "tastatura (HID)" }, d.location());
+                keyboards.push((c, k));
+            }
+        }
+        None => crate::warn!("usb: {} de pe portul {} nu porneste", d.kind(), d.location()),
+    }
+}
+
+/// Runs forever: hands finished transfers to the keyboard drivers and, every ~250 ms, starts the keyboards and mice
+/// plugged in since the last look and stops the ones unplugged (P6-80).
 fn poll_loop() {
+    let mut n: u32 = 0;
     loop {
         {
             let mut ctrl = CONTROLLERS.lock();
@@ -62,7 +75,31 @@ fn poll_loop() {
             for (c, k) in keyboards.iter_mut() {
                 k.poll(&mut ctrl[*c]);
             }
+            if n % PORT_EVERY == 0 {
+                for (c, x) in ctrl.iter_mut().enumerate() {
+                    for change in x.port_changes() {
+                        match change {
+                            xhci::PortChange::Connected(found) => {
+                                for d in found.iter().filter(|d| d.hid[0].is_some()) {
+                                    start_hid(c, x, d, &mut keyboards);
+                                }
+                            }
+                            xhci::PortChange::Disconnected(slots) => {
+                                let mut i = 0;
+                                while i < keyboards.len() {
+                                    if keyboards[i].0 == c && slots.contains(&keyboards[i].1.slot()) {
+                                        keyboards.swap_remove(i).1.release();
+                                    } else {
+                                        i += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
+        n = n.wrapping_add(1);
         crate::sched::sleep_ms(POLL_MS);
     }
 }
