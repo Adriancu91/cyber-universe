@@ -149,7 +149,7 @@ pub fn allowed(line: &str) -> Result<(), &'static str> {
     }
     match words.as_slice() {
         [] => Err("rand gol"),
-        ["hw" | "lspci" | "lsusb" | "net" | "mem" | "uptime" | "raport", ..] => Ok(()),
+        ["hw" | "lspci" | "lsusb" | "net" | "mem" | "uptime" | "raport" | "analiza", ..] => Ok(()),
         ["log" | "ls" | "cat" | "compara", ..] => Ok(()),
         ["timp", "timp" | "exit", ..] => Err("timp masoara o singura comanda obisnuita"),
         ["timp", rest @ ..] if !rest.is_empty() => allowed(&rest.join(" ")),

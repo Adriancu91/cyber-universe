@@ -35,3 +35,20 @@ La pornirea oricărui build de test, `names::self_test()` verifică tabelul de n
 Link Status), PCI Code and ID Assignment (clasele), ACPI 6.5 cap. 5 (MCFG, HPET, FADT, MADT), xHCI 1.2 (vitezele porturilor),
 documentația publică CPUID Intel/AMD. Numele din tabel sunt scrise de noi după id-urile raportate de dispozitive și paginile publice
 ale producătorilor; niciun tabel copiat din alt proiect.
+
+**Analiza ca UHL (P6-86, C-117 pasul 1, `uhl.rs` + comanda `analiza` / `hw uhl` din `shell/analiza.rs`):** același inventar ca unealta UHL
+Portable a lui Adrian (schema `uhl-inventory/0.1`: `statuses`, `sources`, `components`, `props` cu `value` + `status` + `source_refs`),
+dar văzut de sub orice driver. Scrie pe stick `raport/uhl/<calculator>/<AAAALLZZ-HHMM>/`: `inventory.json` (tot, cu seriile — nu pleacă
+de pe stick), `inventory.redacted.json` (seriile, UUID-ul și seria PCIe „Device Serial Number” ascunse; în spațiul de configurare cei 8 octeți
+ai seriei sunt puși pe 0) și `report.txt` (rezumat în română). `trimite` urcă doar ultimele două (`gh-trimite --rapoarte`).
+Conține: SMBIOS (tipurile 0, 1, 2, 3, 4, 17 + câte structuri de fiecare tip), CPUID (instrucțiuni, cache-uri, frunzele brute), harta de memorie,
+**fiecare funcție PCI** cu spațiul de configurare întreg (4 KiB, hex), BAR-urile pe index (mărimea = NOT_TESTED, cere o scriere; excepție
+Resizable BAR, unde mărimea curentă se citește), capabilitățile și capabilitățile extinse, D0–D3 și stările suportate, PCIe (tip de port,
+legătura maximă/curentă, viteze suportate, ASPM suportat/pornit, payload), punțile (magistralele); **toate** tabelele ACPI (fiecare instanță,
+plus DSDT din FADT), dispozitivele USB. Statusuri: MEASURED = citit direct; CONFIRMED = verificat de a doua sursă (nucleele MADT = pornite,
+suma de control ACPI); DOCUMENTED = din tabelul nostru de nume; NOT_TESTED = nu s-a citit intenționat (mărimea BAR, MSR, registrele NVIDIA —
+pasul 2, P6-87). Doar citire; MSR-urile nu se citesc încă. Tabelele ACPI păstrate: până la 128 (înainte 32).
+Test: scenariul `analiza` (QEMU cu `-smbios type=1,...,serial=SERIE-TEST-4242`): fișierele recitite și verificate în nucleu cu `cyber_json`
+(JSON valid, câte o componentă pe funcție PCI, 4096 octeți de configurație fiecare, DSDT în plus, seria în `inventory.json` și ascunsă în varianta
+de trimis, „0 scrieri”), `uhl::self_test()` la pornire (SMBIOS, nume de dosar, ascunderea); scenariul `ghpush`: dintr-un dosar `uhl/` pleacă
+doar cele 2 fișiere. Surse: specificațiile PCI/PCIe (Resizable BAR, Device Serial Number, Link Capabilities 2), DMTF SMBIOS 3.x, ACPI 6.5. Cod propriu.

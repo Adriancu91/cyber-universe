@@ -27,6 +27,8 @@ pub struct Info {
 }
 
 static INFO: Mutex<Option<Info>> = Mutex::new(None);
+/// P6-86 (`analiza`): the raw table and the version, kept for the inventory (serials stay on the machine).
+static RAW: Mutex<Option<((u8, u8), Vec<u8>)>> = Mutex::new(None);
 
 /// The table is at most this big for us (real tables are a few KiB).
 const MAX_TABLE: usize = 64 * 1024;
@@ -54,6 +56,7 @@ pub fn init() -> bool {
     let p = crate::acpi::reach(table, len as u64);
     // SAFETY: `reach` made [table, table + len) readable (HHDM or a read-only mapping); firmware tables do not move.
     let bytes = unsafe { core::slice::from_raw_parts(p, len) };
+    *RAW.lock() = Some((version, bytes.to_vec()));
     let mut info = parse(bytes);
     info.version = version;
     crate::info!("smbios: {} {}", version_text(version), summary(&info));
@@ -185,6 +188,11 @@ fn join(parts: &[&str]) -> String {
 fn summary(i: &Info) -> String {
     let name = join(&[&i.manufacturer, &i.product]);
     if name.is_empty() { String::from("(model necunoscut)") } else { name }
+}
+
+/// P6-86: the raw structure table and the SMBIOS version (None when the firmware has no SMBIOS).
+pub fn raw() -> Option<((u8, u8), Vec<u8>)> {
+    RAW.lock().clone()
 }
 
 /// The lines of `hw` / `hw lista`.

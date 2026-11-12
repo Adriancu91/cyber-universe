@@ -265,6 +265,7 @@ fn run_tests() -> ! {
     assert!(acpi::fadt::self_test(), "acpi: FADT RESET_REG decodat gresit");
     info!("test: FADT RESET_REG decodare OK");
     hw::smbios::self_test();
+    hw::uhl::self_test();
     assert!(hw::names::self_test(), "hw: tabelul de nume hardware gresit");
     info!("test: tabelul de nume hardware OK (Wi-Fi recunoscut dupa clasa si id)");
     if let Err(e) = net::sntp::self_test() {
@@ -1947,6 +1948,22 @@ fn test_ghpush() {
     let dest = l.lines().find(|x| x.starts_with("gpu-jurnal-002.txt -> rezultate/os-automat/")).and_then(|x| x.split(" -> ").nth(1)).expect("test: rand in trimise.txt");
     assert!(take(&[R, dest, "/etc/jurnal-inapoi.txt"], "raport trimis") == 0);
     assert!(fs::read_all("/etc/jurnal-inapoi.txt").ok().as_deref() == Some(&b"gpu: lant: al doilea jurnal\n"[..]), "test: raportul din hub difera");
+    // P6-86 (C-117): from an `analiza` folder only the redacted inventory and the short report leave.
+    for d in ["/etc/raport/uhl", "/etc/raport/uhl/Test-PC", "/etc/raport/uhl/Test-PC/20261112-2340"] {
+        let _ = fs::create(d, fs::Kind::Dir);
+    }
+    put("/etc/raport/uhl/Test-PC/20261112-2340/inventory.json", b"{\"serial\":\"SERIE-SECRETA\"}");
+    put("/etc/raport/uhl/Test-PC/20261112-2340/inventory.redacted.json", b"{\"serial\":\"[ascuns]\"}");
+    put("/etc/raport/uhl/Test-PC/20261112-2340/report.txt", b"analiza de proba\n");
+    assert!(reports("uhl") == 0);
+    let l = ledger();
+    assert!(l.lines().count() == 5 && !l.contains("inventory.json ->"), "test: uhl: trimise.txt: {:?}", l);
+    let dest = l.lines().find(|x| x.starts_with("uhl/Test-PC/20261112-2340/inventory.redacted.json -> ")).and_then(|x| x.split(" -> ").nth(1)).expect("test: uhl in trimise.txt");
+    assert!(dest.ends_with("/uhl/Test-PC/20261112-2340/inventory.redacted.json"), "test: uhl: cale in hub {}", dest);
+    assert!(take(&[R, dest, "/etc/uhl-inapoi.json"], "uhl trimis") == 0);
+    assert!(fs::read_all("/etc/uhl-inapoi.json").ok().as_deref() == Some(&b"{\"serial\":\"[ascuns]\"}"[..]), "test: uhl: continut");
+    assert!(reports("uhl nimic nou") == 0 && ledger().lines().count() == 5);
+    info!("test: analiza: doar inventarul fara serii si raportul au plecat in hub OK");
     info!("test: rapoartele pleaca singure in hub OK");
     // P6-61 (C-84 item 2): `gh-ia --hub` reads the hub (here the test repository, `hub =` above) and only shows.
     let hub = |args: &[&str], what: &str| {

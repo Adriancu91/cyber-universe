@@ -5,6 +5,7 @@ use crate::drivers::keyboard::{Key, wait_key};
 use crate::fs::{self, Kind};
 use alloc::{format, string::String, vec::Vec};
 
+mod analiza;
 pub mod auto;
 pub mod ciclu;
 pub mod compara;
@@ -150,9 +151,14 @@ fn dispatch(line: &str) -> bool {
             [] => hw(),
             ["lista"] => hw_lista(false),
             ["lista", "--detalii"] => hw_lista(true),
-            _ => out!("folosire: hw sau hw lista [--detalii]\n"),
+            ["uhl"] => analiza::run(),
+            _ => out!("folosire: hw sau hw lista [--detalii] sau hw uhl (= analiza)\n"),
         },
         "raport" => raport::manual(),
+        "analiza" => match args {
+            [] => analiza::run(), // C-117 (P6-86)
+            _ => out!("folosire: analiza   (fara optiuni; inventarul ca UHL pe stick, doar citire)\n"),
+        },
         "trimite" => raport::send_to_hub(),
         "ora" => ora(args),
         "test" => match args {
@@ -252,6 +258,7 @@ fn help() {
     out!("  gpu recupereaza  dupa un lant oprit: Booter Unload coboara WPR2 fara repornire (cere DA; doar stick-ul de test)\n");
     out!("  hw               raport hardware pe o pagina (pentru o singura poza)\n");
     out!("  hw lista [--detalii]  tot hardware-ul: procesor, memorie, PCI, Wi-Fi, USB, ACPI (doar citire)\n");
+    out!("  analiza          inventarul hardware ca UHL (uhl-inventory/0.1) pe stick: raport/uhl/<calculator>/<sesiune>/ (doar citire)\n");
     out!("  raport           scrie pe stick /usb/raport/<data>-<nr>.txt: hw, lspci, net, jurnalele (fara chei)\n");
     out!("  ora [server [port]]  ora din retea (SNTP, implicit pool.ntp.org) fata de ceasul calculatorului (nu-l schimba)\n");
     out!("  test tot         autotestul OS-ului (procesor, ceas, stick, retea, placa video): PASS/FAIL + raport pe stick\n");

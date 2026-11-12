@@ -24,7 +24,8 @@ pub struct SdtHeader {
     pub creator_revision: u32,
 }
 
-const MAX_TABLES: usize = 32;
+/// P6-86: 128 (the ASUS TUF has 31 in the XSDT; C-117 wants every instance).
+const MAX_TABLES: usize = 128;
 static mut TABLES: [u64; MAX_TABLES] = [0; MAX_TABLES]; // physical addresses
 static mut TABLE_COUNT: usize = 0;
 
@@ -112,6 +113,9 @@ pub fn init() -> bool {
             n += 1;
         }
     }
+    if count > MAX_TABLES {
+        crate::warn!("acpi: {} tabele in radacina, pastrez primele {}", count, MAX_TABLES);
+    }
     // SAFETY: single-threaded boot.
     unsafe { TABLE_COUNT = n };
 
@@ -129,6 +133,11 @@ pub fn tables() -> alloc::vec::Vec<(u64, SdtHeader)> {
     // SAFETY: written once during boot, read-only afterwards.
     let tables = unsafe { &(&*core::ptr::addr_of!(TABLES))[..TABLE_COUNT] };
     tables.iter().filter_map(|&phys| header(phys).map(|(h, _)| (phys, h))).collect()
+}
+
+/// P6-86: the header of the table at `phys` (checksum verified), for tables outside the XSDT (the DSDT).
+pub fn header_at(phys: u64) -> Option<SdtHeader> {
+    header(phys).map(|(h, _)| h)
 }
 
 /// Finds a table by its 4-letter signature; returns a pointer to its header and its length.

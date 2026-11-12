@@ -121,8 +121,14 @@ fn reports(c: &Config, dir: &str) -> i64 {
     let ledger = read_file(&ledger_path, 1024 * 1024).map(|t| String::from_utf8_lossy(&t).into_owned()).unwrap_or_default();
     let sent: Vec<&str> = ledger.lines().filter_map(|l| l.split(" -> ").next()).collect();
     let names = String::from_utf8_lossy(&buf[..n as usize]).into_owned();
-    let pending: Vec<&str> =
-        names.lines().filter(|l| !l.is_empty() && !l.ends_with('/') && *l != LEDGER && !sent.contains(l)).collect();
+    let mut pending: Vec<String> = names
+        .lines()
+        .filter(|l| !l.is_empty() && !l.ends_with('/') && *l != LEDGER && !sent.contains(l))
+        .map(String::from)
+        .collect();
+    // P6-86 (C-117): from the `analiza` folders only the redacted inventory and the short report; `inventory.json`
+    // (with the serial numbers) never leaves the stick.
+    pending.extend(uhl_files(dir).into_iter().filter(|n| !sent.contains(&n.as_str())));
     if pending.is_empty() {
         println!("gh-trimite: nimic nou de trimis din {} ({} trimise deja)", dir, sent.len());
         return 0;
@@ -141,7 +147,7 @@ fn reports(c: &Config, dir: &str) -> i64 {
         .unwrap_or_else(|| String::from("fara-data"));
     let mut ledger = ledger;
     let (mut ok, mut failed) = (0, 0);
-    for name in pending {
+    for name in pending.iter().map(|n| n.as_str()) {
         let file = format!("{}/{}", dir, name);
         let dest = format!("rezultate/os-automat/{}/{}", day, name);
         let message = format!("cyber-universe: raport din OS ({}, trimis automat)", name);
@@ -162,6 +168,30 @@ fn reports(c: &Config, dir: &str) -> i64 {
     }
     println!("gh-trimite: rapoarte: {} trimise in {} (rezultate/os-automat/{}/), {} netrimise", ok, c.hub, day, failed);
     if failed == 0 { 0 } else { 1 }
+}
+
+/// The only files of `<dir>/uhl/<machine>/<session>/` that may be sent, as paths relative to `dir`.
+const UHL_SENDABLE: &[&str] = &["inventory.redacted.json", "report.txt"];
+
+fn uhl_files(dir: &str) -> Vec<String> {
+    let entries = |path: &str| -> Vec<String> {
+        let mut buf = alloc::vec![0u8; 16 * 1024];
+        let n = cyber_user::list(path, &mut buf);
+        if n < 0 {
+            return Vec::new();
+        }
+        String::from_utf8_lossy(&buf[..n as usize]).lines().filter(|l| !l.is_empty()).map(String::from).collect()
+    };
+    let mut out = Vec::new();
+    for machine in entries(&format!("{}/uhl", dir)).iter().filter_map(|e| e.strip_suffix('/')) {
+        for session in entries(&format!("{}/uhl/{}", dir, machine)).iter().filter_map(|e| e.strip_suffix('/')) {
+            let files = entries(&format!("{}/uhl/{}/{}", dir, machine, session));
+            for name in UHL_SENDABLE.iter().filter(|n| files.iter().any(|f| f == *n)) {
+                out.push(format!("uhl/{}/{}/{}", machine, session, name));
+            }
+        }
+    }
+    out
 }
 
 /// Writes `data` as the whole content of `path` (the ledger is small; written again each time).

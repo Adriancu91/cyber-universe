@@ -216,6 +216,8 @@
   `gh-trimite --rapoarte [dosar]` (P6-61, C-84): rapoartele din `/usb/raport` care nu sunt în `trimise.txt` → hub
   (`hub =` în `/etc/github.conf`, implicit `Adriancu91/Cyber-hub`), la `rezultate/os-automat/<data>/<nume>`; fără token cod 2.
   Nucleul îl pornește după `raport`, `gpu lant` și la comanda `trimite`. Test: tot în `ghpush`.
+  P6-86 (C-117): din `raport/uhl/<calculator>/<sesiune>/` (comanda `analiza`) pleacă DOAR `inventory.redacted.json` și `report.txt`
+  (la `rezultate/os-automat/<data>/uhl/<calculator>/<sesiune>/`); `inventory.json`, cu seriile, nu pleacă niciodată. Test: `ghpush`.
 - `gh-ia --hub [comenzi [proiect] | stare [proiect] | decizii]` (P6-61, C-84) — citește Cyber Hub și arată pe ecran comenzile
   proiectului (ultimele 8, cu rândurile `stare`), `stare/<proiect>.md` sau ultimele 40 de rânduri din `DECIZII.md`. Comanda shell `hub`. Test: `ghpush`.
 - `gh-ia --hub-ia <cale> <fișier>` (P6-64, C-87) — un fișier din hub pe disc; nucleul îl folosește la `hub ruleaza`

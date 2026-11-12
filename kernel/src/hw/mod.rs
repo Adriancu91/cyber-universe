@@ -9,6 +9,7 @@
 
 pub mod names;
 pub mod smbios;
+pub mod uhl;
 
 use crate::pci::Device;
 use alloc::format;
