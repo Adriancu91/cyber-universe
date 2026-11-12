@@ -3,6 +3,11 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-12 ~00:40–00:50 UTC (02:40–02:50 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
+  - `git pull` OK (hub: `main` local vechi divergent → păstrat pe ramura locală `vechi-local-backup`, `main` din `origin/main`; nimic forțat). `env-check --install` nerulat (nicio sarcină de cod).
+  - Hub: nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/` (testul GPU e joi la 07:00 ora RO, peste ~4 ore). CI: toate rulările recente verzi (ultima: `wip/P6-80`, run 43113989284).
+  - Nicio sarcină liberă: P6-80 așteaptă testul de joi (Release neschimbat până atunci), P6-12 după test, P3-10/P6-10 cu Adrian, P5-07 BLOCAT. Regula 5 nu se aplică (P6-78/P6-79 gata pe 11 nov).
+  - **Pentru sesiunea următoare:** neschimbat — jurnalele de joi (C-108, `os-289`) și poza ASUS cu `os-290` (C-109); după test `git merge wip/P6-80` în `main` → CI → Release → bifează P6-80; apoi P6-12.
 - 2026-11-11 ~21:40–23:20 UTC (23:40–01:20 ora RO) — sesiune programată, fără Adrian — **P6-80 (mouse USB) cod gata pe `wip/P6-80`, CI verde; nimic schimbat pe `main` în afară de documente.**
   - `git pull` OK pentru ambele (hub: `main` local vechi divergent → păstrat pe ramura locală `backup-local-20261111`, `main` din `origin/main`; nimic forțat). `env-check --install` OK. CI 291 (`stress.yml`) verde.
   - Hub: nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou de pe placă. Rezultatul Lenovo (`rezultate/2026-11-11-laptop-lenovo-i5/`, 18:14–18:33): pornește complet; touchpad (I2C) nu merge; **mouse-ul USB nu merge** și nu apare deloc în `hw`.
