@@ -352,16 +352,105 @@ pub fn user_accessible(root: u64, virt: u64, write: bool) -> bool {
 
 /// Makes the device registers at `[phys, phys + len)` reachable through the HHDM, uncached
 /// (pages already mapped are left as they are). Returns the virtual address of `phys`.
+///
+/// P6-12 step 1 (diagnostic only, no change of behavior): every page is counted in `MMIO_STATS` as newly
+/// mapped (and its PCD/PWT bits checked after mapping), already mapped uncached, or already mapped WITH cache
+/// (PCD = 0, the case Cyber-GPU pointed out). The first calls that meet cached pages write one log line each.
 pub fn map_mmio(phys: u64, len: u64) -> Result<u64, MapError> {
     const CACHE_DISABLE: u64 = (1 << 3) | (1 << 4); // write-through + cache disable
     let virt = phys_to_virt(phys) as u64;
     let mut page = virt & !(PAGE_SIZE - 1);
     let end = virt + len.max(1);
+    let (mut new, mut new_ok, mut uncached, mut cached, mut huge) = (0u64, 0u64, 0u64, 0u64, 0u64);
     while page < end {
-        if translate(page).is_none() {
-            map(page, phys - (virt - page), WRITABLE | NO_EXECUTE | CACHE_DISABLE)?;
+        match leaf_entry(cr3(), page) {
+            None => {
+                map(page, phys - (virt - page), WRITABLE | NO_EXECUTE | CACHE_DISABLE)?;
+                new += 1;
+                if leaf_entry(cr3(), page).is_some_and(|(e, _)| e & CACHE_DISABLE == CACHE_DISABLE) {
+                    new_ok += 1;
+                }
+            }
+            Some((e, level)) => {
+                if level < 3 {
+                    huge += 1;
+                }
+                if e & (1 << 4) != 0 {
+                    uncached += 1;
+                } else {
+                    cached += 1;
+                }
+            }
         }
         page += PAGE_SIZE;
     }
+    use core::sync::atomic::Ordering::Relaxed;
+    let st = &MMIO_STATS;
+    st.calls.fetch_add(1, Relaxed);
+    st.new.fetch_add(new, Relaxed);
+    st.new_ok.fetch_add(new_ok, Relaxed);
+    st.uncached.fetch_add(uncached, Relaxed);
+    st.cached.fetch_add(cached, Relaxed);
+    st.huge.fetch_add(huge, Relaxed);
+    if cached > 0 && st.logged.fetch_add(1, Relaxed) < 16 {
+        crate::info!(
+            "mmio: 0x{:x} (+{} B): {} pagini deja mapate CU cache (PCD=0; {} in pagini mari), {} deja fara cache, {} noi fara cache",
+            phys, len, cached, huge, uncached, new
+        );
+    }
     Ok(virt)
+}
+
+/// Counters of `map_mmio` since boot (P6-12 diagnostic), shown by `log mmio`.
+pub struct MmioStats {
+    pub calls: core::sync::atomic::AtomicU64,
+    pub new: core::sync::atomic::AtomicU64,
+    pub new_ok: core::sync::atomic::AtomicU64,
+    pub uncached: core::sync::atomic::AtomicU64,
+    pub cached: core::sync::atomic::AtomicU64,
+    pub huge: core::sync::atomic::AtomicU64,
+    logged: core::sync::atomic::AtomicU64,
+}
+
+pub static MMIO_STATS: MmioStats = MmioStats {
+    calls: core::sync::atomic::AtomicU64::new(0),
+    new: core::sync::atomic::AtomicU64::new(0),
+    new_ok: core::sync::atomic::AtomicU64::new(0),
+    uncached: core::sync::atomic::AtomicU64::new(0),
+    cached: core::sync::atomic::AtomicU64::new(0),
+    huge: core::sync::atomic::AtomicU64::new(0),
+    logged: core::sync::atomic::AtomicU64::new(0),
+};
+
+/// One-line summary of `MMIO_STATS` (Romanian, for `log mmio`).
+pub fn mmio_summary() -> alloc::string::String {
+    use core::sync::atomic::Ordering::Relaxed;
+    let st = &MMIO_STATS;
+    alloc::format!(
+        "mmio: {} apeluri map_mmio; pagini: {} noi fara cache (biti PCD+PWT verificati: {}/{}), {} deja fara cache, {} deja CU cache, {} in pagini mari",
+        st.calls.load(Relaxed),
+        st.new.load(Relaxed),
+        st.new_ok.load(Relaxed),
+        st.new.load(Relaxed),
+        st.uncached.load(Relaxed),
+        st.cached.load(Relaxed),
+        st.huge.load(Relaxed)
+    )
+}
+
+/// The leaf entry that maps `virt` in the tables at `root` and its level (1 = 1 GiB, 2 = 2 MiB, 3 = 4 KiB page).
+fn leaf_entry(root: u64, virt: u64) -> Option<(u64, u8)> {
+    let idx = indices(virt);
+    let mut t = table(root);
+    for (level, &i) in idx.iter().enumerate() {
+        let entry = t[i];
+        if entry & PRESENT == 0 {
+            return None;
+        }
+        if level == 3 || (level > 0 && entry & HUGE != 0) {
+            return Some((entry, level as u8));
+        }
+        t = table(entry & ADDR_MASK);
+    }
+    None
 }

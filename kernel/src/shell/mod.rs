@@ -984,6 +984,9 @@ fn show_log(args: &[&str]) {
         out!("{}", log_summary(&crate::log::recent()));
         return;
     }
+    if args.first() == Some(&"mmio") {
+        out!("{}\n", crate::mem::paging::mmio_summary()); // P6-12 diagnostic; the matching log lines follow
+    }
     let mut count = 30usize;
     let mut word: Option<String> = None;
     let mut warnings_only = false;

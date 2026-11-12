@@ -38,3 +38,6 @@ firele pornite cu `sched::spawn_in` văd datele spațiului lor, iar după distru
   512 cadre ale fiecărei pagini mari. Test: scenariile `memorie` și `memorie-smp`.
 - **Mai multe nuclee (K6-02b):** heap-ul, alocatorul de cadre, paza DMA și tabelele de pagini au încuietori cu întreruperile
   oprite (`sched/spin.rs`); demaparea unei pagini a nucleului golește TLB-ul celorlalte nuclee (`apic::shootdown`).
+- **Diagnostic MMIO (P6-81, pasul 1 din P6-12):** `map_mmio` nu schimbă paginile deja mapate (de exemplu de Limine), dar acum
+  numără fiecare pagină: nouă (biții PCD+PWT verificați după mapare), deja fără cache, deja **cu cache**, în pagini mari.
+  Primele 16 cazuri cu cache apar în jurnal (`mmio: …`); `log mmio` arată rezumatul. Test: scenariul `mmio`.
