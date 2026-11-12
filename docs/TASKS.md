@@ -418,6 +418,8 @@ Din testul pe Lenovo (hub `rezultate/2026-11-11-laptop-lenovo-i5/`: „mouse USB
 - [x] **P6-81** Pasul 1 din P6-12: `map_mmio` numără paginile (noi fără cache — biți verificați, deja fără cache, deja CU cache, în pagini mari) și scrie primele 16 cazuri cu cache în jurnal; `log mmio` arată rezumatul. Fără schimbare de comportament. Plan: `docs/plans/P6-81.md`. Dep: P6-80.
 - [x] **P6-82** Scenariul `remote` sigur în CI: rândurile `test: remote: astept clientul` și `remote: pornit pe …` scrise înainte ca clientul să se poată conecta (CI 294 a picat o dată pe ordine). Fără schimbare de comportament. Plan: `docs/plans/P6-82.md`. Dep: P6-81.
   Gata (2026-11-12 ~08:30 UTC): scenariul nou `mmio` + `boot shell log net ahci nvme usb-disk gpu` TRECUT local. În QEMU apare deja un caz: 0x80000000 (+4 MiB, ecranul QEMU = BAR0 al plăcii VGA) e mapat de Limine CU cache — exact situația din observația Cyber-GPU. Pe laptop/workstation: `log mmio` + poză → decide pasul 2 (P6-12).
+Din hub, C-113 (cerut de Adrian, 12 nov 18:28, „înaintea următorului test pe placă”):
+- [~] **P6-83** C-113: jurnalul pe stick-ul Kingston FAT32 de 64 GB (sincronizarea refuzată tolerată, motivul refuzului în jurnal), durata scrierilor/sincronizărilor măsurată (`usb timp`), FAT: doar sectoarele atinse se rescriu; scenariul nou `fat-mare` (64 GB, clustere de 32 KiB). Plan: `docs/plans/P6-83.md`. Dep: P6-82.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
