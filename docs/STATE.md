@@ -3,6 +3,11 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-12 ~03:40–03:50 UTC (05:40–05:50 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
+  - `git pull` OK (hub: `main` local vechi divergent → păstrat pe ramura locală `local-vechi-20261112`, `main` din `origin/main`; nimic forțat). `env-check --install` nerulat (nicio sarcină de cod).
+  - Hub: nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/` (testul GPU e azi la 07:00 ora RO). CI: ultimele 5 rulări verzi (ultima: `wip/P6-80`, run 43113989284).
+  - Nicio sarcină liberă (neschimbat): P6-80 așteaptă testul de azi, P6-12 după test, P3-10/P6-10 cu Adrian, P5-07 BLOCAT. Regula 5 nu se aplică (P6-79 gata pe 11 nov, sesiunea 17:40/20:40).
+  - **Pentru sesiunea următoare:** jurnalele de azi (C-108, `os-289`) și poza ASUS cu `os-290` (C-109); după test `git merge wip/P6-80` în `main` → CI → Release → bifează P6-80; apoi P6-12. Atenție la regula 5: încă o sesiune fără sarcină terminată ar face 3 la rând — dacă testul a avut loc, P6-80 se poate termina.
 - 2026-11-12 ~00:40–00:50 UTC (02:40–02:50 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
   - `git pull` OK (hub: `main` local vechi divergent → păstrat pe ramura locală `vechi-local-backup`, `main` din `origin/main`; nimic forțat). `env-check --install` nerulat (nicio sarcină de cod).
   - Hub: nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/` (testul GPU e joi la 07:00 ora RO, peste ~4 ore). CI: toate rulările recente verzi (ultima: `wip/P6-80`, run 43113989284).
