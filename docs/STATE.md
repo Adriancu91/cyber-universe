@@ -3,6 +3,10 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-12 ~15:40–15:55 UTC (17:40–17:55 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
+  - Hub: **C-111 — Adrian vine acum (~17:55) la testul cu variante (C-108).** Am găsit că Release-ul **`os-289` nu mai există pe GitHub** (nici `os-292`; există os-290/291/293/294/295) → procedura din `stare/cyber-universe.md` mutată pe **`os-295`** (aceleași 10 variante GPU, construit din `76866fb`), Adrian anunțat pe telefon. Cauza dispariției neinvestigată (de verificat dacă ceva șterge Release-uri vechi).
+  - CI: ultimele 3 rulări verzi. Nicio sarcină liberă (P6-12 pasul 2 după `log mmio` real; P6-10/P3-10 cu Adrian; P5-07 BLOCAT). Regula 5: a doua sesiune la rând fără sarcină terminată (după P6-82).
+  - **Pentru sesiunea următoare:** jurnalele testului de azi (`rezultate/2026-11-12-workstation-os295/` sau os289) → Cyber-GPU; poza `log mmio` → P6-12 pasul 2. Dacă nu există jurnale și nicio sarcină liberă → a treia sesiune fără sarcină: aplică regula 5.
 - 2026-11-12 ~12:40–12:50 UTC (14:40–14:50 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
   - `git pull` OK (hub: `main` local vechi divergent → `main` mutat pe `origin/main`, commit-urile vechi locale erau doar copii vechi ale hub-ului; nimic forțat). `env-check --install` nerulat (nicio sarcină de cod).
   - Hub: nicio comandă `nou` pentru `cyber-universe` (ultima, C-110, e pentru Kronos); niciun jurnal nou în `rezultate/`. CI: ultimele 5 rulări verzi (ultima: P6-82, run 43202037669 → `os-295`).
