@@ -63,6 +63,29 @@ pub struct GpuTour {
     pub address: Option<String>,
     pub simulated: bool,
     pub lines: Vec<String>,
+    /// P6-90: Some(when) = the facts come from the `gpu tur --trezire` run at that time in this power-on (the plain
+    /// read-only tour of `analiza` found none: Memory Space off on the laptop); `plain` = what the plain tour said.
+    pub from_awake: Option<String>,
+    pub plain_reason: Option<String>,
+}
+
+/// P6-90 (C-117, ASUS os-301 „placa NVIDIA: 0 fapte”): when the read-only tour of `analiza` found no facts and a
+/// `gpu tur --trezire` of the same board ran earlier in this power-on, its facts go in the inventory (marked with
+/// their source and time). `analiza` itself still writes nothing.
+pub fn pick_tour(plain: GpuTour, awake: Option<crate::drivers::gpu_tur::AwakeTour>) -> GpuTour {
+    if !tour_facts(&plain.lines).is_empty() {
+        return plain;
+    }
+    match awake {
+        Some(a) if a.address == plain.address && !tour_facts(&a.lines).is_empty() => GpuTour {
+            address: plain.address,
+            simulated: plain.simulated,
+            plain_reason: plain.lines.iter().rev().find(|l| !l.trim().is_empty()).cloned(),
+            lines: a.lines,
+            from_awake: Some(a.when),
+        },
+        _ => plain,
+    }
 }
 
 /// `fapt <key> = <value>` lines -> (key, value); the order is kept.
@@ -85,15 +108,33 @@ fn gpu_component(t: &GpuTour) -> J {
     let refused = t.lines.iter().find(|l| l.contains("0 scrieri in placa")).map(|l| {
         l.split_whitespace().zip(l.split_whitespace().skip(1)).find(|(_, b)| *b == "scrieri,").and_then(|(a, _)| a.parse::<u64>().ok()).unwrap_or(0)
     });
+    // The awake tour's own count: "...: scrieri: N in configuratia PCI (registrul Command, ...), 0 in registrele placii; ...".
+    let awake_writes = t.lines.iter().rev().find(|l| l.contains("0 in registrele placii")).map(|l| {
+        let after = &l[l.find("scrieri: ").map(|i| i + 9).unwrap_or(0)..];
+        after.split_whitespace().next().and_then(|n| n.parse::<u64>().ok()).unwrap_or(0)
+    });
     let mut v = Vec::new();
     props!(v;
         "simulated" => p(J::Bool(t.simulated), "MEASURED", refs),
         "facts" => p(J::Object(facts.iter().map(|(k, x)| (k.clone(), J::String(x.clone()))).collect()), state, refs),
         "fact_count" => p(int(facts.len() as u64), state, refs),
-        "writes_to_board" => match refused {
-            Some(r) => p(J::String(format!("0 (adaptorul a refuzat {} cereri de scriere)", r)), "CONFIRMED", refs),
-            None => p(J::Null, "UNKNOWN", refs),
+        "writes_to_board" => match (refused, awake_writes) {
+            (Some(r), _) => p(J::String(format!("0 (adaptorul a refuzat {} cereri de scriere)", r)), "CONFIRMED", refs),
+            (None, Some(n)) => p(
+                J::String(format!("0 in registrele placii; {} in registrul Command PCI la gpu tur --trezire (repus)", n)),
+                "CONFIRMED",
+                refs,
+            ),
+            (None, None) => p(J::Null, "UNKNOWN", refs),
         },
+        "facts_source" => p(
+            J::String(match &t.from_awake {
+                Some(when) => format!("gpu tur --trezire din aceeasi pornire ({}); analiza nu a trezit placa", when),
+                None => String::from("turul de citire al analizei (gpu tur)"),
+            }),
+            "MEASURED",
+            refs,
+        ),
         "tour_lines" => p(J::Array(t.lines.iter().map(|l| J::String(l.clone())).collect()), "MEASURED", refs),
         "vbios_image" => not_tested("imaginea VBIOS nu se copiaza in inventar (doar antetele, din fapte)"),
     );
@@ -104,6 +145,9 @@ fn gpu_component(t: &GpuTour) -> J {
         Some(x) => p(J::String(x), "UNKNOWN", refs), // "necitita (...)": the reason, as the tour wrote it
         None => not_tested("faptul vbios.versiune lipseste din tur"),
     });
+    if let Some(why) = &t.plain_reason {
+        props!(v; "analysis_tour_result" => p(J::String(why.clone()), "MEASURED", refs));
+    }
     if facts.is_empty() {
         props!(v; "why_no_facts" => p(J::String(t.lines.iter().rev().find(|l| !l.trim().is_empty()).cloned().unwrap_or_default()), "MEASURED", refs));
     }
@@ -1160,6 +1204,9 @@ fn report_text(doc: &J, machine: &str, stamp: &str, session: &str, counts: &[usi
             f("chip.nume"), f("i6.vram"), f("gfw.progres"),
             prop_value(c, "writes_to_board").and_then(|x| x.as_str()).unwrap_or("necunoscut"),
         ));
+        if let Some(src) = prop_value(c, "facts_source").and_then(|x| x.as_str()).filter(|x| x.starts_with("gpu tur --trezire")) {
+            t.push_str(&format!("  faptele placii: din {}\n", src));
+        }
     }
     t.push_str("0 scrieri in dispozitive\n");
     t

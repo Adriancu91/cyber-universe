@@ -28,7 +28,19 @@ pub fn run(sim: bool) {
     } else {
         crate::drivers::gpu::display_devices().into_iter().find(|d| d.vendor == 0x10DE).map(|d| {
             super::emit(&format!("analiza: placa NVIDIA {}: turul de citire cyber-gpu (gpu tur, 0 scrieri)...\n", d.address()));
-            crate::hw::uhl::GpuTour { address: Some(d.address()), simulated: false, lines: crate::drivers::gpu_tur::tour() }
+            let plain = crate::hw::uhl::GpuTour {
+                address: Some(d.address()),
+                simulated: false,
+                lines: crate::drivers::gpu_tur::tour(),
+                from_awake: None,
+                plain_reason: None,
+            };
+            // P6-90: Memory Space off (the laptop) -> the facts of an earlier `gpu tur --trezire` of this power-on.
+            let t = crate::hw::uhl::pick_tour(plain, crate::drivers::gpu_tur::last_awake(Some(&d.address())));
+            if let Some(when) = &t.from_awake {
+                super::emit(&format!("analiza: placa NVIDIA: faptele din gpu tur --trezire de la {} (analiza nu trezeste placa)\n", when));
+            }
+            t
         })
     };
     // P6-88 (C-118 W0): the Intel Wi-Fi adapter, read only (with --sim: QEMU's edu device stands in).
@@ -89,7 +101,7 @@ pub fn run(sim: bool) {
 
 #[cfg(feature = "test-gpu-sim")]
 fn gpu_sim_tour() -> Option<crate::hw::uhl::GpuTour> {
-    Some(crate::hw::uhl::GpuTour { address: None, simulated: true, lines: crate::drivers::gpu_tur::tour_sim() })
+    Some(crate::hw::uhl::GpuTour { address: None, simulated: true, lines: crate::drivers::gpu_tur::tour_sim(), from_awake: None, plain_reason: None })
 }
 
 #[cfg(not(feature = "test-gpu-sim"))]
@@ -133,6 +145,7 @@ fn check_files(dir: &str, sim: bool) {
         assert!(ver.contains('.'), "analiza: vbios_version {:?}", ver);
         crate::info!("test: analiza --sim: vbios_version = {}", ver);
         crate::info!("test: analiza --sim: faptele placii (gpu-sim) in inventar OK");
+        check_pick_tour();
     }
     // P6-88: one wifi_adapter component per adapter (with --sim: QEMU's edu device, its identification register read).
     let wifi_n = crate::drivers::wifi::adapters(sim).len();
@@ -146,4 +159,46 @@ fn check_files(dir: &str, sim: bool) {
         "test: analiza: JSON valid, {} componente ({} PCI, {} ACPI), seria ascunsa in varianta de trimis OK",
         comps.len(), pci, kind("acpi_table")
     );
+}
+
+/// P6-90: the choice between the plain tour of `analiza` and an earlier `gpu tur --trezire` (laptop, Memory Space off).
+#[cfg(feature = "qemu-test")]
+fn check_pick_tour() {
+    use crate::drivers::gpu_tur::AwakeTour;
+    use crate::hw::uhl::{pick_tour, tour_facts, GpuTour};
+    use alloc::{string::ToString, vec};
+    let plain = |addr: &str, lines: &[&str]| GpuTour {
+        address: Some(addr.to_string()),
+        simulated: false,
+        lines: lines.iter().map(|l| l.to_string()).collect(),
+        from_awake: None,
+        plain_reason: None,
+    };
+    let off = ["gpu0: 01:00.0 GeForce RTX 3060 Laptop", "gpu0: Memory Space oprit de firmware"];
+    let awake = |addr: &str| AwakeTour {
+        address: Some(addr.to_string()),
+        when: "07:38:10".to_string(),
+        lines: vec![
+            "fapt chip.nume = GA106".to_string(),
+            "fapt i6.vram = 6144 MiB".to_string(),
+            "gpu0: scrieri: 2 in configuratia PCI (registrul Command, trezirea C-116), 0 in registrele placii; 0 cereri refuzate de adaptor".to_string(),
+        ],
+    };
+    // Memory Space off + an awake tour of the same board -> its facts, marked.
+    let t = pick_tour(plain("01:00.0", &off), Some(awake("01:00.0")));
+    assert!(t.from_awake.as_deref() == Some("07:38:10") && tour_facts(&t.lines).len() == 2, "analiza: turul treaz nefolosit");
+    assert!(t.plain_reason.as_deref().is_some_and(|r| r.contains("Memory Space")), "analiza: motivul turului simplu");
+    // Another board's awake tour, or no awake tour -> the plain one stays.
+    assert!(pick_tour(plain("02:00.0", &off), Some(awake("01:00.0"))).from_awake.is_none(), "analiza: alta placa");
+    assert!(pick_tour(plain("01:00.0", &off), None).from_awake.is_none(), "analiza: fara tur treaz");
+    // The plain tour has facts (the workstation) -> it wins.
+    let t = pick_tour(plain("01:00.0", &["fapt chip.nume = GA104"]), Some(awake("01:00.0")));
+    assert!(t.from_awake.is_none(), "analiza: turul simplu cu fapte trebuie pastrat");
+    // The component: the source and the writes of the wake-up, in the JSON and the report.
+    let t = pick_tour(plain("01:00.0", &off), Some(awake("01:00.0")));
+    let inv = crate::hw::uhl::build(&|_| "-", "test", "2026-11-13T07:41:00", "20261113-0741", Some(&t), &[]);
+    assert!(inv.full.contains("gpu tur --trezire din aceeasi pornire (07:38:10)"), "analiza: sursa faptelor");
+    assert!(inv.full.contains("0 in registrele placii; 2 in registrul Command PCI"), "analiza: scrierile trezirii");
+    assert!(inv.report.contains("2 fapte | cip GA106 | VRAM 6144 MiB") && inv.report.contains("faptele placii: din gpu tur --trezire"), "analiza: raport {}", inv.report);
+    crate::info!("test: analiza: faptele din gpu tur --trezire (Memory Space oprit) in inventar OK");
 }

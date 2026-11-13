@@ -663,6 +663,36 @@ fn awake_on_board(
 pub const TREZIRE_REFUSED: &str =
     "gpu tur --trezire: acest sistem nu poate scrie in placa (doar stick-ul de test, gpu-scrie); nimic scris";
 
+/// P6-90 (C-117, ASUS os-301): the last `gpu tur --trezire` of this power-on that found facts, so `analiza` can put
+/// them in the inventory when its own read-only tour finds Memory Space off (the laptop) — `analiza` never wakes the
+/// board itself (0 writes).
+#[derive(Clone)]
+pub struct AwakeTour {
+    /// PCI address of the board ("01:00.0"); None for the gpu-sim model.
+    pub address: Option<String>,
+    /// When the tour ran ("HH:MM:SS", from the RTC; "necunoscut" without it).
+    pub when: String,
+    pub lines: Vec<String>,
+}
+
+static LAST_AWAKE: crate::sched::Mutex<Option<AwakeTour>> = crate::sched::Mutex::new(None);
+
+fn remember_awake(address: Option<String>, lines: &[String]) {
+    if !lines.iter().any(|l| l.contains("fapt ")) {
+        return; // a failed tour is not kept: an older good one stays the useful one
+    }
+    let when = match crate::drivers::rtc::now() {
+        Some(t) => format!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second),
+        None => String::from("necunoscut"),
+    };
+    *LAST_AWAKE.lock() = Some(AwakeTour { address, when, lines: lines.to_vec() });
+}
+
+/// The last awake tour of this power-on for the board at `address` (None = the gpu-sim model).
+pub fn last_awake(address: Option<&str>) -> Option<AwakeTour> {
+    LAST_AWAKE.lock().as_ref().filter(|t| t.address.as_deref() == address).cloned()
+}
+
 /// `gpu tur --trezire` on the real board (the shell asked for `DA` first; outside `gpu-scrie` it refuses before).
 pub fn tour_awake() -> Vec<String> {
     let p = "gpu0";
@@ -671,7 +701,10 @@ pub fn tour_awake() -> Vec<String> {
         lines.push(String::from("nicio placa NVIDIA"));
         return finish(lines);
     };
-    tour_ampere_board(p, d, true, lines)
+    let address = d.address();
+    let lines = tour_ampere_board(p, d, true, lines);
+    remember_awake(Some(address), &lines);
+    lines
 }
 
 /// `gpu tur --trezire --sim`: the wake-up and the tour on the gpu-sim model of the laptop (configuration from what
@@ -697,6 +730,8 @@ pub fn tour_awake_sim() -> Vec<String> {
         "{}: laptop: {} scrieri in configuratie, {} in registre, Command dupa = {:04x}",
         p, cfg.writes, bar0.writes.len(), cfg.read_raw(0x04) & 0xffff
     ));
+    // P6-90: the laptop model's awake tour is what `analiza --sim` may reuse (as the real one on the laptop).
+    remember_awake(None, &lines);
     // BOOT_0 does not answer after the wake-up: the tour fails, Command must still be put back.
     let mut cfg2 = gpu_sim::pci::SimConfig::ga106_laptop_asus();
     let mut dead = gpu_sim::mmio::SimMmio::new(16 << 20);
