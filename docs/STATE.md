@@ -3,6 +3,11 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-13 ~09:40–09:55 UTC (11:40–11:55 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
+  - `git pull`: OS OK (HEAD detașat → `main`); hub cu `main` local divergent (copie veche) → `pull --rebase` curat, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
+  - Hub: nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/`. Nou: **C-119** (Kronos, antrenament ≤72 h) — Adrian plecat până luni seara (16 nov), workstation-ul e al lui Kronos non-stop, fără teste OS/GPU acolo. **DECIZII 13 nov 11:11:** întâi GPU funcțional; nicio sarcină OS nouă pentru mai multe nuclee / antrenare pe procesor.
+  - CI: ultimele 4 rulări verzi (302 → `os-302`). Nicio sarcină liberă: P6-12 pasul 2 după `log mmio` real; P6-10/P3-10 cu Adrian; P5-07 BLOCAT; C-118 W1 și C-116 pasul 3 așteaptă DA-ul lui Adrian. Regula 5 nu se aplică (P6-90 gata în sesiunea 08:40).
+  - **Pentru sesiunea următoare:** neschimbat până la întoarcerea lui Adrian (luni seara). Atenție la regula 5: aceasta e prima sesiune fără sarcină terminată după P6-90.
 - 2026-11-13 ~06:40–08:30 UTC (08:40–10:30 ora RO) — sesiune programată, fără Adrian — **P6-90 GATA** (C-117, din testul ASUS cu `os-301`); CI 302 verde (run 43389192633) → **Release `os-302`**.
   - `git pull`: `main` local divergent în ambele clone → lucrat pe ramura locală `lucru-13nov` din `origin/main`, nimic forțat. `env-check --install` OK.
   - Hub: nicio comandă `nou` pentru `cyber-universe`. **Rezultat nou:** `rezultate/2026-11-13-laptop-asus-os301/` — pe laptop trec `wifi identifica` (AX201 găsit; registrele CSR necitite: Memory Space oprit de firmware), `gpu identifica`, `gpu tur --trezire` (45 de fapte, VBIOS `94.06.1e.00.23` = Windows, 0 scrieri în registrele plăcii), `analiza`, `test tot` 6/7 (rețeaua: fără cablu). De îmbunătățit: `analiza` arăta „placa NVIDIA: 0 fapte”.
