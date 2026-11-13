@@ -3,6 +3,12 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-13 ~12:40–13:00 UTC (14:40–15:00 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
+  - `git pull`: ambele clone erau pe HEAD detașat → `main` + `pull --rebase` curat, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
+  - Hub: nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/`. Nou: Cyber-GPU sesiunea 98 a citit jurnalul `gpu tur --trezire` de pe laptop (`vbios.versiune = 94.06.1e.00.23` = Windows) — **„nimic de legat, nimic de schimbat în OS”** (`4ff043d` doar adăugări în model; `835f24d` din `os-302` rămâne bun).
+  - Amănuntul din nota lor (`os-301_laptop-tur-citit.md`: ecranul a scris „45 fapte”, modelul lor dă 47) — verificat: OS-ul afișează exact `t.facts.len()` din bibliotecă, nu numără altfel; configurația se citește prin ECAM (și capabilitățile extinse, deci și ReBAR). Cele 2 fapte lipsă sunt printre cele 7–8 rânduri tăiate sus în poză (jurnalul de pe stick nu conține rândurile `fapt`), deci nu se poate spune care. Nu e nevoie de cod: cu `os-302`, `analiza` după `gpu tur --trezire` pune toate faptele în `inventory.redacted.json` → la următorul test pe laptop se vede lista completă.
+  - CI: ultimele 3 rulări verzi (302 → `os-302`). Nicio sarcină liberă: P6-12 pasul 2 după `log mmio` real; P6-10/P3-10 cu Adrian; P5-07 BLOCAT; C-118 W1 și C-116 pasul 3 așteaptă DA-ul lui Adrian (plecat până luni seara, C-119).
+  - **Regula 5:** a doua sesiune la rând fără sarcină terminată (după P6-90 din sesiunea 08:40). **Pentru sesiunea următoare:** dacă tot nu e nimic nou → a treia la rând: scrie „OPRIT: necesită analiza lui Adrian” (motivul real e doar așteptarea lui Adrian, nu o problemă de cod).
 - 2026-11-13 ~09:40–09:55 UTC (11:40–11:55 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
   - `git pull`: OS OK (HEAD detașat → `main`); hub cu `main` local divergent (copie veche) → `pull --rebase` curat, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
   - Hub: nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/`. Nou: **C-119** (Kronos, antrenament ≤72 h) — Adrian plecat până luni seara (16 nov), workstation-ul e al lui Kronos non-stop, fără teste OS/GPU acolo. **DECIZII 13 nov 11:11:** întâi GPU funcțional; nicio sarcină OS nouă pentru mai multe nuclee / antrenare pe procesor.
