@@ -3,6 +3,11 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-13 ~15:40–15:50 UTC (17:40–17:50 ora RO) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5); nicio schimbare de cod.
+  - `git pull`: clonele locale aveau `main` vechi și neînrudit (clonă superficială) → păstrat deoparte ca `vechi-main-local`, `main` nou urmărește `origin/main`; nimic șters, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
+  - Hub: nicio comandă `nou` pentru `cyber-universe` (singura nouă, C-120, e pentru Kronos); niciun jurnal nou în `rezultate/`. CI: ultimele 3 rulări verzi (302 → `os-302`).
+  - **Regula 5:** a treia sesiune la rând (11:40, 14:40, 17:40) fără sarcină terminată → „OPRIT”. Cauza reală: doar așteptarea lui Adrian (plecat până luni seara, C-119), nu o problemă de cod. Se ridică singur la prima comandă nouă sau la primul jurnal nou de test.
+  - **Pentru sesiunea următoare:** verifică hub-ul (COMENZI `nou`, `rezultate/`) și CI; dacă nu e nimic nou, rămâne OPRIT, fără sarcini noi. Coada: P6-12 pasul 2 după `log mmio` real; P6-10/P3-10 cu Adrian; P5-07 BLOCAT; C-118 W1 și C-116 pasul 3 așteaptă DA-ul lui Adrian.
 - 2026-11-13 ~12:40–13:00 UTC (14:40–15:00 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
   - `git pull`: ambele clone erau pe HEAD detașat → `main` + `pull --rebase` curat, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
   - Hub: nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/`. Nou: Cyber-GPU sesiunea 98 a citit jurnalul `gpu tur --trezire` de pe laptop (`vbios.versiune = 94.06.1e.00.23` = Windows) — **„nimic de legat, nimic de schimbat în OS”** (`4ff043d` doar adăugări în model; `835f24d` din `os-302` rămâne bun).
