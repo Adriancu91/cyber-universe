@@ -284,7 +284,7 @@ pub fn identify() -> Vec<String> {
 // ---------------------------------------------------------------------------------------------------------------
 
 /// Pinned Cyber-GPU revision (kernel/Cargo.toml), shown in the report.
-pub const CYBER_GPU_REV: &str = "6b6bb38";
+pub const CYBER_GPU_REV: &str = "835f24d";
 
 /// P6-85 (C-116): the line for a board the library knows only for reading (GA106, the ASUS TUF laptop).
 pub const GA106_READ_ONLY: &str =
@@ -618,6 +618,11 @@ fn vbios_lines(p: &str, r: &gpu_core::error::GpuResult<nvidia_ga104::vbios::Vbio
         )),
         None => v.push(format!("{}: BIT: negasita", p)),
     }
+    // P6-89 (cyber-gpu 835f24d, C-116/C-117): the version string as Windows shows it, from BIT token 'i' (0x69).
+    v.push(match &l.version {
+        Some(ver) => format!("{}: versiune VBIOS: {} (jetonul BIT 0x69; de comparat cu raportul UHL din Windows)", p, ver),
+        None => format!("{}: versiune VBIOS: necitita (jetonul BIT 0x69 lipseste sau e scurt)", p),
+    });
     v.push(format!(
         "{}: FWSEC: {} imagini; complet (PCI-AT + BIT 0x70 + FWSEC): {}; {} citiri PROM",
         p, l.fwsec_images(), if l.complete() { "da" } else { "nu" }, l.prom_reads

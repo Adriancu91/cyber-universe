@@ -97,6 +97,13 @@ fn gpu_component(t: &GpuTour) -> J {
         "tour_lines" => p(J::Array(t.lines.iter().map(|l| J::String(l.clone())).collect()), "MEASURED", refs),
         "vbios_image" => not_tested("imaginea VBIOS nu se copiaza in inventar (doar antetele, din fapte)"),
     );
+    // P6-89 (cyber-gpu 835f24d): the VBIOS version from BIT token 'i', to compare with the Windows UHL report.
+    let version = facts.iter().find(|(k, _)| k == "vbios.versiune").map(|(_, x)| x.clone());
+    props!(v; "vbios_version" => match version {
+        Some(x) if x.starts_with(|c: char| c.is_ascii_hexdigit()) && x.contains('.') => p(J::String(x), "MEASURED", refs),
+        Some(x) => p(J::String(x), "UNKNOWN", refs), // "necitita (...)": the reason, as the tour wrote it
+        None => not_tested("faptul vbios.versiune lipseste din tur"),
+    });
     if facts.is_empty() {
         props!(v; "why_no_facts" => p(J::String(t.lines.iter().rev().find(|l| !l.trim().is_empty()).cloned().unwrap_or_default()), "MEASURED", refs));
     }

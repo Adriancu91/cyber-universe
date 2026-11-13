@@ -433,6 +433,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-87** C-117 pasul 2: partea NVIDIA în `analiza` — faptele turului de citire Cyber-GPU (`gpu tur`, lista C-54, 0 scrieri: BOOT_0/42, GFW, VBIOS, FWSEC, I6/WPR2) ca o componentă `gpu_registers`; `analiza --sim` în build-urile de test. Plan: `docs/plans/P6-87.md`. Dep: P6-86.
   Gata (2026-11-12 ~22:35 UTC): componenta `gpu_registers` din faptele turului (`gpu_tur::tour()` pe placa NVIDIA găsită; `analiza --sim` în build-urile de test); `writes_to_board` CONFIRMED 0; rândul plăcii în `report.txt`. Scenariul nou `analiza-gpu`; local `analiza-gpu analiza gpu-tur gpu-ga106 hw-lista` TRECUT. Pe placa reală netestat.
 - [~] **P6-88** C-118 pasul W0: `wifi identifica` — placa Wi-Fi Intel (AX201, CNVi) DOAR CITIRE: configurația PCI, BAR0, D-state, PCIe, registrele CSR documentate (HW_REV, HW_RF_ID, GP_CNTRL) dacă firmware-ul a lăsat placa trează; în `test tot` și în `analiza`. Plan: `docs/plans/P6-88.md`. Dep: P6-86.
+- [~] **P6-89** cyber-gpu `835f24d` (C-116/C-117): versiunea VBIOS din jetonul BIT 'i' — rândul `versiune VBIOS` în `gpu vbios`, `vbios_version` în `analiza`. Plan: `docs/plans/P6-89.md`. Dep: P6-87.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)

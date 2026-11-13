@@ -128,6 +128,10 @@ fn check_files(dir: &str, sim: bool) {
         let facts = g.get("props").and_then(|p| p.get("facts")).and_then(|p| p.get("value")).expect("analiza: fapte");
         assert!(facts.get("chip.nume").and_then(|x| x.as_str()) == Some("GA104"), "analiza: chip.nume");
         assert!(facts.get("pci.id").and_then(|x| x.as_str()) == Some("10de:2482"), "analiza: pci.id");
+        // P6-89 (cyber-gpu 835f24d): the VBIOS version string of the model, as a property of its own.
+        let ver = g.get("props").and_then(|p| p.get("vbios_version")).and_then(|p| p.get("value")).and_then(|v| v.as_str()).unwrap_or("");
+        assert!(ver.contains('.'), "analiza: vbios_version {:?}", ver);
+        crate::info!("test: analiza --sim: vbios_version = {}", ver);
         crate::info!("test: analiza --sim: faptele placii (gpu-sim) in inventar OK");
     }
     // P6-88: one wifi_adapter component per adapter (with --sim: QEMU's edu device, its identification register read).
