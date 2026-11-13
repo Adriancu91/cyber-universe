@@ -162,7 +162,7 @@ pub fn resizable_bars(d: &Device) -> Vec<(u16, u64)> {
 }
 
 /// Maps the page at `phys` read-only and uncached at `WINDOW`, calls `f` with its virtual address, unmaps it.
-fn with_readonly_window<T>(phys: u64, f: impl FnOnce(u64) -> T) -> Result<T, &'static str> {
+pub(crate) fn with_readonly_window<T>(phys: u64, f: impl FnOnce(u64) -> T) -> Result<T, &'static str> {
     let _guard = WINDOW_LOCK.lock();
     // Deliberately no WRITABLE flag: the card's registers cannot be written through this mapping.
     paging::map(WINDOW, phys & !0xFFF, paging::NO_EXECUTE | UNCACHED).map_err(|_| "maparea ferestrei a esuat")?;

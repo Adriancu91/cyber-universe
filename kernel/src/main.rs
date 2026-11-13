@@ -266,6 +266,7 @@ fn run_tests() -> ! {
     info!("test: FADT RESET_REG decodare OK");
     hw::smbios::self_test();
     hw::uhl::self_test();
+    drivers::wifi::self_test();
     assert!(hw::names::self_test(), "hw: tabelul de nume hardware gresit");
     info!("test: tabelul de nume hardware OK (Wi-Fi recunoscut dupa clasa si id)");
     if let Err(e) = net::sntp::self_test() {

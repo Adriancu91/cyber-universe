@@ -49,6 +49,18 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
 - **Test:** scenariile `net` (e1000e, implicită la q35) și `net-e1000`: o cerere ARP către poarta virtuală QEMU (10.0.2.2)
   primește răspuns. **Surse:** Intel 8254x Software Developer's Manual, Intel 82574 datasheet, RFC 826 (ARP).
 
+## Wi-Fi (C-118, pasul W0: doar citire)
+
+- `wifi.rs` — comanda `wifi` / `wifi identifica` (P6-88): funcțiile Intel de clasă 02:80 din PCI (AX201 = `8086:43F0`, CNVi la
+  `00:14.3` pe ASUS TUF F15): ID-uri, subsistem, revizie, integrat (magistrala 0 = CNVi) sau pe M.2, Command, starea D, BAR-uri,
+  legătura PCIe, lista de capabilități; **doar dacă** firmware-ul a lăsat placa în D0 cu Memory Space pornit, cinci registre CSR
+  (`HW_IF_CONFIG`, `RESET`, `GP_CNTRL`, `HW_REV`, `HW_RF_ID`) prin fereastra doar-citire a nivelului 0 GPU. Zero scrieri. Intră și
+  în `test tot` (rândul „wifi”) și în `analiza` (componenta `wifi_adapter`). Pașii următori (W1–W4) în `docs/WIFI.md`.
+- **Test:** scenariul `wifi` (fără placă → „nicio placa Wi-Fi Intel”; `wifi identifica --sim` citește dispozitivul QEMU `edu`
+  prin fereastră: `HW_IF_CONFIG@000=010000ed`), `analiza-gpu` (componenta în JSON), `testtot`; decodarea testată la pornire.
+- **Surse:** iwlwifi (`iwl-csr.h`, GPL-2.0 OR BSD-3) citit doar ca specificație — offset-uri și câmpuri, codul e scris de noi;
+  PCI Local Bus / PCI Express Base. Firmware-ul Intel și driverul Windows nu se deschid (licența).
+
 ## Plăci video (nivel 0, doar citire)
 
 - `gpu.rs` — comanda `gpu` (P6-11, comanda C-12): plăcile de clasă 03 din PCI (furnizor, model, subsistem, Command, starea

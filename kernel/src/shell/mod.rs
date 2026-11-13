@@ -181,6 +181,21 @@ fn dispatch(line: &str) -> bool {
             _ => out!("folosire: compara <fisier1> <fisier2>\n"),
         },
         "gpu" => gpu(args),
+        "wifi" => match args {
+            // P6-88 (C-118 step W0): the Intel Wi-Fi adapter, read only.
+            [] | ["identifica"] => {
+                for l in crate::drivers::wifi::identify(false) {
+                    out!("{}\n", l);
+                }
+            }
+            #[cfg(feature = "qemu-test")]
+            ["identifica", "--sim"] => {
+                for l in crate::drivers::wifi::identify(true) {
+                    out!("{}\n", l);
+                }
+            }
+            _ => out!("folosire: wifi [identifica]   (placa Wi-Fi Intel, doar citire: pasul W0 din C-118)\n"),
+        },
         "cpu" => cpu(args),
         "log" => show_log(args),
         "timp" => time_command(args),
@@ -255,6 +270,7 @@ fn help() {
     out!("  rtl porneste [variante]  reporneste placa Realtek cu variantele date (fara: ca la pornire; `rtl` le arata)\n");
     out!("  gpu [identifica|plan]  placile video (nivel 0: doar citire; NVIDIA: registrele de identitate)\n");
     out!("  gpu pregatire-i6 pregatirea pasului I6 (doar citire); gpu i6 --scrie = prima scriere (doar stick-ul de test)\n");
+    out!("  wifi [identifica] placa Wi-Fi Intel (AX201): configuratia PCI si registrele de identitate, doar citire (W0)\n");
     out!("  gpu tur          turul de citire (doar citire, un rand `fapt` pe fapt); gpu lant = pasii ferestrei in lant (cere DA)\n");
     out!("  gpu tur --trezire  laptopul (GA106): Memory Space pornit pentru tur, repus la final (cere DA; doar stick-ul de test)\n");
     out!("  gpu recupereaza  dupa un lant oprit: Booter Unload coboara WPR2 fara repornire (cere DA; doar stick-ul de test)\n");

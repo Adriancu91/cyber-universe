@@ -111,11 +111,19 @@ fn video() -> Check {
     }
 }
 
+/// P6-88 (C-118: "at every test on the laptop, Wi-Fi too"): the Intel Wi-Fi adapter, read only (step W0).
+fn wifi() -> Check {
+    match crate::drivers::wifi::summary() {
+        Some(d) => pass("wifi", d),
+        None => Check { name: "wifi", verdict: Verdict::Missing, detail: String::from("nicio placa Wi-Fi Intel pe PCI") },
+    }
+}
+
 /// `test tot`: runs every check, prints, writes the report on the stick and sends it to the hub.
 pub fn run() {
     super::emit("test tot: autotestul OS-ului (doar citiri; un fisier mic de proba pe stick)\n");
     let mount = super::raport::writable_mount();
-    let checks = [processor(), clock(), timer(), stick(mount.as_deref()), network(), video()];
+    let checks = [processor(), clock(), timer(), stick(mount.as_deref()), network(), video(), wifi()];
     let mut text = String::from("== test tot: autotestul Cyber Universe OS ==\n");
     for c in &checks {
         let v = match c.verdict {

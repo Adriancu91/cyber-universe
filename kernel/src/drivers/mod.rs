@@ -21,3 +21,4 @@ pub mod rtc;
 pub mod rtl8168;
 pub mod serial;
 pub mod usb;
+pub mod wifi; // P6-88 (C-118 W0): `wifi identifica`, read only

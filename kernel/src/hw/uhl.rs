@@ -53,6 +53,8 @@ const SOURCES: &[(&str, &str, &str)] = &[
     ("cu-drivers", "software", "Driverele Cyber Universe pornite la boot"),
     ("cyber-gpu", "hardware", "Turul de citire Cyber-GPU (lista sigura C-54): registrele placii NVIDIA prin adaptorul care refuza orice scriere"),
     ("gpu-sim", "simulation", "Modelele gpu-sim ale Cyber-GPU (doar in build-urile de test; NU e placa reala)"),
+    ("iwlwifi-csr", "documentation", "Registrele CSR ale placilor Wi-Fi Intel (iwl-csr.h din iwlwifi, GPL-2.0 OR BSD-3, citit ca specificatie)"),
+    ("qemu-edu", "simulation", "Dispozitivul QEMU edu in locul placii Wi-Fi (doar in build-urile de test; NU e placa reala)"),
 ];
 
 /// P6-87 (C-117 step 2): the read-only tour of the NVIDIA board (`gpu tur`), given by the shell.
@@ -104,6 +106,54 @@ fn gpu_component(t: &GpuTour) -> J {
     };
     let name = facts.iter().find(|(k, _)| k == "chip.nume").map(|(_, x)| format!("NVIDIA {}", x)).unwrap_or_else(|| String::from("NVIDIA"));
     component(id, "gpu_registers", if t.simulated { format!("{} (SIMULARE gpu-sim)", name) } else { name }, v)
+}
+
+/// P6-88 (C-118 step W0): the Intel Wi-Fi adapter, read only (`wifi identifica`).
+fn wifi_component(f: &crate::drivers::wifi::Facts) -> J {
+    use crate::drivers::wifi::{self, CSR_GP_CNTRL, CSR_HW_IF_CONFIG, CSR_HW_REV, CSR_HW_RF_ID, CSR_RESET};
+    let hw: &[&str] = if f.simulated { &["qemu-edu"] } else { &["pci-config"] };
+    let csr_refs: &[&str] = if f.simulated { &["qemu-edu"] } else { &["iwlwifi-csr"] };
+    let mut v = Vec::new();
+    props!(v;
+        "simulated" => p(J::Bool(f.simulated), "MEASURED", hw),
+        "pci_address" => p(J::String(f.address.clone()), "MEASURED", hw),
+        "model" => match wifi::model_name(f.vendor, f.device) {
+            Some(m) => p(s(m), "DOCUMENTED", &["cu-names"]),
+            None => p(J::Null, "UNKNOWN", &["cu-names"]),
+        },
+        "integrated_cnvi" => p(J::Bool(f.integrated), "INFERRED", hw),
+        "command" => p(hex(f.command as u64, 4), "MEASURED", hw),
+        "power_state" => match f.power_state {
+            Some(d) => p(J::String(format!("D{}", d)), "MEASURED", hw),
+            None => p(J::Null, "UNKNOWN", hw),
+        },
+        "capability_ids" => p(J::Array(f.capabilities.iter().map(|c| hex(*c as u64, 2)).collect()), "MEASURED", hw),
+    );
+    match &f.csr {
+        Ok(c) => {
+            let (mt, mn) = wifi::mac_type(c.get(CSR_HW_REV));
+            let (rt, rn) = wifi::rf_type(c.get(CSR_HW_RF_ID));
+            props!(v;
+                "csr_hw_if_config" => p(hex(c.get(CSR_HW_IF_CONFIG) as u64, 8), "MEASURED", csr_refs),
+                "csr_reset" => p(hex(c.get(CSR_RESET) as u64, 8), "MEASURED", csr_refs),
+                "csr_gp_cntrl" => p(hex(c.get(CSR_GP_CNTRL) as u64, 8), "MEASURED", csr_refs),
+                "csr_hw_rev" => p(hex(c.get(CSR_HW_REV) as u64, 8), "MEASURED", csr_refs),
+                "csr_hw_rf_id" => p(hex(c.get(CSR_HW_RF_ID) as u64, 8), "MEASURED", csr_refs),
+                "mac_type" => p(J::String(format!("{:#05x} {}", mt, mn.unwrap_or("?"))), "INFERRED", csr_refs),
+                "rf_type" => p(J::String(format!("{:#05x} {}", rt, rn.unwrap_or("?"))), "INFERRED", csr_refs),
+                "gp_cntrl_bits" => p(J::String(wifi::gp_cntrl_text(c.get(CSR_GP_CNTRL))), "INFERRED", csr_refs),
+            );
+        }
+        Err(why) => {
+            props!(v; "csr_registers" => not_tested(why));
+        }
+    }
+    props!(v;
+        "firmware" => not_tested("pasul W1 (firmware-ul il descarca Adrian; nu se desface)"),
+        "writes_to_board" => p(int(0), "CONFIRMED", hw),
+    );
+    let name = format!("{:04x}:{:04x} {}", f.vendor, f.device, wifi::model_name(f.vendor, f.device).unwrap_or("Wi-Fi"));
+    component(format!("wifi:0000:{}", f.address), "wifi_adapter", if f.simulated { format!("{} (SIMULARE qemu edu)", name) } else { name }, v)
 }
 
 /// One property.
@@ -161,7 +211,14 @@ pub struct Inventory {
 }
 
 /// Builds the inventory. `driver_of` = which of our drivers handles a function; `stamp` = "AAAA-LL-ZZTHH:MM:SS".
-pub fn build(driver_of: &dyn Fn(&Device) -> &'static str, cpu_name: &str, stamp: &str, session: &str, gpu: Option<&GpuTour>) -> Inventory {
+pub fn build(
+    driver_of: &dyn Fn(&Device) -> &'static str,
+    cpu_name: &str,
+    stamp: &str,
+    session: &str,
+    gpu: Option<&GpuTour>,
+    wifi: &[crate::drivers::wifi::Facts],
+) -> Inventory {
     let smb = smbios_structs();
     let machine = machine_name(&smb);
     let mut comps: Vec<J> = Vec::new();
@@ -175,6 +232,9 @@ pub fn build(driver_of: &dyn Fn(&Device) -> &'static str, cpu_name: &str, stamp:
     }
     if let Some(g) = gpu {
         comps.push(gpu_component(g));
+    }
+    for w in wifi {
+        comps.push(wifi_component(w));
     }
     let acpi_count = acpi_components(&mut comps);
     let usb = crate::drivers::usb::devices();

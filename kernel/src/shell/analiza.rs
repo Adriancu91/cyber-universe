@@ -31,7 +31,9 @@ pub fn run(sim: bool) {
             crate::hw::uhl::GpuTour { address: Some(d.address()), simulated: false, lines: crate::drivers::gpu_tur::tour() }
         })
     };
-    let inv = crate::hw::uhl::build(&super::driver_of, &super::cpu_name(), &stamp, &session, gpu.as_ref());
+    // P6-88 (C-118 W0): the Intel Wi-Fi adapter, read only (with --sim: QEMU's edu device stands in).
+    let wifi = crate::drivers::wifi::facts(sim);
+    let inv = crate::hw::uhl::build(&super::driver_of, &super::cpu_name(), &stamp, &session, gpu.as_ref(), &wifi);
     let machine_dir = format!("{}/{}", base, inv.machine);
     let mut dir = format!("{}/{}", machine_dir, session);
     let made = (|| -> Result<(), String> {
@@ -127,6 +129,14 @@ fn check_files(dir: &str, sim: bool) {
         assert!(facts.get("chip.nume").and_then(|x| x.as_str()) == Some("GA104"), "analiza: chip.nume");
         assert!(facts.get("pci.id").and_then(|x| x.as_str()) == Some("10de:2482"), "analiza: pci.id");
         crate::info!("test: analiza --sim: faptele placii (gpu-sim) in inventar OK");
+    }
+    // P6-88: one wifi_adapter component per adapter (with --sim: QEMU's edu device, its identification register read).
+    let wifi_n = crate::drivers::wifi::adapters(sim).len();
+    assert!(kind("wifi_adapter") == wifi_n, "analiza: {} placi Wi-Fi in JSON, {} in nucleu", kind("wifi_adapter"), wifi_n);
+    if let Some(w) = comps.iter().find(|c| c.get("kind").and_then(|x| x.as_str()) == Some("wifi_adapter")) {
+        let reg = w.get("props").and_then(|p| p.get("csr_hw_if_config")).and_then(|p| p.get("value")).and_then(|v| v.as_str());
+        assert!(reg.is_some(), "analiza: registrele placii Wi-Fi lipsesc");
+        crate::info!("test: analiza: placa Wi-Fi in inventar OK (HW_IF_CONFIG {})", reg.unwrap_or(""));
     }
     crate::info!(
         "test: analiza: JSON valid, {} componente ({} PCI, {} ACPI), seria ascunsa in varianta de trimis OK",

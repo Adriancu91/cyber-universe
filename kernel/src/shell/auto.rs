@@ -154,6 +154,7 @@ pub fn allowed(line: &str) -> Result<(), &'static str> {
         ["timp", "timp" | "exit", ..] => Err("timp masoara o singura comanda obisnuita"),
         ["timp", rest @ ..] if !rest.is_empty() => allowed(&rest.join(" ")),
         ["cpu", ..] => Ok(()),
+        ["wifi"] | ["wifi", "identifica"] => Ok(()), // P6-88: read only
         ["gpu"] => Ok(()),
         // P6-85 (C-116): the minimal wake-up writes the PCI Command register: only with Adrian there.
         ["gpu", "tur", rest @ ..] if rest.contains(&"--trezire") => {
