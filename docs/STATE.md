@@ -3,6 +3,11 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-13 ~06:40–08:30 UTC (08:40–10:30 ora RO) — sesiune programată, fără Adrian — **P6-90 GATA** (C-117, din testul ASUS cu `os-301`); CI 302 verde (run 43389192633) → **Release `os-302`**.
+  - `git pull`: `main` local divergent în ambele clone → lucrat pe ramura locală `lucru-13nov` din `origin/main`, nimic forțat. `env-check --install` OK.
+  - Hub: nicio comandă `nou` pentru `cyber-universe`. **Rezultat nou:** `rezultate/2026-11-13-laptop-asus-os301/` — pe laptop trec `wifi identifica` (AX201 găsit; registrele CSR necitite: Memory Space oprit de firmware), `gpu identifica`, `gpu tur --trezire` (45 de fapte, VBIOS `94.06.1e.00.23` = Windows, 0 scrieri în registrele plăcii), `analiza`, `test tot` 6/7 (rețeaua: fără cablu). De îmbunătățit: `analiza` arăta „placa NVIDIA: 0 fapte”.
+  - **P6-90:** ultimul `gpu tur --trezire` cu fapte e ținut minte; `analiza` îl folosește când turul ei doar-citire n-are fapte (sursa + ora în inventar și raport; `analiza` tot nu scrie nimic). Test `check_pick_tour` în `analiza-gpu`. **Toată suita 107/0/1.**
+  - **Pentru sesiunea următoare:** `os-302` gata. C-118 W1 așteaptă: (a) „DA” de la Adrian pentru o „trezire” a plăcii Wi-Fi (ca la GPU: Memory Space pornit pentru citirea registrelor CSR, repus) și (b) fișierul de firmware Qu/QuZ-hr-b0 descărcat de el. C-116 pasul 3 așteaptă DA-ul lui Adrian (Cyber-GPU). Restul cozii neschimbat (P6-12 pasul 2 după `log mmio` real; P6-10/P3-10 cu Adrian; P5-07 BLOCAT).
 - 2026-11-13 ~03:40–03:50 UTC (05:40–05:50 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
   - `git pull`: `main` local vechi divergent în ambele clone → `main` mutat pe `origin/main` (`checkout -B`), nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
   - Hub: nicio comandă `nou` pentru `cyber-universe` (C-118 e preluat, W0 gata; W1 așteaptă poza W0 + firmware-ul descărcat de Adrian + „da”); niciun jurnal nou în `rezultate/`. CI: ultimele 3 rulări verzi (301 → `os-301`).
