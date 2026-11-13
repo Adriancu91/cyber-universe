@@ -3,6 +3,10 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-13 ~18:40–18:50 UTC (20:40–20:50 ora RO) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5, rămâne); nicio schimbare de cod.
+  - `git pull`: clonele locale aveau iar `main` divergent → lucrat pe ramura locală `lucru-13nov` din `origin/main`; nimic șters, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
+  - Hub: nicio comandă `nou` pentru `cyber-universe` (de la 17:50 doar Kronos S110 și starea Cyber-GPU, sesiunea 99: nimic de legat); niciun jurnal nou în `rezultate/`. CI: ultimele 3 rulări verzi (302 → `os-302`).
+  - **Ce ridică oprirea:** o comandă nouă de la Adrian sau un jurnal nou de test (Adrian plecat până luni seara, 16 nov, C-119). Coada neschimbată: P6-12 pasul 2 după `log mmio` real; P6-10/P3-10 cu Adrian; P5-07 BLOCAT; C-118 W1 și C-116 pasul 3 așteaptă DA-ul lui Adrian.
 - 2026-11-13 ~15:40–15:50 UTC (17:40–17:50 ora RO) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5); nicio schimbare de cod.
   - `git pull`: clonele locale aveau `main` vechi și neînrudit (clonă superficială) → păstrat deoparte ca `vechi-main-local`, `main` nou urmărește `origin/main`; nimic șters, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
   - Hub: nicio comandă `nou` pentru `cyber-universe` (singura nouă, C-120, e pentru Kronos); niciun jurnal nou în `rezultate/`. CI: ultimele 3 rulări verzi (302 → `os-302`).
