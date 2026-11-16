@@ -27,6 +27,19 @@
 - **Ce ar debloca:** dacă pică și sub 60: măsurarea ceasului față de TSC în loc de PIT, sau testul cu `-smp 4` pe o gazdă mai liberă.
 - **Nevoie de Adrian:** nu.
 
+### B-007 · testul de stres (5 min) a picat o dată în CI · 2026-11-16
+- **Problema:** rularea săptămânală 43855385956 (16 nov, `main` = `50b4476`, nightly 2026-11-13) a picat la 201 s: procesul 217
+  (`/bin/cat`) a primit `page fault la adresa 0x400000 (pagina lipsa, citire, mod utilizator)` la `RIP=0x400000` — chiar prima
+  instrucțiune a programului; pagina de cod nu era în tabelele active. Primele 216 procese au mers.
+- **Am verificat:** aceeași versiune local de 2 ori (TRECUT, 300 s) și rularea la cerere în CI 43870282772 (verde) → eroare rară,
+  nereprodusă. Rulările 1–6 (21 oct – 9 nov) au fost verzi. Codul pentru procese/memorie nu s-a schimbat de la 12 nov.
+  Citit (fără schimbări): `proc::start`/`on_exit`, `AddressSpace::drop`, `paging::free_lower_half`, `sched::use_kernel_tables`.
+- **Eroarea exactă:** `ERR proces oprit: page fault (#PF) la RIP=0x400000` → `PANIC: stres: procesul a iesit cu -1` (src/tests/stress.rs:76).
+- **Ce ar debloca:** la următoarea apariție, mai multe date: la un #PF în mod utilizator, scrise în jurnal CR3 față de rădăcina firului
+  și ce găsește `translate` pentru adresă (diagnostic mic, sarcină separată când coada se deschide). Ipoteze de verificat: un cadru
+  folosit de două ori (eliberat și realocat cât încă e folosit), sau CR3 greșit la comutarea firului.
+- **Nevoie de Adrian:** nu.
+
 <!-- Șablon:
 ### B-001 · P0-01 · 2026-10-27
 - **Problema:** ...

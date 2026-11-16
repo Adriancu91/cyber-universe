@@ -3,6 +3,11 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-16 ~12:40–13:05 UTC (14:40–15:05 ora RO) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5, rămâne); nicio schimbare de cod.
+  - `git pull`: clonele locale pe HEAD detașat, cu `main` vechi divergent → lucrat pe ramura locală `lucru-1116` din `origin/main`; nimic șters, nimic forțat.
+  - Hub: nicio comandă `nou` pentru `cyber-universe` (noi: C-122…C-124, C-126 la kronos; C-125 = V2+V3 pentru I9 la cyber-gpu). **Jurnal nou:** `rezultate/2026-11-16-workstation-os302/` — I0–I8 + golden trec din nou, **I9 pică la `PROMOTE_CTX` virtual cu 0x57 `NV_ERR_OBJECT_NOT_FOUND`** → treaba cyber-gpu (C-125); OS-ul leagă commit-ul lor după. Ecranul a înghețat la I8 ca la os-295 (cunoscut). `trimite` n-a mers: **lipsea `/usb/github.token` pe stick-ul de test** (de spus lui Adrian).
+  - **CI:** testul de stres săptămânal (run 43855385956) **a picat o dată**: procesul 217 cu page fault la 0x400000 (B-007). `env-check --install` OK; `tools/test.sh --stress` local de 2 ori TRECUT; rularea la cerere în CI 43870282772 **verde** → eroare rară, nereprodusă; notată în BLOCKERS cu pasul de diagnostic.
+  - **Ce ridică oprirea:** o comandă nouă de la Adrian sau commit-ul cyber-gpu pentru C-125 (de legat în OS). Coada neschimbată.
 - 2026-11-16 ~09:40–09:45 UTC (11:40–11:45 ora RO) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5, rămâne); nicio schimbare de cod.
   - `git pull`: clonele locale pe HEAD detașat, cu `main` vechi divergent → `main` vechi păstrat ca ramura locală `vechi-local-10nov`, `main` nou din `origin/main`; nimic șters, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
   - Hub: de la 08:45 niciun commit nou → nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/`. CI: ultimele 3 rulări verzi (`os-302`).
