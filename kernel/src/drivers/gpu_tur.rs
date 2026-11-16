@@ -222,7 +222,7 @@ pub fn variants_list() -> Vec<String> {
 
 /// `gpu lant` on the real board (the shell asked for `DA` first). Writes only in the `gpu-scrie` build.
 /// P6-78 (C-108): `variant` = `--varianta N` (already checked by the shell); `None` = the library's default variant (1 since cyber-gpu e49ca76).
-pub fn chain(variant: Option<u8>) -> Vec<String> {
+pub fn chain(variant: Option<u8>, i9: nvidia_ga104::gsp::user_space::I9Options) -> Vec<String> {
     let p = "gpu0";
     let mut lines = Vec::new();
     let settings = match nvidia_ga104::gsp::variants::settings(variant) {
@@ -233,6 +233,7 @@ pub fn chain(variant: Option<u8>) -> Vec<String> {
         }
     };
     lines.push(format!("{}: {}", p, variant_line(variant)));
+    lines.push(format!("{}: {}", p, super::gpu_golden::i9_line(i9)));
     let Some((d, bar0)) = gpu_i6::board(&mut lines) else { return finish(lines) };
     let writes_allowed = cfg!(feature = "gpu-scrie");
     #[cfg(feature = "gpu-scrie")]
@@ -403,7 +404,7 @@ pub fn chain(variant: Option<u8>) -> Vec<String> {
             let (Some(prep), Some(st)) = (i7.last_mut(), gs.as_mut()) else { return Err(step_failed("lipseste golden")) };
             let mut rw = gpu_i6::hw::GspWriteWindow::new(bar0);
             let mut vf = gpu_i6::hw::VramFence::new(bar0);
-            let r = gpu_golden::channel_step(p, &mut rw, &mut vf, &mut clock, j, prep, st, Some(&permit), &mut lines, |_| {});
+            let r = gpu_golden::channel_step(p, &mut rw, &mut vf, &mut clock, j, prep, st, Some(&permit), &mut lines, i9, |_| {});
             refused += rw.refused + vf.refused;
             r
         }
@@ -834,7 +835,7 @@ pub fn tour_sim() -> Vec<String> {
 /// an error (the chain must stop there and still put Bus Master back). `writes_allowed` false = the read-only chain of
 /// every build without `gpu-scrie`: it must stop before Bus Master and still run the tour.
 #[cfg(feature = "test-gpu-sim")]
-pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>) -> Vec<String> {
+pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: nvidia_ga104::gsp::user_space::I9Options) -> Vec<String> {
     use gpu_pci::bus_master::{restore_command, set_bus_master, BusMasterPermit};
     use gpu_sim::fake_gsp::{FakeGsp, SimFault, SimHsImage, SimUcode, GSP_BASE};
     use nvidia_ga104::gsp::hs_load::{self, HsUcode};
@@ -858,6 +859,7 @@ pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>) -> Vec<
         }
     };
     lines.push(format!("{}: {}", p, variant_line(variant)));
+    lines.push(format!("{}: {}", p, super::gpu_golden::i9_line(i9)));
     settings.journal(variant, &mut j);
     let mut clock = gpu_sim::clock::SimClock::default();
     let mut ro = gpu_i6::sim_board();
@@ -992,7 +994,7 @@ pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>) -> Vec<
             let (Some(prep), Some(peer), Some(st)) = (i7p.as_mut(), sim_peer.as_mut(), gs.as_mut()) else {
                 return Err(step_failed("lipseste golden"));
             };
-            let r = gpu_golden::channel_step(p, &mut g, &mut vram, &mut clock, j, prep, st, None, &mut lines, |m| peer.serve(m, &mut rm));
+            let r = gpu_golden::channel_step(p, &mut g, &mut vram, &mut clock, j, prep, st, None, &mut lines, i9, |m| peer.serve(m, &mut rm));
             lines.push(format!("{}: modelul RM: {} mesaje servite in total", p, peer.served));
             r
         }
@@ -1140,11 +1142,11 @@ static KRONOS_LINES: crate::sched::Mutex<Option<Vec<String>>> = crate::sched::Mu
 fn kronos_chain_thread() {
     let sim = KRONOS_SIM.load(core::sync::atomic::Ordering::SeqCst);
     #[cfg(feature = "test-gpu-sim")]
-    let lines = if sim { chain_sim(false, true, None) } else { chain(None) };
+    let lines = if sim { chain_sim(false, true, None, Default::default()) } else { chain(None, Default::default()) };
     #[cfg(not(feature = "test-gpu-sim"))]
     let lines = {
         let _ = sim;
-        chain(None)
+        chain(None, Default::default())
     };
     if let Some((used, size)) = crate::sched::stack_used() {
         crate::info!("gpu: kronos --gpu: stiva firului lantului: {} KiB folositi din {} KiB", used.div_ceil(1024), size / 1024);

@@ -33,7 +33,7 @@ use nvidia_ga104::fb_layout::FbLayout;
 use nvidia_ga104::gsp::falcon::{self, GuardedBar0};
 use nvidia_ga104::gsp::golden::{self, GoldenImage, QueueTransportBellKeep, RmTransport, RM_REPLY_US};
 use nvidia_ga104::gsp::msgq::SharedMem;
-use nvidia_ga104::gsp::user_space::{self, UserSpace, WorkChannel};
+use nvidia_ga104::gsp::user_space::{self, I9Options, I9Report, UserSpace, WorkChannel};
 use nvidia_ga104::gsp::work_queue::ChannelMemory;
 use nvidia_ga104::gsp::HardwareWritePermit;
 use nvidia_ga104::mmu::{GpuMemory, VramWrite};
@@ -273,22 +273,31 @@ pub(super) fn channel_step<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized
     st: &mut GpuState,
     permit: Option<&HardwareWritePermit>,
     lines: &mut Vec<String>,
+    i9: I9Options,
     poll: impl FnMut(&mut dyn SharedMem),
 ) -> GpuResult<()> {
     let calls0 = st.rm_calls;
     let GpuState { mem, pending, zone, rm_calls, vram_words, golden: gi, .. } = st;
     let Some(gi) = gi.as_ref() else { return Err(GpuError::InvalidArgument("I9: lipseste imaginea golden")) };
+    let mut rep = I9Report::default();
     let r = {
         let mut t = OsRm { bar, vbar: &mut *vbar, journal: &mut *journal, permit, prep, clock, poll, zone, pending, calls: rm_calls, words: vram_words };
         (|| {
             let u = user_space::open_user_space(&mut t, gi.next_handle(), mem.root())?;
             let cg = user_space::open_compute_group(&mut t, &u)?;
-            let w = user_space::open_work_channel_cleared(&mut t, &mut *mem, &u, &cg, gi)?;
+            // P6-91 (C-125): `I9Options::OS_302` sends exactly what os-302 sent (cyber-gpu test
+            // `c125_off_sends_exactly_what_os302_sent`); `C125` = V2 (privileged ctx buffers) + V3 (RM's buffer list).
+            let w = user_space::open_work_channel_with(&mut t, &mut *mem, &u, &cg, gi, i9, &mut rep)?;
             user_space::query_gr_info(&mut t, &u)?.check_sm86()?;
             Ok::<_, GpuError>((u, w))
         })()
     }
     .and_then(|x| flush(vbar, journal, permit, zone, pending, vram_words).map(|_| x));
+    // The journal is free again (`t` ended): the report reaches the stick also when I9 fails (the os-302 case).
+    if i9 != I9Options::OS_302 {
+        rep.journal(journal);
+        lines.push(format!("{}: {}", p, i9_report_line(&rep)));
+    }
     match r {
         Ok(x) => {
             lines.push(format!("{}: pas I9 canal de lucru: ok (SM 8.6; {} mesaje RM)", p, st.rm_calls - calls0));
@@ -300,4 +309,42 @@ pub(super) fn channel_step<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized
             Err(e)
         }
     }
+}
+
+/// P6-91 (C-125): `--i9 c125` from the shell; anything else is refused before the `DA`.
+pub fn i9_option(v: &str) -> Option<I9Options> {
+    match v {
+        "c125" => Some(I9Options::C125),
+        "os302" => Some(I9Options::OS_302),
+        _ => None,
+    }
+}
+
+/// P6-91 (C-125): the I9 option on the screen (before `DA`) and in the result lines.
+pub fn i9_line(o: I9Options) -> String {
+    if o == I9Options::OS_302 {
+        String::from("optiune I9: implicita (ca os-302)")
+    } else {
+        format!(
+            "optiune I9: c125 (C-125, SIMULARE testata; pe placa doar cu Adrian) - V2 buffere de context privilegiate: {}, V3 lista bufferelor de la RM in jurnal: {}",
+            if o.privileged_ctx { "da" } else { "nu" },
+            if o.ctx_buffer_info { "da" } else { "nu" }
+        )
+    }
+}
+
+/// P6-91: one screen line from the I9 report (the details are in the journal rows `i9 ...`).
+fn i9_report_line(r: &I9Report) -> String {
+    use nvidia_ga104::gsp::user_space::CtxInfoAnswer;
+    let v3 = match &r.ctx_info {
+        CtxInfoAnswer::NotAsked => String::from("V3 neintrebat"),
+        CtxInfoAnswer::Listed(l) => format!("V3 lista RM: {} buffere", l.len()),
+        CtxInfoAnswer::Refused(c) => format!("V3 refuzat de RM: {:#x}", c),
+    };
+    format!(
+        "I9 c125: optiuni {} (b0 V2, b1 V3); {}; {} buffere de context promovate (detalii: randurile i9 din jurnal)",
+        r.options.bits(),
+        v3,
+        r.ctx_bufs.len()
+    )
 }

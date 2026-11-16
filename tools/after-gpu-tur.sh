@@ -37,6 +37,8 @@ def step(ev, name):
     return [i for i, b in enumerate(ev) if b.startswith(f"pas {name}:")]
 
 tour, ok, err, ro = (parse(t) for t in sys.argv[1:])
+# P6-91 (C-125): without `--i9` the chain sends what os-302 sent and writes no `i9` report rows.
+assert not [b for b in ok if b.startswith("valoare i9 ")], "lantul implicit a scris randuri i9 (C-125 trebuia oprit)"
 assert not writes(tour), "turul a scris"
 assert any(b.startswith("bar0 r 0x1fa828") for b in tour), "turul nu a citit WPR2"
 print(f"[after-gpu-tur] ok: tur: {len(tour)} randuri, 0 scrieri")

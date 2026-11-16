@@ -700,7 +700,7 @@ fn gpu(args: &[&str]) {
                 out!("{}\n", l);
             }
         }
-        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios [--detalii] | gpu fwsec | gpu firmware | gpu pregatire-i6 | gpu i6 --scrie | gpu tur [--trezire] | gpu lant [--varianta N] | gpu variante | gpu recupereaza | gpu plan)\n", other),
+        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios [--detalii] | gpu fwsec | gpu firmware | gpu pregatire-i6 | gpu i6 --scrie | gpu tur [--trezire] | gpu lant [--varianta N] [--i9 c125] | gpu variante | gpu recupereaza | gpu plan)\n", other),
     }
 }
 
@@ -710,6 +710,8 @@ fn lant(rest: &[&str]) {
     // P6-78 (C-108): `--varianta N` picks one of Cyber-GPU's numbered I8 variants (`gpu variante`); checked here,
     // before the warning and the `DA`, so a wrong number writes nothing.
     let mut variant: Option<u8> = None;
+    // P6-91 (C-125): `--i9 c125` = Cyber-GPU's new I9 try (V2 + V3), off by default; checked here, before the `DA`.
+    let mut i9: Option<nvidia_ga104::gsp::user_space::I9Options> = None;
     let mut opts: Vec<&str> = Vec::new();
     let mut it = rest.iter();
     while let Some(a) = it.next() {
@@ -725,13 +727,22 @@ fn lant(rest: &[&str]) {
                     return;
                 }
             }
+        } else if *a == "--i9" {
+            match it.next().and_then(|v| crate::drivers::gpu_golden::i9_option(v)) {
+                Some(o) if i9.is_none() => i9 = Some(o),
+                _ => {
+                    out!("gpu lant: --i9 cere c125 (varianta C-125) sau os302 (implicita); nimic scris in placa\n");
+                    return;
+                }
+            }
         } else {
             opts.push(a);
         }
     }
+    let i9 = i9.unwrap_or_default();
     let rest = &opts[..];
     if let Some(bad) = rest.iter().find(|a| !matches!(**a, "--sim" | "--eroare" | "--doar-citire")) {
-        out!("gpu lant: optiune necunoscuta: {} (folosire: gpu lant [--varianta N])\n", bad);
+        out!("gpu lant: optiune necunoscuta: {} (folosire: gpu lant [--varianta N] [--i9 c125])\n", bad);
         return;
     }
     let sim = rest.contains(&"--sim");
@@ -743,6 +754,7 @@ fn lant(rest: &[&str]) {
         out!("{}\n", l);
     }
     out!("{}\n", crate::drivers::gpu_tur::variant_line(variant));
+    out!("{}\n", crate::drivers::gpu_golden::i9_line(i9));
     if !sim && !cfg!(feature = "gpu-scrie") {
         out!("(acest sistem nu poate scrie in placa: lantul va rula doar citire, oprit inainte de primul pas care scrie)\n");
     }
@@ -754,18 +766,19 @@ fn lant(rest: &[&str]) {
         return;
     }
     crate::info!(
-        "gpu: lant: confirmat cu DA{}; {}",
+        "gpu: lant: confirmat cu DA{}; {}; {}",
         if sim { " (SIMULARE)" } else { "" },
-        crate::drivers::gpu_tur::variant_line(variant)
+        crate::drivers::gpu_tur::variant_line(variant),
+        crate::drivers::gpu_golden::i9_line(i9)
     );
     #[cfg(feature = "test-gpu-sim")]
     if sim {
-        for l in crate::drivers::gpu_tur::chain_sim(rest.contains(&"--eroare"), !rest.contains(&"--doar-citire"), variant) {
+        for l in crate::drivers::gpu_tur::chain_sim(rest.contains(&"--eroare"), !rest.contains(&"--doar-citire"), variant, i9) {
             out!("{}\n", l);
         }
         return;
     }
-    for l in crate::drivers::gpu_tur::chain(variant) {
+    for l in crate::drivers::gpu_tur::chain(variant, i9) {
         out!("{}\n", l);
     }
     // C-84 item 1: the chain's journal (/usb/raport/gpu-jurnal-NNN.txt) goes to the hub when there is a token.
