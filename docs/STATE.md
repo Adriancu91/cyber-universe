@@ -3,6 +3,13 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-16 ~18:40–20:05 UTC (20:40–22:05 ora RO) — sesiune programată, fără Adrian — **oprirea (regula 5) s-a ridicat: P6-91 GATA** → **Release `os-303`**.
+  - Motivul ridicării: Cyber-GPU a terminat C-125 (`78704e5`, starea `239f986`) — exact condiția scrisă de sesiunile anterioare („commit-ul cyber-gpu pentru C-125, de legat în OS”). Nicio comandă `nou` pentru `cyber-universe` în COMENZI.
+  - `git pull`: clonele pe HEAD detașat → `checkout main` + pull curat; nimic șters, nimic forțat. `env-check --install` OK.
+  - **P6-91 (C-125):** `kernel` legat la cyber-gpu `239f986`; `gpu lant --i9 c125` = I9 cu bufferele de context mapate privilegiat (V2) + lista bufferelor cerută de la RM și scrisă în jurnal (V3); raportul `i9 …` ajunge pe stick și când I9 pică. Fără `--i9` totul e ca în `os-302`. Lanțul automat (`ciclu`, `kronos --gpu`) rămâne pe implicit. Scenariul nou `gpu-i9` + `after-gpu-i9.sh`; `after-gpu-tur.sh` verifică 0 rânduri `i9` în lanțul implicit.
+  - Teste: toată suita locală 108/0/1; CI 303 verde (run 43937673556) → `os-303`.
+  - **Pentru Adrian (fereastra pe workstation, când Kronos lasă placa):** stick-ul de test cu `os-303` + `github.token` → pornire rece → `gpu lant --i9 c125` → DA → `trimite`.
+  - **Pentru sesiunea următoare:** coada fără Adrian e iar goală (P6-12 pasul 2 după `log mmio` real; P6-10/P3-10 cu Adrian; P5-07 BLOCAT; C-118 W1 și C-116 pasul 3 așteaptă DA). Regula 5 numără de la această sesiune (sarcină terminată). B-007 neschimbat.
 - 2026-11-16 ~15:40–15:50 UTC (17:40–17:50 ora RO) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5, rămâne); nicio schimbare de cod.
   - `git pull`: clonele locale pe HEAD detașat, cu `main` vechi divergent (istorii superficiale) → `main` vechi păstrat ca ramura locală `vechi-local-main`, `main` nou din `origin/main`; nimic șters, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
   - Hub: de la 15:05 doar C-127, C-128, C-129 (toate pentru `kronos`) și starea Kronos → nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/`; C-125 (cyber-gpu) încă fără commit de legat.
