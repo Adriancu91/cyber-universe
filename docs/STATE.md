@@ -3,6 +3,11 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-16 ~15:40–15:50 UTC (17:40–17:50 ora RO) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5, rămâne); nicio schimbare de cod.
+  - `git pull`: clonele locale pe HEAD detașat, cu `main` vechi divergent (istorii superficiale) → `main` vechi păstrat ca ramura locală `vechi-local-main`, `main` nou din `origin/main`; nimic șters, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
+  - Hub: de la 15:05 doar C-127, C-128, C-129 (toate pentru `kronos`) și starea Kronos → nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/`; C-125 (cyber-gpu) încă fără commit de legat.
+  - CI: nicio rulare nouă; ultima (stres la cerere 43870282772) verde. B-007 neschimbat.
+  - **Ce ridică oprirea:** o comandă nouă de la Adrian sau commit-ul cyber-gpu pentru C-125. Coada neschimbată.
 - 2026-11-16 ~12:40–13:05 UTC (14:40–15:05 ora RO) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5, rămâne); nicio schimbare de cod.
   - `git pull`: clonele locale pe HEAD detașat, cu `main` vechi divergent → lucrat pe ramura locală `lucru-1116` din `origin/main`; nimic șters, nimic forțat.
   - Hub: nicio comandă `nou` pentru `cyber-universe` (noi: C-122…C-124, C-126 la kronos; C-125 = V2+V3 pentru I9 la cyber-gpu). **Jurnal nou:** `rezultate/2026-11-16-workstation-os302/` — I0–I8 + golden trec din nou, **I9 pică la `PROMOTE_CTX` virtual cu 0x57 `NV_ERR_OBJECT_NOT_FOUND`** → treaba cyber-gpu (C-125); OS-ul leagă commit-ul lor după. Ecranul a înghețat la I8 ca la os-295 (cunoscut). `trimite` n-a mers: **lipsea `/usb/github.token` pe stick-ul de test** (de spus lui Adrian).
