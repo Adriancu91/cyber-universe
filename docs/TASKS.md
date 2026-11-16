@@ -438,6 +438,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
   Gata (2026-11-13 ~03:30 UTC): cyber-gpu `835f24d`; `gpu vbios` are rândul `versiune VBIOS`, `analiza` are `vbios_version` (SIMULARE: `94.04.65.00.3e`); turul are 42 de fapte. Toată suita verde (vezi P6-88).
 - [x] **P6-90** C-117 (testul ASUS os-301): `analiza` pune în inventar faptele ultimului `gpu tur --trezire` al aceleiași plăci din pornirea curentă când turul ei doar-citire nu are fapte (Memory Space oprit pe laptop); sursa și ora în inventar și raport; 0 scrieri noi. Plan: `docs/plans/P6-90.md`. Dep: P6-87.
   Gata (2026-11-13 ~08:20 UTC): ultimul `gpu tur --trezire` cu fapte e ținut minte (adresă, oră, rânduri); `analiza` îl folosește (`hw::uhl::pick_tour`) când turul ei doar-citire n-are fapte, cu `facts_source`, `analysis_tour_result`, `writes_to_board` = „0 în registrele plăcii; 2 în Command PCI (repus)” și rândul „faptele placii: din …” în raport; verificarea `check_pick_tour` în `analiza-gpu`. Toată suita: 107 trecute, 0 eșuate, 1 sărit. Pe laptop netestat.
+- [~] **P6-91** C-125 (după jurnalul os-302, I9 = 0x57): cyber-gpu `239f986` (`78704e5`); `gpu lant --i9 c125` = varianta nouă de I9 (V2 bufferele de context privilegiate + V3 lista bufferelor de la RM în jurnal), implicit oprită; doar în fereastra cu Adrian. Plan: `docs/plans/P6-91.md`. Dep: P6-56.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
