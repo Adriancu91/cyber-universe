@@ -3,6 +3,10 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-16 ~00:40–00:45 UTC (02:40–02:45 ora RO) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5, rămâne); nicio schimbare de cod.
+  - `git pull`: clonele locale erau superficiale și vechi („istorii neînrudite”) → mutate deoparte (`cu-old`, `hub-old`, nimic șters) și clonate din nou curat; nimic forțat pe GitHub. `env-check --install` nerulat (nicio sarcină de cod).
+  - Hub: de la 23:45 niciun commit nou → nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/`. CI: ultimele 3 rulări verzi (`os-302`).
+  - **Ce ridică oprirea:** o comandă nouă de la Adrian sau un jurnal nou de test (Adrian plecat până luni seara, 16 nov, C-119). Coada neschimbată.
 - 2026-11-15 ~21:40–21:45 UTC (23:40–23:45 ora RO) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5, rămâne); nicio schimbare de cod.
   - `git pull`: clonele locale erau pe HEAD detașat, cu `main` vechi divergent → lucrat pe ramura locală `lucru-1115b` din `origin/main`; nimic șters, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
   - Hub: de la 20:45 niciun commit nou → nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/`. CI: ultimele 3 rulări verzi (`os-302`).
