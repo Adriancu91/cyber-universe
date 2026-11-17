@@ -3,6 +3,11 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-17 ~21:40–21:45 UTC (23:40–23:45 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
+  - `git pull`: clona OS pe HEAD detașat → `checkout main` + pull curat; hub-ul avea `main` vechi divergent (50/50) → păstrat ca ramura locală `backup-local-*`, `main` pus pe `origin/main`; nimic șters pe GitHub, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
+  - Hub: de la 18:41 UTC niciun commit nou → nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/` (testul `os-305` e mâine). CI: ultima rulare (305) verde → `os-305`.
+  - Coada fără Adrian e goală (neschimbat). **Regula 5:** a doua sesiune fără sarcină terminată după P6-93 (2 din 3).
+  - **Pentru Adrian (neschimbat):** mâine, după ce S124 lasă placa: stick-ul de test cu `os-305` + `github.token` → pornire rece → `gpu lant --i9 c135` → DA → `trimite`.
 - 2026-11-17 ~18:40–18:45 UTC (20:40–20:45 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
   - `git pull`: clona OS pe HEAD detașat → `checkout main` + pull curat; hub-ul avea `main` vechi divergent (clonă superficială) → lucrat pe ramura locală `hub-zi` din `origin/main`; nimic șters, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
   - Hub: de la sesiunea precedentă doar starea Kronos (18:17 UTC) → nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/` (testul `os-305` e mâine). CI: ultima rulare (305) verde → `os-305`.
