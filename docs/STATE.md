@@ -3,6 +3,13 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-17 ~12:40–14:00 UTC (14:40–16:00 ora RO) — sesiune programată, fără Adrian — **oprirea (regula 5) s-a ridicat: comanda C-134 → P6-92 GATA** → **Release `os-304`**.
+  - `git pull`: clonele pe HEAD detașat → `checkout main` + pull curat; nimic șters, nimic forțat. `env-check --install` OK.
+  - Hub: testul lui Adrian cu `os-303` (`rezultate/2026-11-17-workstation-os303/`): I0–I8 + golden trec, I9 cu `--i9 c125` tot `0x57`, V3 refuzat `0x31`. Cyber-GPU a făcut C-133 (`b352d50`). **C-134** (Adrian, 14:30): leagă C-133 și scoate `os-304` acum.
+  - **P6-92:** `kernel` legat la cyber-gpu `b352d50`; `gpu lant --i9 c133` = `open_work_channel_c133` (un singur `PROMOTE_CTX` PA+VA înaintea obiectului compute; încercarea A, apoi B doar dacă A e refuzat); raportul `i9 c133 …` ajunge pe stick și când I9 pică. Fără opțiune și cu `--i9 c125`: neschimbat. Scenariul nou `gpu-i9b` + `tools/after-gpu-i9b.sh`.
+  - Teste: local scenariile GPU (13) trecute; CI run 44087004522: prima dată `appwindow` a picat (ordinea a două rânduri pe serial, instabil cunoscut, fără legătură cu placa; local trece), reluat doar jobul picat → **verde** → `os-304` (commit `e142143`).
+  - **Pentru Adrian (fereastra de azi, placa liberă până la 19:00):** stick-ul de test cu `os-304` + `github.token` → pornire rece → `gpu lant --i9 c133` → DA → `trimite`.
+  - **Pentru sesiunea următoare:** coada fără Adrian e iar goală (P6-12 pasul 2 după `log mmio` real; P6-10/P3-10 cu Adrian; P5-07 BLOCAT). Regula 5 numără de la această sesiune. Citește jurnalul testului `os-304` dacă a urcat.
 - 2026-11-17 ~09:40–09:45 UTC (11:40–11:45 ora RO) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5, rămâne); nicio schimbare de cod.
   - `git pull`: clonele pe HEAD detașat → `checkout main` + pull curat; nimic șters, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
   - Hub: de la 08:45 doar starea Kronos (09:17 UTC) → nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/`. CI: ultima rulare (303) verde → `os-303`.
