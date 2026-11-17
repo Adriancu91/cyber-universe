@@ -33,7 +33,7 @@ use nvidia_ga104::fb_layout::FbLayout;
 use nvidia_ga104::gsp::falcon::{self, GuardedBar0};
 use nvidia_ga104::gsp::golden::{self, GoldenImage, QueueTransportBellKeep, RmTransport, RM_REPLY_US};
 use nvidia_ga104::gsp::msgq::SharedMem;
-use nvidia_ga104::gsp::user_space::{self, C133Report, I9Options, I9Report, UserSpace, WorkChannel};
+use nvidia_ga104::gsp::user_space::{self, C133Report, C135Report, I9Options, I9Report, UserSpace, WorkChannel};
 use nvidia_ga104::gsp::work_queue::ChannelMemory;
 use nvidia_ga104::gsp::HardwareWritePermit;
 use nvidia_ga104::mmu::{GpuMemory, VramWrite};
@@ -281,6 +281,7 @@ pub(super) fn channel_step<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized
     let Some(gi) = gi.as_ref() else { return Err(GpuError::InvalidArgument("I9: lipseste imaginea golden")) };
     let mut rep = I9Report::default();
     let mut rep133 = C133Report::default();
+    let mut rep135 = C135Report::default();
     let r = {
         let mut t = OsRm { bar, vbar: &mut *vbar, journal: &mut *journal, permit, prep, clock, poll, zone, pending, calls: rm_calls, words: vram_words };
         (|| {
@@ -295,6 +296,9 @@ pub(super) fn channel_step<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized
                 // P6-92 (C-133): one PROMOTE_CTX (PA + VA) before the compute object (try A, then B in a new group);
                 // it makes its own channel group, replacing open_compute_group + open_work_channel_with.
                 I9Choice::C133 => user_space::open_work_channel_c133(&mut t, &mut *mem, &u, gi, &mut rep133)?.1,
+                // P6-93 (C-135): straight to form B; try N = channel without error notifier, then F = fixed ChID +
+                // computed token (only if GSP-RM refuses N's token). Makes its own channel group, like C133.
+                I9Choice::C135 => user_space::open_work_channel_c135(&mut t, &mut *mem, &u, gi, &mut rep135)?.1,
             };
             user_space::query_gr_info(&mut t, &u)?.check_sm86()?;
             Ok::<_, GpuError>((u, w))
@@ -311,6 +315,10 @@ pub(super) fn channel_step<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized
         I9Choice::C133 => {
             rep133.journal(journal);
             lines.push(format!("{}: {}", p, c133_report_line(&rep133)));
+        }
+        I9Choice::C135 => {
+            rep135.journal(journal);
+            lines.push(format!("{}: {}", p, c135_report_line(&rep135)));
         }
     }
     match r {
@@ -333,6 +341,8 @@ pub enum I9Choice {
     Opts(I9Options),
     /// C-133: `open_work_channel_c133` (one PROMOTE_CTX PA+VA before the compute object).
     C133,
+    /// C-135: `open_work_channel_c135` (form B directly; N without error notifier, then F with a fixed ChID).
+    C135,
 }
 
 impl Default for I9Choice {
@@ -341,11 +351,12 @@ impl Default for I9Choice {
     }
 }
 
-/// P6-91 (C-125) / P6-92 (C-133): `--i9 c125|c133` from the shell; anything else is refused before the `DA`.
+/// P6-91 (C-125) / P6-92 (C-133) / P6-93 (C-135): `--i9 c125|c133|c135` from the shell; anything else is refused before the `DA`.
 pub fn i9_option(v: &str) -> Option<I9Choice> {
     match v {
         "c125" => Some(I9Choice::Opts(I9Options::C125)),
         "c133" => Some(I9Choice::C133),
+        "c135" => Some(I9Choice::C135),
         "os302" => Some(I9Choice::Opts(I9Options::OS_302)),
         _ => None,
     }
@@ -354,6 +365,11 @@ pub fn i9_option(v: &str) -> Option<I9Choice> {
 /// P6-91 (C-125) / P6-92 (C-133): the I9 option on the screen (before `DA`) and in the result lines.
 pub fn i9_line(c: I9Choice) -> String {
     let o = match c {
+        I9Choice::C135 => {
+            return String::from(
+                "optiune I9: c135 (C-135, SIMULARE testata; pe placa doar cu Adrian) - direct forma B; N: canal fara notificator de erori; F (doar daca jetonul lui N e refuzat): canal cu id ales de noi + jeton calculat",
+            )
+        }
         I9Choice::C133 => {
             return String::from(
                 "optiune I9: c133 (C-133, SIMULARE testata; pe placa doar cu Adrian) - PROMOTE_CTX intr-un singur mesaj PA+VA inaintea obiectului compute (A: MAIN+PM+PATCH; B doar daca A e refuzat)",
@@ -405,5 +421,36 @@ fn c133_report_line(r: &C133Report) -> String {
         passed,
         if refusals.is_empty() { "" } else { "; " },
         refusals.join("; ")
+    )
+}
+
+/// P6-93 (C-135): one screen line from the C-135 report (the details are in the journal rows `i9 c135 ...`).
+fn c135_report_line(r: &C135Report) -> String {
+    use nvidia_ga104::gsp::user_space::C135Token;
+    let passed = match r.passed {
+        Some(v) => format!("reusita: {:?}", v),
+        None => String::from("nicio varianta reusita"),
+    };
+    let details: Vec<String> = r
+        .tries
+        .iter()
+        .filter_map(|t| {
+            let tok = match t.token {
+                C135Token::Refused { status, .. } => Some(format!("{:?}: jeton refuzat cu {:#x}", t.variant, status)),
+                _ => None,
+            };
+            let refusal = t.refusal.map(|c| format!("{:?} refuzat dupa pasul {} cu {:#x}", t.variant, t.stage as u32, c));
+            match (tok, refusal) {
+                (Some(a), Some(b)) => Some(format!("{}; {}", a, b)),
+                (a, b) => a.or(b),
+            }
+        })
+        .collect();
+    format!(
+        "I9 c135: {} incercari; {}{}{} (detalii: randurile i9 c135 din jurnal)",
+        r.tries.len(),
+        passed,
+        if details.is_empty() { "" } else { "; " },
+        details.join("; ")
     )
 }

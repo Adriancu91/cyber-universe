@@ -700,7 +700,7 @@ fn gpu(args: &[&str]) {
                 out!("{}\n", l);
             }
         }
-        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios [--detalii] | gpu fwsec | gpu firmware | gpu pregatire-i6 | gpu i6 --scrie | gpu tur [--trezire] | gpu lant [--varianta N] [--i9 c125|c133] | gpu variante | gpu recupereaza | gpu plan)\n", other),
+        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios [--detalii] | gpu fwsec | gpu firmware | gpu pregatire-i6 | gpu i6 --scrie | gpu tur [--trezire] | gpu lant [--varianta N] [--i9 c125|c133|c135] | gpu variante | gpu recupereaza | gpu plan)\n", other),
     }
 }
 
@@ -731,7 +731,7 @@ fn lant(rest: &[&str]) {
             match it.next().and_then(|v| crate::drivers::gpu_golden::i9_option(v)) {
                 Some(o) if i9.is_none() => i9 = Some(o),
                 _ => {
-                    out!("gpu lant: --i9 cere c125 (varianta C-125), c133 (varianta C-133) sau os302 (implicita); nimic scris in placa\n");
+                    out!("gpu lant: --i9 cere c125 (varianta C-125), c133 (varianta C-133), c135 (varianta C-135) sau os302 (implicita); nimic scris in placa\n");
                     return;
                 }
             }
@@ -742,7 +742,7 @@ fn lant(rest: &[&str]) {
     let i9 = i9.unwrap_or_default();
     let rest = &opts[..];
     if let Some(bad) = rest.iter().find(|a| !matches!(**a, "--sim" | "--eroare" | "--doar-citire")) {
-        out!("gpu lant: optiune necunoscuta: {} (folosire: gpu lant [--varianta N] [--i9 c125|c133])\n", bad);
+        out!("gpu lant: optiune necunoscuta: {} (folosire: gpu lant [--varianta N] [--i9 c125|c133|c135])\n", bad);
         return;
     }
     let sim = rest.contains(&"--sim");
