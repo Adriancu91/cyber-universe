@@ -3,6 +3,13 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-17 ~15:40–18:50 UTC (17:40–20:50 ora RO) — sesiune programată, fără Adrian — **comanda C-136 → P6-93 GATA** → **Release `os-305`**.
+  - `git pull`: clonele pe HEAD detașat → `checkout main` + pull curat; nimic șters, nimic forțat. `env-check --install` OK.
+  - Hub: testul lui Adrian cu `os-304` (`rezultate/2026-11-17-workstation-os304/`): încercarea B trece de `PROMOTE_CTX` și de obiectul compute; refuz `0x40` la cererea jetonului de lucru. Cyber-GPU a făcut C-135 (`f7126b9`, starea `f732365`). **C-136** (Adrian, 17:35): leagă C-135 și scoate `os-305` pentru testul de mâine.
+  - **P6-93:** `kernel` legat la cyber-gpu `f732365`; `gpu lant --i9 c135` = `open_work_channel_c135` (direct forma B; N = canal fără notificator de erori; F doar dacă jetonul lui N e refuzat: id de canal 16 ales de noi + jeton calculat); raportul `i9 c135 …` ajunge pe stick și când I9 pică. Fără opțiune, `--i9 c125`, `--i9 c133`: neschimbate. Scenariul nou `gpu-i9c` + `tools/after-gpu-i9c.sh`.
+  - Teste: toată suita locală 110/0/1; CI run 44132096814: prima dată a picat `https-real` (cererea reală către api.github.com, fără legătură cu placa; la fel ca la os-245), reluat doar jobul picat → **verde** → `os-305` (commit `08d5eb4`).
+  - **Pentru Adrian (mâine, după ce S124 lasă placa):** stick-ul de test cu `os-305` + `github.token` → pornire rece → `gpu lant --i9 c135` → DA → `trimite`. Dacă I9 trece, lanțul merge singur la I10 (add64, primul calcul pe placă).
+  - **Pentru sesiunea următoare:** coada fără Adrian e iar goală (P6-12 pasul 2 după `log mmio` real; P6-10/P3-10 cu Adrian; P5-07 BLOCAT). Regula 5 numără de la această sesiune. Citește jurnalul testului `os-305` dacă a urcat.
 - 2026-11-17 ~12:40–14:00 UTC (14:40–16:00 ora RO) — sesiune programată, fără Adrian — **oprirea (regula 5) s-a ridicat: comanda C-134 → P6-92 GATA** → **Release `os-304`**.
   - `git pull`: clonele pe HEAD detașat → `checkout main` + pull curat; nimic șters, nimic forțat. `env-check --install` OK.
   - Hub: testul lui Adrian cu `os-303` (`rezultate/2026-11-17-workstation-os303/`): I0–I8 + golden trec, I9 cu `--i9 c125` tot `0x57`, V3 refuzat `0x31`. Cyber-GPU a făcut C-133 (`b352d50`). **C-134** (Adrian, 14:30): leagă C-133 și scoate `os-304` acum.
