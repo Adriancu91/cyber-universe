@@ -3,6 +3,11 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-17 ~18:40–18:45 UTC (20:40–20:45 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
+  - `git pull`: clona OS pe HEAD detașat → `checkout main` + pull curat; hub-ul avea `main` vechi divergent (clonă superficială) → lucrat pe ramura locală `hub-zi` din `origin/main`; nimic șters, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
+  - Hub: de la sesiunea precedentă doar starea Kronos (18:17 UTC) → nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/` (testul `os-305` e mâine). CI: ultima rulare (305) verde → `os-305`.
+  - Coada fără Adrian e goală (P6-12 pasul 2 după `log mmio` real; P6-10/P3-10 cu Adrian; P5-07 BLOCAT). **Regula 5:** prima sesiune fără sarcină terminată după P6-93 (1 din 3).
+  - **Pentru Adrian (neschimbat):** mâine, după ce S124 lasă placa: stick-ul de test cu `os-305` + `github.token` → pornire rece → `gpu lant --i9 c135` → DA → `trimite`.
 - 2026-11-17 ~15:40–18:50 UTC (17:40–20:50 ora RO) — sesiune programată, fără Adrian — **comanda C-136 → P6-93 GATA** → **Release `os-305`**.
   - `git pull`: clonele pe HEAD detașat → `checkout main` + pull curat; nimic șters, nimic forțat. `env-check --install` OK.
   - Hub: testul lui Adrian cu `os-304` (`rezultate/2026-11-17-workstation-os304/`): încercarea B trece de `PROMOTE_CTX` și de obiectul compute; refuz `0x40` la cererea jetonului de lucru. Cyber-GPU a făcut C-135 (`f7126b9`, starea `f732365`). **C-136** (Adrian, 17:35): leagă C-135 și scoate `os-305` pentru testul de mâine.
