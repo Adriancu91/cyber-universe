@@ -222,7 +222,7 @@ pub fn variants_list() -> Vec<String> {
 
 /// `gpu lant` on the real board (the shell asked for `DA` first). Writes only in the `gpu-scrie` build.
 /// P6-78 (C-108): `variant` = `--varianta N` (already checked by the shell); `None` = the library's default variant (1 since cyber-gpu e49ca76).
-pub fn chain(variant: Option<u8>, i9: nvidia_ga104::gsp::user_space::I9Options) -> Vec<String> {
+pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String> {
     let p = "gpu0";
     let mut lines = Vec::new();
     let settings = match nvidia_ga104::gsp::variants::settings(variant) {
@@ -835,7 +835,7 @@ pub fn tour_sim() -> Vec<String> {
 /// an error (the chain must stop there and still put Bus Master back). `writes_allowed` false = the read-only chain of
 /// every build without `gpu-scrie`: it must stop before Bus Master and still run the tour.
 #[cfg(feature = "test-gpu-sim")]
-pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: nvidia_ga104::gsp::user_space::I9Options) -> Vec<String> {
+pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String> {
     use gpu_pci::bus_master::{restore_command, set_bus_master, BusMasterPermit};
     use gpu_sim::fake_gsp::{FakeGsp, SimFault, SimHsImage, SimUcode, GSP_BASE};
     use nvidia_ga104::gsp::hs_load::{self, HsUcode};

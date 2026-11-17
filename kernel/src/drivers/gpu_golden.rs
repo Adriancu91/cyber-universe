@@ -33,7 +33,7 @@ use nvidia_ga104::fb_layout::FbLayout;
 use nvidia_ga104::gsp::falcon::{self, GuardedBar0};
 use nvidia_ga104::gsp::golden::{self, GoldenImage, QueueTransportBellKeep, RmTransport, RM_REPLY_US};
 use nvidia_ga104::gsp::msgq::SharedMem;
-use nvidia_ga104::gsp::user_space::{self, I9Options, I9Report, UserSpace, WorkChannel};
+use nvidia_ga104::gsp::user_space::{self, C133Report, I9Options, I9Report, UserSpace, WorkChannel};
 use nvidia_ga104::gsp::work_queue::ChannelMemory;
 use nvidia_ga104::gsp::HardwareWritePermit;
 use nvidia_ga104::mmu::{GpuMemory, VramWrite};
@@ -273,30 +273,45 @@ pub(super) fn channel_step<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized
     st: &mut GpuState,
     permit: Option<&HardwareWritePermit>,
     lines: &mut Vec<String>,
-    i9: I9Options,
+    i9: I9Choice,
     poll: impl FnMut(&mut dyn SharedMem),
 ) -> GpuResult<()> {
     let calls0 = st.rm_calls;
     let GpuState { mem, pending, zone, rm_calls, vram_words, golden: gi, .. } = st;
     let Some(gi) = gi.as_ref() else { return Err(GpuError::InvalidArgument("I9: lipseste imaginea golden")) };
     let mut rep = I9Report::default();
+    let mut rep133 = C133Report::default();
     let r = {
         let mut t = OsRm { bar, vbar: &mut *vbar, journal: &mut *journal, permit, prep, clock, poll, zone, pending, calls: rm_calls, words: vram_words };
         (|| {
             let u = user_space::open_user_space(&mut t, gi.next_handle(), mem.root())?;
-            let cg = user_space::open_compute_group(&mut t, &u)?;
-            // P6-91 (C-125): `I9Options::OS_302` sends exactly what os-302 sent (cyber-gpu test
-            // `c125_off_sends_exactly_what_os302_sent`); `C125` = V2 (privileged ctx buffers) + V3 (RM's buffer list).
-            let w = user_space::open_work_channel_with(&mut t, &mut *mem, &u, &cg, gi, i9, &mut rep)?;
+            let w = match i9 {
+                I9Choice::Opts(o) => {
+                    let cg = user_space::open_compute_group(&mut t, &u)?;
+                    // P6-91 (C-125): `I9Options::OS_302` sends exactly what os-302 sent (cyber-gpu test
+                    // `c125_off_sends_exactly_what_os302_sent`); `C125` = V2 (privileged ctx buffers) + V3 (RM's buffer list).
+                    user_space::open_work_channel_with(&mut t, &mut *mem, &u, &cg, gi, o, &mut rep)?
+                }
+                // P6-92 (C-133): one PROMOTE_CTX (PA + VA) before the compute object (try A, then B in a new group);
+                // it makes its own channel group, replacing open_compute_group + open_work_channel_with.
+                I9Choice::C133 => user_space::open_work_channel_c133(&mut t, &mut *mem, &u, gi, &mut rep133)?.1,
+            };
             user_space::query_gr_info(&mut t, &u)?.check_sm86()?;
             Ok::<_, GpuError>((u, w))
         })()
     }
     .and_then(|x| flush(vbar, journal, permit, zone, pending, vram_words).map(|_| x));
     // The journal is free again (`t` ended): the report reaches the stick also when I9 fails (the os-302 case).
-    if i9 != I9Options::OS_302 {
-        rep.journal(journal);
-        lines.push(format!("{}: {}", p, i9_report_line(&rep)));
+    match i9 {
+        I9Choice::Opts(o) if o == I9Options::OS_302 => {}
+        I9Choice::Opts(_) => {
+            rep.journal(journal);
+            lines.push(format!("{}: {}", p, i9_report_line(&rep)));
+        }
+        I9Choice::C133 => {
+            rep133.journal(journal);
+            lines.push(format!("{}: {}", p, c133_report_line(&rep133)));
+        }
     }
     match r {
         Ok(x) => {
@@ -311,17 +326,41 @@ pub(super) fn channel_step<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized
     }
 }
 
-/// P6-91 (C-125): `--i9 c125` from the shell; anything else is refused before the `DA`.
-pub fn i9_option(v: &str) -> Option<I9Options> {
+/// P6-91/P6-92: the I9 choice of `gpu lant --i9 ...`. `Default` = what os-302/os-303 sent without the option.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum I9Choice {
+    /// The `open_compute_group` + `open_work_channel_with` path (os-302 default, C-125 V2/V3).
+    Opts(I9Options),
+    /// C-133: `open_work_channel_c133` (one PROMOTE_CTX PA+VA before the compute object).
+    C133,
+}
+
+impl Default for I9Choice {
+    fn default() -> Self {
+        I9Choice::Opts(I9Options::OS_302)
+    }
+}
+
+/// P6-91 (C-125) / P6-92 (C-133): `--i9 c125|c133` from the shell; anything else is refused before the `DA`.
+pub fn i9_option(v: &str) -> Option<I9Choice> {
     match v {
-        "c125" => Some(I9Options::C125),
-        "os302" => Some(I9Options::OS_302),
+        "c125" => Some(I9Choice::Opts(I9Options::C125)),
+        "c133" => Some(I9Choice::C133),
+        "os302" => Some(I9Choice::Opts(I9Options::OS_302)),
         _ => None,
     }
 }
 
-/// P6-91 (C-125): the I9 option on the screen (before `DA`) and in the result lines.
-pub fn i9_line(o: I9Options) -> String {
+/// P6-91 (C-125) / P6-92 (C-133): the I9 option on the screen (before `DA`) and in the result lines.
+pub fn i9_line(c: I9Choice) -> String {
+    let o = match c {
+        I9Choice::C133 => {
+            return String::from(
+                "optiune I9: c133 (C-133, SIMULARE testata; pe placa doar cu Adrian) - PROMOTE_CTX intr-un singur mesaj PA+VA inaintea obiectului compute (A: MAIN+PM+PATCH; B doar daca A e refuzat)",
+            )
+        }
+        I9Choice::Opts(o) => o,
+    };
     if o == I9Options::OS_302 {
         String::from("optiune I9: implicita (ca os-302)")
     } else {
@@ -346,5 +385,25 @@ fn i9_report_line(r: &I9Report) -> String {
         r.options.bits(),
         v3,
         r.ctx_bufs.len()
+    )
+}
+
+/// P6-92 (C-133): one screen line from the C-133 report (the details are in the journal rows `i9 c133 ...`).
+fn c133_report_line(r: &C133Report) -> String {
+    let passed = match r.passed {
+        Some(v) => format!("reusita: {:?}", v),
+        None => String::from("nicio varianta reusita"),
+    };
+    let refusals: Vec<String> = r
+        .tries
+        .iter()
+        .filter_map(|t| t.refusal.map(|c| format!("{:?} refuzat dupa pasul {} cu {:#x}", t.variant, t.stage as u32, c)))
+        .collect();
+    format!(
+        "I9 c133: {} incercari; {}{}{} (detalii: randurile i9 c133 din jurnal)",
+        r.tries.len(),
+        passed,
+        if refusals.is_empty() { "" } else { "; " },
+        refusals.join("; ")
     )
 }
