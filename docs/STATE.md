@@ -3,6 +3,12 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-18 ~15:40–15:50 UTC (17:40–17:50 ora RO) — sesiune programată, fără Adrian — **testul `os-306` a trecut pe placa reală: I14 OK, lanțul I0→I14 întreg pe RTX 3070 Ti**; nicio schimbare de cod.
+  - `git pull`: clonele pe HEAD detașat → `checkout main` + pull curat; nimic șters, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
+  - Hub: `rezultate/2026-11-18-workstation-os306/REZULTAT.md` + `os-automat/2026-11-18/gpu-jurnal-008.txt` (centrul de comandă, cu Adrian ~17:25): I0–I13 ok ca la os-305; scara C-139: **proba 1 (o invalidare) = DATE VECHI** (eșecul os-305 reprodus, cauza confirmată), **proba 2 (invalidare înaintea fiecărei lansări) TRECE** — argmax placă = procesor = vectori (0x2861), abatere ~2,6e-6; **`i14-simbol: ok`** (prima dată). Curățare ok.
+  - **C-140** (comanda pentru P6-94) avea încă `stare: nou` în hub → închisă acum `gata` cu rezultatul testului. Nicio altă comandă `nou` pentru `cyber-universe`. CI: ultima rulare (os-306) verde.
+  - **Coada fără Adrian e goală** (P6-12 pasul 2 după `log mmio` real; P6-10/P3-10 cu Adrian; P5-07 BLOCAT). Pasul următor natural (model Kronos real, de ex. #513 cu zona de comenzi de 32 KiB, mai multe simboluri) are nevoie de „da”-ul lui Adrian și de lucrul Cyber-GPU întâi.
+  - **Regula 5:** prima sesiune fără sarcină terminată după P6-94 (1 din 3).
 - 2026-11-18 ~12:40–15:10 UTC (14:40–17:10 ora RO) — sesiune programată, fără Adrian — **oprirea (regula 5) s-a ridicat: jurnalul testului `os-305` a sosit → P6-94 GATA** → **Release `os-306`**.
   - `git pull`: clonele pe HEAD detașat → `checkout main` + pull curat; nimic șters, nimic forțat. `env-check --install` OK.
   - Hub: testul lui Adrian cu `os-305` (`rezultate/2026-11-18-workstation-os305/` + `os-automat/2026-11-18/gpu-jurnal-007.txt`): **I9 TRECE** (c135 N), **I10 add64, I11 copiere, I12 q8-matvec, I13 strat: ok pe placa reală**; `i14-simbol` ESEC („argmax diferit de vectorii lui Kronos”). Cyber-GPU a făcut C-139 (`db34429`: analiza `os-305_ANALIZA_I14.md`, cauza probabilă ~55 % = date vechi în cache; reparația + scara + diagnosticul). Nicio comandă `nou` pentru `cyber-universe` (C-139 spune că centrul de comandă cere apoi `os-306`) → legat după precedentul P6-91.
