@@ -741,13 +741,19 @@ fn lant(rest: &[&str]) {
     }
     let i9 = i9.unwrap_or_default();
     let rest = &opts[..];
-    if let Some(bad) = rest.iter().find(|a| !matches!(**a, "--sim" | "--eroare" | "--doar-citire")) {
+    if let Some(bad) = rest.iter().find(|a| !matches!(**a, "--sim" | "--eroare" | "--doar-citire" | "--date-vechi")) {
         out!("gpu lant: optiune necunoscuta: {} (folosire: gpu lant [--varianta N] [--i9 c125|c133|c135])\n", bad);
         return;
     }
     let sim = rest.contains(&"--sim");
     if sim && !cfg!(feature = "test-gpu-sim") {
         out!("gpu: --sim exista doar in build-ul de test (modelul gpu-sim nu intra in sistemul pornit de pe stick)\n");
+        return;
+    }
+    // P6-94 (C-139): `--date-vechi` = the GPU model serves stale data until an invalidation (the os-305 hypothesis), so
+    // the I14 ladder and its journal rows can be seen in SIMULATION. Only with `--sim`.
+    if rest.contains(&"--date-vechi") && !sim {
+        out!("gpu lant: --date-vechi exista doar cu --sim (ipoteza C-139 in modelul gpu-sim); nimic scris in placa\n");
         return;
     }
     for l in crate::drivers::gpu::LANT_WARNING {
@@ -773,9 +779,15 @@ fn lant(rest: &[&str]) {
     );
     #[cfg(feature = "test-gpu-sim")]
     if sim {
+        let stale = rest.contains(&"--date-vechi");
+        crate::drivers::gpu_i10::SIM_STALE_READS.store(stale, core::sync::atomic::Ordering::Relaxed);
+        if stale {
+            out!("SIMULARE: modelul gpu-sim serveste date vechi pana la o invalidare (ipoteza C-139, linii de 128 B)\n");
+        }
         for l in crate::drivers::gpu_tur::chain_sim(rest.contains(&"--eroare"), !rest.contains(&"--doar-citire"), variant, i9) {
             out!("{}\n", l);
         }
+        crate::drivers::gpu_i10::SIM_STALE_READS.store(false, core::sync::atomic::Ordering::Relaxed);
         return;
     }
     for l in crate::drivers::gpu_tur::chain(variant, i9) {

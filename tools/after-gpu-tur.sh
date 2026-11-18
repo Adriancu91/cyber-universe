@@ -94,7 +94,7 @@ for k, ev, i6_ok in ((2, ok, True), (3, err, False)):
         seg14 = [i for i in gsp if i13[0] < i < i14[0]]
         assert all(i in vwin or i in tlb or i in wbell for i in seg14), f"{k}: I14: alte scrieri"
         n14 = len([i for i in seg14 if i in wbell])
-        assert n14 == 30, f"{k}: I14: trebuie 30 sonerii (urcarea + 29 simboluri), sunt {n14}"
+        assert n14 == 32, f"{k}: I14: trebuie 32 sonerii (urcarea + 2 probe ale scarii C-139 + 29 simboluri), sunt {n14}"
         for lo, hi in ((i9[0], i10[0]), (i10[0], cost[0]), (cost[0], i11[0]), (i11[0], i12[0])):
             seg = [i for i in gsp if lo < i < hi]
             b = [i for i in seg if i in wbell]

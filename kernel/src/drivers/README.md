@@ -162,6 +162,14 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
     `BoardRunner`, fiecare poziție judecată de `CpuCheck` = motorul de pe procesor; oprire la prima eroare, nimic trimis după) și dă rândul
     de viteză din ceasul plăcii (`generare (placa|SIMULARE): … simboluri/s`). Înainte de urcare: `VramBudget::of_model` față de
     `vram_free()` (rezervă 4 MiB), refuz cinstit dacă nu încape. Pentru 24 de straturi zona de comenzi ar trebui 32 KiB (acum 16, ajunge pentru #513).
+    **P6-94 (C-139, cyber-gpu `db34429`, după os-305: I9–I13 trec pe placă, I14 „argmax diferit”):** `BoardRunner` dă și cele 4 operații ale
+    diagnosticului (`kronos_diag::TokenIo`: `submit` codat cu `kd::encode`, `read` prin fereastra VRAM, `write` prin colector, `journal`).
+    Înaintea textelor, **scara** (`kd::ladder`) trimite primul simbol ca în os-305 (proba de control), apoi cu reparația (golirea cache-urilor
+    înaintea fiecărei lansări), apoi rezervele, scrie rândurile `i14d` în jurnal și alege felul textelor; `kronos --gpu` folosește același fel.
+    Copierea logit-urilor e ultima lansare a listei (`kl::copy_launch`). Argmax-ul față de `vectori.json` se verifică după judecata față de
+    procesor; la o poziție care nu trece: `kd::explain` (+ `kd::locate`), iar dacă doar copierea în RAM e greșită textul o ia de la capăt cu
+    logit-urile din VRAM — pasul raportează atunci ESEC cu motivul (o ocolire nu e reparație). `gpu lant --sim --date-vechi` (doar în build-ul
+    de test) pornește ipoteza „date vechi” în modelul gpu-sim: scenariul `gpu-i14d` + `tools/after-gpu-i14d.sh`.
     **`kronos --gpu` (P6-62 pas 3):** shell-ul întreabă `DA` (ca la `gpu lant`), apoi `/bin/kronos` cere prin apelul 43 lanțul întreg;
     la `i14-simbol`, după ce modelul de control a trecut, rulează cererea (modelul dat, textul + n simboluri greedy, fiecare simbol judecat
     față de procesor, același cod `run_model`). Orice eroare (fără `DA`, build care nu poate scrie, lanț oprit, simbol greșit, timp depășit)

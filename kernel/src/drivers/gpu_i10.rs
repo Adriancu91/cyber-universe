@@ -348,6 +348,11 @@ pub(super) fn cost_step<V: Mmio + ?Sized, K: Clock + ?Sized>(
 /// The simulated GPU: on the doorbell it checks the offset, the token and that the TLB was invalidated after the last
 /// table write, fetches the ring, the pushbuffer and the buffers through the page tables, runs the channel and writes
 /// back what it changed. `sim_launch_ns` = 4000 (the numbers of the cost step are the model's, only the method counts).
+/// P6-94 (C-139): `gpu lant --sim --date-vechi` — the model's command processor serves stale data until an
+/// invalidation (`CommandProcessor::model_stale_reads`, Cyber-GPU's hypothesis for os-305), 128-byte lines.
+#[cfg(feature = "test-gpu-sim")]
+pub static SIM_STALE_READS: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 #[cfg(feature = "test-gpu-sim")]
 pub(super) struct SimGpu {
     cp: gpu_sim::cmdproc::CommandProcessor,
@@ -378,6 +383,10 @@ impl SimGpu {
             cp.register_program(kl::EMBED, c::embed_on_cpu);
         }
         cp.sim_launch_ns = 4000;
+        if SIM_STALE_READS.load(core::sync::atomic::Ordering::Relaxed) {
+            // 128 is a power of two below a page: accepted by the model.
+            let _ = cp.model_stale_reads(128);
+        }
         let sys = gpu_sim::vram::SimVram::new(crate::mem::frame::top_of_ram().next_multiple_of(0x1000));
         SimGpu { cp, token, rung: 0, launches: 0, invalidates_seen: 0, sys }
     }

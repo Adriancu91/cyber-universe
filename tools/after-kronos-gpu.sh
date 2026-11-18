@@ -2,7 +2,7 @@
 # After scenario `kronos-gpu` (P6-62 step 3, C-83): `kronos --gpu`.
 #   - the first two runs (no `DA`; `DA` in a build that cannot write) never touched the board: exactly ONE journal;
 #   - 001 = `kronos --gpu-sim` with `DA`: the whole chain, Bus Master on/off around every write, I14 = the control model
-#     (1 upload + 29 tokens) + the request (1 upload + 5 prompt positions + 4 greedy = 9 tokens) = 40 work-channel
+#     (1 upload + 2 ladder probes of C-139 + 29 tokens) + the request (1 upload + 5 prompt positions + 4 greedy = 9 tokens) = 42 work-channel
 #     doorbells, nothing but the VRAM window, the TLB invalidate and the doorbell in I14, no write after it.
 set -uo pipefail
 IMG="${1:?disk image}"
@@ -27,7 +27,7 @@ assert i13 and i14 and ev[i14[0]].endswith("ok"), "I14 nu a trecut"
 seg = [i for i in gsp if i13[0] < i < i14[0]]
 assert all(allowed(i) for i in seg), f"I14: alte scrieri: {[ev[i] for i in seg if not allowed(i)][:3]}"
 bells = len([i for i in seg if off(i) == 0xBB0090])
-assert bells == 40, f"I14 + kronos --gpu: trebuie 40 sonerii (30 control + 10 cererea), sunt {bells}"
+assert bells == 42, f"I14 + kronos --gpu: trebuie 42 sonerii (30 control + 2 scara C-139 + 10 cererea), sunt {bells}"
 assert not [i for i in gsp if i14[0] < i < cfg[1]], "scriere dupa I14"
 assert not [i for i, b in enumerate(ev) if i > cfg[1] and (b.startswith("cfg  w ") or b.startswith("bar0 w "))], "scriere dupa Bus Master oprit"
 print(f"[after-kronos-gpu] ok: un singur lant, {len(gsp)} scrieri intre Bus Master pornit/oprit, I14 + cererea = {bells} sonerii, nimic dupa")
