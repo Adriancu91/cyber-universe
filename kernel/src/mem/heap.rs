@@ -12,8 +12,9 @@ use core::sync::atomic::AtomicBool;
 
 /// Start of the heap's virtual area (well above the HHDM, unused by Limine).
 pub const HEAP_START: u64 = 0xFFFF_9000_0000_0000;
-/// Upper limit for the heap's growth.
-pub const HEAP_MAX: u64 = 256 * 1024 * 1024;
+/// Upper limit for the heap's growth (P6-95: 1 GiB — `kronos --gpu` with #513 holds the file, the model and the board's blob,
+/// ~350 MiB at the peak; the heap still grows only when asked).
+pub const HEAP_MAX: u64 = 1024 * 1024 * 1024;
 const INITIAL_SIZE: u64 = 1024 * 1024;
 /// Every block is a multiple of this, which is also the minimum alignment and the size of a free-list node.
 const UNIT: usize = 16;

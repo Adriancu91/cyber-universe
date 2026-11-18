@@ -12,6 +12,11 @@
 //! "INTRERUPT", the list is renamed, and the machine restarts (no endless loop).
 //!
 //! List format: one command per line; `#` starts a comment; `ceas N` = minutes for the safety clock (1-120).
+//!
+//! P6-96 (command C-143): `test-placa [--i9 c135]` is the one command that writes to the card, and only with BOTH of Adrian's
+//! keys (`hub/permite-test-placa` on the stick + the decision `ciclu-test activat` in the hub's DECIZII.md, read over the
+//! network when the command comes): `gpu recupereaza`, the chain (+ #513 with `kronos --gpu` when it is on the stick), the
+//! report + the gpu journal sent to the hub. Without the keys it is refused like every other writing command.
 //! Idea: unattended test runners that boot once into a test image (CI hardware labs); our own code.
 
 use super::raport;
@@ -69,6 +74,21 @@ pub fn run_if_present() {
     let total = plan.commands.len();
     for (i, cmd) in plan.commands.iter().enumerate() {
         out.add(&format!("\n== [{}/{}] {} ==\n", i + 1, total, cmd));
+        // P6-96 (C-143): the board test, with Adrian's keys instead of the allow-list.
+        if let Some(parsed) = super::ciclu::board_command(cmd) {
+            match board_test(parsed) {
+                Ok(text) => {
+                    out.add(&text);
+                    ran += 1;
+                }
+                Err(why) => {
+                    refused += 1;
+                    say(&format!("auto: [{}/{}] REFUZAT: {} ({})\n", i + 1, total, cmd, why));
+                    out.add(&format!("REFUZAT: {} (nimic nu s-a scris in placa)\n", why));
+                }
+            }
+            continue;
+        }
         if let Err(why) = allowed(cmd) {
             refused += 1;
             say(&format!("auto: [{}/{}] REFUZAT: {} ({})\n", i + 1, total, cmd, why));
@@ -174,10 +194,50 @@ pub fn allowed(line: &str) -> Result<(), &'static str> {
         ["run", "kronos" | "kronos-calcul", ..] => Ok(()),
         ["run", ..] => Err("programul nu e pe lista alba (doar kronos, kronos-calcul)"),
         ["reboot", ..] => Err("repornirea o face bucla, la final"),
+        ["test-placa", ..] => Err("test-placa scrie in placa video: doar cu cheile lui Adrian (verificate cand vine comanda)"),
         #[cfg(feature = "test-auto")]
         ["test-blocheaza" | "test-jurnal", ..] => Ok(()),
         _ => Err("comanda nu e pe lista alba"),
     }
+}
+
+/// P6-96: `test-placa` from the list. `Err` = refused (form or keys; nothing touched). `Ok` = what ran, for the list's report;
+/// the same text is also a report in the hub folder of the stick, sent with the gpu journal (`trimite`).
+fn board_test(parsed: Result<String, &'static str>) -> Result<String, String> {
+    let i9 = parsed.map_err(String::from)?;
+    super::ciclu::keys()?;
+    say(&format!("auto: test-placa (I9 {}): cheile lui Adrian sunt puse; gpu recupereaza, apoi lantul\n", i9));
+    crate::info!("auto: test-placa: cheile sunt puse (fisierul de pe stick + DECIZII.md); testul pe placa porneste (I9 {})", i9);
+    let t0 = crate::time::uptime_ms().unwrap_or(0);
+    let (body, result) = super::ciclu::board_test(&i9);
+    let ms = crate::time::uptime_ms().unwrap_or(0).saturating_sub(t0);
+    let text = format!(
+        "in lucru: test-placa --i9 {} (de la {}; cheile: fisierul de pe stick + DECIZII.md)\n{}\nREZULTAT TEST PLACA: {}\n-- gata in {} ms\n",
+        i9,
+        now_text(),
+        body,
+        result,
+        ms
+    );
+    say(&format!("auto: test-placa: {}\n", result));
+    let (reports, _) = raport::hub_paths();
+    if fs::kind(reports).is_err() {
+        let _ = fs::create(reports, Kind::Dir);
+    }
+    let path = free_name(&format!("{}/ciclu-auto-{}", reports, date_stamp()));
+    let mut copy = Report::create(&path);
+    copy.add(&format!(
+        "== test pe placa din lista automata (P6-96, C-143): raport Cyber Universe OS ==\nnucleu: cyber-universe {} (cyber-gpu {})\nora: {}\n{}",
+        env!("CARGO_PKG_VERSION"),
+        crate::drivers::gpu::CYBER_GPU_REV,
+        now_text(),
+        text
+    ));
+    super::emit_capture_begin();
+    raport::send_to_hub();
+    let sent = super::emit_capture_end();
+    say(&sent);
+    Ok(format!("{}{}", text, sent))
 }
 
 /// The last run was cut off (safety clock or a hang): note it, rename the list, restart. Never runs the list again.
@@ -310,7 +370,7 @@ pub fn self_test() {
     for ok in ["hw", "gpu", "gpu identifica", "gpu pregatire-i6", "gpu tur", "gpu plan", "run kronos --profil --n 64 Buna", "run kronos-calcul --cauta", "cpu porneste", "raport", "log gpu 40", "compara /usb/a.txt /usb/b.txt", "log --sumar", "log --avertismente 50", "timp uptime", "timp run kronos --n 16 Buna"] {
         assert!(allowed(ok).is_ok(), "auto: `{}` trebuia permis", ok);
     }
-    for bad in ["gpu i6 --scrie", "gpu i6", "gpu lant", "gpu recupereaza", "gpu recupereaza --sim", "gpu lant --sim", "gpu pregatire-i6 --scrie", "reboot", "run fetch https://x", "http get x", "rtl", "run editor", "mod incarca x", "exit", "test-gata", "timp", "timp reboot", "timp gpu i6 --scrie", "timp timp uptime", "timp run editor", "run kronos --gpu Ana", "run kronos --n 3 --gpu-sim x", "timp run kronos --gpu", "run kronos --conversatie", "gpu tur --trezire", "timp gpu tur --trezire", "gpu tur --trezire --sim"] {
+    for bad in ["test-placa", "test-placa --i9 c135", "gpu i6 --scrie", "gpu i6", "gpu lant", "gpu recupereaza", "gpu recupereaza --sim", "gpu lant --sim", "gpu pregatire-i6 --scrie", "reboot", "run fetch https://x", "http get x", "rtl", "run editor", "mod incarca x", "exit", "test-gata", "timp", "timp reboot", "timp gpu i6 --scrie", "timp timp uptime", "timp run editor", "run kronos --gpu Ana", "run kronos --n 3 --gpu-sim x", "timp run kronos --gpu", "run kronos --conversatie", "gpu tur --trezire", "timp gpu tur --trezire", "gpu tur --trezire --sim"] {
         assert!(allowed(bad).is_err(), "auto: `{}` trebuia refuzat", bad);
     }
     crate::info!("test: lista alba a modului automat OK");

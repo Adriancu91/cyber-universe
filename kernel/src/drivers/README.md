@@ -170,6 +170,13 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
     procesor; la o poziție care nu trece: `kd::explain` (+ `kd::locate`), iar dacă doar copierea în RAM e greșită textul o ia de la capăt cu
     logit-urile din VRAM — pasul raportează atunci ESEC cu motivul (o ocolire nu e reparație). `gpu lant --sim --date-vechi` (doar în build-ul
     de test) pornește ipoteza „date vechi” în modelul gpu-sim: scenariul `gpu-i14d` + `tools/after-gpu-i14d.sh`.
+    **P6-95 (C-141, cyber-gpu `3a23dc0` = C-142, după os-306: I0→I14 trece pe placa reală):** zona de comenzi 32 KiB (`PUSH_BYTES`; #513 =
+    9.440 B pe simbol cu invalidare înaintea fiecărei lansări); înainte de urcare `kronos_speed::ModelLimits::check` (zona de comenzi, pasul
+    înregistrărilor, VRAM-ul; refuz cu motivul, nimic urcat); contoarele `kronos_speed::Speed` (urcarea pe bucăți, fiecare poziție cu ceasul
+    OS-ului, fără verificarea pe procesor) + timpul motorului procesorului (`step_cpu`). Pentru `kronos --gpu`: rândurile `kg` (modelul,
+    cerute, generate, primul simbol diferit de procesor, abaterea) și `kv` (viteza) în gpu-jurnal + 4 rânduri de viteză pe ecran. `kronos --gpu`
+    rulează lanțul cu I9 `c135` (`gpu_tur::KRONOS_I9`; `gpu lant` fără opțiune neschimbat). Memoria nucleului poate crește până la 1 GiB.
+    Test: `kronos-gpu` + `tools/after-kronos-gpu.sh` (rândurile `kg`/`kv` în I14).
     **`kronos --gpu` (P6-62 pas 3):** shell-ul întreabă `DA` (ca la `gpu lant`), apoi `/bin/kronos` cere prin apelul 43 lanțul întreg;
     la `i14-simbol`, după ce modelul de control a trecut, rulează cererea (modelul dat, textul + n simboluri greedy, fiecare simbol judecat
     față de procesor, același cod `run_model`). Orice eroare (fără `DA`, build care nu poate scrie, lanț oprit, simbol greșit, timp depășit)

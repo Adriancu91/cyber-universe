@@ -47,6 +47,12 @@
   (`revenire::return_to_old`). Rulează doar cu ambele chei: `/usb/hub/permite-test-placa` + un rând de decizie cu `ciclu-test activat`
   în `DECIZII.md` din hub; altfel REFUZAT. Test: `ghpush` (refuzuri, oprire curată la actualizare, toate deciziile de după repornire) +
   `update` (`--versiune`).
+  **P6-96 (C-143, cheile puse de Adrian pe 18 nov):** `ciclu-test os-<N> [--i9 c125|c133|c135|os302]` (implicit `c135`); testul =
+  `gpu recupereaza` → dacă pregătirea I6 nu trece după ea: „CICLU OPRIT: trebuie pornire rece (Adrian)”, fără altă încercare → altfel
+  lanțul cu I9-ul ales și, dacă `/usb/kronos/kronos_513_q8_0.kgr` există, `kronos --gpu --n 16 Buna ziua` în același lanț (cheile țin
+  locul lui DA pentru acel program). Același test din lista automată: `test-placa [--i9 …]` în `auto/teste.txt` (`auto.rs`), doar cu
+  ambele chei; raportul `raport/ciclu-auto-<data>.txt` + gpu-jurnalul urcă în hub (`trimite`), apoi lista se termină → repornire →
+  Windows. Test: `ghpush` (forma, rândul real din DECIZII.md, recuperarea), `auto` (`test-placa` refuzat fără chei).
 - **`test tot` (P6-61, F9):** `testtot.rs` — autotestul pe calculatorul real (procesor, ceas, temporizator, stick, rețea, placa
   video doar prin ID-urile PCI); `PASS`/`FAIL`/`LIPSA`, raport `raport/test-tot-*.txt`, apoi `trimite`. Test: scenariul `testtot`.
 - **`ora [server [port]]` (P6-61):** SNTP (`net/sntp.rs`, RFC 4330): ora din rețea în UTC și ora României (regula UE pentru

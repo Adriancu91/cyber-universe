@@ -7,3 +7,4 @@ ls /disk
 test-jurnal din lista
 run kronos --control
 cat /disk/salut.txt
+test-placa

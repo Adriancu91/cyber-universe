@@ -1129,6 +1129,15 @@ fn sim_system_info() -> nvidia_ga104::gsp::sysinfo::SystemInfoInput {
 /// first `kronos_gpu` call. Without it the board is never touched and `/bin/kronos` stays on the processor.
 pub static KRONOS_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-95 (C-141): the I9 of the chain `kronos --gpu` runs. `None` = `c135`, the only I9 that passed on the real board
+/// (os-305/os-306); the test cycle (P6-96) may set another one for one run. `gpu lant` without `--i9` is unchanged.
+pub static KRONOS_I9: crate::sched::Mutex<Option<super::gpu_golden::I9Choice>> = crate::sched::Mutex::new(None);
+
+/// The I9 of the next `kronos --gpu` chain (taken: it never outlives one run).
+pub fn kronos_i9() -> super::gpu_golden::I9Choice {
+    KRONOS_I9.lock().take().unwrap_or(super::gpu_golden::I9Choice::C135)
+}
+
 /// Kernel stack of the thread that runs the chain for `kronos --gpu`.
 #[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
 const KRONOS_STACK: usize = 256 * 1024;
@@ -1141,12 +1150,13 @@ static KRONOS_LINES: crate::sched::Mutex<Option<Vec<String>>> = crate::sched::Mu
 #[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
 fn kronos_chain_thread() {
     let sim = KRONOS_SIM.load(core::sync::atomic::Ordering::SeqCst);
+    let i9 = kronos_i9();
     #[cfg(feature = "test-gpu-sim")]
-    let lines = if sim { chain_sim(false, true, None, Default::default()) } else { chain(None, Default::default()) };
+    let lines = if sim { chain_sim(false, true, None, i9) } else { chain(None, i9) };
     #[cfg(not(feature = "test-gpu-sim"))]
     let lines = {
         let _ = sim;
-        chain(None, Default::default())
+        chain(None, i9)
     };
     if let Some((used, size)) = crate::sched::stack_used() {
         crate::info!("gpu: kronos --gpu: stiva firului lantului: {} KiB folositi din {} KiB", used.div_ceil(1024), size / 1024);

@@ -133,20 +133,27 @@ done
 
 # P6-75 (C-105): the chain and the recovery run only behind Adrian's typed DA (shell/mod.rs) or behind the two keys of the
 # hub test cycle (shell/ciclu.rs, which hubcmd.rs calls only with what ciclu::gate returned). Nobody else may call them.
-callers="$(grep -rnE 'gpu_tur::chain\(\)|gpu_rec::recover\(\)' "$ROOT/kernel/src" --include=*.rs \
+# P6-96 (C-143): also `kronos --gpu`'s permission (KRONOS_ARMED) — set only after DA (shell/mod.rs) or by the cycle with keys.
+callers="$(grep -rnE 'gpu_tur::chain\(|gpu_rec::recover\(\)|KRONOS_ARMED\.store\(true' "$ROOT/kernel/src" --include=*.rs \
     | grep -vE '^[^:]*/kernel/src/(drivers/|shell/mod\.rs:|shell/ciclu\.rs:)' || true)"
 if [[ -n "$callers" ]]; then
     echo "[after-gpu] EȘUAT: lanțul / recuperarea chemate din afara DA-ului și a ciclului cu chei:"; echo "$callers"; exit 1
 fi
 if ! grep -qE 'ciclu::gate\(&o\.command\)' "$ROOT/kernel/src/shell/hubcmd.rs" \
     || [[ "$(grep -cE 'ciclu::start\(' "$ROOT/kernel/src/shell/hubcmd.rs")" != 1 ]] \
-    || ! grep -B1 -E 'ciclu::start\(' "$ROOT/kernel/src/shell/hubcmd.rs" | grep -qE 'if let Ok\(Some\(tag\)\) = verdict'; then
+    || ! grep -B1 -E 'ciclu::start\(' "$ROOT/kernel/src/shell/hubcmd.rs" | grep -qE 'if let Ok\(Some\(\(tag, i9\)\)\) = verdict'; then
     echo "[after-gpu] EȘUAT: în hubcmd.rs ciclu::start trebuie chemat o singură dată, doar cu ce a dat ciclu::gate"; exit 1
 fi
 if grep -rnE 'ciclu::start\(' "$ROOT/kernel/src" --include=*.rs | grep -vq 'shell/hubcmd.rs'; then
     echo "[after-gpu] EȘUAT: ciclu::start chemat din afara hubcmd.rs"; exit 1
 fi
-echo "[after-gpu] ok: lanțul fără DA doar în ciclul din hub, după cele două chei (C-105)"
+# P6-96 (C-143): the board test of the automatic list runs only right after both keys were checked (auto.rs), and nowhere else.
+bt="$(grep -rnE 'ciclu::board_test\(' "$ROOT/kernel/src" --include=*.rs | grep -v 'shell/ciclu.rs' || true)"
+if [[ "$(grep -c . <<<"$bt")" != 1 ]] || ! grep -q 'shell/auto.rs' <<<"$bt" \
+    || ! grep -B6 -E 'ciclu::board_test\(' "$ROOT/kernel/src/shell/auto.rs" | grep -qE 'super::ciclu::keys\(\)\?;'; then
+    echo "[after-gpu] EȘUAT: ciclu::board_test trebuie chemat doar din auto.rs, imediat după ciclu::keys()"; echo "$bt"; exit 1
+fi
+echo "[after-gpu] ok: lanțul fără DA doar în ciclul din hub și în test-placa, după cele două chei (C-105, C-143)"
 
 # P6-85 (C-116): the minimal wake-up (`gpu tur --trezire`) runs only behind Adrian's typed DA in shell/mod.rs.
 callers="$(grep -rnE 'gpu_tur::tour_awake\(\)' "$ROOT/kernel/src" --include=*.rs | grep -vE '^[^:]*/kernel/src/shell/mod\.rs:' || true)"

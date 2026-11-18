@@ -17,6 +17,7 @@
     .\bucla-automata.ps1 pregateste -DosarRelease C:\cyber\os-213
     .\bucla-automata.ps1 pregateste -DosarRelease C:\cyber\os-213 -Teste C:\cyber\teste.txt -FaraRepornire
     .\bucla-automata.ps1 citeste
+    .\bucla-automata.ps1 pregateste -DosarRelease C:\cyber\os-307 -TestPlaca      (P6-96, C-143: testul pe placa, doar cu cheile)
 #>
 [CmdletBinding()]
 param(
@@ -41,7 +42,11 @@ param(
     [switch]$FaraRepornire,
 
     # Ruleaza si in afara orelor 08:00-22:00 (doar daca Adrian a spus ca nu e antrenare in noaptea asta).
-    [switch]$SiNoaptea
+    [switch]$SiNoaptea,
+
+    # P6-96 (C-143): lista = testul pe placa (`test-placa`: gpu recupereaza, lantul cu I9 c135, #513 daca e pe stick, jurnalul in hub).
+    # Sistemul il ruleaza DOAR cu cheile lui Adrian (hub\permite-test-placa pe stick + "ciclu-test activat" in DECIZII.md din hub).
+    [switch]$TestPlaca
 )
 
 $ErrorActionPreference = 'Stop'
@@ -63,6 +68,13 @@ cpu porneste
 run kronos --control
 run kronos --profil --fara-ecran --n 64 Buna ziua
 raport
+'@
+
+# P6-96 (C-143): lista testului pe placa; ceasul de siguranta 40 de minute (lantul + #513 + trimiterea).
+$ListaTestPlaca = @'
+# test pe placa (P6-96, C-143) - doar cu cheile lui Adrian; un rand = o comanda
+ceas 40
+test-placa
 '@
 
 function Scrie([string]$text) { Write-Host "[bucla] $text" }
@@ -170,7 +182,11 @@ function Pregateste {
     }
     if (Test-Path (Join-Path $auto 'teste.txt')) { Scrie 'ATENTIE: o lista veche nerulata (auto\teste.txt) se inlocuieste' }
 
-    $lista = if ($Teste) { Get-Content -Raw $Teste } else { $ListaImplicita }
+    if ($TestPlaca -and $Teste) { Opreste '-TestPlaca si -Teste nu merg impreuna' }
+    if ($TestPlaca -and -not (Test-Path (Join-Path $stick 'hub\permite-test-placa'))) {
+        Opreste 'lipseste hub\permite-test-placa pe stick: fara cheia lui Adrian testul pe placa ar fi refuzat'
+    }
+    $lista = if ($TestPlaca) { $ListaTestPlaca } elseif ($Teste) { Get-Content -Raw $Teste } else { $ListaImplicita }
     foreach ($rand in ($lista -split "`r?`n")) {
         $r = ($rand -split '#')[0].Trim()
         if ($r -match '--scrie' -or $r -match '^gpu\s+i6\b' -or $r -match '^gpu\s+lant\b' -or $r -match '^reboot\b') { Opreste "lista are o comanda care nu e voie in modul automat: $r" }

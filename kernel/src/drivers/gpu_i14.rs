@@ -25,7 +25,7 @@
 use alloc::{format, string::String, vec::Vec};
 use gpu_compute::layer::Shape;
 use gpu_compute::model::{self as cm, Caches};
-use gpu_core::diag::Journal;
+use gpu_core::diag::{Event, Journal};
 use gpu_core::error::{GpuError, GpuResult};
 use gpu_core::hal::{Clock, Mmio};
 use nvidia_ga104::gsp::golden::Mapping;
@@ -34,6 +34,7 @@ use nvidia_ga104::kronos_layer::{self as kl, LayerVas, OwnedLayer, Prog, WeightV
 use nvidia_ga104::kronos_diag as kd;
 use nvidia_ga104::kronos_gen::{GenPlan, Generation, Stop, TokenCheck, TokenOutput, TokenRunner, VramBudget};
 use nvidia_ga104::kronos_model::{self as km, ModelVas, OwnedModel};
+use nvidia_ga104::kronos_speed as ks;
 use nvidia_ga104::mmu::SysMapping;
 use nvidia_ga104::push::PushBuf;
 use nvidia_ga104::transfer;
@@ -80,6 +81,16 @@ const MIC_CONTROLS: [Control; 3] = [
 
 /// VRAM kept free after a model's upload (C-87 step 4: the screen and the steps after I14).
 const VRAM_RESERVE: u64 = 4 << 20;
+
+/// P6-95 (C-141): the `kronos --gpu` result rows in the gpu journal (they go up to the hub with it); the speed rows are
+/// cyber-gpu's `kv …` (`kronos_speed::rows`), plus the CPU engine's own two.
+const KG_MODEL: &str = "kg kronos --gpu model";
+const KG_ASKED: &str = "kg simboluri cerute";
+const KG_MADE: &str = "kg simboluri generate pe placa (identice cu procesorul)";
+const KG_FIRST_DIFF: &str = "kg primul simbol diferit de procesor (pozitia; ffffffff = niciunul)";
+const KG_WORST: &str = "kg abaterea maxima a logit-urilor fata de procesor (x1e6)";
+const KV_CPU_MED: &str = "kv motorul procesorului median pe pozitie (us, step_cpu)";
+const KV_CPU_X100: &str = "kv simboluri pe secunda x100 (motorul procesorului)";
 
 const UP_FIRST: u32 = 0xc000;
 const TOKEN_FIRST: u32 = 0x1_0000;
@@ -351,6 +362,10 @@ struct RunOut {
     worst: f32,
     median: u64,
     from_vram: bool,
+    /// P6-95 (C-141/C-142): the upload and every position (OS clock without the CPU check), and the CPU engine's time
+    /// per position (`step_cpu`, the same weights) for the comparison.
+    speed: ks::Speed,
+    cpu_us: Vec<u64>,
 }
 
 /// The board's pieces a run needs (P6-62 step 3: shared by the control model and a `kronos --gpu` request).
@@ -380,22 +395,24 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let e = s.e;
     let n_tok = km::launches_per_token(m.layers.len());
     let n = n_tok + 1; // + the copy of the logits down
-    // C-139: the largest stretch of one submission, in the way that needs the most words (invalidation before every launch).
-    let push_need = kd::push_bytes(kd::SeqMode::EachLaunch, m.layers.len(), n) as u64;
-    if push_need > l.push.size / 2 {
-        lines.push(format!(
-            "{}: I14: {} lansari pe simbol = {} octeti de comenzi, zona de comenzi are {} octeti (trebuie marita)",
-            p, n, push_need, l.push.size
-        ));
-        return Err(bad("I14: zona de comenzi prea mica pentru un simbol"));
-    }
-    // 0. C-87 step 4: the VRAM the model needs, from its shapes, checked before anything is uploaded.
+    // 0. C-87 step 4 + P6-95 (C-142 `kronos_speed::ModelLimits`): the VRAM, the pushbuffer area (two tokens in the way that
+    //    needs the most words) and the records' stride, from the model's shapes, checked before anything is uploaded.
     let budget = VramBudget::of_model(m)?;
+    let lim = ks::ModelLimits::of(&s, m.layers.len(), m.vocab, m.context, I11_BOARD_BYTES)?;
     let (free, largest) = st.mem.vram_free();
     lines.push(format!("{}: i14: {}; VRAM liber {} MiB (cea mai lunga bucata {} MiB)", p, budget.line(m.layers.len()), free >> 20, largest >> 20));
-    if let Err(err) = budget.check(free, largest, VRAM_RESERVE) {
-        lines.push(format!("{}: I14: modelul nu incape in VRAM-ul liber (pastrez {} MiB rezerva): nimic urcat", p, VRAM_RESERVE >> 20));
-        return Err(err);
+    let vram_line = budget.line(m.layers.len());
+    for x in lim.lines().into_iter().filter(|x| *x != vram_line) {
+        let have = if x.contains("zona de comenzi: cel putin") { format!(" (are {} KiB)", l.push.size >> 10) } else { String::new() };
+        lines.push(format!("{}: i14: {}{}", p, x, have));
+    }
+    let refused = lim.check(l.push.size, STRIDE, free, largest, VRAM_RESERVE);
+    if !refused.is_empty() {
+        for r in &refused {
+            lines.push(format!("{}: I14: {}", p, r.line()));
+        }
+        lines.push(format!("{}: I14: modelul nu incape (motivul e mai sus; pastrez {} MiB rezerva de VRAM): nimic urcat", p, VRAM_RESERVE >> 20));
+        return Err(bad("I14: modelul nu incape (zona de comenzi, pasul inregistrarilor sau VRAM-ul): nimic urcat"));
     }
     // 1. The blob, uploaded through the arena in pieces of at most 8 MiB.
     let blob = pack(m);
@@ -425,7 +442,9 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     maps.extend(progs.iter().map(|(_, pm)| *pm));
     let mut up_ns = 0u64;
     let mut k = 0u32;
+    let mut speed = ks::Speed::new(if permit.is_some() { ks::Source::Placa } else { ks::Source::Simulare });
     for (i, chunk) in blob.bytes.chunks(piece as usize).enumerate() {
+        let host_t0 = crate::time::since_boot_us();
         let len = (chunk.len() as u64).next_multiple_of(16);
         ram_write(&host, chunk);
         let w = st.mem.writer_mut();
@@ -440,7 +459,12 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         let nw = pb.len();
         let sys = [host.clone()];
         match run_records(vbar, clock, journal, st, l, permit, &words[..nw], rec_up, 2, first + 1, &maps, &sys, doorbell)? {
-            Ok(b) => up_ns += transfer::analyze_sequence(&b, 1, first)?[0],
+            Ok(b) => {
+                let ns = transfer::analyze_sequence(&b, 1, first)?[0];
+                up_ns += ns;
+                let host = host_t0.zip(crate::time::since_boot_us()).map(|(a, b)| b.saturating_sub(a));
+                speed.add_piece(chunk.len() as u64, ns, host);
+            }
             Err(last) => {
                 lines.push(format!("{}: I14: urcarea bucatii {} nu s-a terminat (inregistrarea 1 = {:#x})", p, i, last));
                 return Err(GpuError::Timeout { waited_us: WAIT_US });
@@ -485,6 +509,7 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let weights = m.weights();
     let mut worst = 0.0f32;
     let mut medians = Vec::new();
+    let mut cpu_us: Vec<u64> = Vec::new();
     let mut all = Vec::with_capacity(runs.len());
     let label = if permit.is_some() { "placa" } else { "SIMULARE" };
     let mut runner = BoardRunner {
@@ -515,6 +540,7 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         timing: None,
         last_logits: Vec::new(),
         argmaxes: Vec::new(),
+        speed,
     };
     // 3. C-139: the ladder, once, on the first token of the first control text, before the texts.
     if way.is_none() {
@@ -549,8 +575,9 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
             let positions = plan.positions();
             let mut generation = Generation::new(plan);
             runner.argmaxes.clear();
-            let mut check = CpuCheck { w: &weights, caches: Caches::new(m.layers.len(), e) };
+            let mut check = CpuCheck { w: &weights, caches: Caches::new(m.layers.len(), e), us: Vec::new() };
             let stop = generation.run(&mut runner, Some(&mut check)).clone();
+            cpu_us.append(&mut check.us);
             if stop.is_clean_end() {
                 break (generation, positions);
             }
@@ -560,6 +587,16 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 Stop::Eroare { err, .. } => return Err(err),
                 _ => return Err(bad("I14: generarea s-a oprit (vezi randul de mai sus)")),
             };
+            // P6-95 (C-141): for `kronos --gpu` the first position that differs from the processor, in the journal.
+            if run.argmax.is_none() {
+                let made = pos.saturating_sub(run.prompt.len());
+                runner.journal.push(Event::Value { what: KG_FIRST_DIFF, value: pos as u32 });
+                runner.journal.push(Event::Value { what: KG_MADE, value: made as u32 });
+                runner.lines.push(format!(
+                    "{}: kronos --gpu: primul simbol diferit de procesor la pozitia {} (dupa {} simboluri generate identice)",
+                    p, pos, made
+                ));
+            }
             // What that token left in memory (nothing sent). The CPU engine's caches hold the earlier rows.
             let tok = generation.seq[pos];
             let cpu = check.cpu_logits(tok, pos)?;
@@ -619,9 +656,10 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         all.push(greedy);
     }
     let from_vram = runner.from_vram;
+    let speed = core::mem::replace(&mut runner.speed, ks::Speed::new(ks::Source::Simulare));
     medians.sort_unstable();
     let median = medians.get(medians.len() / 2).copied().unwrap_or(0);
-    Ok(RunOut { all, worst, median, from_vram })
+    Ok(RunOut { all, worst, median, from_vram, speed, cpu_us })
 }
 
 /// One position on the board for `kronos_gen::Generation`, and the 4 operations of cyber-gpu's diagnosis
@@ -663,6 +701,8 @@ struct BoardRunner<'r, 'b, V: Mmio + ?Sized, K: Clock + ?Sized> {
     last_logits: Vec<f32>,
     /// The board's argmax at every position of the current text.
     argmaxes: Vec<usize>,
+    /// P6-95 (C-142): the speed counters (upload + every position).
+    speed: ks::Speed,
 }
 
 impl<V: Mmio + ?Sized, K: Clock + ?Sized> BoardRunner<'_, '_, V, K> {
@@ -765,6 +805,7 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
             ram_write(&self.host_logits, &alloc::vec![0xee; self.logits_bytes as usize]);
             alloc::vec![kl::copy_launch(vas.logits, self.host_logits.va, self.logits_bytes)?]
         };
+        let host_t0 = crate::time::since_boot_us();
         kd::send_token(self, &weights, vas, tok, pos, way, &extra)?;
         *self.tokens_done += 1;
         let logits: Vec<f32> = if self.from_vram {
@@ -780,7 +821,11 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
         self.argmaxes.push(cm::argmax(&logits).unwrap_or(usize::MAX));
         self.last_logits = logits.clone();
         let (start_ns, end_ns, busy_ns) = self.timing.unwrap_or((0, 0, 0));
-        Ok(TokenOutput { logits, start_ns, end_ns, busy_ns })
+        let out = TokenOutput { logits, start_ns, end_ns, busy_ns };
+        // P6-95: the OS clock from the first launch written to the logits read (without the CPU check, C-142 point 3).
+        let host = host_t0.zip(crate::time::since_boot_us()).map(|(a, b)| b.saturating_sub(a));
+        let _ = self.speed.add_token(pos, &out, host); // a board clock that went back is counted by Generation itself
+        Ok(out)
     }
 }
 
@@ -788,11 +833,18 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
 struct CpuCheck<'a, 'w> {
     w: &'a cm::ModelWeights<'w>,
     caches: Caches,
+    /// P6-95: the CPU engine's time of every position (us, OS clock).
+    us: Vec<u64>,
 }
 
 impl TokenCheck for CpuCheck<'_, '_> {
     fn cpu_logits(&mut self, token: usize, pos: usize) -> GpuResult<Vec<f32>> {
-        cm::step_cpu(self.w, &mut self.caches, token, pos)
+        let t0 = crate::time::since_boot_us();
+        let r = cm::step_cpu(self.w, &mut self.caches, token, pos);
+        if let Some(d) = t0.zip(crate::time::since_boot_us()).map(|(a, b)| b.saturating_sub(a)) {
+            self.us.push(d);
+        }
+        r
     }
 }
 
@@ -915,6 +967,9 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
         "{}: kronos --gpu: {} ({} straturi, E {}, vocabular {}, context {}): {} simboluri date, {} de generat",
         p, job.path, m.layers.len(), m.shape.e, m.vocab, m.context, job.prompt.len(), job.n
     ));
+    let name = job.path.rsplit('/').next().unwrap_or(&job.path);
+    journal.push(Event::text(KG_MODEL, name.as_bytes()));
+    journal.push(Event::Value { what: KG_ASKED, value: job.n as u32 });
     let runs = [Run { name: String::from("kronos --gpu"), prompt: job.prompt.clone(), steps: job.n, argmax: None, greedy: None }];
     let out = run_model(p, vbar, clock, journal, st, l, &m, &runs, permit, lines, doorbell, tokens_done, subs, &mut Some(way))
         .map_err(|e| format!("{}", e))?;
@@ -926,5 +981,37 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
         "{}: kronos --gpu: abaterea maxima a logit-urilor fata de procesor {:e}; durata mediana a unui simbol {} ns (ceasul placii)",
         p, worst, median
     ));
+    let made = all.last().map_or(0, |g| g.len());
+    // P6-95 (C-141): the result and the speed in the gpu journal (it goes up to the hub by itself) and on the screen.
+    journal.push(Event::Value { what: KG_MADE, value: made as u32 });
+    journal.push(Event::Value { what: KG_FIRST_DIFF, value: u32::MAX });
+    journal.push(Event::Value { what: KG_WORST, value: (worst as f64 * 1e6).min(u32::MAX as f64) as u32 });
+    out.speed.journal(journal, false);
+    let (cpu_med, cpu_x100) = cpu_speed(&out.cpu_us);
+    journal.push(Event::Value { what: KV_CPU_MED, value: cpu_med.map_or(u32::MAX, |v| v.min(u32::MAX as u64) as u32) });
+    journal.push(Event::Value { what: KV_CPU_X100, value: cpu_x100.map_or(u32::MAX, |v| v.min(u32::MAX as u64) as u32) });
+    lines.extend(out.speed.lines().into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
+    let x100 = |v: Option<u64>| v.map_or(String::from("?"), |x| format!("{}.{:02}", x / 100, x % 100));
+    lines.push(format!(
+        "{}: kronos --gpu: viteza: placa {} simboluri/s (ceasul placii), cu driverul {} simboluri/s; motorul procesorului (nucleul, 1 nucleu) median {} us pe pozitie = {} simboluri/s",
+        p,
+        x100(out.speed.summary().board_per_s_x100),
+        x100(out.speed.summary().host_per_s_x100),
+        cpu_med.map_or(String::from("?"), |v| format!("{}", v)),
+        x100(cpu_x100)
+    ));
+    lines.push(format!("{}: kronos --gpu: {} simboluri generate pe placa, toate identice cu procesorul (niciun simbol diferit)", p, made));
     Ok(all.pop().unwrap_or_default())
+}
+
+/// The CPU engine's median time per position (us) and positions per second × 100 over all of them.
+fn cpu_speed(us: &[u64]) -> (Option<u64>, Option<u64>) {
+    if us.is_empty() {
+        return (None, None);
+    }
+    let mut v = us.to_vec();
+    v.sort_unstable();
+    let total: u64 = us.iter().sum();
+    let x100 = (total > 0).then(|| (us.len() as u128 * 100 * 1_000_000 / total as u128) as u64);
+    (Some(v[v.len() / 2]), x100)
 }

@@ -16,6 +16,14 @@
 //!
 //! The phases live in `/usb/hub/ciclu.txt` (they survive the restart): `actualizare` -> `test` -> `test-pornit`
 //! (written just before the card is touched) -> done (file removed).
+//!
+//! P6-96 (command C-143, Adrian's "Da chei", DECIZII.md 2026-11-18 17:48): the keys are on. The test is now the chain that
+//! passes on the real board — I9 `c135` by default (`ciclu-test os-<N> --i9 c125|c133|c135|os302` for another one) — and,
+//! when #513 is on the stick, `kronos --gpu --n 16 Buna ziua` in the same chain (the keys stand for the `DA`, for that one
+//! program). When `gpu recupereaza` does not bring the card back (WPR2 still raised; it never ran on the real board before),
+//! the cycle stops cleanly with "trebuie pornire rece (Adrian)" and does not try again. The same test runs from the
+//! automatic list (`test-placa` in `auto/teste.txt`, auto.rs) with the same keys: one boot from the stick, the test, the
+//! journal up to the hub, back to Windows — no restart in between (C-143 completion of 17:58).
 //! Idea: hardware test labs with job queues, A/B updates; our own code.
 
 use super::{auto, hubcmd, raport};
@@ -48,13 +56,21 @@ impl Phase {
     }
 }
 
-/// A cycle in progress: its phase, the hub command and the release.
+/// A cycle in progress: its phase, the hub command, the release and (P6-96) the I9 of the chain (`c135` when absent).
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct State {
     pub phase: Phase,
     pub id: String,
     pub tag: String,
+    pub i9: String,
 }
+
+/// P6-96: the I9 the cycle uses when the command does not name one (the one that passed on the board at os-305/os-306).
+pub const I9_DEFAULT: &str = "c135";
+/// P6-96: the model the cycle runs after the chain when it is on the stick (`kronos --gpu`, C-141).
+pub const K513: &str = "/usb/kronos/kronos_513_q8_0.kgr";
+/// P6-96: what `kronos --gpu` generates in the cycle (the command of CITESTE.txt).
+pub const K513_ARGS: [&str; 6] = ["kronos", "--gpu", "--n", "16", "Buna", "ziua"];
 
 /// What to do at boot with the state found on the stick.
 #[derive(Debug, PartialEq, Eq)]
@@ -91,17 +107,40 @@ pub fn is_cycle(command: &str) -> bool {
     command.split_whitespace().next() == Some("ciclu-test")
 }
 
-/// `ciclu-test os-<N>` -> the release's name.
-pub fn target(command: &str) -> Result<String, &'static str> {
+fn release_name(tag: &str) -> bool {
+    tag.strip_prefix("os-").is_some_and(|n| !n.is_empty() && n.len() <= 6 && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// `--i9 <x>` checked against the chain's own list (`gpu_golden::i9_option`).
+fn i9_ok(x: &str) -> bool {
+    crate::drivers::gpu_golden::i9_option(x).is_some()
+}
+
+/// `ciclu-test os-<N> [--i9 c125|c133|c135|os302]` -> (the release's name, the I9).
+pub fn target(command: &str) -> Result<(String, String), &'static str> {
     let words: Vec<&str> = command.split_whitespace().collect();
     match words.as_slice() {
-        ["ciclu-test", tag]
-            if tag.strip_prefix("os-").is_some_and(|n| !n.is_empty() && n.len() <= 6 && n.bytes().all(|b| b.is_ascii_digit())) =>
-        {
-            Ok(String::from(*tag))
-        }
-        _ => Err("forma corecta: `ciclu-test os-<numar>` (de exemplu ciclu-test os-281)"),
+        ["ciclu-test", tag] if release_name(tag) => Ok((String::from(*tag), String::from(I9_DEFAULT))),
+        ["ciclu-test", tag, "--i9", x] if release_name(tag) && i9_ok(x) => Ok((String::from(*tag), String::from(*x))),
+        _ => Err("forma corecta: `ciclu-test os-<numar>` sau `ciclu-test os-<numar> --i9 c135` (c125, c133, c135, os302)"),
     }
+}
+
+/// P6-96: `test-placa [--i9 …]` of the automatic list -> the I9.
+pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
+    let words: Vec<&str> = command.split_whitespace().collect();
+    match words.as_slice() {
+        ["test-placa"] => Some(Ok(String::from(I9_DEFAULT))),
+        ["test-placa", "--i9", x] if i9_ok(x) => Some(Ok(String::from(*x))),
+        ["test-placa", ..] => Some(Err("forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302)")),
+        _ => None,
+    }
+}
+
+/// P6-96 (C-143 point 3): `gpu recupereaza` brought the card back when its last check says the I6 pre-check passes again
+/// (WPR2 down, read after the program — or it was never raised). Anything else = a cold start is needed.
+pub fn recovery_passed(lines: &[String]) -> bool {
+    lines.iter().any(|l| l.contains("pregatirea I6 trece din nou"))
 }
 
 /// Key b: a decision line (a list item) of DECIZII.md with the exact words.
@@ -118,7 +157,7 @@ fn permit_path() -> String {
 }
 
 pub fn parse_state(text: &str) -> Option<State> {
-    let (mut phase, mut id, mut tag) = (None, None, None);
+    let (mut phase, mut id, mut tag, mut i9) = (None, None, None, String::from(I9_DEFAULT));
     for line in text.lines() {
         let Some((k, v)) = line.split_once('=') else { continue };
         let v = v.trim();
@@ -133,10 +172,11 @@ pub fn parse_state(text: &str) -> Option<State> {
             }
             "comanda" => id = Some(String::from(v)),
             "versiune" => tag = Some(String::from(v)),
+            "i9" if i9_ok(v) => i9 = String::from(v),
             _ => {}
         }
     }
-    Some(State { phase: phase?, id: id?, tag: tag? })
+    Some(State { phase: phase?, id: id?, tag: tag?, i9 })
 }
 
 fn read_state() -> Option<State> {
@@ -146,7 +186,7 @@ fn read_state() -> Option<State> {
 
 fn write_state(s: &State) -> Result<(), String> {
     let p = state_path();
-    let text = format!("faza={}\ncomanda={}\nversiune={}\n", s.phase.name(), s.id, s.tag);
+    let text = format!("faza={}\ncomanda={}\nversiune={}\ni9={}\n", s.phase.name(), s.id, s.tag, s.i9);
     let _ = fs::remove(&p);
     fs::create(&p, Kind::File).map_err(|e| format!("{}: {}", p, e.message()))?;
     fs::write(&p, 0, text.as_bytes()).map_err(|e| format!("{}: {}", p, e.message()))?;
@@ -159,15 +199,27 @@ fn clear_state() {
     let _ = fs::flush(hubcmd::dir());
 }
 
-/// Both keys, the command's form and no other cycle in progress. `Ok` = the release's name.
-pub fn gate(command: &str) -> Result<String, String> {
-    let tag = target(command).map_err(String::from)?;
+/// Both keys, the command's form and no other cycle in progress. `Ok` = the release's name and the I9.
+pub fn gate(command: &str) -> Result<(String, String), String> {
+    let target = target(command).map_err(String::from)?;
+    keys()?;
+    if let Some(s) = read_state() {
+        return Err(format!("un ciclu e deja in lucru ({} pentru {}, faza {})", s.id, s.tag, s.phase.name()));
+    }
+    Ok(target)
+}
+
+/// Adrian's two keys: (a) the file on the stick, (b) the decision line in the hub's DECIZII.md (read now, over the network).
+pub fn keys() -> Result<(), String> {
     if fs::kind(&permit_path()).is_err() {
         return Err(format!(
             "ciclul de test e DEZACTIVAT: lipseste {} (il pune doar Adrian pe stick) si o decizie a lui in DECIZII.md cu `{}`",
             permit_path(),
             PHRASE
         ));
+    }
+    if !crate::net::wait_ready(30_000) {
+        return Err(String::from("reteaua nu are adresa: decizia lui Adrian din DECIZII.md nu se poate verifica; nimic scris in placa"));
     }
     let local = format!("{}/decizii.md", hubcmd::dir());
     let got = match crate::proc::spawn_path("/bin/gh-ia", &["gh-ia", "--hub-ia", "DECIZII.md", &local]) {
@@ -184,10 +236,7 @@ pub fn gate(command: &str) -> Result<String, String> {
             PHRASE
         ));
     }
-    if let Some(s) = read_state() {
-        return Err(format!("un ciclu e deja in lucru ({} pentru {}, faza {})", s.id, s.tag, s.phase.name()));
-    }
-    Ok(tag)
+    Ok(())
 }
 
 /// Runs a program and returns (exit code, what it printed).
@@ -209,8 +258,8 @@ fn on_trial() -> bool {
 
 /// Step 1, from the hub command (both keys already checked): the update. Returns the answer's text; when a new version
 /// was put in place the machine restarts into it and this never returns.
-pub fn start(id: &str, tag: &str) -> String {
-    let mut s = State { phase: Phase::Update, id: String::from(id), tag: String::from(tag) };
+pub fn start(id: &str, tag: &str, i9: &str) -> String {
+    let mut s = State { phase: Phase::Update, id: String::from(id), tag: String::from(tag), i9: String::from(i9) };
     if let Err(e) = write_state(&s) {
         return format!("CICLU OPRIT inainte de actualizare: starea nu se poate scrie ({}); nimic schimbat\n", e);
     }
@@ -230,7 +279,7 @@ pub fn start(id: &str, tag: &str) -> String {
     }
     if on_trial() {
         text.push_str(&format!("\nversiunea {} e pe stick; repornesc in ea; testul si raportul vin dupa repornire, in acelasi fisier\n", tag));
-        let o = hubcmd::Order { id: String::from(id), command: format!("ciclu-test {}", tag) };
+        let o = hubcmd::Order { id: String::from(id), command: command_of(&s) };
         let _ = hubcmd::send_answer(&o, &text, None);
         crate::info!("ciclu-test {}: versiunea {} pusa; repornesc", id, tag);
         crate::sched::sleep_ms(1000);
@@ -241,6 +290,15 @@ pub fn start(id: &str, tag: &str) -> String {
     text
 }
 
+/// The hub command a cycle answers (the same words Adrian's command had).
+fn command_of(s: &State) -> String {
+    if s.i9 == I9_DEFAULT {
+        format!("ciclu-test {}", s.tag)
+    } else {
+        format!("ciclu-test {} --i9 {}", s.tag, s.i9)
+    }
+}
+
 /// Step 3: the card back to its start state, then the chain without `DA` (both keys were checked when the command came).
 fn test(s: &mut State) -> String {
     s.phase = Phase::TestStarted;
@@ -248,22 +306,59 @@ fn test(s: &mut State) -> String {
         clear_state();
         return format!("CICLU OPRIT: starea nu se poate scrie ({}); nimic scris in placa\n", e);
     }
-    crate::info!("ciclu-test {}: testul pe placa ({}): gpu recupereaza, apoi gpu lant (fara DA: cheile ciclului sunt puse)", s.id, s.tag);
+    crate::info!("ciclu-test {}: testul pe placa ({}, I9 {}): gpu recupereaza, apoi lantul (fara DA: cheile ciclului sunt puse)", s.id, s.tag, s.i9);
+    let (text, result) = board_test(&s.i9);
+    clear_state();
+    format!("{}\nCICLU GATA ({}): {}\n", text, s.tag, result)
+}
+
+/// P6-96: the board test of a cycle (from the hub or from the automatic list; both keys already checked): `gpu recupereaza`;
+/// a cold start is needed when it does not bring the card back (no second try); else the chain with `i9` and — when #513
+/// is on the stick — `kronos --gpu --n 16 Buna ziua` at its I14 (one chain). Returns (the whole text, the result line).
+pub fn board_test(i9: &str) -> (String, String) {
+    let choice = crate::drivers::gpu_golden::i9_option(i9).unwrap_or(crate::drivers::gpu_golden::I9Choice::C135);
     let mut text = String::from("\n-- gpu recupereaza\n");
-    for l in crate::drivers::gpu_rec::recover() {
-        text.push_str(&l);
-        text.push('\n');
-    }
-    text.push_str("\n-- gpu lant\n");
-    let chain = crate::drivers::gpu_tur::chain(None, Default::default());
-    for l in &chain {
+    let rec = crate::drivers::gpu_rec::recover();
+    for l in &rec {
         text.push_str(l);
         text.push('\n');
     }
-    clear_state();
-    let result = chain.iter().rev().find(|l| l.contains("rezultat lant:")).cloned().unwrap_or_else(|| String::from("(lantul nu a dat un rezultat)"));
-    text.push_str(&format!("\nCICLU GATA ({}): {}\n", s.tag, result));
-    text
+    if !recovery_passed(&rec) {
+        let why = String::from(
+            "CICLU OPRIT: trebuie pornire rece (Adrian): gpu recupereaza nu a adus placa la starea de pornire (pregatirea I6 nu trece); lantul nu a pornit, nicio alta incercare",
+        );
+        crate::warn!("ciclu: {}", why);
+        text.push_str(&format!("\n{}\n", why));
+        return (text, why);
+    }
+    let k513 = fs::kind(K513).is_ok();
+    let result = if k513 {
+        text.push_str(&format!("\n-- run {} (lantul cu I9 {}, apoi #513 la i14-simbol; DA dat de cheile ciclului)\n", K513_ARGS.join(" "), i9));
+        *crate::drivers::gpu_tur::KRONOS_I9.lock() = Some(choice);
+        crate::drivers::gpu_tur::KRONOS_ARMED.store(true, core::sync::atomic::Ordering::SeqCst);
+        let (code, printed) = run_program("/bin/kronos", &K513_ARGS);
+        // The permission never outlives this one program (as in the shell).
+        crate::drivers::gpu_tur::KRONOS_ARMED.store(false, core::sync::atomic::Ordering::SeqCst);
+        *crate::drivers::gpu_tur::KRONOS_I9.lock() = None;
+        text.push_str(&printed);
+        text.push_str(&format!("(kronos a iesit cu codul {})\n", code));
+        let chain = printed.lines().rev().find(|l| l.contains("rezultat lant:")).map(String::from);
+        let board = printed.lines().find(|l| l.contains("kronos: PE PLACA")).map(String::from);
+        match (chain, board) {
+            (Some(c), Some(b)) => format!("{}; {}", c.trim(), b.trim()),
+            (Some(c), None) => format!("{}; #513 NU a rulat pe placa (vezi randurile kronos de mai sus)", c.trim()),
+            (None, _) => String::from("(lantul nu a dat un rezultat; vezi randurile kronos de mai sus)"),
+        }
+    } else {
+        text.push_str(&format!("\n-- gpu lant --i9 {} ({} lipseste: doar lantul)\n", i9, K513));
+        let chain = crate::drivers::gpu_tur::chain(None, choice);
+        for l in &chain {
+            text.push_str(l);
+            text.push('\n');
+        }
+        chain.iter().rev().find(|l| l.contains("rezultat lant:")).cloned().unwrap_or_else(|| String::from("(lantul nu a dat un rezultat)"))
+    };
+    (text, result)
 }
 
 /// After the restart: the report of a cycle in progress, the old version back when the cycle itself failed.
@@ -287,7 +382,7 @@ fn report(s: &State, body: &str, ms: Option<u64>) {
         crate::warn!("ciclu-test {}: reteaua nu are adresa: raportul ramane pe stick ({})", s.id, path);
         return;
     }
-    let o = hubcmd::Order { id: s.id.clone(), command: format!("ciclu-test {}", s.tag) };
+    let o = hubcmd::Order { id: s.id.clone(), command: command_of(s) };
     let sent = hubcmd::send_answer(&o, body, ms);
     crate::info!("ciclu-test {}: raspuns in hub: {}", s.id, sent);
     raport::send_to_hub();
@@ -345,16 +440,35 @@ pub fn in_progress() -> bool {
 #[cfg(feature = "test-ghpush")]
 pub fn self_test() {
     assert!(is_cycle("ciclu-test os-281") && is_cycle("  ciclu-test") && !is_cycle("gpu lant") && !is_cycle("ciclu-testx os-1"));
-    assert!(target("ciclu-test os-281") == Ok(String::from("os-281")));
-    for bad in ["ciclu-test", "ciclu-test 281", "ciclu-test os-", "ciclu-test os-28a", "ciclu-test os-1 DA", "ciclu-test os-1234567"] {
+    assert!(target("ciclu-test os-281") == Ok((String::from("os-281"), String::from("c135"))), "ciclu: implicit I9 c135 (P6-96)");
+    assert!(target("ciclu-test os-307 --i9 c133") == Ok((String::from("os-307"), String::from("c133"))));
+    assert!(target("ciclu-test os-307 --i9 os302") == Ok((String::from("os-307"), String::from("os302"))));
+    for bad in ["ciclu-test", "ciclu-test 281", "ciclu-test os-", "ciclu-test os-28a", "ciclu-test os-1 DA", "ciclu-test os-1234567", "ciclu-test os-1 --i9", "ciclu-test os-1 --i9 c999", "ciclu-test os-1 --i9 c135 DA"] {
         assert!(target(bad).is_err(), "ciclu: `{}` trebuia refuzat", bad);
     }
+    assert!(board_command("test-placa") == Some(Ok(String::from("c135"))));
+    assert!(board_command("test-placa --i9 c125") == Some(Ok(String::from("c125"))));
+    assert!(board_command("test-placa --i9 x").is_some_and(|r| r.is_err()) && board_command("test-placa DA").is_some_and(|r| r.is_err()));
+    assert!(board_command("gpu lant").is_none() && board_command("test-placax").is_none());
+    let rec = |s: &str| alloc::vec![String::from("gpu0: Bus Master pornit"), String::from(s)];
+    assert!(recovery_passed(&rec("gpu0: C-103: pregatirea I6 trece din nou: `gpu lant` poate rula in aceeasi pornire")));
+    assert!(!recovery_passed(&rec("gpu0: C-103: pregatirea I6 NU trece: tot pornire rece (cablul scos 30 s)")));
+    assert!(!recovery_passed(&rec("gpu0: gpu recupereaza: exista doar pe stick-ul de test (optiunea gpu-scrie)")));
     assert!(decision_found("# Decizii\n- 2026-11-20 — ciclu-test activat (Adrian)\n"));
+    // P6-96 (C-143 point 1): the exact form of Adrian's line in the hub's DECIZII.md of 18 Nov (bold, long dash).
+    assert!(decision_found(
+        "## 2026-11-18 17:48 · Adrian · teste pe placă fără el (ciclul automat C-105)\n- 2026-11-18 17:48 — **ciclu-test activat** (Adrian: „Da chei”, după ce `os-306` a trecut tot lanțul I0→I14 pe placa reală): înlocuiește explicit regula\n"
+    ));
+    assert!(!decision_found("## 2026-11-18 17:48 · ciclu-test activat\n"), "ciclu: un titlu nu e o decizie");
     assert!(!decision_found("# Decizii\n- Teste complet automate: directia aprobata, fara activare\n"));
     assert!(!decision_found("ciclu-test activat\n"), "ciclu: doar un rand de decizie (`- `) conteaza");
-    let s = State { phase: Phase::TestStarted, id: String::from("K-12"), tag: String::from("os-300") };
-    let text = format!("faza={}\ncomanda={}\nversiune={}\n", s.phase.name(), s.id, s.tag);
-    assert!(parse_state(&text) == Some(s), "ciclu: starea citita inapoi");
+    let s = State { phase: Phase::TestStarted, id: String::from("K-12"), tag: String::from("os-300"), i9: String::from("c133") };
+    let text = format!("faza={}\ncomanda={}\nversiune={}\ni9={}\n", s.phase.name(), s.id, s.tag, s.i9);
+    assert!(parse_state(&text) == Some(s.clone()), "ciclu: starea citita inapoi");
+    assert!(command_of(&s) == "ciclu-test os-300 --i9 c133");
+    // A state written by os-306 (no i9 line) reads back with the default.
+    let old = parse_state("faza=test\ncomanda=K-3\nversiune=os-306\n");
+    assert!(old.as_ref().is_some_and(|o| o.i9 == "c135") && old.as_ref().is_some_and(|o| command_of(o) == "ciclu-test os-306"));
     assert!(parse_state("faza=altceva\ncomanda=K-1\nversiune=os-1\n").is_none() && parse_state("faza=test\n").is_none());
     use AtBoot::*;
     for (st, trial, ret, want) in [
@@ -371,5 +485,5 @@ pub fn self_test() {
     ] {
         assert!(decide(st, trial, ret) == want, "ciclu: decide({:?}, {}, {})", st, trial, ret);
     }
-    crate::info!("test: ciclu-test: forma, decizia, starea si fazele dupa repornire OK");
+    crate::info!("test: ciclu-test: forma (cu --i9, implicit c135), test-placa, recuperarea, randul real din DECIZII.md, starea si fazele dupa repornire OK");
 }

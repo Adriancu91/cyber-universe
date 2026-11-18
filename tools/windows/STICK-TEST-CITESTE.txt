@@ -12,3 +12,16 @@ firmware\, kronos\ (modelul tau), github.token si raport\ nu se ating.
 
 ATENTIE: acesta e stick-ul care POATE scrie in placa video (doar dupa "DA").
 Stick-ul normal CYBER-UNIV (fara scriere in placa) ramane pentru folosirea obisnuita.
+
+KRONOS #513 PE PLACA VIDEO (os-307, comanda C-141) - pornire rece, apoi O SINGURA comanda:
+   run kronos --gpu --n 16 Buna ziua
+   apoi scrii DA (litere mari) si Enter.
+   Lantul ferestrei ruleaza o data (I0..I14, cu I9 c135, cel care a trecut pe placa), apoi #513
+   (kronos\kronos_513_q8_0.kgr) genereaza 16 simboluri pe placa, fiecare comparat cu procesorul.
+   Rezultatul si viteza (randurile "kg" si "kv") sunt in gpu-jurnal; la final scrii: trimite
+   Daca ceva nu merge pe placa, kronos continua singur pe procesor (nimic nu se strica).
+
+CICLUL AUTOMAT DE TEST (os-307, comanda C-143) - doar cu cheile lui Adrian:
+   pe stick: hub\permite-test-placa  +  in DECIZII.md din hub o decizie cu "ciclu-test activat".
+   Din Windows: bucla-automata.ps1 pregateste -TestPlaca  (scrie auto\teste.txt cu "test-placa"),
+   o singura pornire de pe stick, testul pe placa, jurnalul urca singur in hub, apoi repornire in Windows.

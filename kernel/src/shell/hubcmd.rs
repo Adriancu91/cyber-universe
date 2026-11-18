@@ -310,7 +310,7 @@ fn run_inner(only_show: bool, quiet: bool) {
     for (i, o) in now.iter().enumerate() {
         out.add(&format!("\n== [{}/{}] {}: {} ==\n", i + 1, now.len(), o.id, o.command));
         // C-105 (P6-75): the test cycle has its own keys instead of the allow-list.
-        let verdict: Result<Option<String>, String> = if ciclu::is_cycle(&o.command) {
+        let verdict: Result<Option<(String, String)>, String> = if ciclu::is_cycle(&o.command) {
             ciclu::gate(&o.command).map(Some)
         } else {
             allowed(&o.command).map(|()| None).map_err(String::from)
@@ -328,8 +328,8 @@ fn run_inner(only_show: bool, quiet: bool) {
         // Noted before it runs: a command that hangs or restarts the machine is not run again at the next boot.
         note_done(&o.id, "rulat");
         let t0 = crate::time::uptime_ms().unwrap_or(0);
-        let text = if let Ok(Some(tag)) = verdict {
-            ciclu::start(&o.id, &tag) // restarts the machine when a new version was put in place
+        let text = if let Ok(Some((tag, i9))) = verdict {
+            ciclu::start(&o.id, &tag, &i9) // restarts the machine when a new version was put in place
         } else {
             super::emit_capture_begin();
             super::program_capture_begin();

@@ -30,5 +30,13 @@ bells = len([i for i in seg if off(i) == 0xBB0090])
 assert bells == 42, f"I14 + kronos --gpu: trebuie 42 sonerii (30 control + 2 scara C-139 + 10 cererea), sunt {bells}"
 assert not [i for i in gsp if i14[0] < i < cfg[1]], "scriere dupa I14"
 assert not [i for i, b in enumerate(ev) if i > cfg[1] and (b.startswith("cfg  w ") or b.startswith("bar0 w "))], "scriere dupa Bus Master oprit"
+# P6-95 (C-141): the request's result and speed rows in the journal (they go up to the hub with it), inside I14.
+val = lambda name: [int(b.rsplit("= ", 1)[1], 16) for b in ev if b.startswith("valoare " + name + " = ")]
+kv = [i for i, b in enumerate(ev) if b.startswith("valoare kv ") or b.startswith("valoare kg ") or b.startswith("text kg ")]
+assert kv and i13[0] < kv[0] and kv[-1] < i14[0], "randurile kg/kv trebuie sa fie in I14"
+assert val("kg simboluri cerute") == [5] and val("kg simboluri generate pe placa (identice cu procesorul)") == [5], "kg: 5 cerute, 5 generate"
+assert val("kg primul simbol diferit de procesor (pozitia; ffffffff = niciunul)") == [0xFFFFFFFF], "kg: niciun simbol diferit"
+assert val("kv sursa (0 SIMULARE, 1 placa)") == [0] and val("kv simboluri") == [9], ("kv", val("kv simboluri"))
+assert val("kv urcare bucati") == [1] and len(val("kv simboluri pe secunda x100 (motorul procesorului)")) == 1, "kv: urcarea, motorul procesorului"
 print(f"[after-kronos-gpu] ok: un singur lant, {len(gsp)} scrieri intre Bus Master pornit/oprit, I14 + cererea = {bells} sonerii, nimic dupa")
 PY

@@ -85,7 +85,9 @@ pub(super) struct Add64 {
 
 /// The work channel's pushbuffer area (P6-62): 16 KiB = two #513 tokens in flight (`kronos_model::push_bytes_per_token(12)`
 /// = 7 832 B each; Cyber-GPU's answer of 7 Nov, `C-83_i14.md`). I10 had 4 KiB, too small for even one #513 token.
-pub(super) const PUSH_BYTES: u64 = 0x4000;
+/// P6-95 (C-141, answer to question 2 of Cyber-GPU's C-139 note): 32 KiB, because the way that passed on the board at os-306
+/// (an invalidation before every launch) needs 9 440 B per #513 token (`kronos_speed::ModelLimits::k513`).
+pub(super) const PUSH_BYTES: u64 = 0x8000;
 
 /// What I10 keeps for the launch cost.
 pub(super) struct Launched {
