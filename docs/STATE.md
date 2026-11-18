@@ -3,6 +3,13 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-18 ~12:40–15:10 UTC (14:40–17:10 ora RO) — sesiune programată, fără Adrian — **oprirea (regula 5) s-a ridicat: jurnalul testului `os-305` a sosit → P6-94 GATA** → **Release `os-306`**.
+  - `git pull`: clonele pe HEAD detașat → `checkout main` + pull curat; nimic șters, nimic forțat. `env-check --install` OK.
+  - Hub: testul lui Adrian cu `os-305` (`rezultate/2026-11-18-workstation-os305/` + `os-automat/2026-11-18/gpu-jurnal-007.txt`): **I9 TRECE** (c135 N), **I10 add64, I11 copiere, I12 q8-matvec, I13 strat: ok pe placa reală**; `i14-simbol` ESEC („argmax diferit de vectorii lui Kronos”). Cyber-GPU a făcut C-139 (`db34429`: analiza `os-305_ANALIZA_I14.md`, cauza probabilă ~55 % = date vechi în cache; reparația + scara + diagnosticul). Nicio comandă `nou` pentru `cyber-universe` (C-139 spune că centrul de comandă cere apoi `os-306`) → legat după precedentul P6-91.
+  - **P6-94:** `kernel` legat la cyber-gpu `db34429`; `i14-simbol`: scara (proba ca os-305, apoi „invalidare înaintea fiecărei lansări”, apoi rezervele) scrie rândurile `i14d` în jurnal și alege felul textelor; la o poziție care nu trece, diagnosticul complet în jurnal (argmax placă/procesor/vectori, primele 8 logit-uri, abaterea, etapa greșită). `gpu lant` ca înainte (`--i9 c135` pentru I9 rămâne opțiunea de folosit pe placă). Simulare nouă `gpu lant --sim --date-vechi` + scenariul `gpu-i14d`.
+  - Teste: toată suita locală 111/0/1; CI run 44324544830 verde din prima → `os-306` (commit `686952c`).
+  - **Pentru Adrian (la următoarea fereastră pe workstation):** stick-ul de test cu `os-306` + `github.token` → pornire rece → `gpu lant --i9 c135` → DA → `trimite`. Dacă ipoteza e bună, I14 trece; altfel jurnalul spune exact etapa greșită.
+  - **Pentru sesiunea următoare:** coada fără Adrian e iar goală (P6-12 pasul 2 după `log mmio` real; P6-10/P3-10 cu Adrian; P5-07 BLOCAT). Regula 5 numără de la această sesiune. Citește jurnalul testului `os-306` dacă a urcat. Întrebarea 2 din nota C-139 (zona de comenzi 32 KiB pentru #513) — nefăcută: doar când rulează #513.
 - 2026-11-18 ~09:40–09:45 UTC (11:40–11:45 ora RO) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5, rămâne); nicio schimbare de cod.
   - `git pull`: clonele pe HEAD detașat → `checkout main` + pull curat (deja la zi); nimic șters, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
   - Hub: de la 06:42 UTC doar C-138 (pentru `kronos`, curățenie pe C:, `gata` cu C-137) și starea Kronos → nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou de test în `rezultate/`. CI: ultima rulare (305) verde → `os-305`.
