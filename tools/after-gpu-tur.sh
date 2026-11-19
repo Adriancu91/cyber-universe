@@ -92,7 +92,14 @@ for k, ev, i6_ok in ((2, ok, True), (3, err, False)):
         assert all(i in vwin or i in tlb or i in wbell for i in seg13), f"{k}: I13: alte scrieri"
         assert len([i for i in seg13 if i in wbell]) == 5, f"{k}: I13: trebuie 5 sonerii (urcarea + 4 pozitii)"
         seg14 = [i for i in gsp if i13[0] < i < i14[0]]
-        assert all(i in vwin or i in tlb or i in wbell for i in seg14), f"{k}: I14: alte scrieri"
+        # P6-98 (C-148 point 3): the last thing in I14 is ONE GSP-RM read of the performance state (`ks`): GSP
+        # doorbell(s) only after the last work-channel doorbell and before the `ks` row.
+        ks = [i for i, b in enumerate(ev) if b.startswith("valoare ks stare de performanta la final")]
+        assert len(ks) == 1 and i13[0] < ks[0] < i14[0], f"{k}: ks: un singur rand, in I14"
+        last_wb = max(i for i in seg14 if i in wbell)
+        rm14 = [i for i in seg14 if 0x110000 <= off(i) <= 0x113FFF]
+        assert rm14 and all(last_wb < i < ks[0] for i in rm14), f"{k}: ks: scrierile GSP trebuie dupa ultima sonerie si inaintea randului ks"
+        assert all(i in vwin or i in tlb or i in wbell or i in rm14 for i in seg14), f"{k}: I14: alte scrieri"
         n14 = len([i for i in seg14 if i in wbell])
         assert n14 == 32, f"{k}: I14: trebuie 32 sonerii (urcarea + 2 probe ale scarii C-139 + 29 simboluri), sunt {n14}"
         for lo, hi in ((i9[0], i10[0]), (i10[0], cost[0]), (cost[0], i11[0]), (i11[0], i12[0])):
