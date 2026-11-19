@@ -27,7 +27,7 @@
 use super::gpu::{self, ReadOnlyBar0Window, ReadOnlyConfig, TscClock, CYBER_GPU_REV, NVIDIA, WINDOW_LOCK};
 use crate::fs::{self, FsError, Kind};
 use alloc::{format, string::String, vec::Vec};
-use gpu_core::diag::{Event, Journal};
+use gpu_core::diag::{Event, Flush, Journal, LiveSink};
 use gpu_core::hal::{Clock, ConfigSpace, Mmio};
 use nvidia_ga104::fwsec::FwsecLocation;
 use nvidia_ga104::gsp::falcon::{self, GuardedBar0};
@@ -61,7 +61,14 @@ struct Live {
     off: u64,
     lines: usize,
     failed: Option<String>,
+    /// P6-97 (C-145): routine rows held in memory (each with its own time) until the next row that must be on the
+    /// stick, or `Journal::flush_live`; empty outside a routine stretch.
+    held: String,
+    held_lines: usize,
 }
+
+/// P6-97 (C-145, `kt` rows): microseconds spent inside the live journal (formatting, writing, syncing the stick).
+pub(super) static JOURNAL_US: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 static LIVE: crate::sched::Mutex<Option<Live>> = crate::sched::Mutex::new(None);
 
@@ -103,45 +110,89 @@ pub(super) fn live_open(what: &str) -> Result<String, String> {
         let head = format!("# jurnal gpu P6-40, cyber-gpu {}, comanda: {}\n", CYBER_GPU_REV, what);
         fs::write(&path, 0, head.as_bytes()).map_err(|e| format!("{}: {}", path, e.message()))?;
         fs::flush(&path).map_err(|e| format!("{}: sincronizarea stick-ului dupa antet: {} (motivul in `log usb`)", path, e.message()))?;
-        *LIVE.lock() = Some(Live { path: path.clone(), off: head.len() as u64, lines: 0, failed: None });
+        *LIVE.lock() = Some(Live { path: path.clone(), off: head.len() as u64, lines: 0, failed: None, held: String::new(), held_lines: 0 });
         crate::info!("gpu: jurnalul pe loc: {}", path);
         return Ok(path);
     }
     Err(last_err)
 }
 
-/// `Journal::with_sink` target: the log line, then the same line appended to the stick file and flushed — before the
-/// library makes its next access, everything up to this one is on the stick.
-fn sink(e: &Event) {
+/// `Journal::with_live_sink` target. `Flush::Now` (every row outside a routine stretch — the same as before P6-97): the
+/// rows held so far and this one are appended to the stick file in ONE write and flushed — before the library makes its
+/// next access, everything up to this one is on the stick. `Flush::Later` (P6-97, C-145: a routine row of `kronos --gpu`,
+/// at most `kronos_fast::GEN_MAX_PENDING` of them): the row, with the time it happened, waits in memory.
+fn live_line(e: &Event, flush: Flush) {
+    let t0 = crate::time::since_boot_us();
     crate::info!("gpu: jurnal: {}", e);
-    let us = crate::time::since_boot_us().unwrap_or(0);
+    let us = t0.unwrap_or(0);
     let line = format!("[{:5}.{:06}] gpu: {}\n", us / 1_000_000, us % 1_000_000, e);
-    let mut live = LIVE.lock();
-    let Some(l) = live.as_mut() else { return };
+    {
+        let mut live = LIVE.lock();
+        if let Some(l) = live.as_mut() {
+            if l.failed.is_none() {
+                l.held.push_str(&line);
+                l.held_lines += 1;
+                if flush == Flush::Now {
+                    write_held(l);
+                }
+            }
+        }
+    }
+    count_journal_time(t0);
+}
+
+/// `LiveSink::flush`: the held routine rows go to the stick now (P6-97: once per token, and at the end of the stretch).
+fn live_flush() {
+    let t0 = crate::time::since_boot_us();
+    {
+        let mut live = LIVE.lock();
+        if let Some(l) = live.as_mut() {
+            write_held(l);
+        }
+    }
+    count_journal_time(t0);
+}
+
+/// The held rows, appended in one write and flushed.
+fn write_held(l: &mut Live) {
+    if l.held.is_empty() {
+        return;
+    }
+    let text = core::mem::take(&mut l.held);
+    let n_lines = core::mem::replace(&mut l.held_lines, 0);
     if l.failed.is_some() {
         return;
     }
-    let r = fs::write(&l.path, l.off, line.as_bytes())
+    let r = fs::write(&l.path, l.off, text.as_bytes())
         .map_err(|e| ("scriere", e))
         .and_then(|n| fs::flush(&l.path).map(|_| n).map_err(|e| ("sincronizare", e)));
     match r {
         Ok(n) => {
             l.off += n as u64;
-            l.lines += 1;
+            l.lines += n_lines;
         }
         Err((step, err)) => l.failed = Some(format!("randul {} ({}): {}", l.lines + 1, step, err.message())),
     }
 }
 
+fn count_journal_time(t0: Option<u64>) {
+    if let Some(d) = t0.zip(crate::time::since_boot_us()).map(|(a, b)| b.saturating_sub(a)) {
+        JOURNAL_US.fetch_add(d, core::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// Stops the live journal: (path, lines written, first failure).
 fn live_close() -> Option<(String, usize, Option<String>)> {
-    LIVE.lock().take().map(|l| (l.path, l.lines, l.failed))
+    LIVE.lock().take().map(|mut l| {
+        write_held(&mut l); // P6-97: nothing held is lost when a command ends
+        (l.path, l.lines, l.failed)
+    })
 }
 
 /// The journal of one command: live on the stick when `path` is set, in memory only otherwise.
 pub(super) fn journal(live: bool) -> Journal {
     if live {
-        Journal::with_sink(JOURNAL_CAP, sink)
+        Journal::with_live_sink(JOURNAL_CAP, LiveSink { line: live_line, flush: live_flush })
     } else {
         Journal::new(JOURNAL_CAP)
     }

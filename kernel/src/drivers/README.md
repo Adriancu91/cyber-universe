@@ -177,6 +177,14 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
     cerute, generate, primul simbol diferit de procesor, abaterea) și `kv` (viteza) în gpu-jurnal + 4 rânduri de viteză pe ecran. `kronos --gpu`
     rulează lanțul cu I9 `c135` (`gpu_tur::KRONOS_I9`; `gpu lant` fără opțiune neschimbat). Memoria nucleului poate crește până la 1 GiB.
     Test: `kronos-gpu` + `tools/after-kronos-gpu.sh` (rândurile `kg`/`kv` în I14).
+    **P6-97 (C-146, cyber-gpu `e74b418` = C-145, după primul ciclu automat os-307: 3,10 simb/s cu driverul față de 43,93 doar lansările):**
+    doar pentru `kronos --gpu`, nimic schimbat în ce primește placa: (1) jurnalul pe loc e `Journal::with_live_sink` — rândurile de rutină
+    (fereastra VRAM, invalidarea TLB, soneria și notele lor) sunt ținute în memorie cu ora lor și scrise pe stick o dată pe simbol, într-o
+    singură scriere; orice alt rând golește tot pe loc (fără rutină = exact ca înainte); (2) umbra sloturilor de lansare
+    (`kronos_fast::WriteShadow`): un simbol scrie (și recitește) doar cuvintele schimbate; după texte sloturile se recitesc o dată și se
+    compară cu umbra (rândul `kt umbra …`); (3) timpul pe simbol pe bucăți (`kronos_fast::TimeSplit`: placă / driver / jurnal / ecran +
+    verificarea pe procesor) în rândurile `kt …` și în ieșire, deci și în raportul ciclului. `kg`/`kv` și comanda rămân ca în os-307. Modelul
+    de control I14 și scara nu folosesc nimic din acestea. Test: `kronos-gpu` + `tools/after-kronos-gpu.sh` (rândurile `kt` în I14, umbra 0).
     **`kronos --gpu` (P6-62 pas 3):** shell-ul întreabă `DA` (ca la `gpu lant`), apoi `/bin/kronos` cere prin apelul 43 lanțul întreg;
     la `i14-simbol`, după ce modelul de control a trecut, rulează cererea (modelul dat, textul + n simboluri greedy, fiecare simbol judecat
     față de procesor, același cod `run_model`). Orice eroare (fără `DA`, build care nu poate scrie, lanț oprit, simbol greșit, timp depășit)

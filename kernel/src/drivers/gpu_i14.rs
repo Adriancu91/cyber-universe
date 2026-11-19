@@ -32,6 +32,7 @@ use nvidia_ga104::gsp::golden::Mapping;
 use nvidia_ga104::gsp::HardwareWritePermit;
 use nvidia_ga104::kronos_layer::{self as kl, LayerVas, OwnedLayer, Prog, WeightVas, PROGRAMS};
 use nvidia_ga104::kronos_diag as kd;
+use nvidia_ga104::kronos_fast as kf;
 use nvidia_ga104::kronos_gen::{GenPlan, Generation, Stop, TokenCheck, TokenOutput, TokenRunner, VramBudget};
 use nvidia_ga104::kronos_model::{self as km, ModelVas, OwnedModel};
 use nvidia_ga104::kronos_speed as ks;
@@ -91,6 +92,12 @@ const KG_FIRST_DIFF: &str = "kg primul simbol diferit de procesor (pozitia; ffff
 const KG_WORST: &str = "kg abaterea maxima a logit-urilor fata de procesor (x1e6)";
 const KV_CPU_MED: &str = "kv motorul procesorului median pe pozitie (us, step_cpu)";
 const KV_CPU_X100: &str = "kv simboluri pe secunda x100 (motorul procesorului)";
+
+/// P6-97 (C-146): whether the board rewrote any word of the launch slots (read back after the text; 0 = the shadow held).
+const KT_SHADOW: &str = "kt umbra lansarilor: cuvinte schimbate de placa in sloturi (0 = umbra corecta)";
+/// P6-97 (C-145): the notes the OS repeats with the routine writes of a generation (the permit's reason, the doorbell's
+/// note) — exactly the texts of `gpu_tur.rs`.
+const GEN_NOTES: [&str; 2] = ["C-55 gpu lant: fereastra cu Adrian (P6-42)", "soneria canalului de lucru (I10): scriere fara recitire"];
 
 const UP_FIRST: u32 = 0xc000;
 const TOKEN_FIRST: u32 = 0x1_0000;
@@ -366,6 +373,10 @@ struct RunOut {
     /// per position (`step_cpu`, the same weights) for the comparison.
     speed: ks::Speed,
     cpu_us: Vec<u64>,
+    /// P6-97 (C-146): every position of the last text, split (board / journal / screen / the rest = driver / CPU check).
+    split: Vec<kf::TokenSplit>,
+    /// P6-97: words of the launch slots the board changed (read back after the texts); `None` = no shadow (control model).
+    shadow_changed: Option<usize>,
 }
 
 /// The board's pieces a run needs (P6-62 step 3: shared by the control model and a `kronos --gpu` request).
@@ -512,6 +523,8 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let mut cpu_us: Vec<u64> = Vec::new();
     let mut all = Vec::with_capacity(runs.len());
     let label = if permit.is_some() { "placa" } else { "SIMULARE" };
+    let fast = runs.iter().all(|r| r.argmax.is_none());
+    let mut split_all: Vec<kf::TokenSplit> = Vec::new();
     let mut runner = BoardRunner {
         p,
         vbar: &mut *vbar,
@@ -541,6 +554,12 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         last_logits: Vec::new(),
         argmaxes: Vec::new(),
         speed,
+        // P6-97 (C-145/C-146): only for `kronos --gpu` (no control answers): the control model and the ladder keep
+        // writing every slot whole, as in os-306/os-307.
+        shadow: if fast { Some(kf::WriteShadow::new(launches.pa, launches.size)?) } else { None },
+        shadow_ranges: alloc::collections::BTreeMap::new(),
+        fast,
+        split: Vec::new(),
     };
     // 3. C-139: the ladder, once, on the first token of the first control text, before the texts.
     if way.is_none() {
@@ -575,8 +594,17 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
             let positions = plan.positions();
             let mut generation = Generation::new(plan);
             runner.argmaxes.clear();
+            runner.split.clear();
             let mut check = CpuCheck { w: &weights, caches: Caches::new(m.layers.len(), e), us: Vec::new() };
             let stop = generation.run(&mut runner, Some(&mut check)).clone();
+            // P6-97: the CPU check of each position next to its token (Generation checks every position once, in order).
+            let mut split = core::mem::take(&mut runner.split);
+            if split.len() == check.us.len() {
+                for (t, &c) in split.iter_mut().zip(&check.us) {
+                    t.check_us = c;
+                }
+            }
+            split_all = split;
             cpu_us.append(&mut check.us);
             if stop.is_clean_end() {
                 break (generation, positions);
@@ -657,9 +685,10 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     }
     let from_vram = runner.from_vram;
     let speed = core::mem::replace(&mut runner.speed, ks::Speed::new(ks::Source::Simulare));
+    let shadow_changed = runner.shadow_check()?;
     medians.sort_unstable();
     let median = medians.get(medians.len() / 2).copied().unwrap_or(0);
-    Ok(RunOut { all, worst, median, from_vram, speed, cpu_us })
+    Ok(RunOut { all, worst, median, from_vram, speed, cpu_us, split: split_all, shadow_changed })
 }
 
 /// One position on the board for `kronos_gen::Generation`, and the 4 operations of cyber-gpu's diagnosis
@@ -703,6 +732,15 @@ struct BoardRunner<'r, 'b, V: Mmio + ?Sized, K: Clock + ?Sized> {
     argmaxes: Vec<usize>,
     /// P6-95 (C-142): the speed counters (upload + every position).
     speed: ks::Speed,
+    /// P6-97 (C-145 point 2): what was last written in the launch slots (`kronos --gpu` only): a token writes (and reads
+    /// back) only the words that changed. Forgotten after any error and after any other write through `TokenIo::write`.
+    shadow: Option<kf::WriteShadow>,
+    /// The slot pieces written under the shadow (VRAM address → bytes), read back once after the texts.
+    shadow_ranges: alloc::collections::BTreeMap<u64, usize>,
+    /// `kronos --gpu`: the routine journal rows go to the stick once per token (C-145 point 1).
+    fast: bool,
+    /// P6-97 (C-146): every position of the current text, split (the CPU check is added after).
+    split: Vec<kf::TokenSplit>,
 }
 
 impl<V: Mmio + ?Sized, K: Clock + ?Sized> BoardRunner<'_, '_, V, K> {
@@ -714,6 +752,68 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> BoardRunner<'_, '_, V, K> {
             .map(|m| m.pa + (va - m.va))
             .ok_or(bad("I14: adresa GPU in afara zonelor pasului"))
     }
+
+    /// P6-97: after the texts, the slot pieces written under the shadow are read back once and compared with it: a word
+    /// the board changed would mean the shadow is wrong (C-145 §6). Returns how many words differ (`None`: no shadow).
+    /// The shadow is dropped either way (the next run starts whole).
+    fn shadow_check(&mut self) -> GpuResult<Option<usize>> {
+        let Some(sh) = self.shadow.take() else { return Ok(None) };
+        let ranges = core::mem::take(&mut self.shadow_ranges);
+        let GpuState { zone, .. } = &*self.st;
+        let mut vw = nvidia_ga104::vram_window::VramWindow::new(&mut *self.vbar, &mut *self.journal, self.permit, zone.vram_size, &zone.protected)?;
+        let mut changed = 0usize;
+        let mut r: GpuResult<()> = Ok(());
+        'all: for (&pa, &len) in &ranges {
+            let mut got = Vec::with_capacity(len);
+            for i in 0..(len / 4) as u64 {
+                match vw.read_u32(pa + 4 * i) {
+                    Ok(v) => got.extend_from_slice(&v.to_le_bytes()),
+                    Err(e) => {
+                        r = Err(e);
+                        break 'all;
+                    }
+                }
+            }
+            match sh.changes(pa, &got) {
+                Ok(c) => changed += c.iter().map(|(_, b)| b.len() / 4).sum::<usize>(),
+                Err(e) => {
+                    r = Err(e);
+                    break;
+                }
+            }
+        }
+        let back = vw.restore();
+        r?;
+        back?;
+        Ok(Some(changed))
+    }
+}
+
+/// P6-97 (C-145 point 2): writes `bytes` at `pa` through the shadow: only the words that changed since the last token
+/// (each written and read back as before), then remembered. Any error forgets the shadow. `bytes` is padded to whole
+/// words with zeros, exactly as `put_bytes` writes it.
+fn shadow_put<W: nvidia_ga104::gsp::work_queue::ChannelMemory + ?Sized>(
+    w: &mut W,
+    sh: &mut kf::WriteShadow,
+    ranges: &mut alloc::collections::BTreeMap<u64, usize>,
+    pa: u64,
+    bytes: &[u8],
+) -> GpuResult<()> {
+    let mut b = bytes.to_vec();
+    b.resize(bytes.len().next_multiple_of(4), 0);
+    let r = (|| {
+        for (at, range) in sh.changes(pa, &b)? {
+            put_bytes(w, at, &b[range])?;
+        }
+        sh.remember(pa, &b)
+    })();
+    if r.is_err() {
+        sh.forget();
+    } else {
+        let e = ranges.entry(pa).or_insert(0);
+        *e = (*e).max(b.len());
+    }
+    r
 }
 
 impl<V: Mmio + ?Sized, K: Clock + ?Sized> kd::TokenIo for BoardRunner<'_, '_, V, K> {
@@ -733,8 +833,13 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> kd::TokenIo for BoardRunner<'_, '_, V,
             let j = (first_slot + i) as u64;
             let (cb_va, cb_pa) = (self.launches.va + 512 * j, self.launches.pa + 512 * j);
             let pv = prog_va(la.prog).ok_or(bad("I14: program necunoscut"))?;
-            put_bytes(w, cb_pa, &la.cbuf)?;
-            put_bytes(w, cb_pa + 256, &la.qmd(pv, cb_va)?)?;
+            if let Some(sh) = self.shadow.as_mut() {
+                shadow_put(w, sh, &mut self.shadow_ranges, cb_pa, &la.cbuf)?;
+                shadow_put(w, sh, &mut self.shadow_ranges, cb_pa + 256, &la.qmd(pv, cb_va)?)?;
+            } else {
+                put_bytes(w, cb_pa, &la.cbuf)?;
+                put_bytes(w, cb_pa + 256, &la.qmd(pv, cb_va)?)?;
+            }
             qmds.push(cb_va + 256);
         }
         put_bytes(w, self.rec.pa, &alloc::vec![0u8; 16 * (n + 1)])?;
@@ -784,6 +889,10 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> kd::TokenIo for BoardRunner<'_, '_, V,
 
     fn write(&mut self, va: u64, words: &[u32]) -> GpuResult<()> {
         let pa = self.pa_of(va, 4 * words.len() as u64)?;
+        // P6-97: a write from the diagnosis may land in the launch slots: the shadow no longer knows them.
+        if let Some(sh) = self.shadow.as_mut() {
+            sh.forget();
+        }
         let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
         put_bytes(self.st.mem.writer_mut(), pa, &bytes)
     }
@@ -806,6 +915,7 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
             alloc::vec![kl::copy_launch(vas.logits, self.host_logits.va, self.logits_bytes)?]
         };
         let host_t0 = crate::time::since_boot_us();
+        let journal_t0 = super::gpu_i6::JOURNAL_US.load(core::sync::atomic::Ordering::Relaxed);
         kd::send_token(self, &weights, vas, tok, pos, way, &extra)?;
         *self.tokens_done += 1;
         let logits: Vec<f32> = if self.from_vram {
@@ -822,9 +932,27 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
         self.last_logits = logits.clone();
         let (start_ns, end_ns, busy_ns) = self.timing.unwrap_or((0, 0, 0));
         let out = TokenOutput { logits, start_ns, end_ns, busy_ns };
+        // P6-97 (C-145 point 1): the routine rows of this token go to the stick now, inside the token's time.
+        if self.fast {
+            self.journal.flush_live();
+        }
         // P6-95: the OS clock from the first launch written to the logits read (without the CPU check, C-142 point 3).
         let host = host_t0.zip(crate::time::since_boot_us()).map(|(a, b)| b.saturating_sub(a));
         let _ = self.speed.add_token(pos, &out, host); // a board clock that went back is counted by Generation itself
+        if self.fast {
+            // P6-97 (C-146): the split. The board's span is on the board's clock: never more than the OS's own span
+            // of the same token (the two clocks are not the same clock).
+            let host_us = host.unwrap_or(0);
+            let journal_us = super::gpu_i6::JOURNAL_US.load(core::sync::atomic::Ordering::Relaxed).saturating_sub(journal_t0);
+            self.split.push(kf::TokenSplit {
+                pos,
+                host_us,
+                board_us: (end_ns.saturating_sub(start_ns) / 1000).min(host_us),
+                journal_us: journal_us.min(host_us),
+                screen_us: 0, // nothing is printed while a token runs (the text is shown at the end)
+                check_us: 0,
+            });
+        }
         Ok(out)
     }
 }
@@ -971,8 +1099,13 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
     journal.push(Event::text(KG_MODEL, name.as_bytes()));
     journal.push(Event::Value { what: KG_ASKED, value: job.n as u32 });
     let runs = [Run { name: String::from("kronos --gpu"), prompt: job.prompt.clone(), steps: job.n, argmax: None, greedy: None }];
-    let out = run_model(p, vbar, clock, journal, st, l, &m, &runs, permit, lines, doorbell, tokens_done, subs, &mut Some(way))
-        .map_err(|e| format!("{}", e))?;
+    // P6-97 (C-145 point 1): the routine rows (window moves, TLB invalidates, doorbell and their notes) are held in
+    // memory during the upload and the text and go to the stick once per token; every other row as before.
+    journal.set_routine(Some(kf::gen_routine(&GEN_NOTES)));
+    let run = run_model(p, vbar, clock, journal, st, l, &m, &runs, permit, lines, doorbell, tokens_done, subs, &mut Some(way));
+    let live = journal.live_stats();
+    journal.set_routine(None);
+    let out = run.map_err(|e| format!("{}", e))?;
     if out.from_vram {
         return Err(String::from("copierea logit-urilor in RAM e gresita (logit-urile citite din VRAM)"));
     }
@@ -999,6 +1132,27 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
         x100(out.speed.summary().host_per_s_x100),
         cpu_med.map_or(String::from("?"), |v| format!("{}", v)),
         x100(cpu_x100)
+    ));
+    // P6-97 (C-146): the time per token, split (board / driver / journal / screen + the CPU check), in the gpu journal
+    // (`kt …`) and in the output (so also in the cycle's report).
+    let label = if permit.is_some() { "placa" } else { "SIMULARE" };
+    let mut split = kf::TimeSplit::new();
+    for t in &out.split {
+        let _ = split.add(*t); // parts are clamped to the whole in `run_token`
+    }
+    split.journal(journal);
+    if let Some(c) = out.shadow_changed {
+        journal.push(Event::Value { what: KT_SHADOW, value: c.min(u32::MAX as usize) as u32 });
+        lines.push(format!(
+            "{}: kronos --gpu: umbra lansarilor: {}",
+            p,
+            if c == 0 { String::from("recitite la final, identice (placa nu rescrie sloturile)") } else { format!("{} cuvinte schimbate de placa in sloturi (umbra NU e sigura)", c) }
+        ));
+    }
+    lines.extend(split.lines(label).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
+    lines.push(format!(
+        "{}: kronos --gpu: jurnalul pe stick: {} randuri de rutina tinute in memorie, scrise in {} goliri (o data pe simbol)",
+        p, live.held, live.flushes
     ));
     lines.push(format!("{}: kronos --gpu: {} simboluri generate pe placa, toate identice cu procesorul (niciun simbol diferit)", p, made));
     Ok(all.pop().unwrap_or_default())

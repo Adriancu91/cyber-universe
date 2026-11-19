@@ -4,6 +4,8 @@
 #   - 001 = `kronos --gpu-sim` with `DA`: the whole chain, Bus Master on/off around every write, I14 = the control model
 #     (1 upload + 2 ladder probes of C-139 + 29 tokens) + the request (1 upload + 5 prompt positions + 4 greedy = 9 tokens) = 42 work-channel
 #     doorbells, nothing but the VRAM window, the TLB invalidate and the doorbell in I14, no write after it.
+#   - P6-97 (C-146): the request's routine rows are held in memory and written once per token: the journal still has every
+#     access (the same counts as above), plus the `kt` rows (time per token, split) and the shadow read back = 0.
 set -uo pipefail
 IMG="${1:?disk image}"
 dump() { MTOOLS_SKIP_CHECK=1 mtype -i "$IMG@@1M" "::/raport/$1" 2>/dev/null; }
@@ -38,5 +40,10 @@ assert val("kg simboluri cerute") == [5] and val("kg simboluri generate pe placa
 assert val("kg primul simbol diferit de procesor (pozitia; ffffffff = niciunul)") == [0xFFFFFFFF], "kg: niciun simbol diferit"
 assert val("kv sursa (0 SIMULARE, 1 placa)") == [0] and val("kv simboluri") == [9], ("kv", val("kv simboluri"))
 assert val("kv urcare bucati") == [1] and len(val("kv simboluri pe secunda x100 (motorul procesorului)")) == 1, "kv: urcarea, motorul procesorului"
+# P6-97 (C-146): the time per token, split (`kt …`), inside I14; the launch slots read back = the shadow.
+kt = [i for i, b in enumerate(ev) if b.startswith("valoare kt ")]
+assert kt and i13[0] < kt[0] and kt[-1] < i14[0], "randurile kt trebuie sa fie in I14"
+assert val("kt simboluri") == [9] and len(val("kt median jurnal (us)")) == 1 and val("kt median ecran (us)") == [0], "kt: 9 simboluri, jurnal, ecran 0"
+assert val("kt umbra lansarilor: cuvinte schimbate de placa in sloturi (0 = umbra corecta)") == [0], "kt: umbra lansarilor"
 print(f"[after-kronos-gpu] ok: un singur lant, {len(gsp)} scrieri intre Bus Master pornit/oprit, I14 + cererea = {bells} sonerii, nimic dupa")
 PY
