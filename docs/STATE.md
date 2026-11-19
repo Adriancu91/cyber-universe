@@ -3,6 +3,13 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-19 ~09:40–12:30 UTC (11:40–14:30 ora RO) — sesiune programată, fără Adrian — **comanda C-146 → P6-97 GATA** → **Release `os-308`**; „OPRIT (regula 5)” ridicat (comandă nouă de la Adrian + primul ciclu automat `os-307` a trecut).
+  - `git pull`: clonele pe HEAD detașat → `checkout main` + pull curat; hub-ul superficial → `fetch --unshallow` + fast-forward; nimic șters, nimic forțat. `env-check --install` OK.
+  - Hub: primul ciclu automat `os-307` (08:43–08:56 RO, fără Adrian) a trecut cap-coadă: lanțul I0→I14 + Kronos #513, 16 simboluri pe placă identice cu procesorul; viteza 43,93 simb/s doar lansările, 3,10 cu driverul. C-145 la Cyber-GPU gata (`e74b418`: jurnalul sincronizat pe stick la fiecare rând ~246 ms + rescrierea lansărilor ~41 ms pe simbol; piesele de reparat, oprite implicit). **C-146** (Adrian, 08:57): leagă-le → `os-308`.
+  - **P6-97:** cyber-gpu `e74b418`; doar la `kronos --gpu`: rândurile de rutină ale jurnalului (fereastra, invalidarea, soneria + notele lor) ținute în memorie și scrise o dată pe simbol (orice alt rând golește tot pe loc); umbra sloturilor de lansare (se scriu doar cuvintele schimbate; recitire finală = rândul `kt umbra`); timpul pe simbol pe bucăți (`kt …` în gpu-jurnal + 2 rânduri în ieșire/raportul ciclului: placă / driver / jurnal / ecran, apoi verificarea pe procesor). `kg`/`kv`, comanda și verificarea pe procesor (motorul de referință, între simboluri) neschimbate → cifrele se compară cu `os-307`. Nimic schimbat în ce primește placa.
+  - Teste: toată suita locală 111/0/1; CI run 44512180282: prima dată a picat doar `analiza` (dosarul „-2” al celei de-a doua rulări din același minut; cele două rulări au căzut în minute diferite — fără legătură cu P6-97), reluat jobul → verde → `os-308` (commit `0822b5c`).
+  - **Pentru centrul de comandă:** ciclul automat cu `os-308` (ziua 08:00–18:00, fără antrenare Kronos): `bucla-automata.ps1 pregateste -DosarRelease <os-308> -TestPlaca`. Așteptat (estimare Cyber-GPU, nemăsurat): „cu driverul” ~20–22 simb/s în loc de 3,10; cu verificarea de referință între simboluri tot ~0,25 (neschimbată intenționat).
+  - **Pentru sesiunea următoare:** citește jurnalul ciclului `os-308` (`rezultate/os-automat/…`: rândurile `kt`, `kt umbra` = 0, `kg`/`kv`). Pași posibili după cifre (doar cu „da”-ul lui Adrian): verificarea cu motorul optimizat al OS-ului sau `run_check_after` (C-145 punctul 3), golire la 16 simboluri. Coada fără Adrian e iar goală; regula 5 numără de la această sesiune.
 - 2026-11-19 ~06:40–06:45 UTC (08:40–08:45 ora RO) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5, rămâne); nicio schimbare de cod.
   - `git pull`: clona OS pe HEAD detașat → `checkout main` + pull curat; clona hub veche (superficială) mutată deoparte local și hub-ul clonat din nou; nimic șters pe GitHub, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
   - Hub: de la 03:42 UTC doar starea Cyber-GPU (sesiunea 115) și starea Kronos → nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/` (primul ciclu `os-307` n-a rulat încă). CI: ultima rulare (os-307, run 44391087032) verde.
@@ -1585,6 +1592,8 @@
   lanțurile cu `openssl verify` — zero diferențe. CI verde pe toate commit-urile terminate (ultimele încă rulau la final).
 
 ## Următoarea sarcină
+**19 nov 14:30 RO:** nicio sarcină liberă fără Adrian după P6-97 (`os-308`). Se așteaptă jurnalul ciclului automat `os-308`; orice pas nou de viteză (C-145 punctul 3) doar cu o comandă nouă.
+
 Nicio sarcină liberă fără Adrian. Așteptăm: (1) pe laptopul ASUS `gpu tur --trezire` (C-116) și, pe același stick, `analiza` (C-117, `os-299`/`os-300`) + `trimite`; (2) un `inventory.redacted.json` din UHL-ul de Windows al lui Adrian, pentru comparația schemei; (3) testul pe workstation cu `os-298`+ (`gpu lant`); (4) `log mmio` real → P6-12 pasul 2.
 
 (Istoric, mai jos:)
