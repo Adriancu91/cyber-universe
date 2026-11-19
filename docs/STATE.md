@@ -3,6 +3,10 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-19 ~15:40–15:45 UTC (17:40–17:45 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
+  - `git pull`: clona OS pe HEAD detașat → `checkout main` + pull curat; hub-ul superficial → `fetch --unshallow` + fast-forward; nimic șters, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
+  - Hub: de la 12:42 UTC doar `rezultate/2026-11-19-workstation-os308-automat/REZULTAT.md` (centrul de comandă confirmă ciclul `os-308`: 10,99 simb/s, 16 simboluri identice; jurnal ~74 ms din ~87 ms pe simbol), prezentarea și starea Kronos → nicio comandă `nou` pentru `cyber-universe`. CI: ultima rulare (os-308, run 44512180282) verde.
+  - Coada fără Adrian e goală (P6-12 pasul 2 după `log mmio` real; P6-10/P3-10 cu Adrian; P5-07 BLOCAT). Propunerea `idei/2026-11-19_kronos-placa-mai-rapid.md` așteaptă „da”-ul lui Adrian. **Regula 5:** a doua sesiune fără sarcină terminată după P6-97 (2 din 3).
 - 2026-11-19 ~12:40–12:50 UTC (14:40–14:50 ora RO) — sesiune programată, fără Adrian — **ciclul automat `os-308` a trecut pe placă**; nicio schimbare de cod.
   - `git pull`: clonele pe HEAD detașat → `checkout main` + pull curat; hub-ul superficial → `fetch --unshallow` + fast-forward; nimic șters, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
   - Hub: ciclul automat `os-308` (14:37 RO, `ciclu-auto-20261119-1437.txt` + `gpu-jurnal-012/013.txt`): WPR2 era jos (Booter Unload nu a fost nevoie), lanțul I0→I14 + #513 trec; 16 simboluri pe placă identice cu procesorul; abaterea 1,75e-5. **Viteza:** lansările 43,82 simb/s (ca la os-307), **cu driverul 10,99 simb/s** (os-307: 3,10); `kt` median pe simbol: placă 22 958 us, driver 0, **jurnal 73 917 us**, ecran 0; verificarea pe procesor 3 851 098 us/poziție → 0,25 simb/s cu ea; `kt umbra` = 0 (umbra corectă); 646 rânduri de rutină în 24 goliri. Mică nepotrivire de rotunjire: `kv` dă 10,99, suma `kt` dă 11,51 (medii diferite) — de urmărit, nu e o eroare.
