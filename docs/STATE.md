@@ -3,6 +3,11 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-19 ~00:40–00:45 UTC (02:40–02:45 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
+  - `git pull`: clonele pe HEAD detașat → `checkout main` + pull curat; nimic șters, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
+  - Hub: de la 21:41 UTC doar starea Cyber-GPU (sesiunea 114, nimic nou) și starea Kronos → nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/` (primul ciclu `os-307` n-a rulat încă; S126 ține placa). CI: ultima rulare (os-307, run 44391087032) verde.
+  - Coada fără Adrian e goală (P6-12 pasul 2 după `log mmio` real; P6-10/P3-10 cu Adrian; P5-07 BLOCAT). **Regula 5:** a doua sesiune fără sarcină terminată după P6-95/P6-96 (2 din 3).
+  - **Pentru Adrian (neschimbat):** când placa e liberă (după S126): stick-ul de test cu `os-307` + `kronos\kronos_513_q8_0.kgr` + `hub\permite-test-placa` → `bucla-automata.ps1 pregateste -DosarRelease <os-307> -TestPlaca` (sau manual: pornire rece → `run kronos --gpu --n 16 Buna ziua` → DA → `trimite`).
 - 2026-11-18 ~21:40–21:50 UTC (23:40–23:50 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
   - `git pull`: clonele pe HEAD detașat → `checkout main` + pull curat; nimic șters, nimic forțat. `env-check --install` nerulat (nicio sarcină de cod).
   - Hub: de la 21:13 UTC doar C-144 (pentru `kronos`: S126 pornește în noaptea asta pe placă) și starea Kronos → nicio comandă `nou` pentru `cyber-universe`; niciun jurnal nou în `rezultate/` (primul ciclu `os-307` n-a rulat încă). CI: ultima rulare (os-307, run 44391087032) verde.
