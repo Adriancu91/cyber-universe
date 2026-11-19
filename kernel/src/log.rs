@@ -101,6 +101,22 @@ pub fn _log(level: Level, args: fmt::Arguments) {
     });
 }
 
+/// P6-98 (C-148 point 1): an INFO line kept only in the ring (`log` in the shell shows it), not sent to the serial
+/// port or the screen — for the routine rows of the gpu journal, which cost ~4 ms each on those outputs (os-308).
+pub fn ring_only(args: fmt::Arguments) {
+    let mut line = LineBuf { buf: [0; 256], len: 0 };
+    match crate::time::uptime_ms() {
+        Some(ms) => {
+            let _ = write!(line, "[{:>4}.{:03}] ", ms / 1000, ms % 1000);
+        }
+        None => {
+            let _ = line.write_str("[   -.---] ");
+        }
+    }
+    let _ = write!(line, "{:<5} {}\n", Level::Info.label(), args);
+    remember(line.as_str());
+}
+
 /// The last 64 KiB of the log, kept in memory for `log` in the shell (no serial port on a laptop).
 const RING: usize = 64 * 1024;
 struct Ring {

@@ -65,7 +65,25 @@ struct Live {
     /// stick, or `Journal::flush_live`; empty outside a routine stretch.
     held: String,
     held_lines: usize,
+    /// P6-98 (C-148 point 1): `Journal::flush_live` calls (one per token) since the held rows last went to the stick,
+    /// and when that was (us since boot): the held rows are written at most every `FLUSH_TOKENS` calls or `FLUSH_US`.
+    flush_calls: usize,
+    last_write_us: u64,
 }
+
+/// P6-98 (C-148 point 1, Adrian: "un rând important nu se pierde niciodată"): the routine rows held in memory go to the
+/// stick at the latest every 16 tokens or every second (checked at each token), and always before any row that must
+/// be on the stick (`Flush::Now`: steps, `kg`/`kv`/`kt`, reads, errors), when the command ends (`live_close`) and on a
+/// panic (`panic_flush`). More than `HELD_MAX` held rows are written at once (memory bound).
+pub(super) const FLUSH_TOKENS: usize = 16;
+pub(super) const FLUSH_US: u64 = 1_000_000;
+const HELD_MAX: usize = 1024;
+
+/// P6-98: how many times held rows went to the stick (writes + syncs) since boot (for the `kronos --gpu` summary).
+pub(super) static HELD_WRITES: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Set while the live journal writes to the stick: a panic in the middle of that write does not try it again.
+static WRITING: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 /// P6-97 (C-145, `kt` rows): microseconds spent inside the live journal (formatting, writing, syncing the stick).
 pub(super) static JOURNAL_US: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
@@ -110,7 +128,7 @@ pub(super) fn live_open(what: &str) -> Result<String, String> {
         let head = format!("# jurnal gpu P6-40, cyber-gpu {}, comanda: {}\n", CYBER_GPU_REV, what);
         fs::write(&path, 0, head.as_bytes()).map_err(|e| format!("{}: {}", path, e.message()))?;
         fs::flush(&path).map_err(|e| format!("{}: sincronizarea stick-ului dupa antet: {} (motivul in `log usb`)", path, e.message()))?;
-        *LIVE.lock() = Some(Live { path: path.clone(), off: head.len() as u64, lines: 0, failed: None, held: String::new(), held_lines: 0 });
+        *LIVE.lock() = Some(Live { path: path.clone(), off: head.len() as u64, lines: 0, failed: None, held: String::new(), held_lines: 0, flush_calls: 0, last_write_us: crate::time::since_boot_us().unwrap_or(0) });
         crate::info!("gpu: jurnalul pe loc: {}", path);
         return Ok(path);
     }
@@ -119,11 +137,16 @@ pub(super) fn live_open(what: &str) -> Result<String, String> {
 
 /// `Journal::with_live_sink` target. `Flush::Now` (every row outside a routine stretch — the same as before P6-97): the
 /// rows held so far and this one are appended to the stick file in ONE write and flushed — before the library makes its
-/// next access, everything up to this one is on the stick. `Flush::Later` (P6-97, C-145: a routine row of `kronos --gpu`,
-/// at most `kronos_fast::GEN_MAX_PENDING` of them): the row, with the time it happened, waits in memory.
+/// next access, everything up to this one is on the stick. `Flush::Later` (P6-97, C-145: a routine row of `kronos --gpu`):
+/// the row, with the time it happened, waits in memory. P6-98 (C-148 point 1): a held row is no longer printed on the
+/// serial port and the screen (~4 ms each in os-308), only kept in the log's ring, so `log` still shows it.
 fn live_line(e: &Event, flush: Flush) {
     let t0 = crate::time::since_boot_us();
-    crate::info!("gpu: jurnal: {}", e);
+    if flush == Flush::Now {
+        crate::info!("gpu: jurnal: {}", e);
+    } else {
+        crate::log::ring_only(format_args!("gpu: jurnal: {}", e));
+    }
     let us = t0.unwrap_or(0);
     let line = format!("[{:5}.{:06}] gpu: {}\n", us / 1_000_000, us % 1_000_000, e);
     {
@@ -132,7 +155,7 @@ fn live_line(e: &Event, flush: Flush) {
             if l.failed.is_none() {
                 l.held.push_str(&line);
                 l.held_lines += 1;
-                if flush == Flush::Now {
+                if flush == Flush::Now || l.held_lines >= HELD_MAX {
                     write_held(l);
                 }
             }
@@ -141,16 +164,40 @@ fn live_line(e: &Event, flush: Flush) {
     count_journal_time(t0);
 }
 
-/// `LiveSink::flush`: the held routine rows go to the stick now (P6-97: once per token, and at the end of the stretch).
+/// `LiveSink::flush` (the library calls it once per token, P6-97). P6-98 (C-148 point 1): the held routine rows go to
+/// the stick only every `FLUSH_TOKENS` calls or after `FLUSH_US` since the last write; otherwise they keep waiting
+/// (the next `Flush::Now` row, `live_close` and `panic_flush` write them anyway).
 fn live_flush() {
     let t0 = crate::time::since_boot_us();
     {
         let mut live = LIVE.lock();
         if let Some(l) = live.as_mut() {
-            write_held(l);
+            l.flush_calls += 1;
+            let now = t0.unwrap_or(u64::MAX);
+            if l.flush_calls >= FLUSH_TOKENS || now.saturating_sub(l.last_write_us) >= FLUSH_US {
+                write_held(l);
+            }
         }
     }
     count_journal_time(t0);
+}
+
+/// P6-98 (C-148 point 1): the panic handler's last act for the gpu journal — the rows still held go to the stick.
+/// Only when nothing is in the way: the live journal free, no journal write already under way (a panic inside it) and
+/// the file systems free (a panic inside the stick driver cannot be helped from here). Never waits for a lock.
+pub fn panic_flush() {
+    if WRITING.load(core::sync::atomic::Ordering::Relaxed) || !crate::fs::vfs::idle() {
+        return;
+    }
+    if let Some(mut live) = LIVE.try_lock() {
+        if let Some(l) = live.as_mut() {
+            if !l.held.is_empty() {
+                let n = l.held_lines;
+                write_held(l);
+                crate::error!("gpu: jurnalul pe loc: {} randuri tinute scrise pe stick inainte de oprire ({})", n, l.path);
+            }
+        }
+    }
 }
 
 /// The held rows, appended in one write and flushed.
@@ -160,16 +207,21 @@ fn write_held(l: &mut Live) {
     }
     let text = core::mem::take(&mut l.held);
     let n_lines = core::mem::replace(&mut l.held_lines, 0);
+    l.flush_calls = 0;
+    l.last_write_us = crate::time::since_boot_us().unwrap_or(0);
     if l.failed.is_some() {
         return;
     }
+    WRITING.store(true, core::sync::atomic::Ordering::Relaxed);
     let r = fs::write(&l.path, l.off, text.as_bytes())
         .map_err(|e| ("scriere", e))
         .and_then(|n| fs::flush(&l.path).map(|_| n).map_err(|e| ("sincronizare", e)));
+    WRITING.store(false, core::sync::atomic::Ordering::Relaxed);
     match r {
         Ok(n) => {
             l.off += n as u64;
             l.lines += n_lines;
+            HELD_WRITES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         }
         Err((step, err)) => l.failed = Some(format!("randul {} ({}): {}", l.lines + 1, step, err.message())),
     }
@@ -187,6 +239,36 @@ fn live_close() -> Option<(String, usize, Option<String>)> {
         write_held(&mut l); // P6-97: nothing held is lost when a command ends
         (l.path, l.lines, l.failed)
     })
+}
+
+/// P6-98 (C-148 point 1), scenario `jurnal-panica`: the batching and the panic path on the test disk. A row that must
+/// be on the disk is there at once; 15 routine rows and 3 token flushes leave them in memory (fewer than 16 tokens,
+/// less than a second); the 16th flush writes them; then 5 more routine rows are held and the kernel panics:
+/// `tools/after-jurnal-panica.sh` finds all 22 rows on the disk.
+#[cfg(feature = "test-jurnal-panica")]
+pub fn self_test_panic() -> ! {
+    let path = live_open("test jurnal-panica").expect("test: jurnalul pe loc nu se deschide pe /disk");
+    let len = |path: &str| fs::read_all(path).map(|b| b.len()).unwrap_or(0);
+    let row = |i: u32| Event::Value { what: "test jurnal-panica rand", value: i };
+    live_line(&Event::Note("test jurnal-panica: inceput"), Flush::Now);
+    let after_now = len(&path);
+    for i in 0..15 {
+        live_line(&row(i), Flush::Later);
+    }
+    for _ in 0..3 {
+        live_flush();
+    }
+    assert!(len(&path) == after_now, "test: randurile de rutina au ajuns pe disc inainte de 16 simboluri");
+    for _ in 3..FLUSH_TOKENS {
+        live_flush();
+    }
+    assert!(len(&path) > after_now, "test: randurile de rutina nu au ajuns pe disc la 16 simboluri");
+    crate::info!("test: jurnal-panica: 15 randuri tinute, scrise la a 16-a golire");
+    for i in 15..20 {
+        live_line(&row(i), Flush::Later);
+    }
+    crate::info!("test: jurnal-panica: 5 randuri tinute, urmeaza panica");
+    panic!("panica intentionata de test cu randuri tinute in jurnalul gpu");
 }
 
 /// The journal of one command: live on the stick when `path` is set, in memory only otherwise.

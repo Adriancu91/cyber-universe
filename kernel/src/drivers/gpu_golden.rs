@@ -334,6 +334,47 @@ pub(super) fn channel_step<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized
     }
 }
 
+/// P6-98 (C-147 stage 0 (c), C-148 point 3): at the end of the chain — after `i14-simbol` and `kronos --gpu`, with their
+/// rows already on the stick — the board's current performance state is READ once on the work channel's client and
+/// subdevice (`PERF_GET_CURRENT_PSTATE`, nothing set), one `ks …` row. A refusal by GSP-RM is a row (`8000xxxx`), not a
+/// failure of the chain; only a transport error or a reply for another command is an error. The levels and the
+/// temperature have no documented way in 570.144 (cyber-gpu `docs/C-147_ETAPA0.md` §2): a row says so.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn pstate_step<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    bar: &mut B,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    prep: &mut I7Prep,
+    st: &mut GpuState,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    poll: impl FnMut(&mut dyn SharedMem),
+) -> GpuResult<()> {
+    use nvidia_ga104::gsp::perf::{self as gp, Pstate, When};
+    let Some((u, _)) = st.space.as_ref() else { return Err(GpuError::InvalidArgument("ks: lipseste canalul de lucru")) };
+    let sent = gp::encode_get_pstate(u.client, u.subdevice);
+    let GpuState { pending, zone, rm_calls, vram_words, .. } = st;
+    let reply = {
+        let mut t = OsRm { bar, vbar: &mut *vbar, journal: &mut *journal, permit, prep, clock, poll, zone, pending, calls: rm_calls, words: vram_words };
+        t.call(nvidia_ga104::gsp::rpc::function::GSP_RM_CONTROL, &sent)
+    }?;
+    let ps = gp::read_pstate(&sent, &reply)?;
+    gp::journal_pstate(journal, When::End, ps);
+    journal.push(Event::Note(gp::rows::NO_LEVELS));
+    lines.push(format!(
+        "{}: ks: starea de performanta a placii la final: {} (doar citire; nivelurile si temperatura nu au cale documentata)",
+        p,
+        match ps {
+            Pstate::P(n) => format!("P{}", n),
+            Pstate::Odd(m) => format!("masca neobisnuita {:#x}", m),
+            Pstate::Refused(st) => format!("refuzata de GSP-RM (NV_STATUS {:#x})", st),
+        }
+    ));
+    Ok(())
+}
+
 /// P6-91/P6-92: the I9 choice of `gpu lant --i9 ...`. `Default` = what os-302/os-303 sent without the option.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum I9Choice {

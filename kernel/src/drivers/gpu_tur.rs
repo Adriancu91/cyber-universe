@@ -456,6 +456,17 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
                 _ => gpu_i14::token_step(p, &mut vf, &mut clock, j, st, l, gpu_i14::MIC_BOARD, Some(&permit), &mut lines, &mut bell),
             };
             refused += vf.refused + db.refused;
+            // P6-98 (C-148 point 3): the board's performance state, read once at the end of the chain (after I14 passed).
+            if s.id == "i14-simbol" && r.is_ok() {
+                if let Some(prep) = i7.last_mut() {
+                    let mut rw = gpu_i6::hw::GspWriteWindow::new(bar0);
+                    let mut vf = gpu_i6::hw::VramFence::new(bar0);
+                    if let Err(e) = gpu_golden::pstate_step(p, &mut rw, &mut vf, &mut clock, j, prep, st, Some(&permit), &mut lines, |_| {}) {
+                        lines.push(format!("{}: ks: starea de performanta necitita: {}", p, e));
+                    }
+                    refused += rw.refused + vf.refused;
+                }
+            }
             r
         }
         #[cfg(feature = "gpu-scrie")]
@@ -1059,6 +1070,14 @@ pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: sup
                 "{}: modelul GPU: {} sonerii in total, {} lansari, {} scrieri in alte registre",
                 p, gpu.rung, gpu.launches, vram.stray_writes.len() - stray
             ));
+            // P6-98 (C-148 point 3): the performance state at the end of the chain, as on the board (the RM model answers).
+            if s.id == "i14-simbol" && r.is_ok() {
+                if let (Some(prep), Some(peer)) = (i7p.as_mut(), sim_peer.as_mut()) {
+                    if let Err(e) = gpu_golden::pstate_step(p, &mut g, &mut vram, &mut clock, j, prep, st, None, &mut lines, |m| peer.serve(m, &mut rm)) {
+                        lines.push(format!("{}: ks: starea de performanta necitita: {}", p, e));
+                    }
+                }
+            }
             r
         }
         "bus-master-oprit" => match old {

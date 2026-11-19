@@ -329,6 +329,8 @@ pub(super) fn cost_step<V: Mmio + ?Sized, K: Clock + ?Sized>(
         };
         let cost = launch_cost::analyze(&b, COST_LAUNCHES, COST_FIRST)?;
         lines.push(format!("{}: I10 {}", p, cost.line()));
+        // P6-98 (C-147 stage 0 (b)): the cost of an empty launch also on the stick (`kl …` rows), not only on the screen.
+        nvidia_ga104::kronos_perf::journal_launch_cost(&cost, journal);
         Ok(cost.median_ns)
     })();
     match r {

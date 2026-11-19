@@ -26,8 +26,15 @@ i13, i14 = step("i13-strat"), step("i14-simbol")
 assert i13 and i14 and ev[i14[0]].endswith("ok"), "I14 nu a trecut"
 seg = [i for i in range(i13[0] + 1, i14[0]) if ev[i].startswith("bar0 w ")]
 off = lambda i: int(ev[i].split()[2].rstrip(":"), 16)
-assert all(off(i) in (0x1700, 0xB830A0, 0xB830A4, 0xB830B0, 0xBB0090) for i in seg), "I14: alte scrieri decat fereastra, TLB, soneria"
-bells = len([i for i in seg if off(i) == 0xBB0090])
+# P6-98 (C-148): the last thing in I14 is ONE GSP-RM read of the performance state (`ks`): its GSP-window writes come
+# after the last work-channel doorbell and before the `ks` row.
+ks = [i for i, b in enumerate(ev) if b.startswith("valoare ks stare de performanta la final")]
+assert len(ks) == 1 and i13[0] < ks[0] < i14[0], "ks: un singur rand, in I14"
+bell_i = [i for i in seg if off(i) == 0xBB0090]
+gsp_rm = [i for i in seg if 0x110000 <= off(i) <= 0x113FFF]
+assert all(bell_i[-1] < i < ks[0] for i in gsp_rm), "ks: scrierile GSP trebuie sa fie dupa ultima sonerie si inaintea randului ks"
+assert all(off(i) in (0x1700, 0xB830A0, 0xB830A4, 0xB830B0, 0xBB0090) or i in gsp_rm for i in seg), "I14: alte scrieri decat fereastra, TLB, soneria (+ citirea ks)"
+bells = len(bell_i)
 assert bells == 32, f"I14: trebuie 32 sonerii (urcarea + 2 probe + 29 simboluri), sunt {bells}"
 print(f"[after-gpu-i14d] OK: scara = proba os-305 DATE VECHI, reparatia TRECE, textele cu invalidare inaintea fiecarei lansari; I14 ok, {bells} sonerii")
 PY

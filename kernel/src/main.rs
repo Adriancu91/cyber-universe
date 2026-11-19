@@ -437,6 +437,9 @@ fn run_tests() -> ! {
     #[cfg(feature = "test-panic")]
     panic!("panica intentionata de test");
 
+    #[cfg(feature = "test-jurnal-panica")]
+    drivers::gpu_i6::self_test_panic();
+
     #[allow(unreachable_code)]
     qemu::finish_test()
 }
@@ -2511,6 +2514,8 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     if let Some(loc) = info.location() {
         error!("PANIC la {}:{}", loc.file(), loc.line());
     }
+    // P6-98 (C-148 point 1): the gpu journal's held rows go to the stick first (never waits for a lock).
+    drivers::gpu_i6::panic_flush();
     #[cfg(feature = "qemu-test")]
     qemu::exit(qemu::ExitCode::Failed);
     #[cfg(not(feature = "qemu-test"))]

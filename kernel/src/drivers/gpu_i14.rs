@@ -35,6 +35,7 @@ use nvidia_ga104::kronos_diag as kd;
 use nvidia_ga104::kronos_fast as kf;
 use nvidia_ga104::kronos_gen::{GenPlan, Generation, Stop, TokenCheck, TokenOutput, TokenRunner, VramBudget};
 use nvidia_ga104::kronos_model::{self as km, ModelVas, OwnedModel};
+use nvidia_ga104::kronos_perf as kp;
 use nvidia_ga104::kronos_speed as ks;
 use nvidia_ga104::mmu::SysMapping;
 use nvidia_ga104::push::PushBuf;
@@ -377,6 +378,25 @@ struct RunOut {
     split: Vec<kf::TokenSplit>,
     /// P6-97: words of the launch slots the board changed (read back after the texts); `None` = no shadow (control model).
     shadow_changed: Option<usize>,
+    /// P6-98 (C-147 stage 0 (a), `kronos --gpu` only): the launch times split by kind, and why a token was left out.
+    prof: kp::KindProfile,
+    prof_err: Option<String>,
+    /// P6-98 (C-147 stage 0 (d), `kronos --gpu` only): what the VRAM → VRAM copy needs after the texts.
+    copy: Option<CopyCtx>,
+}
+
+/// P6-98 (C-147 stage 0 (d)): the pieces of a `kronos --gpu` run the VRAM → VRAM copy reuses (the weights as source,
+/// the first launch slot, the records, the `copy_b128` program), kept until the `kg`/`kv`/`kt`/`kp` rows are on the stick.
+struct CopyCtx {
+    src_va: u64,
+    /// The host's copy of the bytes at `src_va` (the weights part of the uploaded blob — the board never writes it), for
+    /// the three words read back.
+    src: Vec<u8>,
+    launches: Mapping,
+    rec: Mapping,
+    maps: Vec<Mapping>,
+    sys: SysMapping,
+    copy_va: u64,
 }
 
 /// The board's pieces a run needs (P6-62 step 3: shared by the control model and a `kronos --gpu` request).
@@ -560,6 +580,9 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         shadow_ranges: alloc::collections::BTreeMap::new(),
         fast,
         split: Vec::new(),
+        launch_ns: Vec::new(),
+        prof: kp::KindProfile::new(),
+        prof_err: None,
     };
     // 3. C-139: the ladder, once, on the first token of the first control text, before the texts.
     if way.is_none() {
@@ -686,9 +709,17 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let from_vram = runner.from_vram;
     let speed = core::mem::replace(&mut runner.speed, ks::Speed::new(ks::Source::Simulare));
     let shadow_changed = runner.shadow_check()?;
+    let prof = core::mem::take(&mut runner.prof);
+    let prof_err = runner.prof_err.take();
+    drop(runner);
     medians.sort_unstable();
     let median = medians.get(medians.len() / 2).copied().unwrap_or(0);
-    Ok(RunOut { all, worst, median, from_vram, speed, cpu_us, split: split_all, shadow_changed })
+    // P6-98 (C-147 stage 0 (d)): `kronos --gpu` keeps what the VRAM → VRAM copy needs (it runs after the result rows).
+    // Only the weights (the bytes before the scratch): the scratch, the final vector and the logits are written by the board.
+    let mut src = blob.bytes;
+    src.truncate(blob.scratch as usize);
+    let copy = fast.then(|| CopyCtx { src_va: vblob.va, src, launches, rec, maps: tmaps, sys: host_logits, copy_va });
+    Ok(RunOut { all, worst, median, from_vram, speed, cpu_us, split: split_all, shadow_changed, prof, prof_err, copy })
 }
 
 /// One position on the board for `kronos_gen::Generation`, and the 4 operations of cyber-gpu's diagnosis
@@ -741,6 +772,11 @@ struct BoardRunner<'r, 'b, V: Mmio + ?Sized, K: Clock + ?Sized> {
     fast: bool,
     /// P6-97 (C-146): every position of the current text, split (the CPU check is added after).
     split: Vec<kf::TokenSplit>,
+    /// P6-98 (C-147 stage 0 (a), `kronos --gpu` only): every launch time of the current token, in order (all its
+    /// submissions), then added to `prof` by kind.
+    launch_ns: Vec<u64>,
+    prof: kp::KindProfile,
+    prof_err: Option<String>,
 }
 
 impl<V: Mmio + ?Sized, K: Clock + ?Sized> BoardRunner<'_, '_, V, K> {
@@ -865,6 +901,9 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> kd::TokenIo for BoardRunner<'_, '_, V,
         };
         *self.subs += 1;
         let t = transfer::analyze_sequence(&b, n, first)?;
+        if self.fast {
+            self.launch_ns.extend_from_slice(&t);
+        }
         let time = |k: usize| u64::from_le_bytes(b[16 * k + 8..16 * k + 16].try_into().unwrap_or([0; 8]));
         let busy: u64 = t.iter().sum();
         self.timing = Some(match self.timing {
@@ -908,6 +947,7 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
         let weights = m.weights();
         self.pos = pos;
         self.timing = None;
+        self.launch_ns.clear();
         let extra = if self.from_vram {
             Vec::new()
         } else {
@@ -932,9 +972,16 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
         self.last_logits = logits.clone();
         let (start_ns, end_ns, busy_ns) = self.timing.unwrap_or((0, 0, 0));
         let out = TokenOutput { logits, start_ns, end_ns, busy_ns };
-        // P6-97 (C-145 point 1): the routine rows of this token go to the stick now, inside the token's time.
+        // P6-97 (C-145 point 1): the routine rows of this token are handed to the stick (P6-98: written every 16 tokens
+        // or every second, `gpu_i6::live_flush`), inside the token's time.
         if self.fast {
             self.journal.flush_live();
+            // P6-98 (C-147 stage 0 (a)): this token's launch times by kind; a token that does not fit is left out (once
+            // noted), never guessed.
+            let kinds = kp::token_kinds(m.layers.len(), way.embed == kd::EmbedBy::Program, !self.from_vram);
+            if let Err(e) = self.prof.add_token(&kinds, &self.launch_ns) {
+                self.prof_err.get_or_insert_with(|| format!("pozitia {}: {} ({} lansari, {} timpi)", pos, e, kinds.len(), self.launch_ns.len()));
+            }
         }
         // P6-95: the OS clock from the first launch written to the logits read (without the CPU check, C-142 point 3).
         let host = host_t0.zip(crate::time::since_boot_us()).map(|(a, b)| b.saturating_sub(a));
@@ -1099,13 +1146,15 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
     journal.push(Event::text(KG_MODEL, name.as_bytes()));
     journal.push(Event::Value { what: KG_ASKED, value: job.n as u32 });
     let runs = [Run { name: String::from("kronos --gpu"), prompt: job.prompt.clone(), steps: job.n, argmax: None, greedy: None }];
+    let writes0 = super::gpu_i6::HELD_WRITES.load(core::sync::atomic::Ordering::Relaxed);
     // P6-97 (C-145 point 1): the routine rows (window moves, TLB invalidates, doorbell and their notes) are held in
     // memory during the upload and the text and go to the stick once per token; every other row as before.
     journal.set_routine(Some(kf::gen_routine(&GEN_NOTES)));
     let run = run_model(p, vbar, clock, journal, st, l, &m, &runs, permit, lines, doorbell, tokens_done, subs, &mut Some(way));
     let live = journal.live_stats();
     journal.set_routine(None);
-    let out = run.map_err(|e| format!("{}", e))?;
+    let mut out = run.map_err(|e| format!("{}", e))?;
+    let writes = super::gpu_i6::HELD_WRITES.load(core::sync::atomic::Ordering::Relaxed).saturating_sub(writes0);
     if out.from_vram {
         return Err(String::from("copierea logit-urilor in RAM e gresita (logit-urile citite din VRAM)"));
     }
@@ -1150,12 +1199,123 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
         ));
     }
     lines.extend(split.lines(label).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
+    // P6-98 (C-147 stage 0 (a)): the time per kind of launch (`kp …` rows + the table in the output / cycle report).
+    out.prof.journal(journal);
+    lines.extend(kind_lines(&out.prof, label).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
+    if let Some(why) = &out.prof_err {
+        lines.push(format!("{}: kronos --gpu: timpul pe fel de lansare: un simbol lasat deoparte: {}", p, why));
+    }
     lines.push(format!(
-        "{}: kronos --gpu: jurnalul pe stick: {} randuri de rutina tinute in memorie, scrise in {} goliri (o data pe simbol)",
-        p, live.held, live.flushes
+        "{}: kronos --gpu: jurnalul pe stick: {} randuri de rutina tinute in memorie (nu pe ecran), scrise pe stick in {} scrieri (la {} simboluri sau la o secunda; {} simboluri)",
+        p, live.held, writes, super::gpu_i6::FLUSH_TOKENS, live.flushes
     ));
     lines.push(format!("{}: kronos --gpu: {} simboluri generate pe placa, toate identice cu procesorul (niciun simbol diferit)", p, made));
+    // P6-98 (C-147 stage 0 (d)): the VRAM → VRAM copy, after the result rows are on the stick; its failure is a line,
+    // not a failure of `kronos --gpu` (the text is already generated and checked).
+    if let Some(ctx) = out.copy.take() {
+        if let Err(e) = vram_copy(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, &ctx) {
+            lines.push(format!("{}: kronos --gpu: copierea VRAM -> VRAM: nemasurata: {}", p, e));
+        }
+    }
     Ok(all.pop().unwrap_or_default())
+}
+
+/// P6-98 (C-147 stage 0 (a)): the table "time per kind of launch", longest first (median per token and per launch).
+fn kind_lines(prof: &kp::KindProfile, label: &str) -> Vec<String> {
+    if prof.tokens() == 0 {
+        return Vec::new();
+    }
+    let mut kinds: Vec<kp::KindTime> = prof.summary().into_iter().filter(|k| k.kind.is_some()).collect();
+    kinds.sort_by(|a, b| b.token_median_ns.cmp(&a.token_median_ns));
+    let total: u64 = kinds.iter().map(|k| k.token_median_ns).sum();
+    let mut v = alloc::vec![format!(
+        "timpul pe fel de lansare ({}, median pe simbol, {} simboluri; toate ~{} us pe simbol):",
+        label,
+        prof.tokens(),
+        total / 1000
+    )];
+    for k in kinds {
+        let name = k.kind.map_or("?", |x| x.name());
+        v.push(format!(
+            "  {:<12} {:>7} us pe simbol ({} lansari; una {} ns)",
+            name,
+            k.token_median_ns / 1000,
+            k.per_token,
+            k.launch_median_ns
+        ));
+    }
+    v
+}
+
+/// P6-98 (C-147 stage 0 (d)): one VRAM → VRAM copy of (at most) 64 MiB of the weights into a fresh scratch piece,
+/// repeated `kp::VRAM_COPY_REPEATS` times in one submission with a timestamp record after each (`copy_b128`, already on
+/// the board since I11), three words of the destination read back and compared with the host's copy; `kc …` rows.
+#[allow(clippy::too_many_arguments)]
+fn vram_copy<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    doorbell: &mut Bell<'_, V>,
+    subs: &mut u32,
+    ctx: &CopyCtx,
+) -> GpuResult<()> {
+    let bytes = kp::VramCopy::size_for(ctx.src.len() as u64);
+    let scratch = map_vram(st, bytes)?;
+    let c = kp::VramCopy::new(ctx.src_va, scratch.va, bytes, kp::VRAM_COPY_REPEATS)?;
+    let (cb_va, cb_pa) = (ctx.launches.va, ctx.launches.pa);
+    {
+        let w = st.mem.writer_mut();
+        put_bytes(w, cb_pa, &c.cbuf()?)?;
+        put_bytes(w, cb_pa + 256, &c.qmd(ctx.copy_va, cb_va)?)?;
+        put_bytes(w, ctx.rec.pa, &alloc::vec![0u8; c.record_bytes() as usize])?;
+    }
+    let first = TOKEN_FIRST + STRIDE * *subs;
+    let mut words = alloc::vec![0u32; c.words()];
+    let mut pb = PushBuf::new(&mut words);
+    c.encode(&mut pb, cb_va + 256, ctx.rec.va, first)?;
+    let nw = pb.len();
+    let repeats = kp::VRAM_COPY_REPEATS;
+    let last = first + repeats as u32;
+    let mut maps = ctx.maps.clone();
+    maps.push(scratch);
+    let sys = [ctx.sys.clone()];
+    let b = match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, repeats as u64 + 1, last, &maps, &sys, doorbell)? {
+        Ok(b) => b,
+        Err(got) => {
+            lines.push(format!("{}: kronos --gpu: copierea VRAM -> VRAM: ultima inregistrare = {:#x} (asteptat {:#x})", p, got, last));
+            return Err(GpuError::Timeout { waited_us: WAIT_US });
+        }
+    };
+    *subs += 1;
+    let s = c.analyze(&b, first)?;
+    let got = {
+        let GpuState { zone, .. } = &*st;
+        let mut vw = nvidia_ga104::vram_window::VramWindow::new(&mut *vbar, &mut *journal, permit, zone.vram_size, &zone.protected)?;
+        let spots = c.spots();
+        let r = (|| Ok::<[u32; 3], GpuError>([vw.read_u32(scratch.pa + spots[0])?, vw.read_u32(scratch.pa + spots[1])?, vw.read_u32(scratch.pa + spots[2])?]))();
+        let back = vw.restore();
+        r.and_then(|v| back.map(|_| v))?
+    };
+    let wrong = c.wrong_spots(&ctx.src, &got);
+    c.journal(&s, Some(wrong), journal);
+    lines.push(format!(
+        "{}: kronos --gpu: copierea VRAM -> VRAM: {} KiB x {}, cuvinte gresite {} din 3; cea mai rapida {} us, mediana {} us = {} MB/s ({} MB/s trafic, {} promile din 608 GB/s)",
+        p,
+        bytes >> 10,
+        repeats,
+        wrong,
+        s.min_ns / 1000,
+        s.median_ns / 1000,
+        s.copy_mb_s(),
+        s.traffic_mb_s(),
+        s.share_permille()
+    ));
+    Ok(())
 }
 
 /// The CPU engine's median time per position (us) and positions per second × 100 over all of them.

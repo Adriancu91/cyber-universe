@@ -758,7 +758,8 @@ fn on_gpu(o: &Opts, path: &str, n: usize, sim: bool, tok: Option<&Tokenizer>) ->
     let first = lines.next().unwrap_or("");
     // The chain's last lines (its result) say where it stopped.
     let rest: Vec<&str> = lines.collect();
-    for l in rest.iter().filter(|l| l.contains("kronos --gpu") || l.contains("rezultat lant")) {
+    // P6-98: also the board's performance state read at the end of the chain (`ks: …`, C-148 point 3).
+    for l in rest.iter().filter(|l| l.contains("kronos --gpu") || l.contains("rezultat lant") || l.contains(": ks: ")) {
         println!("kronos: lant: {}", l);
     }
     let per_s_x100 = rest.iter().find(|l| l.contains("kronos --gpu: generare (")).and_then(|l| speed_of(l));

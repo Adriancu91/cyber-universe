@@ -87,6 +87,11 @@ struct Mount {
 
 static MOUNTS: crate::sched::Mutex<Vec<Mount>> = crate::sched::Mutex::new(Vec::new());
 
+/// P6-98: no file-system operation is under way right now (for the panic handler, which must never wait for a lock).
+pub fn idle() -> bool {
+    MOUNTS.try_lock().is_some()
+}
+
 /// Makes `fs` visible at the directory `at` (`/` for the root file system).
 pub fn mount(at: &str, fs: Box<dyn FileSystem>) -> Result<(), FsError> {
     let at: Vec<String> = components(at)?.into_iter().map(String::from).collect();
