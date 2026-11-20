@@ -332,6 +332,37 @@ fn test(s: &mut State) -> String {
 /// P6-96: the board test of a cycle (from the hub or from the automatic list; both keys already checked): `gpu recupereaza`;
 /// a cold start is needed when it does not bring the card back (no second try); else the chain with `i9` and — when #513
 /// is on the stick — `kronos --gpu --n 16 Buna ziua` at its I14 (one chain). Returns (the whole text, the result line).
+/// P6-106 (C-147 point 4): the cycle's `kp toate`, `kc` and `kp ln1` against `os-313` (20 Nov 08:07, no boost:
+/// 22 968 us per token, 9 165 MB/s, 2 260 us), from the gpu journal of this test (`PerfGain::compare`).
+fn speed_comparison() -> String {
+    use nvidia_ga104::kronos_perf::{copy_rows, parse_journal, rows, PerfGain};
+    let Some(path) = crate::drivers::gpu_i6::last_journal() else {
+        return String::from("\n-- viteza fata de os-313: fara gpu-jurnal\n");
+    };
+    let now = String::from_utf8_lossy(&fs::read_all(&path).unwrap_or_default()).into_owned();
+    let row = |n: &str, v: u32| format!("valoare {} = {:#010x}\n", n, v);
+    let os313 = [
+        row(rows::TOKENS, 16),
+        row(rows::TOTAL, 22_968),
+        row("kp ln1 simbol (us)", 2_260),
+        row(copy_rows::KIB, 65_536),
+        row(copy_rows::COPY_MB, 9_165),
+    ]
+    .concat();
+    let g = PerfGain::compare(&parse_journal(&os313), &parse_journal(&now));
+    let f = |what: &str, x: Option<(u32, u32, u32)>| match x {
+        Some((b, a, r)) => format!("{}: os-313 {} -> acum {} ({} la mie)\n", what, b, a, r),
+        None => format!("{}: necitit (randul lipseste din jurnal)\n", what),
+    };
+    format!(
+        "\n-- viteza fata de os-313 (fara cerere de viteza; jurnalul {})\n{}{}{}",
+        path,
+        f("timpul placii pe simbol (us, kp toate)", g.token_us),
+        f("copierea VRAM (MB/s, kc)", g.copy_mb_s),
+        f("ln1 pe simbol (us, legat de ceasuri)", g.ln1_us)
+    )
+}
+
 /// Suffix of the I9 text from `board_command` when the FLR trial is asked (`test-placa … --flr-proba`).
 pub const FLR_PROBA: &str = " --flr-proba";
 
@@ -371,6 +402,8 @@ pub fn board_test(i9: &str) -> (String, String) {
         text.push_str(&format!("\n{}\n", why));
         return (text, why);
     }
+    // P6-106 (C-148 completion 1): only the cycle's test asks the board for its maximum speed (not the FLR trial's chain).
+    crate::drivers::gpu_tur::BOOST_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
     let result = if let Some(model) = k513_path() {
         if model != K513 {
             text.push_str(&format!("\n(#513 de pe discul propriu: {})\n", model));
@@ -400,6 +433,8 @@ pub fn board_test(i9: &str) -> (String, String) {
         }
         chain.iter().rev().find(|l| l.contains("rezultat lant:")).cloned().unwrap_or_else(|| String::from("(lantul nu a dat un rezultat)"))
     };
+    crate::drivers::gpu_tur::BOOST_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    text.push_str(&speed_comparison());
     if !flr_trial {
         return (text, result);
     }
@@ -507,6 +542,14 @@ pub fn self_test() {
     assert!(board_command("test-placa --i9 c125") == Some(Ok(String::from("c125"))));
     assert!(board_command("test-placa --i9 x").is_some_and(|r| r.is_err()) && board_command("test-placa DA").is_some_and(|r| r.is_err()));
     assert!(board_command("gpu lant").is_none() && board_command("test-placax").is_none());
+    // P6-106: the comparison with os-313 from a journal with the rows (Cyber-GPU's own example: twice as fast).
+    let _ = fs::create("/etc/kp-test.txt", Kind::File);
+    let rows = "x valoare kp simboluri = 0x00000010\nx valoare kp toate simbol (us) = 0x00002cdc\nx valoare kc copiere VRAM KiB = 0x00010000\nx valoare kc copiere MB/s = 0x0002cc04\n";
+    let _ = fs::write("/etc/kp-test.txt", 0, rows.as_bytes());
+    crate::drivers::gpu_i6::set_last_journal(Some(String::from("/etc/kp-test.txt")));
+    let c = speed_comparison();
+    crate::drivers::gpu_i6::set_last_journal(None);
+    assert!(c.contains("os-313 22968 -> acum 11484 (500 la mie)") && c.contains("os-313 9165 -> acum 183300 (20000 la mie)") && c.contains("ln1 pe simbol (us, legat de ceasuri): necitit"), "test: comparatia cu os-313: {}", c);
     // P6-101: the FLR trial form.
     assert!(board_command("test-placa --flr-proba") == Some(Ok(String::from("c135 --flr-proba"))));
     assert!(board_command("test-placa --i9 c133 --flr-proba") == Some(Ok(String::from("c133 --flr-proba"))));

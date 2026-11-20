@@ -774,7 +774,7 @@ fn lant(rest: &[&str]) {
     }
     let i9 = i9.unwrap_or_default();
     let rest = &opts[..];
-    if let Some(bad) = rest.iter().find(|a| !matches!(**a, "--sim" | "--eroare" | "--doar-citire" | "--date-vechi" | "--flr-proba")) {
+    if let Some(bad) = rest.iter().find(|a| !matches!(**a, "--sim" | "--eroare" | "--doar-citire" | "--date-vechi" | "--flr-proba" | "--ciclu-viteza" | "--ciclu-viteza-refuz")) {
         out!("gpu lant: optiune necunoscuta: {} (folosire: gpu lant [--varianta N] [--i9 c125|c133|c135])\n", bad);
         return;
     }
@@ -785,6 +785,11 @@ fn lant(rest: &[&str]) {
     }
     // P6-94 (C-139): `--date-vechi` = the GPU model serves stale data until an invalidation (the os-305 hypothesis), so
     // the I14 ladder and its journal rows can be seen in SIMULATION. Only with `--sim`.
+    // P6-106: `--ciclu-viteza[-refuz]` = the chain as the cycle runs it (the boost asked), only in SIMULATION.
+    if rest.iter().any(|a| a.starts_with("--ciclu-viteza")) && !sim {
+        out!("gpu lant: --ciclu-viteza exista doar cu --sim (viteza maxima o cere doar ciclul); nimic scris in placa\n");
+        return;
+    }
     if rest.contains(&"--date-vechi") && !sim {
         out!("gpu lant: --date-vechi exista doar cu --sim (ipoteza C-139 in modelul gpu-sim); nimic scris in placa\n");
         return;
@@ -818,10 +823,15 @@ fn lant(rest: &[&str]) {
             out!("SIMULARE: modelul gpu-sim serveste date vechi pana la o invalidare (ipoteza C-139, linii de 128 B)\n");
         }
         let flr_trial = rest.contains(&"--flr-proba");
+        let cycle = rest.iter().any(|a| a.starts_with("--ciclu-viteza"));
+        crate::drivers::gpu_tur::BOOST_IN_CYCLE.store(cycle, core::sync::atomic::Ordering::SeqCst);
+        *crate::drivers::gpu_tur::SIM_BOOST_RULE.lock() =
+            rest.contains(&"--ciclu-viteza-refuz").then_some(gpu_sim::fake_rm::BoostRule::Refuse(0x56));
         for l in crate::drivers::gpu_tur::chain_sim(rest.contains(&"--eroare"), !rest.contains(&"--doar-citire"), variant, i9, flr_trial) {
             out!("{}\n", l);
         }
         crate::drivers::gpu_i10::SIM_STALE_READS.store(false, core::sync::atomic::Ordering::Relaxed);
+        crate::drivers::gpu_tur::BOOST_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
         return;
     }
     for l in crate::drivers::gpu_tur::chain(variant, i9) {

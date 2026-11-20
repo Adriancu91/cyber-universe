@@ -375,6 +375,102 @@ pub(super) fn pstate_step<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized>
     Ok(())
 }
 
+fn pstate_text(ps: nvidia_ga104::gsp::perf::Pstate) -> String {
+    use nvidia_ga104::gsp::perf::Pstate;
+    match ps {
+        Pstate::P(n) => format!("P{}", n),
+        Pstate::Odd(m) => format!("masca neobisnuita {:#x}", m),
+        Pstate::Refused(st) => format!("refuzata de GSP-RM (NV_STATUS {:#x})", st),
+    }
+}
+
+/// P6-106 (C-148 completion 1, C-147 point 4): ONLY in the cycle, once, right after the work channel is open: the board
+/// is asked for its maximum speed (`gp::boost_start`, NVIDIA's form, 600 s). The `ks` rows go to the journal right after
+/// the GSP-RM calls they come from. A refusal is a row; only a transport error is `Err`.
+pub(super) fn boost_begin<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    bar: &mut B,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    prep: &mut I7Prep,
+    st: &mut GpuState,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    poll: impl FnMut(&mut dyn SharedMem),
+) -> GpuResult<nvidia_ga104::gsp::perf::BoostStart> {
+    use nvidia_ga104::gsp::perf::{self as gp, BoostPlan};
+    let Some((u, _)) = st.space.as_ref() else { return Err(GpuError::InvalidArgument("ks: lipseste canalul de lucru")) };
+    let (client, sub) = (u.client, u.subdevice);
+    let plan = BoostPlan { enabled: true, ..BoostPlan::default() };
+    let GpuState { pending, zone, rm_calls, vram_words, .. } = st;
+    let mut rows = Journal::new(16);
+    let r = {
+        let mut t = OsRm { bar, vbar: &mut *vbar, journal: &mut *journal, permit, prep, clock, poll, zone, pending, calls: rm_calls, words: vram_words };
+        let mut rm = |sent: &[u8]| t.call(nvidia_ga104::gsp::rpc::function::GSP_RM_CONTROL, sent);
+        gp::boost_start(&plan, client, sub, &mut rm, &mut rows)
+    };
+    for e in rows.events() {
+        journal.push(*e);
+    }
+    let start = r?;
+    lines.push(format!(
+        "{}: ks: viteza maxima ceruta (doar in ciclu, {} s): inainte {}, cererea {}, dupa {}; verdict {} ({:?})",
+        p,
+        plan.duration_s,
+        pstate_text(start.before),
+        match start.answer {
+            gp::BoostAnswer::Off => String::from("netrimisa"),
+            gp::BoostAnswer::Accepted => String::from("acceptata"),
+            gp::BoostAnswer::Refused(v) => format!("refuzata (NV_STATUS {:#x})", v),
+        },
+        start.after.map_or_else(|| String::from("-"), pstate_text),
+        start.verdict() as u32,
+        start.verdict()
+    ));
+    Ok(start)
+}
+
+/// P6-106: the end of the cycle's test, in place of `pstate_step`: the boost cleared when it holds, then `ks la final`.
+pub(super) fn boost_end<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    bar: &mut B,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    prep: &mut I7Prep,
+    st: &mut GpuState,
+    start: &nvidia_ga104::gsp::perf::BoostStart,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    poll: impl FnMut(&mut dyn SharedMem),
+) -> GpuResult<()> {
+    use nvidia_ga104::gsp::perf::{self as gp, BoostPlan};
+    let Some((u, _)) = st.space.as_ref() else { return Err(GpuError::InvalidArgument("ks: lipseste canalul de lucru")) };
+    let (client, sub) = (u.client, u.subdevice);
+    let plan = BoostPlan { enabled: true, ..BoostPlan::default() };
+    let GpuState { pending, zone, rm_calls, vram_words, .. } = st;
+    let mut rows = Journal::new(16);
+    let r = {
+        let mut t = OsRm { bar, vbar: &mut *vbar, journal: &mut *journal, permit, prep, clock, poll, zone, pending, calls: rm_calls, words: vram_words };
+        let mut rm = |sent: &[u8]| t.call(nvidia_ga104::gsp::rpc::function::GSP_RM_CONTROL, sent);
+        gp::boost_finish(start, &plan, client, sub, &mut rm, &mut rows)
+    };
+    for e in rows.events() {
+        journal.push(*e);
+    }
+    let end = r?;
+    journal.push(Event::Note(gp::rows::NO_LEVELS));
+    lines.push(format!(
+        "{}: ks: inainte de stergere {}, stergerea {}, starea de performanta la final: {}",
+        p,
+        end.before_clear.map_or_else(|| String::from("-"), pstate_text),
+        end.clear.map_or_else(|| String::from("nu era nevoie"), |c| if c == 0 { String::from("acceptata") } else { format!("refuzata ({:#x})", c) }),
+        pstate_text(end.end)
+    ));
+    Ok(())
+}
+
 /// P6-91/P6-92: the I9 choice of `gpu lant --i9 ...`. `Default` = what os-302/os-303 sent without the option.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum I9Choice {

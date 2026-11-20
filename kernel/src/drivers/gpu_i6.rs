@@ -135,6 +135,18 @@ fn copy_to_stick(path: &str) -> Option<String> {
 }
 
 /// Creates `<mount>/raport/gpu-jurnal-NNN.txt` and makes it the destination of `sink`.
+/// P6-106: the path of the last gpu journal opened (the cycle compares its `kp`/`kc` rows with `os-313`).
+static LAST_JOURNAL: crate::sched::Mutex<Option<String>> = crate::sched::Mutex::new(None);
+
+pub(crate) fn last_journal() -> Option<String> {
+    LAST_JOURNAL.lock().clone()
+}
+
+#[cfg(feature = "qemu-test")]
+pub(crate) fn set_last_journal(p: Option<String>) {
+    *LAST_JOURNAL.lock() = p;
+}
+
 pub(super) fn live_open(what: &str) -> Result<String, String> {
     let mut last_err = String::from("stick-ul nu e montat (/usb)");
     for mount in destinations() {
@@ -166,6 +178,7 @@ pub(super) fn live_open(what: &str) -> Result<String, String> {
         fs::flush(&path).map_err(|e| format!("{}: sincronizarea stick-ului dupa antet: {} (motivul in `log usb`)", path, e.message()))?;
         *LIVE.lock() = Some(Live { path: path.clone(), off: head.len() as u64, lines: 0, failed: None, held: String::new(), held_lines: 0, flush_calls: 0, last_write_us: crate::time::since_boot_us().unwrap_or(0) });
         crate::info!("gpu: jurnalul pe loc: {}", path);
+        *LAST_JOURNAL.lock() = Some(path.clone());
         return Ok(path);
     }
     Err(last_err)

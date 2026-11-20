@@ -69,5 +69,9 @@ nota Cyber-GPU `integration/cyber-universe/C-151_reset-flr.md`). **Proba:** în 
 (sau `test-placa --i9 c135 --flr-proba`) = testul obișnuit, apoi lanțul a doua oară în aceeași pornire; rezultatul are
 `PROBA FLR: kf …; al doilea lant: …`. De mână: `gpu lant --flr-proba` (cu DA). Gardul OS pentru FLR lasă scrieri doar în
 antetul configurației (0x04–0x3c), în controlul PCIe (Device/Link Control 1 și 2) și în MSI; ecranul de pe placă se poate pierde.
+**Viteza maximă (P6-106, C-148 completarea 1):** doar în ciclu (`test-placa`, `ciclu-test`), imediat după ce canalul de lucru
+e deschis, placa e rugată să urce la viteza maximă (600 s, forma NVIDIA); la sfârșit cererea e ștearsă. În raport: rândul
+`ks: viteza maxima ceruta …` (înainte, răspunsul, după, verdictul 0–3), `ks: inainte de stergere …` și blocul „viteza fata de
+os-313”. Un refuz al plăcii e doar un rând; lanțul merge ca înainte. De mână (`gpu lant`, `run kronos --gpu`) nu se cere nimic.
 Din hub, cu sistemul deja pornit de pe stick și `hub asculta`: `ciclu-test os-<N>` (implicit I9 `c135`; `--i9 c125|c133|c135|os302`).
 Comenzile manuale `gpu lant` / `run kronos --gpu` cer în continuare DA la tastatură.

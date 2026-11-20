@@ -222,6 +222,10 @@ pub fn variants_list() -> Vec<String> {
 
 /// `gpu lant` on the real board (the shell asked for `DA` first). Writes only in the `gpu-scrie` build.
 /// P6-78 (C-108): `variant` = `--varianta N` (already checked by the shell); `None` = the library's default variant (1 since cyber-gpu e49ca76).
+/// P6-106 (C-148 completion 1): set by the cycle (`ciclu::board_test`) around its chains — only then is the board asked for
+/// its maximum speed (C-147 point 4). Off everywhere else: `gpu lant` and `kronos --gpu` by hand behave as before.
+pub static BOOST_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// The FLR permit's reason (C-152 point 1, Adrian's "Da" for step 1, 19 Nov 23:37).
 #[cfg_attr(not(feature = "gpu-scrie"), allow(dead_code))]
 const FLR_REASON: &str = "C-152: reset FLR in ciclu (aprobat de Adrian 19 nov)";
@@ -305,6 +309,10 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
     let mut gs: Option<gpu_golden::GpuState> = None;
     #[cfg(feature = "gpu-scrie")]
     let mut launched: Option<gpu_i10::Launched> = None;
+    #[cfg(feature = "gpu-scrie")]
+    let mut boost: Option<nvidia_ga104::gsp::perf::BoostStart> = None;
+    #[cfg(feature = "gpu-scrie")]
+    let boost_wanted = BOOST_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     let mut refused = 0usize;
     let report = run_chain_ready(WINDOW_CHAIN_C83, READY_IN_OS, writes_allowed, &mut j, |s, j| match s.id {
         "pregatire-i6" => {
@@ -433,6 +441,13 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
             let mut rw = gpu_i6::hw::GspWriteWindow::new(bar0);
             let mut vf = gpu_i6::hw::VramFence::new(bar0);
             let r = gpu_golden::channel_step(p, &mut rw, &mut vf, &mut clock, j, prep, st, Some(&permit), &mut lines, i9, |_| {});
+            // P6-106: only in the cycle, once, right after the work channel is open.
+            if r.is_ok() && boost_wanted {
+                match gpu_golden::boost_begin(p, &mut rw, &mut vf, &mut clock, j, prep, st, Some(&permit), &mut lines, |_| {}) {
+                    Ok(b) => boost = Some(b),
+                    Err(e) => lines.push(format!("{}: ks: cererea de viteza maxima nu s-a putut trimite: {}", p, e)),
+                }
+            }
             refused += rw.refused + vf.refused;
             r
         }
@@ -489,7 +504,11 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
                 if let Some(prep) = i7.last_mut() {
                     let mut rw = gpu_i6::hw::GspWriteWindow::new(bar0);
                     let mut vf = gpu_i6::hw::VramFence::new(bar0);
-                    if let Err(e) = gpu_golden::pstate_step(p, &mut rw, &mut vf, &mut clock, j, prep, st, Some(&permit), &mut lines, |_| {}) {
+                    let r = match boost.take() {
+                        Some(b) => gpu_golden::boost_end(p, &mut rw, &mut vf, &mut clock, j, prep, st, &b, Some(&permit), &mut lines, |_| {}),
+                        None => gpu_golden::pstate_step(p, &mut rw, &mut vf, &mut clock, j, prep, st, Some(&permit), &mut lines, |_| {}),
+                    };
+                    if let Err(e) = r {
                         lines.push(format!("{}: ks: starea de performanta necitita: {}", p, e));
                     }
                     refused += rw.refused + vf.refused;
@@ -524,6 +543,17 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
         // Writing steps in a build that cannot write never get here (the chain stops before them).
         _ => Err(GpuError::NotPermitted(NOT_IN_OS)),
     });
+    // P6-106: the chain stopped after the boost was accepted: clear it while the channel may still answer (else it
+    // ends by itself after 600 s).
+    #[cfg(feature = "gpu-scrie")]
+    if let (Some(b), Some(prep), Some(st)) = (boost.take(), i7.last_mut(), gs.as_mut()) {
+        let mut rw = gpu_i6::hw::GspWriteWindow::new(bar0);
+        let mut vf = gpu_i6::hw::VramFence::new(bar0);
+        if let Err(e) = gpu_golden::boost_end(p, &mut rw, &mut vf, &mut clock, &mut j, prep, st, &b, Some(&permit), &mut lines, |_| {}) {
+            lines.push(format!("{}: ks: stergerea cererii dupa oprire nu a mers ({}); se stinge singura dupa 600 s", p, e));
+        }
+        refused += rw.refused + vf.refused;
+    }
     drop(_guard);
     report_lines(p, &report, &mut lines);
     if refused > 0 {
@@ -917,6 +947,12 @@ pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: sup
     let mut sim_peer: Option<gpu_i8::SimPeer> = None;
     let mut gs: Option<gpu_golden::GpuState> = None;
     let mut rm = gpu_sim::fake_rm::FakeRm::new();
+    // P6-106 (SIMULARE): in the cycle the RM model has a performance state (P8 idle, as os-313 read) and accepts the boost.
+    let boost_wanted = BOOST_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    if boost_wanted {
+        rm.perf = Some(gpu_sim::fake_rm::SimPerf::new(SIM_BOOST_RULE.lock().unwrap_or_default()));
+    }
+    let mut boost: Option<nvidia_ga104::gsp::perf::BoostStart> = None;
     let mut vram = gpu_sim::pramin::SimBar0Vram::new(gpu_sim::vram::SimVram::new(8 << 30), 0);
     let mut sim_gpu: Option<gpu_i10::SimGpu> = None;
     let mut launched: Option<gpu_i10::Launched> = None;
@@ -1004,6 +1040,13 @@ pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: sup
             };
             let r = gpu_golden::channel_step(p, &mut g, &mut vram, &mut clock, j, prep, st, None, &mut lines, i9, |m| peer.serve(m, &mut rm));
             lines.push(format!("{}: modelul RM: {} mesaje servite in total", p, peer.served));
+            // P6-106 (SIMULARE): as on the board, only in the cycle; the RM model answers the performance controls.
+            if r.is_ok() && boost_wanted {
+                match gpu_golden::boost_begin(p, &mut g, &mut vram, &mut clock, j, prep, st, None, &mut lines, |m| peer.serve(m, &mut rm)) {
+                    Ok(b) => boost = Some(b),
+                    Err(e) => lines.push(format!("{}: ks: cererea de viteza maxima nu s-a putut trimite: {}", p, e)),
+                }
+            }
             r
         }
         "i10-add64" => {
@@ -1070,7 +1113,11 @@ pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: sup
             // P6-98 (C-148 point 3): the performance state at the end of the chain, as on the board (the RM model answers).
             if s.id == "i14-simbol" && r.is_ok() {
                 if let (Some(prep), Some(peer)) = (i7p.as_mut(), sim_peer.as_mut()) {
-                    if let Err(e) = gpu_golden::pstate_step(p, &mut g, &mut vram, &mut clock, j, prep, st, None, &mut lines, |m| peer.serve(m, &mut rm)) {
+                    let r = match boost.take() {
+                        Some(b) => gpu_golden::boost_end(p, &mut g, &mut vram, &mut clock, j, prep, st, &b, None, &mut lines, |m| peer.serve(m, &mut rm)),
+                        None => gpu_golden::pstate_step(p, &mut g, &mut vram, &mut clock, j, prep, st, None, &mut lines, |m| peer.serve(m, &mut rm)),
+                    };
+                    if let Err(e) = r {
                         lines.push(format!("{}: ks: starea de performanta necitita: {}", p, e));
                     }
                 }
@@ -1215,6 +1262,10 @@ fn sim_flr(
     let mut b = SimFlrBoard { cfg, gsp: g, seen };
     nvidia_ga104::flr_reset::reset_if_wpr2_up(&mut b, clock, permit, None, j)
 }
+
+/// P6-106 (SIMULARE): how the RM model answers the boost (`gpu lant --sim --ciclu-viteza [refuz]`); `None` = accept.
+#[cfg(feature = "test-gpu-sim")]
+pub static SIM_BOOST_RULE: crate::sched::Mutex<Option<gpu_sim::fake_rm::BoostRule>> = crate::sched::Mutex::new(None);
 
 /// SIMULATION: the doorbell journaled as on the board (`ring_work_doorbell`), so the journal check sees it.
 #[cfg(feature = "test-gpu-sim")]
