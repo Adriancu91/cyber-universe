@@ -118,6 +118,94 @@ pub fn mount_best(disks: Vec<Box<dyn crate::block::BlockDevice>>, at: &str) -> b
     ok
 }
 
+/// P6-100 (C-148 point 5): set when `/disk` is a partition of the computer's own disk (AHCI/NVMe) marked `cyber.rw`: the
+/// gpu journal and the Kronos model then go there before the stick.
+static OWN_RW: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Whether `/disk` is the computer's own disk with a partition marked `cyber.rw` (P6-100).
+pub fn own_disk_writable() -> bool {
+    OWN_RW.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// P6-100: the computer's own disks (`(name, disk)`, NVMe first, then SATA). Every partition goes into the disk inventory
+/// (`block::inventory`, reads only). Unless something is already mounted at `at` (the test image), mounts there the first
+/// FAT partition marked `cyber.rw` on any of them; without one, as before P6-100: the first FAT partition of the first
+/// disk that has one (read only). Nothing is written to a disk here.
+pub fn mount_own(disks: Vec<(&'static str, Box<dyn crate::block::BlockDevice>)>, at: &str) {
+    use alloc::sync::Arc;
+    use crate::block::{BlockDevice, Partition, Shared};
+    let busy = kind(at).is_ok();
+    // (file system, partition, disk name, partition number)
+    let mut marked: Option<(fat32::Fat32, part::Found, &'static str, usize)> = None;
+    let mut first: Option<(fat32::Fat32, part::Found, &'static str, usize)> = None;
+    for (name, dev) in disks {
+        let dev: Arc<dyn BlockDevice> = Arc::from(dev);
+        let entries = part::list(dev.as_ref());
+        let mut rw_at: Vec<(u64, bool)> = Vec::new();
+        for c in part::fat_candidates(dev.as_ref()) {
+            let Ok(fat) = fat32::Fat32::new(Box::new(Partition::new(Box::new(Shared(dev.clone())), c.start, c.sectors))) else {
+                continue;
+            };
+            rw_at.push((c.start, fat.writable()));
+            let number = entries.iter().find(|e| e.start == c.start).map(|e| e.number).unwrap_or(0);
+            if fat.writable() && marked.is_none() {
+                marked = Some((fat, c, name, number));
+            } else if first.is_none() {
+                first = Some((fat, c, name, number));
+            }
+        }
+        if entries.is_empty() {
+            let what = match rw_at.first() {
+                Some((_, true)) => "FAT fara tabela de partitii, cu cyber.rw",
+                Some((_, false)) => "FAT fara tabela de partitii, fara cyber.rw",
+                None => "nicio tabela de partitii inteleasa",
+            };
+            crate::block::note(format!("  {}: {}", name, what));
+        }
+        for e in &entries {
+            let content = part::content(dev.as_ref(), e.start);
+            let marker = match rw_at.iter().find(|(s, _)| *s == e.start) {
+                Some((_, true)) => ", are cyber.rw",
+                Some((_, false)) => ", fara cyber.rw",
+                None => "",
+            };
+            crate::block::note(format!(
+                "  {} partitia {} ({}, {}): de la sectorul {}, {} MiB, {}{}",
+                name,
+                e.number,
+                e.table,
+                e.kind,
+                e.start,
+                e.sectors / 2048,
+                content,
+                marker
+            ));
+        }
+    }
+    if busy {
+        return;
+    }
+    let own = marked.is_some();
+    match marked.or(first) {
+        Some((fat, p, name, number)) => {
+            if own {
+                crate::info!("fs: {}: partitia {} ({}) de pe {} are cyber.rw: discul propriu, scriere permisa", at, number, p.table, name);
+            }
+            if mount_fat(fat, p, at) {
+                OWN_RW.store(own, core::sync::atomic::Ordering::Relaxed);
+                crate::block::note(format!(
+                    "montat la {}: {} partitia {}{}",
+                    at,
+                    name,
+                    number,
+                    if own { " (cyber.rw: jurnalul gpu si modelul Kronos de aici)" } else { " (doar citire)" }
+                ));
+            }
+        }
+        None => note_failure(at, "niciun disc propriu cu o partitie FAT"),
+    }
+}
+
 /// C-74: the folder of the NVIDIA GSP files on a stick (`nvidia_ga104::firmware::STICK_DIR` without `/usb/`).
 const FIRMWARE_DIR: [&str; 4] = ["firmware", "nvidia", "ga102", "gsp"];
 

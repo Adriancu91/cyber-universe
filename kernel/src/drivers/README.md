@@ -21,15 +21,19 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
   în jurnal (scenariul `log`); programele o citesc cu apelul `time` (ceasul desktopului). Ora e cea ținută de calculator
   (de obicei ora locală sub Windows, UTC sub Linux; în QEMU: UTC).
 - **Scriere pe disc (P4-07):** AHCI (`WRITE DMA EXT`), NVMe (`Write`) și stick-uri USB (`WRITE(10)`) pot scrie; sistemul de
-  fișiere scrie doar pe partițiile marcate (vezi `fs/README.md`). Încă nu se trimite comanda de golire a memoriei cache a
-  discului (FLUSH) — de adăugat înainte de scrieri pe discuri reale importante.
+  fișiere scrie doar pe partițiile marcate (vezi `fs/README.md`). P6-100: `fs::flush` trimite comanda de golire a memoriei
+  discului (FLUSH CACHE EXT la SATA, `Flush` la NVMe), doar dacă discul spune că are memorie de scriere.
 - `ahci.rs` — discuri SATA prin controlerul AHCI (P3-02), citire și scriere, o comandă odată (cu așteptare activă):
   preia controlerul de la firmware, pornește primul port cu disc, `IDENTIFY` (model, mărime), `READ DMA EXT` în bucăți de 4 KiB.
-  Implementează `block::BlockDevice`; discul dă `/disk` (prima partiție FAT32).
-- `nvme.rs` — SSD-uri NVMe (P3-03), doar citire: resetare, coada de administrare, `Identify` (model, mărime),
-  o pereche de cozi I/O, comanda `Read` în bucăți de 4 KiB, cu așteptare activă. La pornire NVMe are prioritate față de SATA pentru `/disk`.
+  Implementează `block::BlockDevice`; discul dă `/disk`. P6-100: `FLUSH CACHE EXT` (0xEA, fără date) la `flush`; celelalte
+  porturi cu dispozitive sunt doar notate în inventarul discurilor (din registrele de stare, nicio comandă trimisă lor).
+- `nvme.rs` — SSD-uri NVMe (P3-03), citire și scriere: resetare, coada de administrare, `Identify` (model, mărime, memoria
+  de scriere VWC), o pereche de cozi I/O, `Read`/`Write` în bucăți de 4 KiB și `Flush` (P6-100), cu așteptare activă.
+  La pornire NVMe are prioritate față de SATA pentru `/disk`; P6-100: o partiție FAT marcată `cyber.rw` (pe oricare disc) câștigă.
 
-**Test:** scenariul `nvme` (discul de test ca NVMe → `/disk`, `test: disc OK`); scenariul `ahci` (discul de test atașat de QEMU ca SATA → `/disk` citit prin AHCI, `test: disc OK`); scenariul `keyboard` trimite tastele h, i, Enter prin monitorul QEMU și verifică ce a primit nucleul.
+**Test:** scenariul `disc-propriu` (P6-100: disc NVMe cu partiție EFI fără `cyber.rw`, partiție de date cu `cyber.rw`,
+partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalul gpu pe `/disk` copiat pe stick); scenariul
+`fatwrite` verifică și `FLUSH CACHE EXT`; scenariul `nvme` (discul de test ca NVMe → `/disk`, `test: disc OK`); scenariul `ahci` (discul de test atașat de QEMU ca SATA → `/disk` citit prin AHCI, `test: disc OK`); scenariul `keyboard` trimite tastele h, i, Enter prin monitorul QEMU și verifică ce a primit nucleul.
 
 **Surse NVMe:** NVM Express Base Specification — doar documentație.
 

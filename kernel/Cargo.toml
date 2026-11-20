@@ -35,6 +35,7 @@ qemu-test = []
 test-panic = ["qemu-test"]
 # P6-98: the gpu journal's held rows reach the test disk before a panic (scenario `jurnal-panica`).
 test-jurnal-panica = ["qemu-test"]
+test-disc-propriu = ["qemu-test"]
 test-divzero = ["qemu-test"]
 test-pagefault = ["qemu-test"]
 test-doublefault = ["qemu-test"]

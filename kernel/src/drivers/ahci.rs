@@ -1,6 +1,6 @@
-//! AHCI (SATA) disks, read only, one command at a time with polling.
+//! AHCI (SATA) disks, one command at a time with polling (writes only reach volumes marked `cyber.rw`, see fat32).
 //! Written from the Serial ATA AHCI 1.3.1 specification (HBA and port registers, command list,
-//! command table, PRDT) and the ATA command set (IDENTIFY DEVICE, READ DMA EXT).
+//! command table, PRDT) and the ATA command set (ATA8-ACS: IDENTIFY DEVICE, READ/WRITE DMA EXT, FLUSH CACHE EXT).
 
 use crate::block::{BlockDevice, BlockError, SECTOR};
 use crate::mem::{frame, map::{PAGE_SIZE, phys_to_virt}, paging};
@@ -32,6 +32,10 @@ const SATA_DISK: u32 = 0x0000_0101;
 const ATA_IDENTIFY: u8 = 0xEC;
 const ATA_READ_DMA_EXT: u8 = 0x25;
 const ATA_WRITE_DMA_EXT: u8 = 0x35;
+/// P6-100: writes the disk's own memory (write cache) to the medium; a command without data.
+const ATA_FLUSH_CACHE_EXT: u8 = 0xEA;
+/// P6-100: FLUSH CACHE EXT commands that succeeded since start-up (the scenarios check that one was sent).
+pub static FLUSHES: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 /// Sectors per command: one 4 KiB DMA buffer.
 const MAX_SECTORS: u64 = PAGE_SIZE / SECTOR as u64;
 const SPIN_LIMIT: u32 = 10_000_000;
@@ -51,6 +55,8 @@ pub struct AhciDisk {
     port: crate::sched::Mutex<Port>,
     sectors: u64,
     pub model: alloc::string::String,
+    /// IDENTIFY word 83 bit 13: the disk knows FLUSH CACHE EXT.
+    can_flush: bool,
 }
 
 fn rd(addr: u64) -> u32 {
@@ -88,7 +94,7 @@ fn dma_frame(s64a: bool) -> Option<u64> {
 
 impl Port {
     /// Runs one ATA command that moves `count` sectors (<= MAX_SECTORS) between the disk and the DMA
-    /// buffer (to the disk if `write`).
+    /// buffer (to the disk if `write`). `count` = 0: a command without data (no PRDT entry).
     fn command(&mut self, ata: u8, lba: u64, count: u64, write: bool) -> Result<(), BlockError> {
         let p = self.regs;
         if !wait(|| rd(p + P_TFD) & 0x88 == 0) {
@@ -115,7 +121,7 @@ impl Port {
         // SAFETY: the command list and table frames belong to this port and are not in use by the
         // controller (CI is clear); offsets are inside the frames.
         unsafe {
-            header.write_volatile(5 | (write as u32) << 6 | (1 << 16));
+            header.write_volatile(5 | (write as u32) << 6 | ((count > 0) as u32) << 16);
             header.add(1).write_volatile(0); // bytes transferred
             header.add(2).write_volatile(self.table as u32);
             header.add(3).write_volatile((self.table >> 32) as u32);
@@ -124,7 +130,7 @@ impl Port {
             prdt.write_volatile(self.buffer as u32);
             prdt.add(1).write_volatile((self.buffer >> 32) as u32);
             prdt.add(2).write_volatile(0);
-            prdt.add(3).write_volatile((bytes - 1) as u32);
+            prdt.add(3).write_volatile(bytes.saturating_sub(1) as u32);
         }
         wr(p + P_IS, u32::MAX);
         wr(p + P_CI, 1);
@@ -191,10 +197,25 @@ impl BlockDevice for AhciDisk {
         }
         Ok(())
     }
+
+    /// P6-100: FLUSH CACHE EXT, so what was written is on the medium, not only in the disk's memory.
+    fn flush(&self) -> Result<(), BlockError> {
+        if !self.can_flush {
+            return Ok(()); // a disk without the command has no write cache to empty
+        }
+        self.port.lock().command(ATA_FLUSH_CACHE_EXT, 0, 0, false)?;
+        FLUSHES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
 }
 
-/// Finds the AHCI controller and returns its first SATA disk, ready to read.
+/// Finds the AHCI controller and returns its first SATA disk, ready to read. P6-100: the other ports with a device are
+/// only noted in the disk inventory (from their status registers, no command sent to them).
 pub fn init() -> Option<AhciDisk> {
+    let controllers = crate::pci::find_all(0x01, 0x06, 0x01).len();
+    if controllers > 1 {
+        crate::block::note(alloc::format!("ahci: {} controlere SATA, folosit doar primul", controllers));
+    }
     let dev = crate::pci::find(0x01, 0x06, 0x01)?;
     dev.enable();
     let Some(abar) = dev.bar(5) else {
@@ -210,25 +231,50 @@ pub fn init() -> Option<AhciDisk> {
     wr(hba + GHC, rd(hba + GHC) | 1 << 31); // AHCI mode
     let s64a = rd(hba + CAP) & (1 << 31) != 0;
     let implemented = rd(hba + PI);
+    let mut found = None;
     for i in 0..32 {
         if implemented & (1 << i) == 0 {
             continue;
         }
         let p = hba + 0x100 + i as u64 * 0x80;
         let ssts = rd(p + P_SSTS);
-        if ssts & 0xF != 3 || (ssts >> 8) & 0xF != 1 || rd(p + P_SIG) != SATA_DISK {
-            continue; // no disk (or not an ATA disk) on this port
+        if ssts & 0xF != 3 {
+            continue; // nothing on this port
+        }
+        let sig = rd(p + P_SIG);
+        if found.is_some() || (ssts >> 8) & 0xF != 1 || sig != SATA_DISK {
+            let what = match sig {
+                SATA_DISK => "disc SATA",
+                0xEB14_0101 => "unitate optica (ATAPI)",
+                0x9669_0101 => "multiplicator de porturi",
+                _ => "dispozitiv necunoscut",
+            };
+            crate::block::note(alloc::format!("ahci portul {}: {} (semnatura {:#010x}), nefolosit", i, what, sig));
+            continue;
         }
         match start_port(p, s64a) {
             Some(disk) => {
                 crate::info!("ahci: disc SATA pe portul {}: {} ({} MiB)", i, disk.model, disk.sectors / 2048);
-                return Some(disk);
+                crate::block::note(alloc::format!(
+                    "ahci portul {}: disc SATA {} ({} MiB, {} sectoare; FLUSH CACHE EXT {})",
+                    i,
+                    disk.model,
+                    disk.sectors / 2048,
+                    disk.sectors,
+                    if disk.can_flush { "da" } else { "nu" }
+                ));
+                found = Some(disk);
             }
-            None => crate::warn!("ahci: portul {} nu porneste", i),
+            None => {
+                crate::warn!("ahci: portul {} nu porneste", i);
+                crate::block::note(alloc::format!("ahci portul {}: disc SATA care nu porneste", i));
+            }
         }
     }
-    crate::info!("ahci: niciun disc SATA");
-    None
+    if found.is_none() {
+        crate::info!("ahci: niciun disc SATA");
+    }
+    found
 }
 
 fn start_port(p: u64, s64a: bool) -> Option<AhciDisk> {
@@ -264,5 +310,6 @@ fn start_port(p: u64, s64a: bool) -> Option<AhciDisk> {
         model.push(v as u8 as char);
     }
     let model = alloc::string::String::from(model.trim());
-    Some(AhciDisk { port: crate::sched::Mutex::new(port), sectors, model })
+    let can_flush = word(83) & (1 << 13) != 0;
+    Some(AhciDisk { port: crate::sched::Mutex::new(port), sectors, model, can_flush })
 }

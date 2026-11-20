@@ -143,6 +143,13 @@ fn dispatch(line: &str) -> bool {
         "http" => http(args),
         "mem" => mem(),
         "lspci" => lspci(),
+        "discuri" => {
+            // P6-100 (C-148 point 5): the computer's own disks as seen at start-up (reads only).
+            out!("discurile vazute de OS (doar citire, la pornire):\n");
+            for row in crate::block::inventory() {
+                out!("{}\n", row);
+            }
+        }
         "lsusb" => lsusb(),
         "usb" => usb(args),
         "net" => net(),
@@ -265,6 +272,7 @@ fn help() {
     out!("  tastatura [ro|us]  aranjamentul tastaturii (romana standard sau engleza SUA)\n");
     out!("  mem              memoria libera si cea folosita\n");
     out!("  lspci            dispozitivele PCI (discuri, USB, retea...)\n");
+    out!("  discuri          discurile calculatorului (controler, model, marime, partitii, cyber.rw); doar citire\n");
     out!("  lsusb            dispozitivele USB conectate\n");
     out!("  net              placa de retea (adresa MAC, pachete)\n");
     out!("  rtl porneste [variante]  reporneste placa Realtek cu variantele date (fara: ca la pornire; `rtl` le arata)\n");

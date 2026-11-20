@@ -91,11 +91,47 @@ pub(super) static JOURNAL_US: core::sync::atomic::AtomicU64 = core::sync::atomic
 static LIVE: crate::sched::Mutex<Option<Live>> = crate::sched::Mutex::new(None);
 
 /// Where the journal goes: the stick; test builds also the test disk (QEMU has no writable stick in the scenario).
-fn destinations() -> &'static [&'static str] {
+/// P6-100 (C-148 point 5): first the computer's own disk when `/disk` is a partition marked `cyber.rw` (a copy goes to
+/// the stick at the end, for `trimite`).
+fn destinations() -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if fs::own_disk_writable() {
+        out.push("/disk");
+    }
+    out.push("/usb");
     #[cfg(feature = "qemu-test")]
-    return &["/usb", "/disk"];
-    #[cfg(not(feature = "qemu-test"))]
-    return &["/usb"];
+    if !out.contains(&"/disk") {
+        out.push("/disk");
+    }
+    out
+}
+
+/// P6-100: a journal written on the computer's own disk is copied, once it is closed, to `/usb/raport/` under a free
+/// `gpu-jurnal-NNN.txt` name (`trimite` sends from the stick). `None` when there is nothing to copy (journal not on
+/// the own disk, or no writable stick); otherwise the row for the summary.
+fn copy_to_stick(path: &str) -> Option<String> {
+    if !path.starts_with("/disk/") || !fs::own_disk_writable() || fs::list("/usb").is_err() {
+        return None;
+    }
+    let dir = "/usb/raport";
+    match fs::create(dir, Kind::Dir) {
+        Ok(()) | Err(FsError::AlreadyExists) => {}
+        Err(e) => return Some(format!("copia pe stick: {}: {}", dir, e.message())),
+    }
+    let data = match fs::read_all(path) {
+        Ok(d) => d,
+        Err(e) => return Some(format!("copia pe stick: nu pot citi {}: {}", path, e.message())),
+    };
+    let existing: Vec<String> = fs::list(dir).map(|l| l.into_iter().map(|(n, _)| n.to_ascii_lowercase()).collect()).unwrap_or_default();
+    let Some(name) = (1..1000).map(|n| format!("gpu-jurnal-{:03}.txt", n)).find(|n| !existing.contains(n)) else {
+        return Some(format!("copia pe stick: {}: prea multe jurnale gpu (999)", dir));
+    };
+    let copy = format!("{}/{}", dir, name);
+    let done = fs::create(&copy, Kind::File).and_then(|_| fs::write(&copy, 0, &data)).and_then(|_| fs::flush(&copy));
+    Some(match done {
+        Ok(()) => format!("copiat pe stick pentru trimite: {} ({} octeti)", copy, data.len()),
+        Err(e) => format!("copia pe stick: {}: {}", copy, e.message()),
+    })
 }
 
 /// Creates `<mount>/raport/gpu-jurnal-NNN.txt` and makes it the destination of `sink`.
@@ -271,6 +307,25 @@ pub fn self_test_panic() -> ! {
     panic!("panica intentionata de test cu randuri tinute in jurnalul gpu");
 }
 
+/// P6-100 (C-148 point 5), scenario `disc-propriu`: with /disk = the own disk marked `cyber.rw`, the journal opens there
+/// (not on the writable stick), and closing it copies it to the stick for `trimite`.
+#[cfg(feature = "test-disc-propriu")]
+pub fn self_test_own_disk() {
+    let path = live_open("test disc-propriu").expect("test: jurnalul pe loc nu se deschide");
+    assert!(path.starts_with("/disk/raport/gpu-jurnal-"), "test: jurnalul nu e pe discul propriu: {}", path);
+    live_line(&Event::Note("test disc-propriu: un rand"), Flush::Now);
+    let mut lines = Vec::new();
+    close_and_check("gpu", false, &mut lines);
+    for l in &lines {
+        crate::info!("test: {}", l);
+    }
+    let copy = lines.iter().find_map(|l| l.split("copiat pe stick pentru trimite: ").nth(1)).expect("test: jurnalul nu a fost copiat pe stick");
+    let copy = copy.split(' ').next().unwrap_or("");
+    assert!(copy.starts_with("/usb/raport/gpu-jurnal-"), "test: copia nu e pe stick: {}", copy);
+    assert!(fs::read_all(copy).ok() == fs::read_all(&path).ok(), "test: copia de pe stick difera de jurnal");
+    crate::info!("test: discul propriu: jurnalul gpu pe {}, copiat identic pe {}", path, copy);
+}
+
 /// The journal of one command: live on the stick when `path` is set, in memory only otherwise.
 pub(super) fn journal(live: bool) -> Journal {
     if live {
@@ -287,6 +342,9 @@ pub(super) fn close_and_check(p: &str, check_i6: bool, lines: &mut Vec<String>) 
     match failed {
         None => lines.push(format!("{}: jurnalul pe loc: {} ({} randuri, fiecare scris pe loc)", p, path, n)),
         Some(why) => lines.push(format!("{}: jurnalul pe loc: {}: scrierea a ESUAT la {}", p, path, why)),
+    }
+    if let Some(row) = copy_to_stick(&path) {
+        lines.push(format!("{}: jurnalul pe discul propriu: {}", p, row));
     }
     // P6-83 (C-113): where the stick's time went (since power-on), to tell a slow stick from a slow driver.
     if path.starts_with("/usb") {

@@ -138,14 +138,11 @@ extern "C" fn kernel_main() -> ! {
     if time::uptime_ms().is_some() {
         drivers::usb::init(); // needs the clock (waits for USB 3 links)
     }
-    // A real disk (NVMe first, then SATA) gives /disk, unless the test disk image already did.
-    let nvme = drivers::nvme::init().map(|d| alloc::boxed::Box::new(d) as alloc::boxed::Box<dyn block::BlockDevice>);
-    let sata = drivers::ahci::init().map(|d| alloc::boxed::Box::new(d) as alloc::boxed::Box<dyn block::BlockDevice>);
-    for disk in [nvme, sata].into_iter().flatten() {
-        if fs::kind("/disk").is_err() {
-            fs::mount_disk(disk, "/disk");
-        }
-    }
+    // A real disk (NVMe first, then SATA) gives /disk, unless the test disk image already did; P6-100: a partition marked
+    // cyber.rw wins, and every disk goes into the disk inventory.
+    let nvme = drivers::nvme::init().map(|d| ("nvme", alloc::boxed::Box::new(d) as alloc::boxed::Box<dyn block::BlockDevice>));
+    let sata = drivers::ahci::init().map(|d| ("sata", alloc::boxed::Box::new(d) as alloc::boxed::Box<dyn block::BlockDevice>));
+    fs::mount_own([nvme, sata].into_iter().flatten().collect(), "/disk");
     drivers::nic::init_global();
     net::init();
     let sticks = drivers::usb::take_disks();
@@ -357,6 +354,9 @@ fn run_tests() -> ! {
 
     #[cfg(feature = "test-fat-mare")]
     test_fat_mare();
+
+    #[cfg(feature = "test-disc-propriu")]
+    test_own_disk();
 
     #[cfg(feature = "test-modules")]
     test_modules();
@@ -1057,6 +1057,52 @@ fn test_fat_write() {
     fs::rename("/disk/scris/gol2", "/disk/scris/multe/gol2").expect("test: mutare director gol");
     assert!(fs::read_all("/disk/salut.txt").unwrap() == b"salut de pe disc\n", "fisierele vechi s-au stricat");
     info!("test: scriere FAT32 OK (nume scurte si lungi, 10000 octeti peste clustere, gol, stergere, director marit, director redenumit si mutat)");
+    // P6-100: fs::flush reaches the SATA disk as FLUSH CACHE EXT (QEMU's disk accepts it).
+    let before = drivers::ahci::FLUSHES.load(core::sync::atomic::Ordering::Relaxed);
+    fs::flush("/disk/scris").expect("test: golirea discului SATA");
+    let after = drivers::ahci::FLUSHES.load(core::sync::atomic::Ordering::Relaxed);
+    assert!(after > before, "test: FLUSH CACHE EXT nu a fost trimis la discul SATA");
+    info!("test: ahci: FLUSH CACHE EXT trimis si acceptat ({} -> {})", before, after);
+}
+
+/// P6-100 (C-148 point 5), scenario `disc-propriu`: an NVMe disk like the workstation's (GPT: EFI FAT32 without
+/// cyber.rw, a FAT32 data partition WITH cyber.rw and kronos/, a Linux partition) next to the usual SATA test disk, and a
+/// writable stick. /disk must be the marked partition; the inventory lists every partition; a write ends with an NVMe
+/// Flush; the gpu journal opens on /disk and is copied to the stick when closed; #513 is looked for on /disk first.
+#[cfg(feature = "test-disc-propriu")]
+fn test_own_disk() {
+    use core::sync::atomic::Ordering;
+    use fs::Kind;
+    assert!(fs::own_disk_writable(), "test: /disk nu e partitia cu cyber.rw a discului propriu");
+    let rows = block::inventory();
+    for r in &rows {
+        info!("test: discuri: {}", r);
+    }
+    let has = |a: &str, b: &str| rows.iter().any(|r| r.contains(a) && r.contains(b));
+    assert!(has("nvme: disc", "MiB"), "test: inventarul nu are discul NVMe");
+    assert!(has("nvme partitia 1 (GPT, EFI (sistem))", "FAT, fara cyber.rw"), "test: inventarul: partitia EFI");
+    assert!(has("nvme partitia 2 (GPT, date de baza", "FAT, are cyber.rw"), "test: inventarul: partitia marcata");
+    assert!(has("nvme partitia 3 (GPT, Linux)", "format necunoscut"), "test: inventarul: partitia Linux");
+    assert!(has("ahci portul 0: disc SATA", "FLUSH CACHE EXT da"), "test: inventarul: discul SATA");
+    assert!(has("sata partitia 1 (GPT, date de baza", "fara cyber.rw"), "test: inventarul: partitia discului SATA");
+    assert!(has("montat la /disk: nvme partitia 2", "cyber.rw"), "test: inventarul: ce e montat");
+    info!("test: discul propriu: inventarul OK ({} randuri)", rows.len());
+
+    let before = drivers::nvme::FLUSHES.load(Ordering::Relaxed);
+    fs::create("/disk/golire.txt", Kind::File).expect("test: fisier pe discul propriu");
+    fs::write("/disk/golire.txt", 0, b"P6-100").expect("test: scriere pe discul propriu");
+    fs::flush("/disk/golire.txt").expect("test: golirea discului NVMe");
+    let after = drivers::nvme::FLUSHES.load(Ordering::Relaxed);
+    assert!(after > before, "test: Flush nu a fost trimis la discul NVMe");
+    info!("test: nvme: Flush trimis si acceptat ({} -> {})", before, after);
+
+    drivers::gpu_i6::self_test_own_disk();
+
+    assert!(shell::ciclu::k513_path() == Some(shell::ciclu::K513_DISK), "test: ciclul nu ia #513 de pe discul propriu");
+    let id = proc::spawn_path("/bin/kronos", &["kronos", "--n", "1", "Buna"]).expect("test: /bin/kronos");
+    let code = proc::wait(id);
+    info!("test: discul propriu: kronos a iesit cu codul {} (modelul de proba nu e #513 adevarat)", code);
+    info!("test: discul propriu OK (inventar, Flush, jurnalul gpu, modelul)");
 }
 
 /// P6-83 (C-113): the `gpu` journal's way of writing (a header, then one line at a time, each followed by a sync) on a

@@ -2,7 +2,7 @@
 //! File systems read through this interface only, so a real disk driver (AHCI/NVMe, Phase 3) can be
 //! put underneath without changing them.
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 
 pub const SECTOR: usize = 512;
 
@@ -94,4 +94,41 @@ impl BlockDevice for Partition {
     fn flush(&self) -> Result<(), BlockError> {
         self.dev.flush()
     }
+}
+
+/// P6-100: one disk shared by several partitions (the OS looks at every FAT partition of a disk to find the one marked
+/// `cyber.rw`). Only one of them is mounted; the others are dropped after the look.
+pub struct Shared(pub Arc<dyn BlockDevice>);
+
+impl BlockDevice for Shared {
+    fn sectors(&self) -> u64 {
+        self.0.sectors()
+    }
+    fn read(&self, lba: u64, buf: &mut [u8]) -> Result<(), BlockError> {
+        self.0.read(lba, buf)
+    }
+    fn write(&self, lba: u64, buf: &[u8]) -> Result<(), BlockError> {
+        self.0.write(lba, buf)
+    }
+    fn flush(&self) -> Result<(), BlockError> {
+        self.0.flush()
+    }
+}
+
+/// P6-100 (C-148 point 5): what the OS saw of the computer's own disks at start-up (controller, model, size,
+/// partitions), only from reads. Shown by `discuri` and written into the report of a board test cycle.
+static INVENTORY: crate::sched::Mutex<Vec<String>> = crate::sched::Mutex::new(Vec::new());
+
+/// Adds one row to the disk inventory.
+pub fn note(row: String) {
+    INVENTORY.lock().push(row);
+}
+
+/// The disk inventory, one row per disk / partition / port.
+pub fn inventory() -> Vec<String> {
+    let rows = INVENTORY.lock().clone();
+    if rows.is_empty() {
+        return alloc::vec![String::from("niciun disc propriu (AHCI/NVMe) vazut de OS")];
+    }
+    rows
 }

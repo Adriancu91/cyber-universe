@@ -1,6 +1,6 @@
-//! NVMe SSDs, read only: admin queue, one I/O queue pair, one command at a time with polling.
-//! Written from the NVM Express Base Specification (controller registers, queues, Identify,
-//! Create I/O Queue, Read).
+//! NVMe SSDs: admin queue, one I/O queue pair, one command at a time with polling (writes only reach volumes marked
+//! `cyber.rw`, see fat32). Written from the NVM Express Base Specification 1.4 (controller registers, queues, Identify,
+//! Create I/O Queue, Read, Write, Flush §6.8).
 
 use crate::block::{BlockDevice, BlockError, SECTOR};
 use crate::mem::{frame, map::{PAGE_SIZE, phys_to_virt}, paging};
@@ -19,7 +19,10 @@ const SPIN_LIMIT: u32 = 20_000_000;
 const ADMIN_CREATE_SQ: u8 = 0x01;
 const ADMIN_CREATE_CQ: u8 = 0x05;
 const ADMIN_IDENTIFY: u8 = 0x06;
+const IO_FLUSH: u8 = 0x00;
 const IO_WRITE: u8 = 0x01;
+/// P6-100: Flush commands that succeeded since start-up (the scenarios check that one was sent).
+pub static FLUSHES: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 const IO_READ: u8 = 0x02;
 
 /// A submission queue and its completion queue.
@@ -44,6 +47,8 @@ struct Controller {
 pub struct NvmeDisk {
     ctrl: crate::sched::Mutex<Controller>,
     sectors: u64,
+    /// Identify Controller byte 525 bit 0 (VWC): the SSD has a volatile write cache that Flush empties.
+    cache: bool,
 }
 
 fn rd32(a: u64) -> u32 {
@@ -199,6 +204,19 @@ impl BlockDevice for NvmeDisk {
         }
         Ok(())
     }
+
+    /// P6-100: Flush (namespace 1), so what was written is on the medium, not only in the SSD's memory.
+    fn flush(&self) -> Result<(), BlockError> {
+        if !self.cache {
+            return Ok(()); // no volatile write cache: every write is already on the medium
+        }
+        if let Err(status) = self.ctrl.lock().run(true, IO_FLUSH, 1, 0, [0; 6]) {
+            crate::warn!("nvme: golirea memoriei discului (Flush) a esuat (stare {:#x})", status);
+            return Err(BlockError::OutOfRange);
+        }
+        FLUSHES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
 }
 
 /// Finds the first NVMe controller, starts it and returns namespace 1 as a disk.
@@ -231,6 +249,7 @@ pub fn init() -> Option<NvmeDisk> {
     let buffer = ctrl.buffer;
     ctrl.run(false, ADMIN_IDENTIFY, 0, buffer, [1, 0, 0, 0, 0, 0]).ok()?; // controller
     let model = alloc::string::String::from(core::str::from_utf8(&ctrl.buffer()[24..64]).unwrap_or("?").trim());
+    let cache = ctrl.buffer()[525] & 1 != 0;
     ctrl.run(false, ADMIN_IDENTIFY, 1, buffer, [0, 0, 0, 0, 0, 0]).ok()?; // namespace 1
     let ns = ctrl.buffer();
     let sectors = u64::from_le_bytes(ns[0..8].try_into().unwrap());
@@ -244,5 +263,16 @@ pub fn init() -> Option<NvmeDisk> {
     ctrl.run(false, ADMIN_CREATE_CQ, 0, cq, [size << 16 | 1, 1, 0, 0, 0, 0]).ok()?;
     ctrl.run(false, ADMIN_CREATE_SQ, 0, sq, [size << 16 | 1, 1 << 16 | 1, 0, 0, 0, 0]).ok()?;
     crate::info!("nvme: disc {} ({} MiB)", model, sectors / 2048);
-    Some(NvmeDisk { ctrl: crate::sched::Mutex::new(ctrl), sectors })
+    let controllers = crate::pci::find_all(0x01, 0x08, 0x02).len();
+    if controllers > 1 {
+        crate::block::note(alloc::format!("nvme: {} controlere, folosit doar primul", controllers));
+    }
+    crate::block::note(alloc::format!(
+        "nvme: disc {} ({} MiB, {} sectoare; memorie de scriere {})",
+        model,
+        sectors / 2048,
+        sectors,
+        if cache { "da, golita cu Flush" } else { "nu" }
+    ));
+    Some(NvmeDisk { ctrl: crate::sched::Mutex::new(ctrl), sectors, cache })
 }

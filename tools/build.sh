@@ -158,6 +158,23 @@ MTOOLS_SKIP_CHECK=1 mcopy -o -i "$FWSTICK" "$BUILD/cyber.rw.pick" ::/cyber.rw
 MTOOLS_SKIP_CHECK=1 mmd -i "$FWSTICK" ::/firmware ::/firmware/nvidia ::/firmware/nvidia/ga102 ::/firmware/nvidia/ga102/gsp
 echo "proba C-74, NU fisierul NVIDIA" > "$BUILD/booter_load.proba"
 MTOOLS_SKIP_CHECK=1 mcopy -o -i "$FWSTICK" "$BUILD/booter_load.proba" ::/firmware/nvidia/ga102/gsp/booter_load-570.144.bin
+# P6-100 (C-148 point 5): an "own disk" like the workstation's (scenario disc-propriu, attached as NVMe): GPT with an
+# EFI FAT32 partition WITHOUT cyber.rw first, then a FAT32 data partition WITH cyber.rw and kronos/ (the tiny model under
+# the name of #513), then a Linux partition. The OS must mount the second one at /disk.
+if [[ ",$EXTRA_FEATURES," == *",test-disc-propriu,"* ]]; then
+    OWN="$BUILD/disc-propriu.img"
+    rm -f "$OWN" && truncate -s 80M "$OWN"
+    printf 'label: gpt\nstart=2048, size=34M, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B\nstart=71680, size=38M, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7\nstart=149504, size=4M, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4\n' \
+        | PATH="$PATH:/usr/sbin:/sbin" sfdisk -q "$OWN"
+    PATH="$PATH:/usr/sbin:/sbin" mkfs.fat -F 32 -s 1 -n EFIPROBA --offset 2048 "$OWN" $((34 * 1024)) >/dev/null 2>&1
+    PATH="$PATH:/usr/sbin:/sbin" mkfs.fat -F 32 -s 1 -n CYBERDATE --offset 71680 "$OWN" $((38 * 1024)) >/dev/null 2>&1
+    echo "partitia EFI de proba, fara cyber.rw" > "$BUILD/efi.txt.own"
+    MTOOLS_SKIP_CHECK=1 mcopy -o -i "$OWN@@1M" "$BUILD/efi.txt.own" ::/efi.txt
+    echo "scriere permisa" > "$BUILD/cyber.rw.own"
+    MTOOLS_SKIP_CHECK=1 mcopy -o -i "$OWN@@$((71680 * 512))" "$BUILD/cyber.rw.own" ::/cyber.rw
+    MTOOLS_SKIP_CHECK=1 mmd -i "$OWN@@$((71680 * 512))" ::/kronos
+    MTOOLS_SKIP_CHECK=1 mcopy -o -i "$OWN@@$((71680 * 512))" "$ROOT/tests/kronos/mini-q8.kgr" ::/kronos/kronos_513_q8_0.kgr
+fi
 # P6-83 (C-113): a 64 GiB stick like Adrian's Kingston (FAT32 from Windows: 32 KiB clusters, ~2 million of them, FAT
 # of ~16 MB), as a sparse file (a few MB on disk). FSInfo's "next free" hint points at the last cluster, so the first
 # allocations land more than 4 GiB into the disk and then wrap to the start of the FAT (scenario fat-mare).

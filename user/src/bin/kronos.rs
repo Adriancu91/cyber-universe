@@ -1160,7 +1160,16 @@ fn main() -> i64 {
         },
         None => None,
     };
-    let dir = o.dir.clone().unwrap_or_else(|| String::from("/usb/kronos"));
+    // P6-100 (C-148 point 5): the computer's own disk first, when its partition is marked `cyber.rw` and has a model.
+    let dir = o.dir.clone().unwrap_or_else(|| {
+        let own = cyber_user::stat("/disk/cyber.rw") >= 0;
+        if own && default_model("/disk/kronos").is_some() {
+            println!("kronos: discul propriu /disk are cyber.rw si un model: caut in /disk/kronos (nu pe stick)");
+            String::from("/disk/kronos")
+        } else {
+            String::from("/usb/kronos")
+        }
+    });
     let path = match o.model.clone() {
         Some(p) => p,
         None => match default_model(&dir) {

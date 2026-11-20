@@ -69,6 +69,17 @@ pub struct State {
 pub const I9_DEFAULT: &str = "c135";
 /// P6-96: the model the cycle runs after the chain when it is on the stick (`kronos --gpu`, C-141).
 pub const K513: &str = "/usb/kronos/kronos_513_q8_0.kgr";
+/// P6-100 (C-148 point 5): the same model on the computer's own disk (a partition marked `cyber.rw`, mounted at /disk).
+pub const K513_DISK: &str = "/disk/kronos/kronos_513_q8_0.kgr";
+
+/// P6-100: where the cycle finds #513: the own disk when it is marked `cyber.rw` and has it, else the stick
+/// (`/bin/kronos` picks its folder the same way: /disk/kronos when /disk has cyber.rw and a model there).
+pub fn k513_path() -> Option<&'static str> {
+    if fs::own_disk_writable() && fs::kind(K513_DISK).is_ok() {
+        return Some(K513_DISK);
+    }
+    fs::kind(K513).is_ok().then_some(K513)
+}
 /// P6-96: what `kronos --gpu` generates in the cycle (the command of CITESTE.txt).
 pub const K513_ARGS: [&str; 6] = ["kronos", "--gpu", "--n", "16", "Buna", "ziua"];
 
@@ -317,7 +328,13 @@ fn test(s: &mut State) -> String {
 /// is on the stick — `kronos --gpu --n 16 Buna ziua` at its I14 (one chain). Returns (the whole text, the result line).
 pub fn board_test(i9: &str) -> (String, String) {
     let choice = crate::drivers::gpu_golden::i9_option(i9).unwrap_or(crate::drivers::gpu_golden::I9Choice::C135);
-    let mut text = String::from("\n-- gpu recupereaza\n");
+    // P6-100 (C-148 point 5): the disks the OS sees on this computer (reads only), before anything else.
+    let mut text = String::from("\n-- discurile vazute de OS (doar citire)\n");
+    for row in crate::block::inventory() {
+        text.push_str(&row);
+        text.push('\n');
+    }
+    text.push_str("\n-- gpu recupereaza\n");
     let rec = crate::drivers::gpu_rec::recover();
     for l in &rec {
         text.push_str(l);
@@ -331,8 +348,10 @@ pub fn board_test(i9: &str) -> (String, String) {
         text.push_str(&format!("\n{}\n", why));
         return (text, why);
     }
-    let k513 = fs::kind(K513).is_ok();
-    let result = if k513 {
+    let result = if let Some(model) = k513_path() {
+        if model != K513 {
+            text.push_str(&format!("\n(#513 de pe discul propriu: {})\n", model));
+        }
         text.push_str(&format!("\n-- run {} (lantul cu I9 {}, apoi #513 la i14-simbol; DA dat de cheile ciclului)\n", K513_ARGS.join(" "), i9));
         *crate::drivers::gpu_tur::KRONOS_I9.lock() = Some(choice);
         crate::drivers::gpu_tur::KRONOS_ARMED.store(true, core::sync::atomic::Ordering::SeqCst);
