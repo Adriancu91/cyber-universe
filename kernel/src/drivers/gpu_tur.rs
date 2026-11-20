@@ -1183,47 +1183,111 @@ fn kronos_chain_thread() {
     *KRONOS_LINES.lock() = Some(lines);
 }
 
+/// What a `kronos --gpu` call gives back to `/bin/kronos` (P6-99): a question of the check after the board (the CPU
+/// logits of `token` at `pos`, from its fast engine), or the end: the board's greedy tokens (or why not) and the chain's lines.
+pub enum KronosStep {
+    Verifica { token: usize, pos: usize },
+    Gata(Result<Vec<usize>, String>, Vec<String>),
+}
+
 /// A `kronos --gpu` request (call 43 from `/bin/kronos`): the whole window chain with the request queued for its
 /// `i14-simbol` step (the board is set up only inside the chain; every token judged against the processor). Returns the
-/// board's greedy tokens, or why not (then `/bin/kronos` generates on the processor), and the chain's lines.
-pub fn kronos_gpu(path: &str, prompt: Vec<usize>, n: usize, sim: bool) -> (Result<Vec<usize>, String>, Vec<String>) {
+/// board's greedy tokens, or why not (then `/bin/kronos` generates on the processor), and the chain's lines; with
+/// `os_check` (P6-99, C-148 point 2) first the questions of the check after the board, one per call (answered by
+/// [`kronos_answer`]).
+pub fn kronos_gpu(path: &str, prompt: Vec<usize>, n: usize, sim: bool, os_check: bool) -> KronosStep {
     use core::sync::atomic::Ordering;
     if !KRONOS_ARMED.swap(false, Ordering::SeqCst) {
-        return (Err(String::from("fara DA de la shell (kronos --gpu se porneste doar din shell, cu DA)")), Vec::new());
+        return KronosStep::Gata(Err(String::from("fara DA de la shell (kronos --gpu se porneste doar din shell, cu DA)")), Vec::new());
     }
     if sim && !cfg!(feature = "test-gpu-sim") {
-        return (Err(String::from("--gpu-sim exista doar in build-ul de test")), Vec::new());
+        return KronosStep::Gata(Err(String::from("--gpu-sim exista doar in build-ul de test")), Vec::new());
     }
     if !sim && !cfg!(feature = "gpu-scrie") {
-        return (Err(String::from("acest sistem nu poate scrie in placa (doar stick-ul de test, gpu-scrie)")), Vec::new());
+        return KronosStep::Gata(Err(String::from("acest sistem nu poate scrie in placa (doar stick-ul de test, gpu-scrie)")), Vec::new());
     }
     #[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
     {
         *gpu_i14::KRONOS_RESULT.lock() = None;
-        *gpu_i14::KRONOS_JOB.lock() = Some(gpu_i14::KronosJob { path: String::from(path), prompt, n });
-        crate::info!("gpu: kronos --gpu: lantul porneste{} cu cererea la i14-simbol", if sim { " (SIMULARE)" } else { "" });
+        *gpu_i14::KRONOS_JOB.lock() = Some(gpu_i14::KronosJob { path: String::from(path), prompt, n, os_check });
+        {
+            let mut c = gpu_i14::OS_CHECK.lock();
+            c.owner = if os_check { crate::sched::current_id() } else { 0 };
+            c.want = None;
+            c.handed = false;
+            c.answer = None;
+        }
+        crate::info!(
+            "gpu: kronos --gpu: lantul porneste{} cu cererea la i14-simbol{}",
+            if sim { " (SIMULARE)" } else { "" },
+            if os_check { "; verificarea dupa placa: /bin/kronos (motorul rapid)" } else { "" }
+        );
         // The chain is deep (the window steps, the falcon/GSP models in SIMULATION, the model at I14): it runs on its
         // own kernel thread with a big stack, not on this program's 16 KiB kernel stack (P6-60: that overflowed and
         // corrupted the heap). This thread waits for it.
         KRONOS_SIM.store(sim, Ordering::SeqCst);
         *KRONOS_LINES.lock() = None;
         crate::sched::spawn_with_stack(kronos_chain_thread, KRONOS_STACK);
-        let lines = loop {
-            if let Some(l) = KRONOS_LINES.lock().take() {
-                break l;
-            }
-            crate::sched::sleep_ms(20);
-        };
-        // A chain that stopped before I14 never took the request.
-        let left = gpu_i14::KRONOS_JOB.lock().take().is_some();
-        let res = gpu_i14::KRONOS_RESULT.lock().take().unwrap_or_else(|| {
-            Err(String::from(if left { "lantul s-a oprit inainte de i14-simbol" } else { "niciun raspuns de la i14-simbol" }))
-        });
-        (res, lines)
+        kronos_wait()
     }
     #[cfg(not(any(feature = "gpu-scrie", feature = "test-gpu-sim")))]
     {
-        let _ = (path, prompt, n);
-        (Err(String::from("acest sistem nu poate scrie in placa")), Vec::new())
+        let _ = (path, prompt, n, os_check);
+        KronosStep::Gata(Err(String::from("acest sistem nu poate scrie in placa")), Vec::new())
     }
+}
+
+/// P6-99: `/bin/kronos`'s answer to the question at `pos` (its fast engine's logits, or why it could not compute them);
+/// then waits for the next question or the end. `None` = this thread made no `kronos --gpu` request with the check. An
+/// answer to a question the chain no longer waits for (it gave up) is dropped.
+pub fn kronos_answer(pos: usize, logits: Result<Vec<f32>, String>) -> Option<KronosStep> {
+    #[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
+    {
+        {
+            let mut c = gpu_i14::OS_CHECK.lock();
+            if c.owner == 0 || c.owner != crate::sched::current_id() {
+                return None;
+            }
+            if c.handed && c.want.map(|w| w.1) == Some(pos) {
+                c.answer = Some(logits);
+            }
+        }
+        Some(kronos_wait())
+    }
+    #[cfg(not(any(feature = "gpu-scrie", feature = "test-gpu-sim")))]
+    {
+        let _ = (pos, logits);
+        None
+    }
+}
+
+/// The calling thread waits for the chain's end or (with the check after the board) its next question.
+#[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
+fn kronos_wait() -> KronosStep {
+    let me = crate::sched::current_id();
+    let got = gpu_i14::wait_for(u64::MAX, || {
+        if let Some(l) = KRONOS_LINES.lock().take() {
+            return Some(Err(l));
+        }
+        let mut c = gpu_i14::OS_CHECK.lock();
+        match c.want {
+            Some((token, pos)) if c.owner == me && !c.handed => {
+                c.handed = true;
+                Some(Ok((token, pos)))
+            }
+            _ => None,
+        }
+    });
+    let lines = match got {
+        Some(Ok((token, pos))) => return KronosStep::Verifica { token, pos },
+        Some(Err(lines)) => lines,
+        None => return KronosStep::Gata(Err(String::from("programul a fost oprit inainte de sfarsitul lantului")), Vec::new()),
+    };
+    gpu_i14::OS_CHECK.lock().owner = 0;
+    // A chain that stopped before I14 never took the request.
+    let left = gpu_i14::KRONOS_JOB.lock().take().is_some();
+    let res = gpu_i14::KRONOS_RESULT.lock().take().unwrap_or_else(|| {
+        Err(String::from(if left { "lantul s-a oprit inainte de i14-simbol" } else { "niciun raspuns de la i14-simbol" }))
+    });
+    KronosStep::Gata(res, lines)
 }

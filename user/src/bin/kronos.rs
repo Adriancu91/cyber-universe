@@ -321,6 +321,12 @@ struct Opts {
     history: Option<String>,
     /// `--gpu` / `--gpu-sim` (P6-62 step 3): Some(false) = the board, Some(true) = the simulated board.
     gpu: Option<bool>,
+    /// `--verificare-nucleu` (P6-99): with `--gpu`, the check between tokens by the kernel's reference engine (as up to
+    /// os-313) instead of the check after the board by this program's fast engine.
+    kernel_check: bool,
+    /// `--strica-verificarea <pozitie>` (P6-99, with `--gpu-sim` only): this program's logits at that position are spoiled on
+    /// purpose (+1 on the largest one), so the check after the board must refuse it (the test of the refusal).
+    spoil: Option<usize>,
 }
 
 fn parse_args() -> Result<Opts, String> {
@@ -351,6 +357,8 @@ fn parse_args() -> Result<Opts, String> {
         chat: false,
         history: None,
         gpu: None,
+        kernel_check: false,
+        spoil: None,
     };
     let mut args = cyber_user::args().skip(1);
     while let Some(a) = args.next() {
@@ -386,6 +394,8 @@ fn parse_args() -> Result<Opts, String> {
             "--conversatie" => o.chat = true,
             "--gpu" => o.gpu = Some(false),
             "--gpu-sim" => o.gpu = Some(true),
+            "--verificare-nucleu" => o.kernel_check = true,
+            "--strica-verificarea" => o.spoil = Some(val()?.parse().map_err(|_| String::from("--strica-verificarea cere o pozitie"))?),
             "--istoric" => o.history = Some(val()?.into()),
             "--repetitie" => {
                 let p: f32 = val()?.parse().map_err(|_| String::from("--repetitie cere un numar (de ex. 1.3)"))?;
@@ -401,6 +411,9 @@ fn parse_args() -> Result<Opts, String> {
             _ if a.starts_with("--") => return Err(alloc::format!("argument necunoscut `{}`", a)),
             _ => o.words.push(a.into()),
         }
+    }
+    if o.spoil.is_some() && (o.gpu != Some(true) || o.kernel_check) {
+        return Err("--strica-verificarea merge doar cu --gpu-sim (verificarea dupa placa, fara --verificare-nucleu)".into());
     }
     if o.chat && (o.gpu.is_some() || o.ask || !o.words.is_empty()) {
         return Err("--conversatie merge singura: fara --gpu, --intreaba sau text (intrebarile le scrii la tastatura)".into());
@@ -732,7 +745,7 @@ fn speed_of(line: &str) -> Option<u64> {
 
 /// P6-62 step 3: `--gpu`. `Some(..)` = done on the board (P6-66: the same text then runs on the processor, for the
 /// speed comparison in the same report); `None` = continue on the processor (the note says why).
-fn on_gpu(o: &Opts, path: &str, n: usize, sim: bool, tok: Option<&Tokenizer>) -> Option<GpuDone> {
+fn on_gpu(o: &Opts, m: &mut Model, path: &str, n: usize, sim: bool, tok: Option<&Tokenizer>) -> Option<GpuDone> {
     let back = |why: &str| {
         println!("kronos: --gpu: {} -> continui pe procesor", why);
         None
@@ -744,14 +757,54 @@ fn on_gpu(o: &Opts, path: &str, n: usize, sim: bool, tok: Option<&Tokenizer>) ->
         return back("nimic de generat");
     }
     let ids: Vec<String> = o.ids.iter().map(|x| alloc::format!("{}", x)).collect();
-    let req = alloc::format!("{}\n{}\n{}\n{}\n", if sim { "sim" } else { "placa" }, path, n, ids.join(","));
+    let os_check = !o.kernel_check;
+    let req = alloc::format!(
+        "{}\n{}\n{}\n{}\n{}",
+        if sim { "sim" } else { "placa" },
+        path,
+        n,
+        ids.join(","),
+        if os_check { "verificare os\n" } else { "" }
+    );
     println!("kronos: --gpu{}: lantul ferestrei porneste, apoi {} simboluri pe placa (pot trece cateva minute)", if sim { " (SIMULARE)" } else { "" }, n);
+    if os_check {
+        println!("kronos: --gpu: verificarea dupa placa: fiecare pozitie judecata in nucleu fata de motorul rapid al acestui program ({})", m.tune.describe());
+    }
     let mut buf = alloc::vec![0u8; 64 * 1024];
     let t0 = now_ms();
-    let got = cyber_user::gpu_kronos(&req, &mut buf);
+    let mut got = cyber_user::gpu_kronos(&req, &mut buf);
+    // P6-99 (C-148 point 2): the check after the board: the kernel asks for this engine's logits, one position at a time
+    // (in order, the board's own tokens), and judges them with the same rule as before (`kronos_model::judge`).
+    let mut seen: Vec<u32> = Vec::new();
+    let (mut asked, mut check_ms) = (0usize, 0u64);
+    while got > 0 && buf.starts_with(b"verifica ") {
+        let line = String::from_utf8_lossy(&buf[..got as usize]).into_owned();
+        let mut w = line.trim().split(' ').skip(1).map(|x| x.parse::<usize>().ok());
+        let (Some(Some(token)), Some(Some(pos))) = (w.next(), w.next()) else {
+            return back(&alloc::format!("intrebare de neinteles de la nucleu: {}", line.trim()));
+        };
+        let c0 = now_ms();
+        let mut logits = check_logits(m, &mut seen, token, pos).unwrap_or_else(|e| {
+            println!("kronos: --gpu: verificarea dupa placa: pozitia {}: {}", pos, e);
+            Vec::new()
+        });
+        if o.spoil == Some(pos) {
+            if let Some(top) = (!logits.is_empty()).then(|| kgr::argmax(&logits) as usize) {
+                logits[top] += 1.0;
+                println!("kronos: --strica-verificarea: logit-ul {} al pozitiei {} stricat intentionat (+1)", top, pos);
+            }
+        }
+        check_ms += now_ms() - c0;
+        asked += 1;
+        got = cyber_user::gpu_kronos_logits(pos, &logits, &mut buf);
+    }
     let ms = now_ms() - t0;
+    m.reset();
     if got < 0 {
         return back(&alloc::format!("apelul a fost refuzat (cod {})", got));
+    }
+    if asked > 0 {
+        println!("kronos: --gpu: verificarea dupa placa: {} pozitii calculate de motorul rapid in {} ms", asked, check_ms);
     }
     let text = String::from_utf8_lossy(&buf[..got as usize]).into_owned();
     let mut lines = text.lines();
@@ -787,12 +840,33 @@ fn on_gpu(o: &Opts, path: &str, n: usize, sim: bool, tok: Option<&Tokenizer>) ->
         println!("kronos: continuare: {:?}", out);
     }
     println!(
-        "kronos: PE PLACA{}: {} simboluri, fiecare comparat in nucleu cu procesorul (lantul intreg + textul in {} ms)",
+        "kronos: PE PLACA{}: {} simboluri, fiecare comparat in nucleu cu procesorul{} (lantul intreg + textul in {} ms)",
         if sim { " (SIMULARE)" } else { "" },
         out.len(),
+        if os_check { " (dupa placa, motorul rapid al OS-ului)" } else { "" },
         ms
     );
     Some(GpuDone { tokens: out, per_s_x100, sim })
+}
+
+/// P6-99: this engine's logits for `token` at `pos` (the board's sequence, asked in order from position 0). `seen` holds
+/// the tokens of the positions already computed; a question that goes back (the kernel restarted the text) starts the
+/// engine again from the tokens it already has.
+fn check_logits(m: &mut Model, seen: &mut Vec<u32>, token: usize, pos: usize) -> Result<Vec<f32>, String> {
+    if pos > seen.len() {
+        return Err(alloc::format!("pozitia {} sare peste pozitii (am {})", pos, seen.len()));
+    }
+    let token = u32::try_from(token).map_err(|_| String::from("simbol prea mare"))?;
+    seen.truncate(pos);
+    if m.len != pos {
+        m.reset();
+        if pos > 0 {
+            m.forward(&seen[..pos], false)?;
+        }
+    }
+    let l = m.forward(&[token], false)?;
+    seen.push(token);
+    Ok(l)
 }
 
 /// `--profil`: where the cycles of the generated tokens went.
@@ -1293,7 +1367,7 @@ fn main() -> i64 {
     let n = o.n.min(c.context.saturating_sub(o.ids.len()));
     let mut gpu_done: Option<GpuDone> = None;
     if let Some(sim) = o.gpu {
-        gpu_done = on_gpu(&o, &path, n, sim, tok.as_ref());
+        gpu_done = on_gpu(&o, &mut m, &path, n, sim, tok.as_ref());
         if gpu_done.is_some() {
             println!("kronos: acelasi text si pe procesor, pentru comparatia de viteza (C-87):");
         }

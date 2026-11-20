@@ -9,6 +9,8 @@
 #   - P6-98 (C-148): + the `kp` rows (time per kind), the VRAM → VRAM copy (one more doorbell = 43, `kc` rows, 0 wrong
 #     words) and, last in I14, ONE GSP-RM read of the performance state (`ks`): its GSP-window writes come after the last
 #     work-channel doorbell and before the `ks` row, and nothing else.
+#   - P6-99 (C-148 point 2): the request is checked AFTER the board by /bin/kronos's fast engine: the same 43 doorbells
+#     (the board runs the same 9 positions), the `kv` rows of the check after the board instead of the step_cpu ones.
 set -uo pipefail
 IMG="${1:?disk image}"
 dump() { MTOOLS_SKIP_CHECK=1 mtype -i "$IMG@@1M" "::/raport/$1" 2>/dev/null; }
@@ -51,7 +53,13 @@ assert kv and i13[0] < kv[0] and kv[-1] < i14[0], "randurile kg/kv trebuie sa fi
 assert val("kg simboluri cerute") == [5] and val("kg simboluri generate pe placa (identice cu procesorul)") == [5], "kg: 5 cerute, 5 generate"
 assert val("kg primul simbol diferit de procesor (pozitia; ffffffff = niciunul)") == [0xFFFFFFFF], "kg: niciun simbol diferit"
 assert val("kv sursa (0 SIMULARE, 1 placa)") == [0] and val("kv simboluri") == [9], ("kv", val("kv simboluri"))
-assert val("kv urcare bucati") == [1] and len(val("kv simboluri pe secunda x100 (motorul procesorului)")) == 1, "kv: urcarea, motorul procesorului"
+assert val("kv urcare bucati") == [1], "kv: urcarea"
+# P6-99 (C-148 point 2): the check after the board by /bin/kronos's fast engine: its own rows, never the step_cpu ones.
+assert not val("kv simboluri pe secunda x100 (motorul procesorului)"), "kv: step_cpu nu mai verifica textul cererii"
+assert len(val("kv verificarea dupa placa median pe pozitie (us, motorul rapid /bin/kronos)")) == 1, "kv: verificarea dupa placa"
+assert len(val("kv pozitii pe secunda x100 (verificarea dupa placa)")) == 1, "kv: pozitii pe secunda la verificare"
+wc = val("kv simboluri pe secunda x100 cu verificare (placa + driver + verificarea dupa placa)")
+assert len(wc) == 1 and 0 < wc[0] < 0xFFFFFFFF, ("kv: cu verificare", wc)
 # P6-97 (C-146): the time per token, split (`kt …`), inside I14; the launch slots read back = the shadow.
 kt = [i for i, b in enumerate(ev) if b.startswith("valoare kt ")]
 assert kt and i13[0] < kt[0] and kt[-1] < i14[0], "randurile kt trebuie sa fie in I14"

@@ -93,6 +93,15 @@ const KG_FIRST_DIFF: &str = "kg primul simbol diferit de procesor (pozitia; ffff
 const KG_WORST: &str = "kg abaterea maxima a logit-urilor fata de procesor (x1e6)";
 const KV_CPU_MED: &str = "kv motorul procesorului median pe pozitie (us, step_cpu)";
 const KV_CPU_X100: &str = "kv simboluri pe secunda x100 (motorul procesorului)";
+/// P6-99 (C-148 point 2): `kronos --gpu` checked AFTER the board by `/bin/kronos`'s fast engine (other names than the
+/// two rows above, so a journal never mixes the two engines).
+const KV_OS_MED: &str = "kv verificarea dupa placa median pe pozitie (us, motorul rapid /bin/kronos)";
+const KV_OS_X100: &str = "kv pozitii pe secunda x100 (verificarea dupa placa)";
+const KV_WITH_CHECK_X100: &str = "kv simboluri pe secunda x100 cu verificare (placa + driver + verificarea dupa placa)";
+
+/// P6-99: how long the chain waits for `/bin/kronos`'s logits of one position before it gives up (a clear line, no
+/// verdict = no token accepted). The fast engine needs ~14 ms per position for #513 on the workstation.
+const OS_CHECK_WAIT_US: u64 = 60_000_000;
 
 /// P6-97 (C-146): whether the board rewrote any word of the launch slots (read back after the text; 0 = the shadow held).
 const KT_SHADOW: &str = "kt umbra lansarilor: cuvinte schimbate de placa in sloturi (0 = umbra corecta)";
@@ -348,6 +357,47 @@ pub struct KronosJob {
     pub path: String,
     pub prompt: Vec<usize>,
     pub n: usize,
+    /// P6-99 (C-148 point 2): every position is judged after the board by `/bin/kronos`'s fast engine (through
+    /// [`OS_CHECK`]) instead of the kernel's reference engine between tokens.
+    pub os_check: bool,
+}
+
+/// P6-99 (C-148 point 2): the meeting point of the chain's check (`OsCheck`, on the chain thread) and `/bin/kronos`
+/// (on the thread of its `gpu_kronos` call): the chain asks for the CPU logits of one (token, position), the program
+/// gets the question as the answer of its call, computes them with its fast engine and gives them back
+/// (`gpu_kronos_logits`). Only the thread that made the request may answer.
+pub struct OsCheckLink {
+    /// The thread of the `gpu_kronos` call (0 = none).
+    pub owner: u64,
+    /// The (token, position) the chain waits for.
+    pub want: Option<(usize, usize)>,
+    /// `want` was already given to the program.
+    pub handed: bool,
+    /// The program's answer: the logits, or why it could not compute them.
+    pub answer: Option<Result<Vec<f32>, String>>,
+}
+
+pub static OS_CHECK: crate::sched::Mutex<OsCheckLink> =
+    crate::sched::Mutex::new(OsCheckLink { owner: 0, want: None, handed: false, answer: None });
+
+/// P6-99: waits until `ready()` gives a value or the OS clock passes `deadline` (us since boot): yields first (an answer
+/// usually comes within milliseconds), then sleeps one tick at a time.
+pub fn wait_for<T>(deadline: u64, mut ready: impl FnMut() -> Option<T>) -> Option<T> {
+    let t0 = crate::time::since_boot_us().unwrap_or(0);
+    loop {
+        if let Some(v) = ready() {
+            return Some(v);
+        }
+        let now = crate::time::since_boot_us().unwrap_or(0);
+        if now >= deadline || crate::sched::killed() {
+            return None;
+        }
+        if now.saturating_sub(t0) < 200_000 {
+            crate::sched::yield_now();
+        } else {
+            crate::sched::sleep_ms(1);
+        }
+    }
 }
 
 /// The request waiting for the next chain, and its answer (the greedy tokens of the board, or why not).
@@ -361,6 +411,8 @@ struct Run<'a> {
     steps: usize,
     argmax: Option<&'a [usize]>,
     greedy: Option<&'a [usize]>,
+    /// P6-99: checked after the board by `/bin/kronos` (`kronos --gpu` only); otherwise the reference engine between tokens.
+    os_check: bool,
 }
 
 /// What a run left behind: the greedy tokens of every text, the worst logit deviation, the median token time, and
@@ -374,6 +426,8 @@ struct RunOut {
     /// per position (`step_cpu`, the same weights) for the comparison.
     speed: ks::Speed,
     cpu_us: Vec<u64>,
+    /// P6-99: `cpu_us` are the times of the check after the board by `/bin/kronos` (not the kernel's `step_cpu`).
+    os_check: bool,
     /// P6-97 (C-146): every position of the last text, split (board / journal / screen / the rest = driver / CPU check).
     split: Vec<kf::TokenSplit>,
     /// P6-97: words of the launch slots the board changed (read back after the texts); `None` = no shadow (control model).
@@ -572,6 +626,7 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         pos: 0,
         timing: None,
         last_logits: Vec::new(),
+        kept: None,
         argmaxes: Vec::new(),
         speed,
         // P6-97 (C-145/C-146): only for `kronos --gpu` (no control answers): the control model and the ladder keep
@@ -618,21 +673,33 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
             let mut generation = Generation::new(plan);
             runner.argmaxes.clear();
             runner.split.clear();
+            runner.kept = run.os_check.then(Vec::new);
             let mut check = CpuCheck { w: &weights, caches: Caches::new(m.layers.len(), e), us: Vec::new() };
-            let stop = generation.run(&mut runner, Some(&mut check)).clone();
+            // P6-99 (C-148 point 2): `kronos --gpu` from `/bin/kronos`: the board first (`run_check_after`), then every
+            // position judged by the same rule (`kronos_model::judge`, in the kernel) against the fast engine's logits.
+            let mut os = OsCheck { us: Vec::new(), why: None };
+            let stop = if run.os_check {
+                generation.run_check_after(&mut runner, &mut os).clone()
+            } else {
+                generation.run(&mut runner, Some(&mut check)).clone()
+            };
+            let mut us = if run.os_check { core::mem::take(&mut os.us) } else { core::mem::take(&mut check.us) };
             // P6-97: the CPU check of each position next to its token (Generation checks every position once, in order).
             let mut split = core::mem::take(&mut runner.split);
-            if split.len() == check.us.len() {
-                for (t, &c) in split.iter_mut().zip(&check.us) {
+            if split.len() == us.len() {
+                for (t, &c) in split.iter_mut().zip(&us) {
                     t.check_us = c;
                 }
             }
             split_all = split;
-            cpu_us.append(&mut check.us);
+            cpu_us.append(&mut us);
             if stop.is_clean_end() {
                 break (generation, positions);
             }
             runner.lines.push(format!("{}: I14: \"{}\": {}", p, run.name, stop.line()));
+            if let Some(why) = os.why.take() {
+                runner.lines.push(format!("{}: kronos --gpu: verificarea dupa placa: {}", p, why));
+            }
             let pos = match stop {
                 Stop::NuTrece { pos, .. } | Stop::LogitiNefiniti { pos } => pos,
                 Stop::Eroare { err, .. } => return Err(err),
@@ -650,6 +717,24 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
             }
             // What that token left in memory (nothing sent). The CPU engine's caches hold the earlier rows.
             let tok = generation.seq[pos];
+            // P6-99: after the board, the reference engine had not run: it runs now up to the refused position (its
+            // caches as the check between tokens would have left them), and the refused position's own board logits
+            // are the ones explained. If the reference engine passes them, the board is not the one that differs.
+            if run.os_check {
+                for q in 0..=pos {
+                    check.cpu_logits(generation.seq[q], q)?;
+                }
+                let got = runner.kept.as_ref().and_then(|k| k.get(pos)).cloned().unwrap_or_default();
+                let reference = check.cpu_logits(tok, pos)?;
+                if matches!(km::judge(&got, &reference), km::TokenVerdict::Trece { .. }) {
+                    runner.lines.push(format!(
+                        "{}: kronos --gpu: pozitia {}: motorul de referinta al nucleului (step_cpu) TRECE logit-urile placii; motorul rapid al OS-ului nu: diferenta e intre cele doua motoare, nu de la placa",
+                        p, pos
+                    ));
+                    return Err(bad("I14: verificarea dupa placa (motorul rapid al OS-ului) a refuzat o pozitie pe care motorul de referinta o trece"));
+                }
+                runner.last_logits = got;
+            }
             let cpu = check.cpu_logits(tok, pos)?;
             let ctx = kd::ProbeCtx {
                 w: &weights,
@@ -719,7 +804,8 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let mut src = blob.bytes;
     src.truncate(blob.scratch as usize);
     let copy = fast.then(|| CopyCtx { src_va: vblob.va, src, launches, rec, maps: tmaps, sys: host_logits, copy_va });
-    Ok(RunOut { all, worst, median, from_vram, speed, cpu_us, split: split_all, shadow_changed, prof, prof_err, copy })
+    let os_check = runs.iter().any(|r| r.os_check);
+    Ok(RunOut { all, worst, median, from_vram, speed, cpu_us, os_check, split: split_all, shadow_changed, prof, prof_err, copy })
 }
 
 /// One position on the board for `kronos_gen::Generation`, and the 4 operations of cyber-gpu's diagnosis
@@ -759,6 +845,9 @@ struct BoardRunner<'r, 'b, V: Mmio + ?Sized, K: Clock + ?Sized> {
     timing: Option<(u64, u64, u64)>,
     /// The logits the last token returned (for `kd::explain`).
     last_logits: Vec<f32>,
+    /// P6-99: with the check after the board, the logits of every position of the current text (the refused one is
+    /// explained with its own logits, not the last token's).
+    kept: Option<Vec<Vec<f32>>>,
     /// The board's argmax at every position of the current text.
     argmaxes: Vec<usize>,
     /// P6-95 (C-142): the speed counters (upload + every position).
@@ -970,6 +1059,10 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
         self.argmaxes.truncate(pos);
         self.argmaxes.push(cm::argmax(&logits).unwrap_or(usize::MAX));
         self.last_logits = logits.clone();
+        if let Some(k) = self.kept.as_mut() {
+            k.truncate(pos);
+            k.push(logits.clone());
+        }
         let (start_ns, end_ns, busy_ns) = self.timing.unwrap_or((0, 0, 0));
         let out = TokenOutput { logits, start_ns, end_ns, busy_ns };
         // P6-97 (C-145 point 1): the routine rows of this token are handed to the stick (P6-98: written every 16 tokens
@@ -1023,6 +1116,44 @@ impl TokenCheck for CpuCheck<'_, '_> {
     }
 }
 
+/// P6-99 (C-148 point 2): the CPU check after the board, by `/bin/kronos`'s fast engine: for every kept position, in
+/// order, the question goes through [`OS_CHECK`] and the chain waits (at most [`OS_CHECK_WAIT_US`]) for the logits.
+/// No answer, or a program that could not compute them, is an error of that position (`Stop::Eroare`), never a pass.
+struct OsCheck {
+    /// The wait of every position (us, OS clock): the program's engine + the hand-over.
+    us: Vec<u64>,
+    /// Why the check could not judge (the error's own text is a fixed one).
+    why: Option<String>,
+}
+
+impl TokenCheck for OsCheck {
+    fn cpu_logits(&mut self, token: usize, pos: usize) -> GpuResult<Vec<f32>> {
+        let t0 = crate::time::since_boot_us().unwrap_or(0);
+        {
+            let mut c = OS_CHECK.lock();
+            c.want = Some((token, pos));
+            c.handed = false;
+            c.answer = None;
+        }
+        let got = wait_for(t0 + OS_CHECK_WAIT_US, || OS_CHECK.lock().answer.take());
+        OS_CHECK.lock().want = None;
+        if let Some(d) = crate::time::since_boot_us().map(|b| b.saturating_sub(t0)) {
+            self.us.push(d);
+        }
+        match got {
+            Some(Ok(v)) => Ok(v),
+            Some(Err(why)) => {
+                self.why = Some(format!("pozitia {}: /bin/kronos nu a putut calcula logit-urile: {}", pos, why));
+                Err(bad("verificarea dupa placa: /bin/kronos nu a putut calcula pozitia"))
+            }
+            None => {
+                self.why = Some(format!("pozitia {}: niciun raspuns de la /bin/kronos in {} s", pos, OS_CHECK_WAIT_US / 1_000_000));
+                Err(bad("verificarea dupa placa: /bin/kronos nu a raspuns la timp"))
+            }
+        }
+    }
+}
+
 /// Step `i14-simbol` with the model file at `path` (the control model `mic_q8_0.kgr`); then a waiting `kronos --gpu`
 /// request, if any (P6-62 step 3).
 #[allow(clippy::too_many_arguments)]
@@ -1066,6 +1197,7 @@ pub(super) fn token_step<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 steps: c.greedy.len(),
                 argmax: Some(c.argmax),
                 greedy: Some(&c.greedy),
+                os_check: false,
             })
             .collect();
         let out = run_model(p, vbar, clock, journal, st, l, &m, &runs, permit, lines, doorbell, &mut tokens_done, &mut subs, &mut way)?;
@@ -1101,7 +1233,12 @@ pub(super) fn token_step<V: Mmio + ?Sized, K: Clock + ?Sized>(
             Err(err) => Err(format!("modelul de control nu a trecut pe placa ({})", err)),
         };
         match &res {
-            Ok(t) => lines.push(format!("{}: kronos --gpu: {} simboluri generate pe placa (fiecare comparat cu procesorul)", p, t.len())),
+            Ok(t) => lines.push(format!(
+                "{}: kronos --gpu: {} simboluri generate pe placa (fiecare comparat cu procesorul{})",
+                p,
+                t.len(),
+                if job.os_check { ", dupa placa" } else { "" }
+            )),
             Err(why) => lines.push(format!("{}: kronos --gpu: ESEC: {} -> kronos continua pe procesor", p, why)),
         }
         *KRONOS_RESULT.lock() = Some(res);
@@ -1145,7 +1282,7 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let name = job.path.rsplit('/').next().unwrap_or(&job.path);
     journal.push(Event::text(KG_MODEL, name.as_bytes()));
     journal.push(Event::Value { what: KG_ASKED, value: job.n as u32 });
-    let runs = [Run { name: String::from("kronos --gpu"), prompt: job.prompt.clone(), steps: job.n, argmax: None, greedy: None }];
+    let runs = [Run { name: String::from("kronos --gpu"), prompt: job.prompt.clone(), steps: job.n, argmax: None, greedy: None, os_check: job.os_check }];
     let writes0 = super::gpu_i6::HELD_WRITES.load(core::sync::atomic::Ordering::Relaxed);
     // P6-97 (C-145 point 1): the routine rows (window moves, TLB invalidates, doorbell and their notes) are held in
     // memory during the upload and the text and go to the stick once per token; every other row as before.
@@ -1170,17 +1307,39 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
     journal.push(Event::Value { what: KG_WORST, value: (worst as f64 * 1e6).min(u32::MAX as f64) as u32 });
     out.speed.journal(journal, false);
     let (cpu_med, cpu_x100) = cpu_speed(&out.cpu_us);
-    journal.push(Event::Value { what: KV_CPU_MED, value: cpu_med.map_or(u32::MAX, |v| v.min(u32::MAX as u64) as u32) });
-    journal.push(Event::Value { what: KV_CPU_X100, value: cpu_x100.map_or(u32::MAX, |v| v.min(u32::MAX as u64) as u32) });
+    let row = |v: Option<u64>| v.map_or(u32::MAX, |v| v.min(u32::MAX as u64) as u32);
+    // P6-99 (C-148 point 2): with the check after the board, its own rows (other names) + the speed with the check.
+    let with_check = with_check_x100(&out.split);
+    if out.os_check {
+        journal.push(Event::Value { what: KV_OS_MED, value: row(cpu_med) });
+        journal.push(Event::Value { what: KV_OS_X100, value: row(cpu_x100) });
+        journal.push(Event::Value { what: KV_WITH_CHECK_X100, value: row(with_check) });
+    } else {
+        journal.push(Event::Value { what: KV_CPU_MED, value: row(cpu_med) });
+        journal.push(Event::Value { what: KV_CPU_X100, value: row(cpu_x100) });
+    }
     lines.extend(out.speed.lines().into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
     let x100 = |v: Option<u64>| v.map_or(String::from("?"), |x| format!("{}.{:02}", x / 100, x % 100));
+    let check_part = if out.os_check {
+        format!(
+            "verificarea dupa placa (motorul rapid /bin/kronos) median {} us/pozitie = {} pozitii/s; cu verificare {} simboluri/s",
+            cpu_med.map_or(String::from("?"), |v| format!("{}", v)),
+            x100(cpu_x100),
+            x100(with_check)
+        )
+    } else {
+        format!(
+            "motorul procesorului (nucleul, 1 nucleu) median {} us pe pozitie = {} simboluri/s",
+            cpu_med.map_or(String::from("?"), |v| format!("{}", v)),
+            x100(cpu_x100)
+        )
+    };
     lines.push(format!(
-        "{}: kronos --gpu: viteza: placa {} simboluri/s (ceasul placii), cu driverul {} simboluri/s; motorul procesorului (nucleul, 1 nucleu) median {} us pe pozitie = {} simboluri/s",
+        "{}: kronos --gpu: viteza: placa {} simboluri/s (ceasul placii), cu driverul {} simboluri/s; {}",
         p,
         x100(out.speed.summary().board_per_s_x100),
         x100(out.speed.summary().host_per_s_x100),
-        cpu_med.map_or(String::from("?"), |v| format!("{}", v)),
-        x100(cpu_x100)
+        check_part
     ));
     // P6-97 (C-146): the time per token, split (board / driver / journal / screen + the CPU check), in the gpu journal
     // (`kt …`) and in the output (so also in the cycle's report).
@@ -1316,6 +1475,12 @@ fn vram_copy<V: Mmio + ?Sized, K: Clock + ?Sized>(
         s.share_permille()
     ));
     Ok(())
+}
+
+/// P6-99: positions per second × 100 with the check: every position's OS time (board + driver + journal) plus its check.
+fn with_check_x100(split: &[kf::TokenSplit]) -> Option<u64> {
+    let total: u64 = split.iter().map(|t| t.host_us + t.check_us).sum();
+    (total > 0).then(|| (split.len() as u128 * 100 * 1_000_000 / total as u128) as u64)
 }
 
 /// The CPU engine's median time per position (us) and positions per second × 100 over all of them.

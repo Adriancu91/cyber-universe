@@ -185,6 +185,16 @@ Aici stau doar driverele fără de care nucleul nu pornește sau nu poate fi dep
     compară cu umbra (rândul `kt umbra …`); (3) timpul pe simbol pe bucăți (`kronos_fast::TimeSplit`: placă / driver / jurnal / ecran +
     verificarea pe procesor) în rândurile `kt …` și în ieșire, deci și în raportul ciclului. `kg`/`kv` și comanda rămân ca în os-307. Modelul
     de control I14 și scara nu folosesc nimic din acestea. Test: `kronos-gpu` + `tools/after-kronos-gpu.sh` (rândurile `kt` în I14, umbra 0).
+    **P6-99 (C-148 punctul 2): verificarea după placă cu motorul rapid al OS-ului.** `kronos --gpu` din `/bin/kronos` (cererea cu
+    `verificare os`) rulează textul cu `Generation::run_check_after`: întâi toate pozițiile pe placă (logit-urile păstrate), apoi
+    fiecare poziție, în ordine, judecată în nucleu cu aceeași regulă (`kronos_model::judge`) față de logit-urile motorului rapid
+    al programului (`OsCheck` ↔ `gpu_tur::kronos_wait`/`kronos_answer`, apelurile 43/45; cel mult 60 s pe poziție, fără răspuns =
+    eroare). Prima poziție refuzată = oprirea, simbolurile de după se aruncă. La refuz, motorul de referință (`step_cpu`) rulează
+    până la poziția refuzată: dacă el trece logit-urile plăcii, rândul spune că diferența e între motoare, nu de la placă; altfel
+    diagnosticul C-139 ca înainte, pe logit-urile chiar ale acelei poziții. Rânduri noi (alte nume decât `step_cpu`): `kv verificarea
+    dupa placa median …`, `kv pozitii pe secunda x100 (verificarea dupa placa)`, `kv simboluri pe secunda x100 cu verificare …`.
+    `kronos --gpu --verificare-nucleu` = verificarea veche între simboluri. Modelul de control I14 rămâne pe motorul de referință.
+    Test: `kronos-gpu` (aceleași 43 sonerii) + `kronos-gpu-strica` (`--strica-verificarea 6`: refuzul exact la poziția 6).
     **`kronos --gpu` (P6-62 pas 3):** shell-ul întreabă `DA` (ca la `gpu lant`), apoi `/bin/kronos` cere prin apelul 43 lanțul întreg;
     la `i14-simbol`, după ce modelul de control a trecut, rulează cererea (modelul dat, textul + n simboluri greedy, fiecare simbol judecat
     față de procesor, același cod `run_model`). Orice eroare (fără `DA`, build care nu poate scrie, lanț oprit, simbol greșit, timp depășit)

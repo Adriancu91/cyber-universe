@@ -56,6 +56,10 @@
   grupele fixe de cifre ale regulilor `ws`), continuă greedy, scrie textul pe măsură ce vine (ține octeții unei litere
   neterminate) și se oprește la `<|endoftext|>`. Shell-ul taie la spații, deci cuvintele se lipesc la loc cu un spațiu.
   `kronos --codeaza <text>` arată doar simbolurile și decodarea înapoi.
+  **Pe placă (`--gpu`, P6-99):** după ce placa a generat textul, nucleul îi cere programului logit-urile fiecărei poziții (apelurile
+  43/45) și le judecă la fel de strict ca înainte; motorul rapid (toate nucleele, AVX2) înlocuiește motorul de referință al
+  nucleului (1 nucleu, ~3,85 s pe poziție la #513). `--verificare-nucleu` = verificarea veche; `--gpu-sim --strica-verificarea N`
+  (doar test) strică intenționat poziția N, ca refuzul să se vadă.
   **Asistent (P6-61, C-84):** `kronos --intreaba <întrebare> [--istoric <cale>]` — ultimele schimburi din istoric (implicit
   `<dosar>/conversatie.txt`) + `Intrebare: …\nRaspuns:`, răspuns până la primul rând nou, schimbul adăugat în istoric.
   `kronos --conversatie` (P6-65, C-87): același lucru pentru mai multe întrebări tastate (`Tu: `, apelul 44 `read_line`), modelul

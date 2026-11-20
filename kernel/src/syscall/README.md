@@ -68,6 +68,11 @@
   `placa`/`sim`, calea modelului, câte simboluri, simbolurile textului separate prin virgulă. Rulează lanțul ferestrei cu cererea la
   `i14-simbol` **doar dacă shell-ul a primit `DA`** chiar pentru acest program (`gpu_tur::KRONOS_ARMED`, folosit o singură dată);
   în `buf`: `ok 1,2,3` sau `eroare <de ce>`, apoi rândurile lanțului. Test: scenariul `kronos-gpu` + `tools/after-kronos-gpu.sh`.
+  P6-99 (C-148 punctul 2): al cincilea rând `verificare os` = verificarea după placă cu motorul rapid al programului: întâi
+  răspunsuri `verifica <simbol> <pozitie>` (câte unul pe apel, în ordine de la poziția 0), la care programul răspunde cu
+  `45 gpu_kronos_logits(pozitie, logit-uri, cate, buf, lungime_buf)` (`cate` valori f32; 0 = nu le-a putut calcula); nucleul le
+  judecă cu aceeași regulă (`kronos_model::judge`) și pune în `buf` următoarea întrebare sau sfârșitul. Răspunde doar firul care a
+  făcut cererea (altfel `-1`); fără răspuns în 60 s poziția e o eroare, nu trece. Test: `kronos-gpu` + `kronos-gpu-strica`.
   `44 read_line(buf, lungime)` (P6-65, grupul stdio): așteaptă un rând de la tastatură (sau din fereastra Terminal în care rulează
   programul), îl afișează cât se tastează (Backspace șterge), întoarce lungimea (UTF-8, fără Enter, cel mult 4 KiB) sau `-1` dacă
   fereastra s-a închis. Folosit de `kronos --conversatie`. Test: `kronos-kgr` (tastele trimise de test).

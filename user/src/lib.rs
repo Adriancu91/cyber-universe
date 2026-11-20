@@ -43,12 +43,25 @@ pub const SYS_UNVEIL: u64 = 41;
 pub const SYS_SECRET: u64 = 42;
 pub const SYS_GPU_KRONOS: u64 = 43;
 pub const SYS_READ_LINE: u64 = 44;
+/// P6-99 (C-148 point 2): the answer to a question of the check after the board (`gpu_kronos` with `verificare os`).
+pub const SYS_GPU_KRONOS_LOGITS: u64 = 45;
 
 /// P6-62 step 3 (`kronos --gpu`): the request text (`placa`|`sim`, model path, n, ids separated by commas, one per
 /// line) runs at the end of the window chain; the answer (`ok 1,2,3` or `eroare ...`, then the chain's lines) goes to
 /// `buf`. Returns the bytes written or a negative error.
 pub fn gpu_kronos(req: &str, buf: &mut [u8]) -> i64 {
     syscall4(SYS_GPU_KRONOS, req.as_ptr() as u64, req.len() as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
+}
+/// P6-99: the fast engine's logits at `pos` (empty = could not compute them); `buf` gets the next question or the end.
+pub fn gpu_kronos_logits(pos: usize, logits: &[f32], buf: &mut [u8]) -> i64 {
+    syscall5(
+        SYS_GPU_KRONOS_LOGITS,
+        pos as u64,
+        logits.as_ptr() as u64,
+        logits.len() as u64,
+        buf.as_mut_ptr() as u64,
+        buf.len() as u64,
+    )
 }
 /// Error: outside this program's promises or rights (P6-23).
 pub const E_DENIED: i64 = -24;
