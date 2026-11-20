@@ -3,6 +3,11 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-20 ~21:40–21:50 UTC (23:40–23:50 ora RO) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5: a treia sesiune la rând fără sarcină terminată după P6-105).
+  - `git pull`: clonele vechi aveau `main` divergent (clonă superficială, `reset --hard` refuzat de paznic) → clone noi curate în `/home/claude/w/`. `env-check --install` nerulat (nicio sarcină de cod).
+  - Hub: nicio comandă `nou` pentru `cyber-universe` (ultima a noastră: C-152, gata). Context: Cyber-GPU a terminat C-147 (punctul 6, studiul lanțului pe placă, 22:55). CI: ultima rulare pe `main` (os-323, run 44742250615) verde.
+  - Coada fără Adrian e goală (P6-12 după `log mmio` real / testul 8; P6-10, P3-10 cu Adrian; P5-07 BLOCAT, P5-08 după el).
+  - **Pentru sesiunea următoare:** OPRIT — nu începe sarcini noi până la o comandă nouă de la Adrian în `COMENZI.md` (atunci oprirea se ridică, ca la C-134) sau până la analiza lui.
 - 2026-11-20 ~18:40–18:50 UTC (20:40–20:50 ora RO) — sesiune programată, fără Adrian — **oprire scurtă; nicio schimbare de cod.**
   - `git pull`: clona OS pe HEAD detașat, `main` local vechi divergent (50/50, clonă superficială) → lucrat pe ramura locală `lucru-zi` din `origin/main` (`git reset --hard` refuzat de paznic; nimic șters, nimic forțat). `env-check --install` nerulat (nicio sarcină de cod).
   - Hub: nicio comandă `nou` pentru `cyber-universe`. Noutăți doar ca context: deciziile lui Adrian din 19:41 (driverul împerecheat cu Kronos; acum viteză maximă pe setările actuale) și 19:45 (o bază + „pachete de calcul” pe model) — fără sarcină pentru OS până la o comandă; Cyber-GPU C-147 punctul 5 în SIMULARE; Kronos C-153 (viteza #513 în Windows). Niciun jurnal nou de la placă după testul 2 (`os-322`); tabloul (`--tablou`, `os-323`) încă nerulat. CI: ultima rulare (os-323, run 44742250615) verde.
