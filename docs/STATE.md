@@ -3,6 +3,14 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-20 ~03:40–05:55 UTC (05:40–07:55 ora RO) — sesiune programată, fără Adrian — **P6-99 GATA** (C-148 punctul 2: verificarea după placă cu motorul rapid al OS-ului) → Release **`os-314`** (CI run 44680689470 verde din prima).
+  - `git pull`: clona OS pe HEAD detașat → `checkout main` + pull curat. Clona veche a hub-ului avea `main` „divergent” (50/50, copie locală veche); n-am șters nimic: hub-ul clonat din nou în alt dosar (`/home/claude/hub`). `env-check --install` OK.
+  - Hub: nicio comandă `nou` pentru `cyber-universe` (C-148 și C-152 deja preluate). Cyber-GPU sesiunea 121: C-147 punctul 3 în SIMULARE (`ab85fe7`), nimic de legat încă.
+  - **P6-99:** `kronos --gpu` cere acum (rândul `verificare os`) verificarea DUPĂ placă: `Generation::run_check_after` — placa rulează toate pozițiile, apoi nucleul întreabă `/bin/kronos` logit-urile fiecărei poziții (apelul 43 întoarce `verifica <simbol> <pozitie>`, programul răspunde prin apelul nou **45 `gpu_kronos_logits`**) și le judecă cu ACEEAȘI regulă (`kronos_model::judge`, în nucleu). Fără răspuns în 60 s = eroare, nu trece; răspunde doar firul care a cerut. La refuz: motorul de referință (`step_cpu`) rulează până la poziția refuzată și spune dacă placa sau motorul rapid diferă; altfel diagnosticul C-139 pe logit-urile chiar ale acelei poziții. Rânduri noi în gpu-jurnal: `kv verificarea dupa placa median …`, `kv pozitii pe secunda x100 (verificarea dupa placa)`, `kv simboluri pe secunda x100 cu verificare …` (cele `step_cpu` nu mai apar la cerere). `--verificare-nucleu` = calea veche. Modelul de control I14 neschimbat.
+  - Teste: `kronos-gpu` (aceleași 43 sonerii, rândurile noi), scenariul nou `kronos-gpu-strica` (+ `tools/after-kronos-gpu-strica.sh`: `--strica-verificarea 6` → refuz exact la poziția 6, 1 simbol generat, kronos continuă pe procesor). Toată suita locală **113/0/1**. Commit `9f7f76f`.
+  - **Risc de urmărit pe placă:** pragurile lui `judge` (1e-3 + 1e-3·|logit|) erau pentru placă–`step_cpu`; motorul rapid adună în altă ordine. În SIMULARE trece; dacă pe placă rândul spune „motorul de referinta TRECE … diferenta e intre cele doua motoare”, ciclul se poate rula cu `--verificare-nucleu` până se lămurește.
+  - **Pentru centrul de comandă:** ciclul automat cu `os-314` (ziua): `bucla-automata.ps1 pregateste -DosarRelease <os-314> -TestPlaca`. De urmărit: `kv simboluri pe secunda x100 cu verificare` (înainte ~0,25 simb/s), `kv verificarea dupa placa median`, plus tot ce era de urmărit la `os-313` (`kt`, `kp`, `kc`, `ks`).
+  - **Pentru sesiunea următoare:** P6-100 (discul propriu, doar pregătire), apoi P6-102, P6-103, P6-104 (P6-101 și P6-105 așteaptă Cyber-GPU C-151). Regula 5 numără de la această sesiune.
 - 2026-11-19 ~21:40–01:20 UTC (23:40–03:20 ora RO) — sesiune programată, fără Adrian — **„OPRIT” ridicat (comenzile noi C-148 și C-152 de la Adrian) → P6-98 GATA** → Release **`os-313`** (numerele 309–312: rulări CI intermediare — `wip/P6-98`, una anulată, una cu versiunea veche în scenarii, una cu `analiza` instabil).
   - `git pull`: clonele pe HEAD detașat → `checkout main` + pull curat; hub-ul superficial → `fetch --unshallow` + fast-forward; nimic șters, nimic forțat. `env-check --install` OK.
   - Hub: C-148 (pachetul 1 al planului de performanță: jurnalul + măsurătorile C-147 → os-309; discul propriu doar pregătire) și C-152 (uneltele treptei 1: FLR, comutatorul de pornire, ceasul de pază, temperatura procesorului, `gpu stare`), ambele `nou` → `preluat`. Cyber-GPU sesiunea 119: C-147 etapa 0 gata în SIMULARE (`02bbc36`, copie în `integrare/cyber-gpu/snapshot/`).
@@ -1613,6 +1621,8 @@
   lanțurile cu `openssl verify` — zero diferențe. CI verde pe toate commit-urile terminate (ultimele încă rulau la final).
 
 ## Următoarea sarcină
+**20 nov 07:55 RO:** P6-100 (C-148 punctul 5: FLUSH AHCI/NVMe, `/disk` cu `cyber.rw`, inventarul discurilor), apoi P6-102/P6-103/P6-104.
+
 **19 nov 14:30 RO:** nicio sarcină liberă fără Adrian după P6-97 (`os-308`). Se așteaptă jurnalul ciclului automat `os-308`; orice pas nou de viteză (C-145 punctul 3) doar cu o comandă nouă.
 
 Nicio sarcină liberă fără Adrian. Așteptăm: (1) pe laptopul ASUS `gpu tur --trezire` (C-116) și, pe același stick, `analiza` (C-117, `os-299`/`os-300`) + `trimite`; (2) un `inventory.redacted.json` din UHL-ul de Windows al lui Adrian, pentru comparația schemei; (3) testul pe workstation cu `os-298`+ (`gpu lant`); (4) `log mmio` real → P6-12 pasul 2.
