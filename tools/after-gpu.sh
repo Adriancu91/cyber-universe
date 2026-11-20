@@ -51,8 +51,15 @@ hw="$(sed -nE '/^(pub\(super\) )?mod hw \{/,/^}/p' "$I6" | grep -v '^\s*//')"
 # P6-56 step 2b: a second BAR0 fence, `VramFence` (golden, I9): only the VRAM window's control registers and PRAMIN.
 # P6-85 (C-116): a second configuration fence, `MemorySpaceOnlyConfig` (the minimal wake-up): Command only, only bit 1.
 # Both configuration writes must be exactly `self.dev.write32(PCI_COMMAND, value)`, each behind its own one-bit check.
-if [[ "$(echo "$hw" | grep -c 'write_volatile')" != 3 ]] || [[ "$(echo "$hw" | grep -c 'dev\.write32(')" != 2 ]] \
+# P6-101 (C-151 point 3, C-152 point 1): a third configuration fence, `FlrConfig` (the reset from inside): exactly one
+# `self.dev.write32(off, value)`, behind `allowed`: the header 0x04..0x3c, the PCIe control registers, the MSI capability.
+if [[ "$(echo "$hw" | grep -c 'write_volatile')" != 3 ]] || [[ "$(echo "$hw" | grep -c 'dev\.write32(')" != 3 ]] \
     || [[ "$(echo "$hw" | grep -c 'self.dev.write32(PCI_COMMAND, value)')" != 2 ]] \
+    || [[ "$(echo "$hw" | grep -c 'self.dev.write32(off, value)')" != 1 ]] \
+    || ! echo "$hw" | grep -q 'if !self.allowed(off) {' \
+    || ! echo "$hw" | grep -q '(0x04..=0x3c).contains(&off)' \
+    || ! echo "$hw" | grep -q '|| self.pcie.is_some_and(|c| \[0x08, 0x10, 0x28, 0x30\].iter().any(|d| off == c + d))' \
+    || ! echo "$hw" | grep -q '|| self.msi.is_some_and(|c| (c..c + 0x18).contains(&off))' \
     || ! echo "$hw" | grep -q '(value as u16 ^ now) & !CMD_BUS_MASTER != 0' \
     || ! echo "$hw" | grep -q '(value as u16 ^ now) & !super::CMD_MEMORY_SPACE != 0' \
     || ! echo "$hw" | grep -q '(GSP_LO..=GSP_HI - 3).contains(&offset)' \
