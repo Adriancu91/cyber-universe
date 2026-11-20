@@ -61,8 +61,8 @@ Adrian a pus cheile (DECIZII.md 2026-11-18 17:48 „ciclu-test activat” + fiș
 3. Raportul (`raport\ciclu-auto-<data>.txt`) și gpu-jurnalul urcă singure în hub (`rezultate/os-automat/<data>/`).
 4. Lista se termină → calculatorul repornește → Windows (pornirea de pe stick a fost o singură dată). Windows vede placa normal
    după repornirea caldă (dovedit 18 nov); oprirea completă din Cyber Universe (ACPI S5) nu e necesară acum.
-**Resetul din interior (P6-101, C-152 punctul 1, din Release-ul după `os-314`):** orice `gpu lant` (deci și `test-placa`)
-începe acum cu rândul `kf …`: dacă WPR2 e deja ridicat (un lanț a rulat în aceeași pornire), OS-ul face FLR (resetul funcției
+**Resetul din interior (P6-101, C-152 punctul 1):** DOAR lanțul al doilea al probei (`--flr-proba`) începe cu rândul
+`kf …`; orice alt lanț e exact ca înainte (viteza și resetul se testează în Release-uri separate). Dacă WPR2 e deja ridicat (un lanț a rulat în aceeași pornire), OS-ul face FLR (resetul funcției
 plăcii, `nvidia_ga104::flr_reset`, cyber-gpu `388351e`), așteaptă VBIOS-ul și recitește WPR2. `kf nu-era-nevoie` = nimic scris
 (ca înainte); `kf wpr2-coborat` = lanțul merge; orice alt cod = oprire curată, fără a doua încercare (tabelul cu codurile:
 nota Cyber-GPU `integration/cyber-universe/C-151_reset-flr.md`). **Proba:** în lista automată, `test-placa --flr-proba`

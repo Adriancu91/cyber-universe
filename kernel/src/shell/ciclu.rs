@@ -443,7 +443,9 @@ pub fn board_test(i9: &str) -> (String, String) {
     text.push_str(&format!("
 -- proba FLR (C-152 punctul 1): gpu lant --i9 {} a doua oara, cu resetul din interior la inceput
 ", i9));
+    crate::drivers::gpu_tur::FLR_ARMED.store(true, core::sync::atomic::Ordering::SeqCst);
     let second = crate::drivers::gpu_tur::chain(None, choice);
+    crate::drivers::gpu_tur::FLR_ARMED.store(false, core::sync::atomic::Ordering::SeqCst);
     for l in &second {
         text.push_str(l);
         text.push('\n');

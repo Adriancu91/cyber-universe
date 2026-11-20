@@ -840,9 +840,11 @@ fn lant(rest: &[&str]) {
     // P6-101 (C-152 point 1): `--flr-proba` = the chain a second time in this power-on (it starts with the FLR).
     if rest.contains(&"--flr-proba") {
         out!("-- proba FLR: lantul a doua oara, cu resetul din interior la inceput\n");
+        crate::drivers::gpu_tur::FLR_ARMED.store(true, core::sync::atomic::Ordering::SeqCst);
         for l in crate::drivers::gpu_tur::chain(variant, i9) {
             out!("{}\n", l);
         }
+        crate::drivers::gpu_tur::FLR_ARMED.store(false, core::sync::atomic::Ordering::SeqCst);
     }
     // C-84 item 1: the chain's journal (/usb/raport/gpu-jurnal-NNN.txt) goes to the hub when there is a token.
     raport::send_to_hub();

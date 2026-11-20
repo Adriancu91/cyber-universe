@@ -226,6 +226,10 @@ pub fn variants_list() -> Vec<String> {
 /// its maximum speed (C-147 point 4). Off everywhere else: `gpu lant` and `kronos --gpu` by hand behave as before.
 pub static BOOST_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-101: set only for the FLR trial's second chain (`test-placa --flr-proba`, `gpu lant --flr-proba`); taken by
+/// `chain`. Without it no chain reads WPR2 for the reset nor writes anything for it.
+pub static FLR_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// The FLR permit's reason (C-152 point 1, Adrian's "Da" for step 1, 19 Nov 23:37).
 #[cfg_attr(not(feature = "gpu-scrie"), allow(dead_code))]
 const FLR_REASON: &str = "C-152: reset FLR in ciclu (aprobat de Adrian 19 nov)";
@@ -275,9 +279,10 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
     let addr = PciAddress { segment: 0, bus: d.bus, dev: d.dev, func: d.func };
     let _guard = WINDOW_LOCK.lock();
     // P6-101 (C-151 point 3, C-152 point 1): before the chain, the reset from inside when WPR2 is already up (a chain
-    // ran earlier in this power-on). WPR2 = 0: nothing written, as before.
+    // ran earlier in this power-on). WPR2 = 0: nothing written. Only when the FLR trial asked for it (`FLR_ARMED`, taken
+    // here): every other chain is exactly as before (the speed and the reset are tested in separate Releases).
     #[cfg(feature = "gpu-scrie")]
-    {
+    if FLR_ARMED.swap(false, core::sync::atomic::Ordering::SeqCst) {
         let flr = gpu_pci::flr::FlrPermit::new(FLR_REASON);
         let mut board = gpu_i6::hw::FlrBoardHw {
             cfg: gpu_i6::hw::FlrConfig::new(&d),
@@ -938,11 +943,13 @@ pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: sup
     let mut frts = (0u64, 0u64);
     let mut i6c: Option<nvidia_ga104::i6_check::I6Check> = None;
     let mut g = FakeGsp::new();
-    // P6-101: the reset from inside at the start, as on the board (WPR2 = 0 in a fresh model: nothing written).
+    // P6-101: with the FLR trial, the reset from inside at the start, as on the board (WPR2 = 0 in a fresh model).
     let mut flr_cfg = gpu_sim::pci::SimConfig::workstation_rtx3070ti().with_flr();
     let flr = gpu_pci::flr::FlrPermit::new(FLR_REASON);
-    let r0 = sim_flr(&mut flr_cfg, &mut g, &mut clock, &flr, &mut j);
-    lines.push(format!("{}: {}", p, r0.row()));
+    if flr_trial {
+        let r0 = sim_flr(&mut flr_cfg, &mut g, &mut clock, &flr, &mut j);
+        lines.push(format!("{}: {}", p, r0.row()));
+    }
     let mut i7p: Option<gpu_i7::I7Prep> = None;
     let mut sim_peer: Option<gpu_i8::SimPeer> = None;
     let mut gs: Option<gpu_golden::GpuState> = None;
