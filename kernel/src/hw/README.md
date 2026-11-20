@@ -67,3 +67,14 @@ nucleul. În mașini virtuale (QEMU/KVM) nu se citește nimic: rândul spune „
 ciclului de test pe placă; la TjMax − 10 °C ciclul nu pornește testul („CICLU OPRIT: procesorul are ... C”).
 Test: `temp::self_test()` (decodarea și pragul, scenariul `log`), rândul din `hw` (scenariul `gpu-ga106`).
 Încă nu: citirea pe fiecare nucleu (planificatorul nu poate fixa un fir pe un nucleu anume; pachetul dă oricum maximul).
+
+## tco.rs — ceasul de pază al plăcii de bază (P6-103, C-152 punctul 3)
+Temporizatorul TCO din cipul Intel al plăcii de bază (ICH9 §13.9; PCH seria 100+: TCOBASE în SMBus 00:1f.4, config 0x50/0x54;
+ICH6…9 și QEMU q35: baza ACPI din LPC 00:1f.0 + 0x60). Dacă nu e „hrănit” (o scriere în TCO_RLD), numără de două ori până la
+zero și repornește calculatorul (~2 × termen × 0,6 s). Rândul „ceasul de paza (TCO)” (portul, oprit/PORNIT, termenul, dacă
+ultima repornire a venit de la el) apare în `hw` și în raportul ciclului — **doar citire pe calculatoarele reale în acest
+Release**; armarea (`arm`, cu NO_REBOOT scos din GCS la cipurile ICH) e permisă doar în build-urile de test (QEMU) și vine pe
+placă într-un Release următor. În ciclu (`for_cycle`): termen 5 minute, hrănit de un fir de sistem la 10 s.
+Test: scenariul `tco` (QEMU q35, `-global ICH9-LPC.noreboot=false`): armat la ~4 s și hrănit 12 s → nicio repornire; apoi
+nehrănit → repornire (scenariul așteaptă resetarea).
+Încă nu: NO_REBOOT pe PCH seria 100+ (e în PMC, alt loc) — de lămurit după citirea de pe workstation.

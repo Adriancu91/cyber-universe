@@ -314,6 +314,8 @@ fn run_tests() -> ! {
     revenire::self_test();
     #[cfg(feature = "test-revenire")]
     pornire::self_test();
+    #[cfg(feature = "test-tco")]
+    hw::tco::self_test();
     #[cfg(feature = "test-ghpush")]
     test_ghpush();
     #[cfg(feature = "test-usb")]

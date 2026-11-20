@@ -9,6 +9,7 @@
 
 pub mod names;
 pub mod smbios;
+pub mod tco;
 pub mod temp;
 pub mod uhl;
 

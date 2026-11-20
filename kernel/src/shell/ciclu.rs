@@ -336,6 +336,8 @@ pub fn board_test(i9: &str) -> (String, String) {
     }
     // P6-104 (C-152 point 4): the processor's temperature; at or above TjMax - 10 the test does not start.
     text.push_str(&format!("{}\n", crate::hw::temp::line()));
+    // P6-103 (C-152 point 3): the chipset's watchdog; this Release only reads it on a real computer.
+    text.push_str(&format!("{}\n", crate::hw::tco::for_cycle()));
     if let Some(why) = crate::hw::temp::too_hot() {
         let why = format!("CICLU OPRIT: {}; testul pe placa nu porneste", why);
         crate::warn!("ciclu: {}", why);
