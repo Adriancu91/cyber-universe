@@ -209,6 +209,7 @@ fn dispatch(line: &str) -> bool {
         "uptime" => uptime(),
         "remote" => remote(args),
         "reboot" => reboot(args),
+        "porneste" => porneste(args),
         "exit" => match crate::term::of_shell(crate::sched::current_id()) {
             Some(t) => {
                 crate::term::close(t);
@@ -302,8 +303,32 @@ fn help() {
     out!("  cpu [porneste]   nucleele procesorului (porneste = porneste-le pe celelalte)\n");
     out!("  usb citire [mare|mica]  citirea de pe stick: 64 KiB pe comanda (varianta noua) sau 4 KiB (implicit)\n");
     out!("  usb timp                cat au durat scrierile si sincronizarile pe stick de la pornire\n");
+    out!("  porneste [windows|os [--o-data|--fara-garda]]  ce porneste stick-ul data viitoare (fara: arata)\n");
     out!("  reboot [acpi|cf9|8042|triplu]  reporneste (implicit: toate metodele, pe rand)\n");
     out!("  exit             inchide terminalul (doar in fereastra Terminal)\n");
+}
+
+/// P6-102 (C-152 point 2): the boot switch on the stick (`kernel/src/pornire.rs`).
+fn porneste(args: &[&str]) {
+    use crate::pornire::{choose, status, Choice};
+    let choice = match args {
+        [] => {
+            out!("{}\n", status("/usb"));
+            return;
+        }
+        ["windows"] => Choice::Windows,
+        ["os"] => Choice::OsGuarded,
+        ["os", "--o-data"] => Choice::OsOnce,
+        ["os", "--fara-garda"] => Choice::OsUnguarded,
+        _ => {
+            out!("folosire: porneste [windows | os [--o-data | --fara-garda]]\n");
+            return;
+        }
+    };
+    match choose("/usb", choice) {
+        Ok(msg) => out!("{}\n", msg),
+        Err(e) => out!("porneste: {}\n", e),
+    }
 }
 
 fn remote(args: &[&str]) {

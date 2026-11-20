@@ -165,6 +165,24 @@ Când stick-ul merge o dată, versiunile noi le poate lua singur, prin internet 
 - Test automat: scenariul `usb` — QEMU pornește de pe imagine atașată ca stick USB (XHCI + usb-storage) și nucleul
   verifică faptul că a fost încărcat de pe disc, nu de pe CD.
 
+## 6b. Comutatorul de pornire: Cyber Universe sau Windows (P6-102, C-152 punctul 2 — 20 nov 2026)
+- Pe stick, `boot/limine/limine.conf` are acum două intrări: **Cyber Universe OS** (prima) și **Windows** (Limine îi spune
+  calculatorului să pornească „Windows Boot Manager” la repornirea următoare și repornește singur).
+- Din OS, comanda `porneste` alege ce pornește stick-ul data viitoare:
+  - `porneste` — arată alegerea de acum, modul și ultima confirmare;
+  - `porneste windows` — de acum pornește Windows;
+  - `porneste os` — Cyber Universe, **cu gardă**: la fiecare pornire OS-ul pune întâi Windows; după ce a ajuns la ecran și a
+    mers 60 s, pune la loc Cyber Universe și scrie confirmarea în `boot/pornire-ultima.txt`. Dacă OS-ul se blochează sau
+    pică înainte, pornirea următoare intră în Windows;
+  - `porneste os --o-data` — Cyber Universe doar la pornirea următoare, apoi Windows (pentru ciclul automat);
+  - `porneste os --fara-garda` — Cyber Universe mereu, ca înainte.
+- Modul stă în `boot/porneste.txt`. O actualizare (`actualizeaza`) aduce `limine.conf` nou (Cyber Universe primul).
+- **Ca să conteze pe workstation**, stick-ul trebuie să fie primul în ordinea de pornire din BIOS. Asta se schimbă o singură
+  dată, cu Adrian de față (ghidat de centrul de comandă); până atunci scriptul din Windows rămâne calea de azi.
+- Test: scenariul `revenire` (toate modurile pe stick-ul de test), scenariul `usb` (stick-ul construit are ambele intrări și
+  pornește Cyber Universe). Verificat o dată de mână în QEMU: cu `default_entry: 2` Limine nu mai pornește nucleul (încearcă
+  Windows, care în QEMU nu există); cu `1` pornește normal.
+
 ## 7. Hub-uri și alegerea stick-ului (P6-14, P6-15 — 2026-10-23)
 - Dispozitivele din spatele unui hub (inclusiv hub-urile interne ale calculatorului) sunt găsite acum: în `lsusb` apar ca
   `port 26.3` = portul 3 al hub-ului de pe portul 26. `log usb` arată fiecare hub („hub 26: …, N porturi”) și fiecare port conectat.

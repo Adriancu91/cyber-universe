@@ -52,7 +52,7 @@ fn path(dir: &str, rel: &str) -> String {
     format!("{}/{}", dir.trim_end_matches('/'), rel)
 }
 
-fn write_file(p: &str, data: &[u8]) -> Result<(), String> {
+pub(crate) fn write_file(p: &str, data: &[u8]) -> Result<(), String> {
     let _ = fs::remove(p);
     fs::create(p, Kind::File).map_err(|e| format!("{}: {}", p, e.message()))?;
     let mut at = 0;
@@ -248,7 +248,7 @@ fn report(dir: &str, text: &str) {
     }
 }
 
-fn now_text() -> String {
+pub(crate) fn now_text() -> String {
     crate::drivers::rtc::now()
         .map(|t| format!("{:04}-{:02}-{:02} {:02}:{:02}", t.year, t.month, t.day, t.hour, t.minute))
         .unwrap_or_else(|| String::from("(ceas necitit)"))

@@ -200,6 +200,9 @@ if [[ ",$EXTRA_FEATURES," == *",test-disk,"* ]]; then
     cp "$DISK" "$ISO_ROOT/boot/disk.img"
     echo "    module_path: boot():/boot/disk.img" >> "$ISO_ROOT/boot/limine/limine.conf"
 fi
+# P6-102 (C-152 point 2): the second entry, Windows (Limine sets the firmware's BootNext to "Windows Boot Manager" and
+# restarts). It goes last, after the module_path lines of the first entry; `porneste` in the OS changes default_entry.
+printf '\n/Windows\n    protocol: efi_boot_entry\n    entry: Windows Boot Manager\n' >> "$ISO_ROOT/boot/limine/limine.conf"
 cp "$LIMINE_DIR/limine-uefi-cd.bin" "$ISO_ROOT/boot/limine/"
 cp "$LIMINE_DIR/BOOTX64.EFI" "$ISO_ROOT/EFI/BOOT/"
 

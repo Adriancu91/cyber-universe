@@ -29,6 +29,7 @@ mod term;
 #[cfg(feature = "qemu-test")]
 mod qemu;
 mod random;
+mod pornire;
 mod revenire;
 #[cfg(feature = "qemu-test")]
 mod tests;
@@ -160,6 +161,8 @@ extern "C" fn kernel_main() -> ! {
 
     #[cfg(not(feature = "qemu-test"))]
     {
+        // P6-102: the boot switch first (`o-data` / `garda` put Windows as the next boot before anything can hang).
+        pornire::at_boot("/usb");
         // P6-50: a new version on trial is confirmed later; one that never confirmed is replaced by the old one.
         if revenire::at_boot("/usb") == revenire::Outcome::Returned {
             power::reboot(None);
@@ -169,6 +172,7 @@ extern "C" fn kernel_main() -> ! {
         }
         shell::auto::run_if_present(); // P6-41: `/usb/auto/teste.txt` = the automatic test loop (restarts at the end)
         revenire::system_ready();
+        pornire::system_ready();
         net::remote::start_if_asked(); // P6-49: `remote.porneste` next to the key = the remote console at boot
         shell::hubcmd::start_if_asked(); // P6-64: `/usb/hub/la-pornire` = run Adrian's commands from the hub
         run_desktop(); // the desktop first; when it closes (Escape), the text shell
@@ -308,10 +312,14 @@ fn run_tests() -> ! {
     test_update();
     #[cfg(feature = "test-revenire")]
     revenire::self_test();
+    #[cfg(feature = "test-revenire")]
+    pornire::self_test();
     #[cfg(feature = "test-ghpush")]
     test_ghpush();
     #[cfg(feature = "test-usb")]
     assert!(boot::medium() == boot::Medium::Disk, "test: pornit de pe {:?}, nu de pe stick", boot::medium());
+    #[cfg(feature = "test-usb")]
+    info!("{}", pornire::status("/usb")); // P6-102: the stick's limine.conf, as built, has both entries
     #[cfg(any(feature = "test-disk", feature = "test-ahci", feature = "test-nvme"))]
     test_disk_files("/disk");
     #[cfg(feature = "test-usbdisk")]

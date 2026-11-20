@@ -456,7 +456,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-99** C-148 punctul 2: verificarea pe procesor DUPĂ placă, cu motorul rapid al OS-ului (logit-urile plăcii judecate la fel de strict), ca viteza „cu verificare” să nu mai fie 0,25 simb/s. Plan: `docs/plans/P6-99.md`. Dep: P6-98.
 - [x] **P6-100** C-148 punctul 5: discul propriu, doar pregătire (FLUSH la AHCI/NVMe, jurnalul și modelul de pe `/disk` cu `cyber.rw`, inventarul discurilor în raportul ciclului). Plan: `docs/plans/P6-100.md`. Dep: P6-98.
 - [ ] **P6-101** C-152 punctul 1: resetul plăcii din interior (FLR) în ciclul automat, Release separat. Plan: `docs/plans/P6-101.md`. Dep: P6-98 + nota Cyber-GPU C-151 punctul 3.
-- [~] **P6-102** C-152 punctul 2: comutatorul de pornire de pe stick (Limine: Cyber Universe / Windows, ales de un rând scris de OS), doar cod + QEMU. Plan: `docs/plans/P6-102.md`. Dep: P6-98.
+- [x] **P6-102** C-152 punctul 2: comutatorul de pornire de pe stick (Limine: Cyber Universe / Windows, ales de un rând scris de OS), doar cod + QEMU. Plan: `docs/plans/P6-102.md`. Dep: P6-98.
 - [ ] **P6-103** C-152 punctul 3: ceasul de pază al plăcii de bază (TCO), doar în modul ciclu, termen larg. Plan: `docs/plans/P6-103.md`. Dep: P6-98.
 - [x] **P6-104** C-152 punctul 4: temperatura procesorului (MSR-uri Intel) + prag de oprire. Plan: `docs/plans/P6-104.md`. Dep: P6-98.
 - [ ] **P6-105** C-152 punctul 5: `gpu stare` cu tabloul de bord al plăcii. Plan: `docs/plans/P6-105.md`. Dep: Cyber-GPU C-151 punctul 1.
