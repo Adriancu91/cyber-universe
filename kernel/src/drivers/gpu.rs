@@ -284,7 +284,7 @@ pub fn identify() -> Vec<String> {
 // ---------------------------------------------------------------------------------------------------------------
 
 /// Pinned Cyber-GPU revision (kernel/Cargo.toml), shown in the report.
-pub const CYBER_GPU_REV: &str = "02bbc36";
+pub const CYBER_GPU_REV: &str = "388351e";
 
 /// P6-85 (C-116): the line for a board the library knows only for reading (GA106, the ASUS TUF laptop).
 pub const GA106_READ_ONLY: &str =
@@ -461,7 +461,7 @@ pub fn identify_sim() -> Vec<String> {
 /// The first `len` bytes of BAR0 (`INIT_WINDOW` = 4 MiB for I2–I3b; P6-40: `fuse::FUSE_WINDOW` = 16 MiB, the whole BAR0
 /// of the GA104, for the I6 pre-check), mapped page by page on demand at `WINDOW`, without write permission.
 /// The caller holds `WINDOW_LOCK` for the whole lifetime of this value.
-pub(super) struct ReadOnlyBar0Window {
+pub(crate) struct ReadOnlyBar0Window {
     phys: u64,
     len: u64,
     mapped: Option<u64>,

@@ -1013,6 +1013,61 @@ pub(super) mod hw {
             }
         }
     }
+
+    /// P6-101 (C-151 point 3 / C-152 point 1): the configuration space of the GPU function for the reset from inside
+    /// (FLR, `gpu_pci::flr`). Reads anywhere; writes only where the saved configuration is put back or the reset is
+    /// asked: the header 0x04..0x3c (Command, BARs, interrupt line), the PCIe capability's Device/Link Control 1 and
+    /// 2 (+0x08, +0x10, +0x28, +0x30) and the MSI capability. Anything else is refused and counted.
+    pub(crate) struct FlrConfig<'a> {
+        dev: &'a crate::pci::Device,
+        pcie: Option<u16>,
+        msi: Option<u16>,
+        pub(crate) refused: usize,
+    }
+
+    impl<'a> FlrConfig<'a> {
+        pub(crate) fn new(dev: &'a crate::pci::Device) -> Self {
+            FlrConfig { dev, pcie: dev.capability(0x10), msi: dev.capability(0x05), refused: 0 }
+        }
+
+        fn allowed(&self, off: u16) -> bool {
+            (0x04..=0x3c).contains(&off)
+                || self.pcie.is_some_and(|c| [0x08, 0x10, 0x28, 0x30].iter().any(|d| off == c + d))
+                || self.msi.is_some_and(|c| (c..c + 0x18).contains(&off))
+        }
+    }
+
+    impl gpu_core::hal::ConfigSpace for FlrConfig<'_> {
+        fn read32(&mut self, offset: u16) -> u32 {
+            self.dev.read32(offset & 0xFFC)
+        }
+        fn write32(&mut self, offset: u16, value: u32) {
+            let off = offset & 0xFFC;
+            if !self.allowed(off) {
+                self.refused += 1;
+                crate::warn!("gpu: scriere refuzata in configuratia PCI (gardul FLR): {:#x} <- {:#010x}", off, value);
+                return;
+            }
+            self.dev.write32(off, value);
+        }
+    }
+
+    /// The board for `nvidia_ga104::flr_reset`: BAR0 read-only (WPR2, GFW boot) and the FLR configuration fence.
+    pub(crate) struct FlrBoardHw<'a> {
+        pub(crate) cfg: FlrConfig<'a>,
+        pub(crate) bar0: gpu::ReadOnlyBar0Window,
+    }
+
+    impl<'a> nvidia_ga104::flr_reset::FlrBoard for FlrBoardHw<'a> {
+        type Bar0 = gpu::ReadOnlyBar0Window;
+        type Cfg = FlrConfig<'a>;
+        fn bar0(&mut self) -> &mut Self::Bar0 {
+            &mut self.bar0
+        }
+        fn cfg(&mut self) -> &mut Self::Cfg {
+            &mut self.cfg
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------

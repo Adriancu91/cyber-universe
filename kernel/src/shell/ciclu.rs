@@ -143,7 +143,13 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
     match words.as_slice() {
         ["test-placa"] => Some(Ok(String::from(I9_DEFAULT))),
         ["test-placa", "--i9", x] if i9_ok(x) => Some(Ok(String::from(*x))),
-        ["test-placa", ..] => Some(Err("forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302)")),
+        // P6-101 (C-152 point 1): the FLR trial = the usual test, then the chain a second time in the same power-on
+        // (it starts with the reset from inside, since WPR2 is up after the first chain).
+        ["test-placa", "--flr-proba"] => Some(Ok(format!("{}{}", I9_DEFAULT, FLR_PROBA))),
+        ["test-placa", "--i9", x, "--flr-proba"] if i9_ok(x) => Some(Ok(format!("{}{}", x, FLR_PROBA))),
+        ["test-placa", ..] => Some(Err(
+            "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba` la sfarsit",
+        )),
         _ => None,
     }
 }
@@ -326,7 +332,14 @@ fn test(s: &mut State) -> String {
 /// P6-96: the board test of a cycle (from the hub or from the automatic list; both keys already checked): `gpu recupereaza`;
 /// a cold start is needed when it does not bring the card back (no second try); else the chain with `i9` and — when #513
 /// is on the stick — `kronos --gpu --n 16 Buna ziua` at its I14 (one chain). Returns (the whole text, the result line).
+/// Suffix of the I9 text from `board_command` when the FLR trial is asked (`test-placa … --flr-proba`).
+pub const FLR_PROBA: &str = " --flr-proba";
+
 pub fn board_test(i9: &str) -> (String, String) {
+    let (i9, flr_trial) = match i9.strip_suffix(FLR_PROBA) {
+        Some(x) => (x, true),
+        None => (i9, false),
+    };
     let choice = crate::drivers::gpu_golden::i9_option(i9).unwrap_or(crate::drivers::gpu_golden::I9Choice::C135);
     // P6-100 (C-148 point 5): the disks the OS sees on this computer (reads only), before anything else.
     let mut text = String::from("\n-- discurile vazute de OS (doar citire)\n");
@@ -387,7 +400,22 @@ pub fn board_test(i9: &str) -> (String, String) {
         }
         chain.iter().rev().find(|l| l.contains("rezultat lant:")).cloned().unwrap_or_else(|| String::from("(lantul nu a dat un rezultat)"))
     };
-    (text, result)
+    if !flr_trial {
+        return (text, result);
+    }
+    // P6-101 (C-152 point 1): the chain a second time in this power-on; it starts with the reset from inside (the
+    // `kf` row). Whatever the outcome, there is no third try; the cycle ends as usual.
+    text.push_str(&format!("
+-- proba FLR (C-152 punctul 1): gpu lant --i9 {} a doua oara, cu resetul din interior la inceput
+", i9));
+    let second = crate::drivers::gpu_tur::chain(None, choice);
+    for l in &second {
+        text.push_str(l);
+        text.push('\n');
+    }
+    let kf = second.iter().find(|l| l.contains(": kf ")).map_or("(fara rand kf)", |l| l.as_str());
+    let r2 = second.iter().rev().find(|l| l.contains("rezultat lant:")).map_or("(fara rezultat)", |l| l.as_str());
+    (text, format!("{}; PROBA FLR: {}; al doilea lant: {}", result, kf.trim(), r2.trim()))
 }
 
 /// After the restart: the report of a cycle in progress, the old version back when the cycle itself failed.
@@ -479,6 +507,10 @@ pub fn self_test() {
     assert!(board_command("test-placa --i9 c125") == Some(Ok(String::from("c125"))));
     assert!(board_command("test-placa --i9 x").is_some_and(|r| r.is_err()) && board_command("test-placa DA").is_some_and(|r| r.is_err()));
     assert!(board_command("gpu lant").is_none() && board_command("test-placax").is_none());
+    // P6-101: the FLR trial form.
+    assert!(board_command("test-placa --flr-proba") == Some(Ok(String::from("c135 --flr-proba"))));
+    assert!(board_command("test-placa --i9 c133 --flr-proba") == Some(Ok(String::from("c133 --flr-proba"))));
+    assert!(board_command("test-placa --flr-proba --i9 c133").is_some_and(|r| r.is_err()));
     let rec = |s: &str| alloc::vec![String::from("gpu0: Bus Master pornit"), String::from(s)];
     assert!(recovery_passed(&rec("gpu0: C-103: pregatirea I6 trece din nou: `gpu lant` poate rula in aceeasi pornire")));
     assert!(!recovery_passed(&rec("gpu0: C-103: pregatirea I6 NU trece: tot pornire rece (cablul scos 30 s)")));

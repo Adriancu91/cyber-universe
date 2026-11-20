@@ -774,7 +774,7 @@ fn lant(rest: &[&str]) {
     }
     let i9 = i9.unwrap_or_default();
     let rest = &opts[..];
-    if let Some(bad) = rest.iter().find(|a| !matches!(**a, "--sim" | "--eroare" | "--doar-citire" | "--date-vechi")) {
+    if let Some(bad) = rest.iter().find(|a| !matches!(**a, "--sim" | "--eroare" | "--doar-citire" | "--date-vechi" | "--flr-proba")) {
         out!("gpu lant: optiune necunoscuta: {} (folosire: gpu lant [--varianta N] [--i9 c125|c133|c135])\n", bad);
         return;
     }
@@ -817,7 +817,8 @@ fn lant(rest: &[&str]) {
         if stale {
             out!("SIMULARE: modelul gpu-sim serveste date vechi pana la o invalidare (ipoteza C-139, linii de 128 B)\n");
         }
-        for l in crate::drivers::gpu_tur::chain_sim(rest.contains(&"--eroare"), !rest.contains(&"--doar-citire"), variant, i9) {
+        let flr_trial = rest.contains(&"--flr-proba");
+        for l in crate::drivers::gpu_tur::chain_sim(rest.contains(&"--eroare"), !rest.contains(&"--doar-citire"), variant, i9, flr_trial) {
             out!("{}\n", l);
         }
         crate::drivers::gpu_i10::SIM_STALE_READS.store(false, core::sync::atomic::Ordering::Relaxed);
@@ -825,6 +826,13 @@ fn lant(rest: &[&str]) {
     }
     for l in crate::drivers::gpu_tur::chain(variant, i9) {
         out!("{}\n", l);
+    }
+    // P6-101 (C-152 point 1): `--flr-proba` = the chain a second time in this power-on (it starts with the FLR).
+    if rest.contains(&"--flr-proba") {
+        out!("-- proba FLR: lantul a doua oara, cu resetul din interior la inceput\n");
+        for l in crate::drivers::gpu_tur::chain(variant, i9) {
+            out!("{}\n", l);
+        }
     }
     // C-84 item 1: the chain's journal (/usb/raport/gpu-jurnal-NNN.txt) goes to the hub when there is a token.
     raport::send_to_hub();

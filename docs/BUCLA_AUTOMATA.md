@@ -61,5 +61,13 @@ Adrian a pus cheile (DECIZII.md 2026-11-18 17:48 „ciclu-test activat” + fiș
 3. Raportul (`raport\ciclu-auto-<data>.txt`) și gpu-jurnalul urcă singure în hub (`rezultate/os-automat/<data>/`).
 4. Lista se termină → calculatorul repornește → Windows (pornirea de pe stick a fost o singură dată). Windows vede placa normal
    după repornirea caldă (dovedit 18 nov); oprirea completă din Cyber Universe (ACPI S5) nu e necesară acum.
+**Resetul din interior (P6-101, C-152 punctul 1, din Release-ul după `os-314`):** orice `gpu lant` (deci și `test-placa`)
+începe acum cu rândul `kf …`: dacă WPR2 e deja ridicat (un lanț a rulat în aceeași pornire), OS-ul face FLR (resetul funcției
+plăcii, `nvidia_ga104::flr_reset`, cyber-gpu `388351e`), așteaptă VBIOS-ul și recitește WPR2. `kf nu-era-nevoie` = nimic scris
+(ca înainte); `kf wpr2-coborat` = lanțul merge; orice alt cod = oprire curată, fără a doua încercare (tabelul cu codurile:
+nota Cyber-GPU `integration/cyber-universe/C-151_reset-flr.md`). **Proba:** în lista automată, `test-placa --flr-proba`
+(sau `test-placa --i9 c135 --flr-proba`) = testul obișnuit, apoi lanțul a doua oară în aceeași pornire; rezultatul are
+`PROBA FLR: kf …; al doilea lant: …`. De mână: `gpu lant --flr-proba` (cu DA). Gardul OS pentru FLR lasă scrieri doar în
+antetul configurației (0x04–0x3c), în controlul PCIe (Device/Link Control 1 și 2) și în MSI; ecranul de pe placă se poate pierde.
 Din hub, cu sistemul deja pornit de pe stick și `hub asculta`: `ciclu-test os-<N>` (implicit I9 `c135`; `--i9 c125|c133|c135|os302`).
 Comenzile manuale `gpu lant` / `run kronos --gpu` cer în continuare DA la tastatură.

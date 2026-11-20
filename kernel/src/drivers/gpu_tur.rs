@@ -222,6 +222,10 @@ pub fn variants_list() -> Vec<String> {
 
 /// `gpu lant` on the real board (the shell asked for `DA` first). Writes only in the `gpu-scrie` build.
 /// P6-78 (C-108): `variant` = `--varianta N` (already checked by the shell); `None` = the library's default variant (1 since cyber-gpu e49ca76).
+/// The FLR permit's reason (C-152 point 1, Adrian's "Da" for step 1, 19 Nov 23:37).
+#[cfg_attr(not(feature = "gpu-scrie"), allow(dead_code))]
+const FLR_REASON: &str = "C-152: reset FLR in ciclu (aprobat de Adrian 19 nov)";
+
 pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String> {
     let p = "gpu0";
     let mut lines = Vec::new();
@@ -266,6 +270,30 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
     let mut clock = TscClock;
     let addr = PciAddress { segment: 0, bus: d.bus, dev: d.dev, func: d.func };
     let _guard = WINDOW_LOCK.lock();
+    // P6-101 (C-151 point 3, C-152 point 1): before the chain, the reset from inside when WPR2 is already up (a chain
+    // ran earlier in this power-on). WPR2 = 0: nothing written, as before.
+    #[cfg(feature = "gpu-scrie")]
+    {
+        let flr = gpu_pci::flr::FlrPermit::new(FLR_REASON);
+        let mut board = gpu_i6::hw::FlrBoardHw {
+            cfg: gpu_i6::hw::FlrConfig::new(&d),
+            bar0: ReadOnlyBar0Window::with_len(bar0, nvidia_ga104::fuse::FUSE_WINDOW),
+        };
+        let r = nvidia_ga104::flr_reset::reset_if_wpr2_up(&mut board, &mut clock, &flr, Some(&permit), &mut j);
+        let refused_flr = board.cfg.refused + board.bar0.refused;
+        drop(board);
+        lines.push(format!("{}: {}", p, r.row()));
+        lines.push(format!("{}: resetul din interior (C-151): {}", p, r.verdict.meaning()));
+        if refused_flr > 0 {
+            lines.push(format!("{}: gardul FLR a REFUZAT {} scrieri", p, refused_flr));
+        }
+        if !r.verdict.chain_may_run() {
+            drop(_guard);
+            gpu_i6::close_and_check(p, false, &mut lines);
+            lines.push(format!("{}: rezultat lant: oprit la resetul din interior ({}); fara a doua incercare", p, r.verdict.code()));
+            return finish(lines);
+        }
+    }
     let mut prepared: Option<(nvidia_ga104::fwsec::FwsecLocation, nvidia_ga104::i6_check::I6Check)> = None;
     #[cfg(feature = "gpu-scrie")]
     let mut old: Option<u16> = None;
@@ -846,10 +874,9 @@ pub fn tour_sim() -> Vec<String> {
 /// an error (the chain must stop there and still put Bus Master back). `writes_allowed` false = the read-only chain of
 /// every build without `gpu-scrie`: it must stop before Bus Master and still run the tour.
 #[cfg(feature = "test-gpu-sim")]
-pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String> {
+pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: super::gpu_golden::I9Choice, flr_trial: bool) -> Vec<String> {
     use gpu_pci::bus_master::{restore_command, set_bus_master, BusMasterPermit};
-    use gpu_sim::fake_gsp::{FakeGsp, SimFault, SimHsImage, SimUcode, GSP_BASE};
-    use nvidia_ga104::gsp::hs_load::{self, HsUcode};
+    use gpu_sim::fake_gsp::FakeGsp;
     let p = "model";
     let mut lines = Vec::new();
     let what = match (fault, writes_allowed) {
@@ -881,6 +908,11 @@ pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: sup
     let mut frts = (0u64, 0u64);
     let mut i6c: Option<nvidia_ga104::i6_check::I6Check> = None;
     let mut g = FakeGsp::new();
+    // P6-101: the reset from inside at the start, as on the board (WPR2 = 0 in a fresh model: nothing written).
+    let mut flr_cfg = gpu_sim::pci::SimConfig::workstation_rtx3070ti().with_flr();
+    let flr = gpu_pci::flr::FlrPermit::new(FLR_REASON);
+    let r0 = sim_flr(&mut flr_cfg, &mut g, &mut clock, &flr, &mut j);
+    lines.push(format!("{}: {}", p, r0.row()));
     let mut i7p: Option<gpu_i7::I7Prep> = None;
     let mut sim_peer: Option<gpu_i8::SimPeer> = None;
     let mut gs: Option<gpu_golden::GpuState> = None;
@@ -903,42 +935,7 @@ pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: sup
             lines.push(format!("{}: Bus Master pornit (COMMAND {:#06x} -> {:#06x})", p, o, cfg.read32(gpu_i6::PCI_COMMAND) as u16));
             Ok(())
         }
-        "i6-fwsec-frts" => {
-            let (desc, ucode, sig) = gpu_i6::sim_fwsec();
-            let (u, img) = hs_load::fwsec_frts_image(&desc, &ucode, &sig, frts.0)
-                .and_then(|img| Ok((HsUcode::from_fwsec_v3(&desc)?, img)))?;
-            let image = match gpu_i6::dma_put(&img) {
-                Ok(i) => i,
-                Err(why) => {
-                    lines.push(format!("{}: zona DMA: {}", p, why));
-                    return Err(step_failed("zona DMA"));
-                }
-            };
-            lines.push(format!("{}: zona DMA: {:#x} octeti la adresa fizica {:#x} (recitita)", p, image.len, image.phys));
-            g.frts = (0, 0);
-            g.fwsec_mapper_at = Some(0x340);
-            if fault {
-                g.fault = SimFault::FrtsError(0x00e1);
-            }
-            g.sim_expect(SimHsImage {
-                falcon: GSP_BASE,
-                ucode: SimUcode::FwsecFrts,
-                imem_pa: 0,
-                code: img[..0x1000].to_vec(),
-                dmem_pa: 0,
-                data: img[0x1000..0x1600].to_vec(),
-                sig_dmem_addr: 0x100,
-                ucode_id: 5,
-                engine_id_mask: 0x400,
-                bootvec: 0,
-            });
-            g.sysmem = Some((image.phys, gpu_i6::dma_bytes(&image)));
-            if gpu_i6::i6_falcon(p, &mut g, &mut clock, j, &u, &image, frts, None, &mut lines) {
-                Ok(())
-            } else {
-                Err(step_failed("FWSEC-FRTS a esuat (vezi randul pasului I6)"))
-            }
-        }
+        "i6-fwsec-frts" => sim_i6_once(p, &mut g, &mut clock, j, frts, fault, &mut lines),
         "i6-wpr2-citit" => wpr2_step(p, &mut g, j, frts, &mut lines),
         "i7-booter-gsp" => {
             let Some(c) = i6c.as_ref() else { return Err(step_failed("lipseste pregatirea I6")) };
@@ -1095,6 +1092,25 @@ pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: sup
         _ => Err(GpuError::NotPermitted(NOT_IN_OS)),
     });
     report_lines(p, &report, &mut lines);
+    // P6-101 (C-152 point 1, SIMULARE): the FLR trial — WPR2 is up after the chain; the reset from inside must lower
+    // it, then I6 runs a second time on the same model (as Cyber-GPU's T138).
+    if flr_trial && report.stopped_at.is_none() {
+        let r = sim_flr(&mut flr_cfg, &mut g, &mut clock, &flr, &mut j);
+        lines.push(format!("{}: proba FLR: {}", p, r.row()));
+        lines.push(format!("{}: proba FLR: {}", p, r.verdict.meaning()));
+        if r.verdict.chain_may_run() {
+            let again = sim_i6_once(p, &mut g, &mut clock, &mut j, frts, false, &mut lines)
+                .and_then(|()| wpr2_step(p, &mut g, &mut j, frts, &mut lines));
+            lines.push(format!(
+                "{}: proba FLR: I6 a doua oara in aceeasi pornire: {}",
+                p,
+                match again {
+                    Ok(()) => String::from("TRECE (WPR2 ridicat din nou)"),
+                    Err(e) => format!("NU TRECE ({})", e),
+                }
+            ));
+        }
+    }
     let outside = g.writes.iter().filter(|&&(o, _)| !(gpu_i6::GSP_LO..=gpu_i6::GSP_HI).contains(&u64::from(o))).count();
     lines.push(format!(
         "{}: modelul: {} blocuri DMA copiate din RAM; {} scrieri falcon, {} in afara ferestrei GSP; configuratie: {} scrieri; COMMAND la final {:#06x}",
@@ -1111,6 +1127,93 @@ pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: sup
         report.writes
     ));
     gpu_i6::sim_lines(lines, "gpu lant")
+}
+
+/// SIMULATION: step I6 (FWSEC-FRTS) on the model `g`; also the second I6 of the FLR trial (P6-101).
+#[cfg(feature = "test-gpu-sim")]
+fn sim_i6_once(
+    p: &str,
+    g: &mut gpu_sim::fake_gsp::FakeGsp,
+    clock: &mut gpu_sim::clock::SimClock,
+    j: &mut Journal,
+    frts: (u64, u64),
+    fault: bool,
+    lines: &mut Vec<String>,
+) -> GpuResult<()> {
+    use gpu_sim::fake_gsp::{SimFault, SimHsImage, SimUcode, GSP_BASE};
+    use nvidia_ga104::gsp::hs_load::{self, HsUcode};
+        let (desc, ucode, sig) = gpu_i6::sim_fwsec();
+        let (u, img) = hs_load::fwsec_frts_image(&desc, &ucode, &sig, frts.0)
+            .and_then(|img| Ok((HsUcode::from_fwsec_v3(&desc)?, img)))?;
+        let image = match gpu_i6::dma_put(&img) {
+            Ok(i) => i,
+            Err(why) => {
+                lines.push(format!("{}: zona DMA: {}", p, why));
+                return Err(step_failed("zona DMA"));
+            }
+        };
+        lines.push(format!("{}: zona DMA: {:#x} octeti la adresa fizica {:#x} (recitita)", p, image.len, image.phys));
+        g.frts = (0, 0);
+        g.fwsec_mapper_at = Some(0x340);
+        if fault {
+            g.fault = SimFault::FrtsError(0x00e1);
+        }
+        g.sim_expect(SimHsImage {
+            falcon: GSP_BASE,
+            ucode: SimUcode::FwsecFrts,
+            imem_pa: 0,
+            code: img[..0x1000].to_vec(),
+            dmem_pa: 0,
+            data: img[0x1000..0x1600].to_vec(),
+            sig_dmem_addr: 0x100,
+            ucode_id: 5,
+            engine_id_mask: 0x400,
+            bootvec: 0,
+        });
+        g.sysmem = Some((image.phys, gpu_i6::dma_bytes(&image)));
+        if gpu_i6::i6_falcon(p, g, clock, j, &u, &image, frts, None, lines) {
+            Ok(())
+        } else {
+            Err(step_failed("FWSEC-FRTS a esuat (vezi randul pasului I6)"))
+        }
+}
+
+/// SIMULATION: the board for `flr_reset` (the FLR seen by the configuration model is passed on to the GSP model
+/// before BAR0 is read again, as in Cyber-GPU's T138).
+#[cfg(feature = "test-gpu-sim")]
+struct SimFlrBoard<'a> {
+    cfg: &'a mut gpu_sim::pci::SimConfig,
+    gsp: &'a mut gpu_sim::fake_gsp::FakeGsp,
+    seen: u32,
+}
+
+#[cfg(feature = "test-gpu-sim")]
+impl<'a> nvidia_ga104::flr_reset::FlrBoard for SimFlrBoard<'a> {
+    type Bar0 = gpu_sim::fake_gsp::FakeGsp;
+    type Cfg = gpu_sim::pci::SimConfig;
+    fn bar0(&mut self) -> &mut Self::Bar0 {
+        while self.seen < self.cfg.flr_count {
+            self.seen += 1;
+            self.gsp.sim_flr();
+        }
+        self.gsp
+    }
+    fn cfg(&mut self) -> &mut Self::Cfg {
+        self.cfg
+    }
+}
+
+#[cfg(feature = "test-gpu-sim")]
+fn sim_flr(
+    cfg: &mut gpu_sim::pci::SimConfig,
+    g: &mut gpu_sim::fake_gsp::FakeGsp,
+    clock: &mut gpu_sim::clock::SimClock,
+    permit: &gpu_pci::flr::FlrPermit,
+    j: &mut Journal,
+) -> nvidia_ga104::flr_reset::FlrReport {
+    let seen = cfg.flr_count;
+    let mut b = SimFlrBoard { cfg, gsp: g, seen };
+    nvidia_ga104::flr_reset::reset_if_wpr2_up(&mut b, clock, permit, None, j)
 }
 
 /// SIMULATION: the doorbell journaled as on the board (`ring_work_doorbell`), so the journal check sees it.
@@ -1171,7 +1274,7 @@ fn kronos_chain_thread() {
     let sim = KRONOS_SIM.load(core::sync::atomic::Ordering::SeqCst);
     let i9 = kronos_i9();
     #[cfg(feature = "test-gpu-sim")]
-    let lines = if sim { chain_sim(false, true, None, i9) } else { chain(None, i9) };
+    let lines = if sim { chain_sim(false, true, None, i9, false) } else { chain(None, i9) };
     #[cfg(not(feature = "test-gpu-sim"))]
     let lines = {
         let _ = sim;
