@@ -458,7 +458,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [ ] **P6-101** C-152 punctul 1: resetul plăcii din interior (FLR) în ciclul automat, Release separat. Plan: `docs/plans/P6-101.md`. Dep: P6-98 + nota Cyber-GPU C-151 punctul 3.
 - [ ] **P6-102** C-152 punctul 2: comutatorul de pornire de pe stick (Limine: Cyber Universe / Windows, ales de un rând scris de OS), doar cod + QEMU. Plan: `docs/plans/P6-102.md`. Dep: P6-98.
 - [ ] **P6-103** C-152 punctul 3: ceasul de pază al plăcii de bază (TCO), doar în modul ciclu, termen larg. Plan: `docs/plans/P6-103.md`. Dep: P6-98.
-- [~] **P6-104** C-152 punctul 4: temperatura procesorului (MSR-uri Intel) + prag de oprire. Plan: `docs/plans/P6-104.md`. Dep: P6-98.
+- [x] **P6-104** C-152 punctul 4: temperatura procesorului (MSR-uri Intel) + prag de oprire. Plan: `docs/plans/P6-104.md`. Dep: P6-98.
 - [ ] **P6-105** C-152 punctul 5: `gpu stare` cu tabloul de bord al plăcii. Plan: `docs/plans/P6-105.md`. Dep: Cyber-GPU C-151 punctul 1.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 

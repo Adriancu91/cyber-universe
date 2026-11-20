@@ -334,6 +334,14 @@ pub fn board_test(i9: &str) -> (String, String) {
         text.push_str(&row);
         text.push('\n');
     }
+    // P6-104 (C-152 point 4): the processor's temperature; at or above TjMax - 10 the test does not start.
+    text.push_str(&format!("{}\n", crate::hw::temp::line()));
+    if let Some(why) = crate::hw::temp::too_hot() {
+        let why = format!("CICLU OPRIT: {}; testul pe placa nu porneste", why);
+        crate::warn!("ciclu: {}", why);
+        text.push_str(&format!("\n{}\n", why));
+        return (text, why);
+    }
     text.push_str("\n-- gpu recupereaza\n");
     let rec = crate::drivers::gpu_rec::recover();
     for l in &rec {

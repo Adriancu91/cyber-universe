@@ -1198,6 +1198,7 @@ fn hw() {
         out!("{}\n", l);
     }
     out!("procesor: {}\n", cpu_name());
+    out!("{}\n", crate::hw::temp::line());
     match crate::gfx::framebuffer::boot_info() {
         Some((phys, size, w, h, pitch, bpp)) => out!(
             "ecran: framebuffer la adresa fizica {:#x}, {} octeti ({} MiB), {}x{}, pitch {} B, {} bpp\n",

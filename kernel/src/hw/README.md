@@ -58,3 +58,12 @@ lista sigură C-54, adaptorul refuză orice scriere) și pune faptele lui (`fapt
 `vbios.*`, `fwsec.*`, `i6.*`) în componenta `gpu:0000:<adresă>` (`facts`, `fact_count`, `writes_to_board` = 0 confirmat din rândul turului,
 `tour_lines`); imaginea VBIOS nu intră în inventar. Pe laptopul GA106 fără `gpu tur --trezire` placa nu se poate citi → faptele lipsesc, motivul e
 în `why_no_facts`. Test: scenariul `analiza-gpu` (`analiza --sim`, doar în build-urile de test: turul pe modelul gpu-sim al plăcii workstation).
+
+## temp.rs — temperatura procesorului (P6-104, C-152 punctul 4)
+Doar citiri ale registrelor termice documentate de Intel (SDM vol. 3B §15.8): `IA32_THERM_STATUS` (0x19C, nucleul pe care
+rulează codul), `IA32_PACKAGE_THERM_STATUS` (0x1B1, cel mai cald nucleu al pachetului), `MSR_TEMPERATURE_TARGET` (0x1A2, TjMax).
+Fiecare citire e păzită de CPUID (Intel, frunza 6 biții 0 și 6, familia 6 model ≥ 0x1A), pentru că un registru lipsă oprește
+nucleul. În mașini virtuale (QEMU/KVM) nu se citește nimic: rândul spune „necitita (...)”. Rândul apare în `hw` și în raportul
+ciclului de test pe placă; la TjMax − 10 °C ciclul nu pornește testul („CICLU OPRIT: procesorul are ... C”).
+Test: `temp::self_test()` (decodarea și pragul, scenariul `log`), rândul din `hw` (scenariul `gpu-ga106`).
+Încă nu: citirea pe fiecare nucleu (planificatorul nu poate fixa un fir pe un nucleu anume; pachetul dă oricum maximul).

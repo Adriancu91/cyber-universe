@@ -262,6 +262,7 @@ fn run_tests() -> ! {
     assert!(acpi::fadt::self_test(), "acpi: FADT RESET_REG decodat gresit");
     info!("test: FADT RESET_REG decodare OK");
     hw::smbios::self_test();
+    hw::temp::self_test();
     hw::uhl::self_test();
     drivers::wifi::self_test();
     assert!(hw::names::self_test(), "hw: tabelul de nume hardware gresit");
