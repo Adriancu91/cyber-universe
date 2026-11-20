@@ -2155,7 +2155,7 @@ fn test_ghpush() {
 #[cfg(feature = "test-https-real")]
 fn test_https_real() {
     assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
-    for url in ["https://example.com/", "https://api.github.com/zen"] {
+    for url in ["https://example.com/", "https://github.com/robots.txt"] {
         let start = arch::x86_64::apic::ticks();
         let id = proc::spawn_path("/bin/fetch", &["fetch", url]).expect("test: /bin/fetch");
         let code = proc::wait_child(id);
