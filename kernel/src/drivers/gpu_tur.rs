@@ -33,7 +33,7 @@ use super::gpu_i10;
 use super::gpu_i11;
 #[cfg(any(feature = "gpu-scrie", feature = "test-gpu-sim"))]
 use super::gpu_i14;
-use alloc::{format, string::String, vec::Vec};
+use alloc::{format, string::String, vec, vec::Vec};
 use gpu_core::diag::Journal;
 use gpu_core::error::{GpuError, GpuResult};
 use gpu_core::hal::{Clock, ConfigSpace, Mmio};
@@ -230,6 +230,98 @@ pub static BOOST_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::
 /// `chain`. Without it no chain reads WPR2 for the reset nor writes anything for it.
 pub static FLR_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-105 (C-152 point 5, C-151 point 1): set only around the cycle's test when the list asks for it
+/// (`test-placa … --tablou`) or by `gpu lant --tablou` (with DA): the board's dashboard is started, read once and
+/// stopped at the end of the chain, after I14 and the `ks` rows. Off by default: every other chain is as in os-322.
+pub static RUSD_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// P6-105: the last dashboard read in this power-on (the `kd` screen lines), for `gpu stare`.
+pub static LAST_DASHBOARD: crate::sched::Mutex<Option<Vec<String>>> = crate::sched::Mutex::new(None);
+
+/// P6-105: `gpu stare` — the last dashboard read in this power-on; the board is not touched.
+pub fn dashboard_status() -> Vec<String> {
+    match LAST_DASHBOARD.lock().as_ref() {
+        Some(l) => {
+            let mut v = vec![String::from("gpu stare: tabloul de bord citit la sfarsitul ultimului lant (placa nu e atinsa acum):")];
+            v.extend(l.iter().cloned());
+            v
+        }
+        None => vec![String::from(
+            "gpu stare: niciun tablou de bord citit in aceasta pornire (se citeste doar la sfarsitul lantului: `test-placa --tablou` sau `gpu lant --tablou`); placa nu e atinsa",
+        )],
+    }
+}
+
+/// P6-105: the 4 KiB page of system memory given to GSP-RM for the dashboard (contiguous, zero, 4 KiB aligned, below
+/// 4 GiB, away from boot-time memory). Freed only when GSP-RM confirmed the stop.
+#[cfg(feature = "gpu-scrie")]
+struct RusdPage {
+    phys: u64,
+    ptr: *const u8,
+}
+
+#[cfg(feature = "gpu-scrie")]
+impl RusdPage {
+    fn new() -> Option<Self> {
+        let phys = crate::mem::frame::alloc_contiguous_between(1, 16 << 20, 4 << 30)?;
+        let ptr = crate::mem::map::phys_to_virt(phys);
+        // SAFETY: the frame was just allocated for us (4 KiB, mapped through the HHDM); nothing else uses it yet.
+        unsafe { core::ptr::write_bytes(ptr, 0, 4096) };
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        Some(RusdPage { phys, ptr })
+    }
+}
+
+#[cfg(feature = "gpu-scrie")]
+impl nvidia_ga104::gsp::rusd::RusdMem for RusdPage {
+    fn read_u64(&mut self, o: usize) -> u64 {
+        if o % 8 != 0 || o + 8 > 4096 {
+            return 0;
+        }
+        // SAFETY: o + 8 <= 4096 and o is a multiple of 8 (checked above); the page is ours and mapped while it lives.
+        let v = unsafe { core::ptr::read_volatile(self.ptr.add(o) as *const u64) };
+        core::sync::atomic::fence(core::sync::atomic::Ordering::Acquire);
+        v
+    }
+    fn read_bytes(&mut self, o: usize, out: &mut [u8]) {
+        if o + out.len() > 4096 {
+            out.fill(0);
+            return;
+        }
+        for (i, b) in out.iter_mut().enumerate() {
+            // SAFETY: o + out.len() <= 4096 (checked above), the same page.
+            *b = unsafe { core::ptr::read_volatile(self.ptr.add(o + i)) };
+        }
+        core::sync::atomic::fence(core::sync::atomic::Ordering::Acquire);
+    }
+}
+
+/// P6-105 (SIMULARE): the page as the RM model rendered it during the wait.
+#[cfg(feature = "test-gpu-sim")]
+struct SimRusdPage(Vec<u8>);
+
+#[cfg(feature = "test-gpu-sim")]
+impl nvidia_ga104::gsp::rusd::RusdMem for SimRusdPage {
+    fn read_u64(&mut self, o: usize) -> u64 {
+        self.0.get(o..o + 8).map_or(0, |b| u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+    }
+    fn read_bytes(&mut self, o: usize, out: &mut [u8]) {
+        match self.0.get(o..o + out.len()) {
+            Some(b) => out.copy_from_slice(b),
+            None => out.fill(0),
+        }
+    }
+}
+
+/// The page's address in SIMULARE (a system-memory address the RM model only records).
+#[cfg(feature = "test-gpu-sim")]
+const SIM_RUSD_PHYS: u64 = 0x0200_0000;
+
+/// P6-105 (SIMULARE): `gpu lant --sim --tablou-refuz` = the RM model refuses the start (as the board might refuse our
+/// client, C-151 note).
+#[cfg(feature = "test-gpu-sim")]
+pub static SIM_RUSD_RULE: crate::sched::Mutex<Option<gpu_sim::fake_rm::RusdRule>> = crate::sched::Mutex::new(None);
+
 /// The FLR permit's reason (C-152 point 1, Adrian's "Da" for step 1, 19 Nov 23:37).
 #[cfg_attr(not(feature = "gpu-scrie"), allow(dead_code))]
 const FLR_REASON: &str = "C-152: reset FLR in ciclu (aprobat de Adrian 19 nov)";
@@ -318,6 +410,8 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
     let mut boost: Option<nvidia_ga104::gsp::perf::BoostStart> = None;
     #[cfg(feature = "gpu-scrie")]
     let boost_wanted = BOOST_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    #[cfg(feature = "gpu-scrie")]
+    let rusd_wanted = RUSD_ARMED.load(core::sync::atomic::Ordering::SeqCst);
     let mut refused = 0usize;
     let report = run_chain_ready(WINDOW_CHAIN_C83, READY_IN_OS, writes_allowed, &mut j, |s, j| match s.id {
         "pregatire-i6" => {
@@ -516,6 +610,10 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
                     if let Err(e) = r {
                         lines.push(format!("{}: ks: starea de performanta necitita: {}", p, e));
                     }
+                    // P6-105 (C-151 point 1): the dashboard, only when armed, after everything above is on the stick.
+                    if rusd_wanted {
+                        dashboard_hw(p, &mut rw, &mut vf, &mut clock, j, prep, st, &permit, &mut lines);
+                    }
                     refused += rw.refused + vf.refused;
                 }
             }
@@ -575,6 +673,49 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
         report.writes
     ));
     finish(lines)
+}
+
+/// P6-105 on the board: page → start → 3 × the interval → read → stop. The lines also go to `LAST_DASHBOARD`.
+#[cfg(feature = "gpu-scrie")]
+#[allow(clippy::too_many_arguments)]
+fn dashboard_hw(
+    p: &str,
+    rw: &mut gpu_i6::hw::GspWriteWindow,
+    vf: &mut gpu_i6::hw::VramFence,
+    clock: &mut TscClock,
+    j: &mut Journal,
+    prep: &mut gpu_i7::I7Prep,
+    st: &mut gpu_golden::GpuState,
+    permit: &nvidia_ga104::gsp::HardwareWritePermit,
+    lines: &mut Vec<String>,
+) {
+    let plan = nvidia_ga104::gsp::rusd::RusdPlan { enabled: true, ..Default::default() };
+    let Some(mut page) = RusdPage::new() else {
+        lines.push(format!("{}: kd tabloul de bord: nicio pagina libera sub 4 GiB; nimic trimis", p));
+        return;
+    };
+    let start = match gpu_golden::dashboard_begin(rw, vf, clock, j, prep, st, &plan, page.phys, Some(permit), |_| {}) {
+        Ok(s) => s,
+        Err(e) => {
+            // A transport error: the page may already be GSP-RM's; it is never reused in this power-on.
+            lines.push(format!("{}: kd tabloul de bord: eroare la pornire ({}); pagina ramane rezervata", p, e));
+            return;
+        }
+    };
+    if start.polling() {
+        clock.delay_us(plan.poll_ms.saturating_mul(3).saturating_mul(1000));
+    }
+    match gpu_golden::dashboard_finish(rw, vf, clock, j, prep, st, &start, &mut page, Some(permit), |_| {}) {
+        Ok((dash, stop)) => {
+            let l = gpu_golden::dashboard_lines(p, &start, dash.as_ref(), &stop);
+            *LAST_DASHBOARD.lock() = Some(l.clone());
+            lines.extend(l);
+            if stop.page_free(&start) {
+                crate::mem::frame::free_frame(page.phys);
+            }
+        }
+        Err(e) => lines.push(format!("{}: kd tabloul de bord: eroare la oprire ({}); pagina ramane rezervata", p, e)),
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -960,6 +1101,11 @@ pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: sup
         rm.perf = Some(gpu_sim::fake_rm::SimPerf::new(SIM_BOOST_RULE.lock().unwrap_or_default()));
     }
     let mut boost: Option<nvidia_ga104::gsp::perf::BoostStart> = None;
+    // P6-105 (SIMULARE): `--tablou` gives the RM model its RUSD page model (accepts, or refuses the start).
+    let rusd_wanted = RUSD_ARMED.load(core::sync::atomic::Ordering::SeqCst);
+    if rusd_wanted {
+        rm.rusd = Some(gpu_sim::fake_rm::SimRusd::new(SIM_RUSD_RULE.lock().unwrap_or_default()));
+    }
     let mut vram = gpu_sim::pramin::SimBar0Vram::new(gpu_sim::vram::SimVram::new(8 << 30), 0);
     let mut sim_gpu: Option<gpu_i10::SimGpu> = None;
     let mut launched: Option<gpu_i10::Launched> = None;
@@ -1126,6 +1272,36 @@ pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: sup
                     };
                     if let Err(e) = r {
                         lines.push(format!("{}: ks: starea de performanta necitita: {}", p, e));
+                    }
+                    // P6-105 (SIMULARE): the dashboard as on the board; the RM model renders the page during the wait.
+                    if rusd_wanted {
+                        let plan = nvidia_ga104::gsp::rusd::RusdPlan { enabled: true, ..Default::default() };
+                        let phys = SIM_RUSD_PHYS;
+                        match gpu_golden::dashboard_begin(&mut g, &mut vram, &mut clock, j, prep, st, &plan, phys, None, |m| peer.serve(m, &mut rm)) {
+                            Err(e) => lines.push(format!("{}: kd tabloul de bord: eroare la pornire ({}); pagina ramane rezervata", p, e)),
+                            Ok(start) => {
+                                let mut page = SimRusdPage(vec![0u8; 4096]);
+                                if start.polling() {
+                                    clock.delay_us(plan.poll_ms.saturating_mul(3).saturating_mul(1000));
+                                    if let Some(m) = rm.rusd.as_ref() {
+                                        let now = clock.now_us().saturating_mul(1000).max(1);
+                                        let b = m.render(now);
+                                        page.0[..b.len()].copy_from_slice(&b);
+                                    }
+                                }
+                                match gpu_golden::dashboard_finish(&mut g, &mut vram, &mut clock, j, prep, st, &start, &mut page, None, |m| peer.serve(m, &mut rm)) {
+                                    Ok((dash, stop)) => {
+                                        let l = gpu_golden::dashboard_lines(p, &start, dash.as_ref(), &stop);
+                                        *LAST_DASHBOARD.lock() = Some(l.clone());
+                                        lines.extend(l);
+                                        if rm.rusd.as_ref().is_some_and(|m| m.phys.is_none()) {
+                                            lines.push(format!("{}: kd modelul: zona comuna oprita (adresa stearsa)", p));
+                                        }
+                                    }
+                                    Err(e) => lines.push(format!("{}: kd tabloul de bord: eroare la oprire ({}); pagina ramane rezervata", p, e)),
+                                }
+                            }
+                        }
                     }
                 }
             }

@@ -147,8 +147,13 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
         // (it starts with the reset from inside, since WPR2 is up after the first chain).
         ["test-placa", "--flr-proba"] => Some(Ok(format!("{}{}", I9_DEFAULT, FLR_PROBA))),
         ["test-placa", "--i9", x, "--flr-proba"] if i9_ok(x) => Some(Ok(format!("{}{}", x, FLR_PROBA))),
+        // P6-105 (C-152 point 5, C-151 point 1): `--tablou` (last) = the board's dashboard at the end of the test's chain.
+        ["test-placa", "--tablou"] => Some(Ok(format!("{}{}", I9_DEFAULT, TABLOU))),
+        ["test-placa", "--i9", x, "--tablou"] if i9_ok(x) => Some(Ok(format!("{}{}", x, TABLOU))),
+        ["test-placa", "--flr-proba", "--tablou"] => Some(Ok(format!("{}{}{}", I9_DEFAULT, FLR_PROBA, TABLOU))),
+        ["test-placa", "--i9", x, "--flr-proba", "--tablou"] if i9_ok(x) => Some(Ok(format!("{}{}{}", x, FLR_PROBA, TABLOU))),
         ["test-placa", ..] => Some(Err(
-            "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba` la sfarsit",
+            "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba` si/sau `--tablou` la sfarsit (in aceasta ordine)",
         )),
         _ => None,
     }
@@ -366,7 +371,14 @@ fn speed_comparison() -> String {
 /// Suffix of the I9 text from `board_command` when the FLR trial is asked (`test-placa … --flr-proba`).
 pub const FLR_PROBA: &str = " --flr-proba";
 
+/// P6-105: suffix of the I9 text when the dashboard is asked (`test-placa … --tablou`, always last).
+pub const TABLOU: &str = " --tablou";
+
 pub fn board_test(i9: &str) -> (String, String) {
+    let (i9, dashboard) = match i9.strip_suffix(TABLOU) {
+        Some(x) => (x, true),
+        None => (i9, false),
+    };
     let (i9, flr_trial) = match i9.strip_suffix(FLR_PROBA) {
         Some(x) => (x, true),
         None => (i9, false),
@@ -404,6 +416,11 @@ pub fn board_test(i9: &str) -> (String, String) {
     }
     // P6-106 (C-148 completion 1): only the cycle's test asks the board for its maximum speed (not the FLR trial's chain).
     crate::drivers::gpu_tur::BOOST_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+    // P6-105: the dashboard only when the list asked for it, and only for this chain (not the FLR trial's second one).
+    crate::drivers::gpu_tur::RUSD_ARMED.store(dashboard, core::sync::atomic::Ordering::SeqCst);
+    if dashboard {
+        text.push_str("\n(tabloul de bord al placii: cerut de lista, la sfarsitul lantului, dupa randurile ks)\n");
+    }
     let result = if let Some(model) = k513_path() {
         if model != K513 {
             text.push_str(&format!("\n(#513 de pe discul propriu: {})\n", model));
@@ -434,6 +451,7 @@ pub fn board_test(i9: &str) -> (String, String) {
         chain.iter().rev().find(|l| l.contains("rezultat lant:")).cloned().unwrap_or_else(|| String::from("(lantul nu a dat un rezultat)"))
     };
     crate::drivers::gpu_tur::BOOST_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::RUSD_ARMED.store(false, core::sync::atomic::Ordering::SeqCst);
     text.push_str(&speed_comparison());
     if !flr_trial {
         return (text, result);
@@ -556,6 +574,9 @@ pub fn self_test() {
     assert!(board_command("test-placa --flr-proba") == Some(Ok(String::from("c135 --flr-proba"))));
     assert!(board_command("test-placa --i9 c133 --flr-proba") == Some(Ok(String::from("c133 --flr-proba"))));
     assert!(board_command("test-placa --flr-proba --i9 c133").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --tablou") == Some(Ok(String::from("c135 --tablou"))));
+    assert!(board_command("test-placa --i9 c133 --flr-proba --tablou") == Some(Ok(String::from("c133 --flr-proba --tablou"))));
+    assert!(board_command("test-placa --tablou --flr-proba").is_some_and(|r| r.is_err()));
     let rec = |s: &str| alloc::vec![String::from("gpu0: Bus Master pornit"), String::from(s)];
     assert!(recovery_passed(&rec("gpu0: C-103: pregatirea I6 trece din nou: `gpu lant` poate rula in aceeasi pornire")));
     assert!(!recovery_passed(&rec("gpu0: C-103: pregatirea I6 NU trece: tot pornire rece (cablul scos 30 s)")));

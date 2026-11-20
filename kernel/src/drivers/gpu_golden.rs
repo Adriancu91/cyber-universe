@@ -471,6 +471,135 @@ pub(super) fn boost_end<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized>(
     Ok(())
 }
 
+/// P6-105 (C-152 point 5, C-151 point 1): the board's dashboard (RM User Shared Data), ONLY when armed
+/// (`gpu_tur::RUSD_ARMED`), at the end of the chain — after I14 and the `ks` rows, with everything before already on the
+/// stick. Step 1: the page given to GSP-RM and the polling asked (`kd::rusd_start`). A refusal is a `kd` row (8000xxxx),
+/// after which nothing else is sent; only a transport error is `Err`. The caller then waits (3 x the interval) and calls
+/// [`dashboard_finish`].
+#[allow(clippy::too_many_arguments)]
+pub(super) fn dashboard_begin<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized>(
+    bar: &mut B,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    prep: &mut I7Prep,
+    st: &mut GpuState,
+    plan: &nvidia_ga104::gsp::rusd::RusdPlan,
+    phys: u64,
+    permit: Option<&HardwareWritePermit>,
+    poll: impl FnMut(&mut dyn SharedMem),
+) -> GpuResult<nvidia_ga104::gsp::rusd::RusdStart> {
+    use nvidia_ga104::gsp::rusd as kd;
+    let Some((u, _)) = st.space.as_ref() else { return Err(GpuError::InvalidArgument("kd: lipseste canalul de lucru")) };
+    let (client, sub) = (u.client, u.subdevice);
+    // An important row: everything held so far (I14, kronos, ks) goes to the stick before the first new command.
+    journal.push(Event::Note(DASHBOARD_BEGIN));
+    let GpuState { pending, zone, rm_calls, vram_words, .. } = st;
+    let mut rows = Journal::new(16);
+    let r = {
+        let mut t = OsRm { bar, vbar: &mut *vbar, journal: &mut *journal, permit, prep, clock, poll, zone, pending, calls: rm_calls, words: vram_words };
+        let mut rm = |sent: &[u8]| t.call(nvidia_ga104::gsp::rpc::function::GSP_RM_CONTROL, sent);
+        kd::rusd_start(plan, phys, client, sub, &mut rm, &mut rows)
+    };
+    for e in rows.events() {
+        journal.push(*e);
+    }
+    r
+}
+
+/// The note written right before the dashboard's first command (the rows before it are flushed to the stick).
+pub(super) const DASHBOARD_BEGIN: &str = "kd tabloul de bord (C-151 punctul 1): rezultatele lantului sunt pe stick; pornesc zona comuna";
+
+/// P6-105 step 2: the page read (only when GSP-RM accepted all three commands), then the polling and the page stopped.
+/// `Ok((dashboard, stop))`; `stop.page_free(&start)` false = the page stays reserved until the next power-on.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn dashboard_finish<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized>(
+    bar: &mut B,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    prep: &mut I7Prep,
+    st: &mut GpuState,
+    start: &nvidia_ga104::gsp::rusd::RusdStart,
+    mem: &mut dyn nvidia_ga104::gsp::rusd::RusdMem,
+    permit: Option<&HardwareWritePermit>,
+    poll: impl FnMut(&mut dyn SharedMem),
+) -> GpuResult<(Option<nvidia_ga104::gsp::rusd::Dashboard>, nvidia_ga104::gsp::rusd::RusdStop)> {
+    use nvidia_ga104::gsp::rusd as kd;
+    let Some((u, _)) = st.space.as_ref() else { return Err(GpuError::InvalidArgument("kd: lipseste canalul de lucru")) };
+    let (client, sub) = (u.client, u.subdevice);
+    let dash = start.polling().then(|| kd::read_dashboard(mem, journal));
+    let GpuState { pending, zone, rm_calls, vram_words, .. } = st;
+    let mut rows = Journal::new(16);
+    let r = {
+        let mut t = OsRm { bar, vbar: &mut *vbar, journal: &mut *journal, permit, prep, clock, poll, zone, pending, calls: rm_calls, words: vram_words };
+        let mut rm = |sent: &[u8]| t.call(nvidia_ga104::gsp::rpc::function::GSP_RM_CONTROL, sent);
+        kd::rusd_stop(start, client, sub, &mut rm, &mut rows)
+    };
+    for e in rows.events() {
+        journal.push(*e);
+    }
+    Ok((dash, r?))
+}
+
+fn kd_answer(v: Option<u32>) -> String {
+    match v {
+        None => String::from("nu s-a trimis"),
+        Some(0) => String::from("da"),
+        Some(x) => format!("refuz {:#x}", x),
+    }
+}
+
+/// P6-105: the dashboard's screen / report lines (also kept for `gpu stare`).
+pub(super) fn dashboard_lines(
+    p: &str,
+    start: &nvidia_ga104::gsp::rusd::RusdStart,
+    dash: Option<&nvidia_ga104::gsp::rusd::Dashboard>,
+    stop: &nvidia_ga104::gsp::rusd::RusdStop,
+) -> Vec<String> {
+    let mut l = Vec::new();
+    l.push(format!(
+        "{}: kd tabloul de bord, raspunsurile placii: pornirea zonei = {}, intervalul = {}, cererea datelor = {}",
+        p,
+        kd_answer(start.init),
+        kd_answer(start.interval),
+        kd_answer(start.mask)
+    ));
+    match dash {
+        Some(d) => {
+            let opt = |v: Option<u32>, unit: &str| v.map_or_else(|| String::from("necitit"), |x| format!("{} {}", x, unit));
+            l.push(format!(
+                "{}: kd temperatura placii: {}; ceasul nucleului {}, al memoriei {}; stare {}",
+                p,
+                d.temp_c().map_or_else(|| String::from("necitita"), |c| format!("{} grade C", c)),
+                opt(d.clk_graphics_mhz, "MHz"),
+                opt(d.clk_memory_mhz, "MHz"),
+                d.pstate().map_or_else(|| String::from("necitita"), pstate_text)
+            ));
+            l.push(format!(
+                "{}: kd incarcare nucleu {} / memorie {} (valori brute); motive {}{}; puterea medie {}, limita {}",
+                p,
+                d.load_gpu.map_or_else(|| String::from("-"), |x| format!("{}", x)),
+                d.load_mem.map_or_else(|| String::from("-"), |x| format!("{}", x)),
+                d.reasons.map_or_else(|| String::from("necitite"), |x| format!("{:#x}", x)),
+                if d.thermal_slowdown() { " (INCETINIRE TERMICA)" } else { "" },
+                opt(d.avg_power_mw, "mW"),
+                opt(d.power_limit_mw, "mW")
+            ));
+            l.push(format!("{}: kd sectiuni citite {:#x} (0x7f = toate), ocupate {:#x}", p, d.sections, d.busy));
+        }
+        None => l.push(format!("{}: kd tabloul nu s-a citit (placa nu a acceptat toate comenzile)", p)),
+    }
+    l.push(format!(
+        "{}: kd oprirea citirilor = {}, oprirea zonei = {}{}",
+        p,
+        kd_answer(stop.mask),
+        kd_answer(stop.deinit),
+        if stop.page_free(start) { "" } else { "; pagina ramane rezervata pana la repornire" }
+    ));
+    l
+}
+
 /// P6-91/P6-92: the I9 choice of `gpu lant --i9 ...`. `Default` = what os-302/os-303 sent without the option.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum I9Choice {

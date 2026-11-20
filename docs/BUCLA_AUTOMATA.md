@@ -73,5 +73,12 @@ antetul configurației (0x04–0x3c), în controlul PCIe (Device/Link Control 1 
 e deschis, placa e rugată să urce la viteza maximă (600 s, forma NVIDIA); la sfârșit cererea e ștearsă. În raport: rândul
 `ks: viteza maxima ceruta …` (înainte, răspunsul, după, verdictul 0–3), `ks: inainte de stergere …` și blocul „viteza fata de
 os-313”. Un refuz al plăcii e doar un rând; lanțul merge ca înainte. De mână (`gpu lant`, `run kronos --gpu`) nu se cere nimic.
+**Tabloul de bord al plăcii (P6-105, C-152 punctul 5, C-151 punctul 1):** oprit implicit. Doar cu `test-placa --tablou`
+(sau `test-placa --i9 c135 --tablou`, `test-placa --flr-proba --tablou`; `--tablou` mereu ultimul) — la sfârșitul lanțului
+testului, după I14 și rândurile `ks` (deci după ce rezultatele sunt pe stick), OS-ul dă plăcii o pagină de 4 KiB de memorie,
+cere citirile la 500 ms (temperatură, ceasuri, stare, încărcare, motive, putere), așteaptă 1,5 s, citește pagina o dată și
+oprește zona. În raport: rândurile `kd …` (răspunsurile plăcii, temperatura, ceasurile, `sectiuni citite 0x7f` = toate). Un
+refuz al plăcii = un rând, nimic altceva trimis. `gpu stare` arată ultimul tablou citit în această pornire (placa nu e atinsă).
+De mână: `gpu lant --tablou` (cu DA). Lanțul al doilea al probei FLR nu citește tabloul.
 Din hub, cu sistemul deja pornit de pe stick și `hub asculta`: `ciclu-test os-<N>` (implicit I9 `c135`; `--i9 c125|c133|c135|os302`).
 Comenzile manuale `gpu lant` / `run kronos --gpu` cer în continuare DA la tastatură.

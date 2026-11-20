@@ -181,7 +181,7 @@ pub fn allowed(line: &str) -> Result<(), &'static str> {
             Err("gpu tur --trezire scrie in configuratia PCI a placii: doar cu Adrian de fata")
         }
         ["gpu", sub, ..] => match *sub {
-            "identifica" | "gfw" | "vbios" | "fwsec" | "firmware" | "pregatire-i6" | "tur" | "plan" | "variante" => Ok(()),
+            "identifica" | "gfw" | "vbios" | "fwsec" | "firmware" | "pregatire-i6" | "tur" | "plan" | "variante" | "stare" => Ok(()),
             "lant" => Err("gpu lant scrie in placa video: doar cu Adrian de fata"),
             "i6" => Err("gpu i6 scrie in placa video: doar cu Adrian de fata"),
             "recupereaza" => Err("gpu recupereaza scrie in placa video: doar cu Adrian de fata"),
@@ -367,7 +367,7 @@ pub(super) fn say(text: &str) {
 /// Boot-time self test of the allow-list (every `auto` test build).
 #[cfg(feature = "test-auto")]
 pub fn self_test() {
-    for ok in ["hw", "gpu", "gpu identifica", "gpu pregatire-i6", "gpu tur", "gpu plan", "run kronos --profil --n 64 Buna", "run kronos-calcul --cauta", "cpu porneste", "raport", "log gpu 40", "compara /usb/a.txt /usb/b.txt", "log --sumar", "log --avertismente 50", "timp uptime", "timp run kronos --n 16 Buna"] {
+    for ok in ["hw", "gpu", "gpu identifica", "gpu pregatire-i6", "gpu tur", "gpu plan", "gpu stare", "run kronos --profil --n 64 Buna", "run kronos-calcul --cauta", "cpu porneste", "raport", "log gpu 40", "compara /usb/a.txt /usb/b.txt", "log --sumar", "log --avertismente 50", "timp uptime", "timp run kronos --n 16 Buna"] {
         assert!(allowed(ok).is_ok(), "auto: `{}` trebuia permis", ok);
     }
     for bad in ["test-placa", "test-placa --i9 c135", "gpu i6 --scrie", "gpu i6", "gpu lant", "gpu recupereaza", "gpu recupereaza --sim", "gpu lant --sim", "gpu pregatire-i6 --scrie", "reboot", "run fetch https://x", "http get x", "rtl", "run editor", "mod incarca x", "exit", "test-gata", "timp", "timp reboot", "timp gpu i6 --scrie", "timp timp uptime", "timp run editor", "run kronos --gpu Ana", "run kronos --n 3 --gpu-sim x", "timp run kronos --gpu", "run kronos --conversatie", "gpu tur --trezire", "timp gpu tur --trezire", "gpu tur --trezire --sim"] {

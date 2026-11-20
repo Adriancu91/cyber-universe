@@ -728,12 +728,22 @@ fn gpu(args: &[&str]) {
             }
         }
         Some("recupereaza") => recupereaza(&args[1..]),
+        Some("stare") => {
+            // P6-105 (C-152 point 5): the last dashboard read at the end of a chain; the board is not touched.
+            if let Some(bad) = args[1..].first() {
+                out!("gpu stare: optiune necunoscuta: {} (folosire: gpu stare)\n", bad);
+                return;
+            }
+            for l in crate::drivers::gpu_tur::dashboard_status() {
+                out!("{}\n", l);
+            }
+        }
         Some("plan") => {
             for l in crate::drivers::gpu::PLAN {
                 out!("{}\n", l);
             }
         }
-        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios [--detalii] | gpu fwsec | gpu firmware | gpu pregatire-i6 | gpu i6 --scrie | gpu tur [--trezire] | gpu lant [--varianta N] [--i9 c125|c133|c135] | gpu variante | gpu recupereaza | gpu plan)\n", other),
+        Some(other) => out!("gpu: necunoscut: {} (folosire: gpu identifica | gpu gfw | gpu vbios [--detalii] | gpu fwsec | gpu firmware | gpu pregatire-i6 | gpu i6 --scrie | gpu tur [--trezire] | gpu lant [--varianta N] [--i9 c125|c133|c135] | gpu variante | gpu recupereaza | gpu stare | gpu plan)\n", other),
     }
 }
 
@@ -774,8 +784,8 @@ fn lant(rest: &[&str]) {
     }
     let i9 = i9.unwrap_or_default();
     let rest = &opts[..];
-    if let Some(bad) = rest.iter().find(|a| !matches!(**a, "--sim" | "--eroare" | "--doar-citire" | "--date-vechi" | "--flr-proba" | "--ciclu-viteza" | "--ciclu-viteza-refuz")) {
-        out!("gpu lant: optiune necunoscuta: {} (folosire: gpu lant [--varianta N] [--i9 c125|c133|c135])\n", bad);
+    if let Some(bad) = rest.iter().find(|a| !matches!(**a, "--sim" | "--eroare" | "--doar-citire" | "--date-vechi" | "--flr-proba" | "--ciclu-viteza" | "--ciclu-viteza-refuz" | "--tablou" | "--tablou-refuz")) {
+        out!("gpu lant: optiune necunoscuta: {} (folosire: gpu lant [--varianta N] [--i9 c125|c133|c135] [--flr-proba] [--tablou])\n", bad);
         return;
     }
     let sim = rest.contains(&"--sim");
@@ -827,14 +837,24 @@ fn lant(rest: &[&str]) {
         crate::drivers::gpu_tur::BOOST_IN_CYCLE.store(cycle, core::sync::atomic::Ordering::SeqCst);
         *crate::drivers::gpu_tur::SIM_BOOST_RULE.lock() =
             rest.contains(&"--ciclu-viteza-refuz").then_some(gpu_sim::fake_rm::BoostRule::Refuse(0x56));
+        // P6-105: the dashboard at the end of the chain; `--tablou-refuz` = the RM model refuses the start.
+        crate::drivers::gpu_tur::RUSD_ARMED
+            .store(rest.iter().any(|a| a.starts_with("--tablou")), core::sync::atomic::Ordering::SeqCst);
+        *crate::drivers::gpu_tur::SIM_RUSD_RULE.lock() =
+            rest.contains(&"--tablou-refuz").then_some(gpu_sim::fake_rm::RusdRule::RefuseInit(0x56));
         for l in crate::drivers::gpu_tur::chain_sim(rest.contains(&"--eroare"), !rest.contains(&"--doar-citire"), variant, i9, flr_trial) {
             out!("{}\n", l);
         }
         crate::drivers::gpu_i10::SIM_STALE_READS.store(false, core::sync::atomic::Ordering::Relaxed);
         crate::drivers::gpu_tur::BOOST_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+        crate::drivers::gpu_tur::RUSD_ARMED.store(false, core::sync::atomic::Ordering::SeqCst);
         return;
     }
-    for l in crate::drivers::gpu_tur::chain(variant, i9) {
+    // P6-105: `--tablou` = the dashboard at the end of this chain only (not the FLR trial's second chain).
+    crate::drivers::gpu_tur::RUSD_ARMED.store(rest.contains(&"--tablou"), core::sync::atomic::Ordering::SeqCst);
+    let first = crate::drivers::gpu_tur::chain(variant, i9);
+    crate::drivers::gpu_tur::RUSD_ARMED.store(false, core::sync::atomic::Ordering::SeqCst);
+    for l in first {
         out!("{}\n", l);
     }
     // P6-101 (C-152 point 1): `--flr-proba` = the chain a second time in this power-on (it starts with the FLR).
