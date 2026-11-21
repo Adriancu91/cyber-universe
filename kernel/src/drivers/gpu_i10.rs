@@ -391,6 +391,8 @@ impl SimGpu {
             cp.register_program_with_needs(nvidia_ga104::layernorm256::LAYERNORM256, c::layernorm256_on_cpu, c::LAYERNORM256_NEEDS);
             // P6-117 (C-161 point 2): P8's tensor-core program (`mma16_f16`).
             cp.register_program_with_needs(nvidia_ga104::mma16::MMA16_F16, c::mma16_f16_on_cpu, c::MMA16_F16_NEEDS);
+            // P6-123 (C-155 point 3): the argmax on the board (256 threads, shfl + barrier, 16 bytes written).
+            cp.register_program_with_needs(nvidia_ga104::argmax::ARGMAX, c::argmax_on_cpu, c::ARGMAX_NEEDS);
         }
         cp.sim_launch_ns = 4000;
         if SIM_STALE_READS.load(core::sync::atomic::Ordering::Relaxed) {

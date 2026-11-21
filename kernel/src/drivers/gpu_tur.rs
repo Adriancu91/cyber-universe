@@ -261,6 +261,13 @@ pub static LN_ONLY_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic
 /// `gpu dieta-sim 2`. Off by default: every other run is as in os-332.
 pub static DIET2_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-123 (C-155 point 3, cyber-gpu `3683ef4`): the argmax on the board, the trial (the note's point 3): every token of
+/// `kronos --gpu` ends with the copy of the logits AND the `argmax` program (one launch more, its 16-byte result in the
+/// logits' RAM arena); at every position the 4 words must equal `argmax_result` of the copied logits (threshold 0). The
+/// token is still chosen on the processor, as before. Set only by the cycle when the list asks for it (`test-placa …
+/// --argmax-placa`) and, in the test build, by `gpu argmax-sim on`. Off by default: every other run is as in os-339.
+pub static ARGMAX_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-117 (C-161 point 2, cyber-gpu `3199fa2`): P8, the first tensor-core computation (`mma16_f16`, 6 sets), after
 /// `kronos --gpu`'s texts. Set only by the cycle when the list asks for it (`test-placa … --p8`) and, in the test
 /// build, by `gpu p8-sim on`. Off by default: every other run sends exactly what os-332 sent.

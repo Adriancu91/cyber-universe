@@ -785,6 +785,24 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu dieta-sim: exista doar in build-ul de test (pe stick dieta o porneste doar ciclul)\n");
         }
+        Some("argmax-sim") => {
+            // P6-123 (C-155 point 3): test build only: the argmax program after the copy, checked, for the next
+            // `kronos --gpu-sim` (in the stick's system only the cycle turns it on, with `test-placa … --argmax-placa`).
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::ARGMAX_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu argmax-sim: pornita (SIMULARE: copia logit-urilor + programul argmax in acelasi simbol, verificat)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::ARGMAX_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu argmax-sim: oprita\n");
+                }
+                _ => out!("folosire: gpu argmax-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu argmax-sim: exista doar in build-ul de test (pe stick argmax-ul pe placa il porneste doar ciclul, test-placa --argmax-placa)\n");
+        }
         Some("p8-sim") => {
             // P6-117 (C-161 point 2): test build only: P8 (`mma16_f16`, 6 sets) after the next `kronos --gpu-sim`'s texts
             // (in the stick's system only the cycle turns it on, with `test-placa … --p8`).

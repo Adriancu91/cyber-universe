@@ -219,6 +219,12 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     logit-urilor (A, B, C, D = NaN); D citit înapoi e judecat pe procesor (`judge_set`, toleranța scrisă) → rândurile `kt mma16 …` în
     jurnal și `mma16 …` + `P8 (mma16): TRECE / NU TRECE / NU A TERMINAT` în ieșire și în răspunsul ciclului. Placa care nu termină un
     set oprește proba (fără reîncercare); o eroare aici nu strică rezultatul lui #513. Test: `kronos-gpu-p8`.
+    **P6-123 (C-155 punctul 3, cyber-gpu `3683ef4`): argmax pe placă, proba.** Doar în ciclu cu `test-placa … --argmax-placa` (după
+    `--k651`, înainte de `--dieta2`; `gpu_tur::ARGMAX_IN_CYCLE`; în build-ul de test `gpu argmax-sim on|off`): fiecare simbol al lui
+    `kronos --gpu` se termină cu copia logit-urilor și programul `argmax` (`nvidia_ga104::argmax::launch`; 16 octeți imediat după
+    logit-uri, umpluți cu `0xEE`); la fiecare poziție cele 4 cuvinte = `argmax_result` al logit-urilor copiate (prag 0), altfel
+    prima poziție diferită e scrisă. Simbolul se alege tot pe procesor; timpul lansării argmax e ținut separat de profilul `kp`.
+    Rânduri `kt argmax placa = procesor: X/Y`, `kt median argmax placa (us)`, verdictul și în răspunsul ciclului. Test: `kronos-gpu-argmax`.
     **P6-119 (C-157 punctul 3, cyber-gpu `367edf4`): dieta 2 a driverului.** Doar în ciclu cu `test-placa … --dieta2` (după alegerea
     listei, înainte de `--p8`; `gpu_tur::DIET2_IN_CYCLE`; în build-ul de test `gpu dieta-sim 2`). Nimic nou pentru placă: (A) pe
     pozițiile care nu hrănesc profilul `kp` (toate în afară de 0, 1 și din 8 în 8) se citesc doar prima și ultima înregistrare
