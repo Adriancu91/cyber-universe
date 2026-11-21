@@ -22,7 +22,7 @@
   cyber-live-1\n<sesiune>\n<nr>\n<fel>\n<text>
   ```
   (fără `\n` la sfârșit; `<text>` exact cum e în JSON, decodat). Cifre hex mici sau mari, 64.
-  Exemplu Python: `hmac.new(cheie, f"cyber-live-1\n{s}\n{nr}\n{fel}\n{text}".encode(), "sha256").hexdigest()`.
+  Exemplu Python: `hmac.new(cheie, f"cyber-live-1\n{s}\n{nr}\n{fel}\n{text}".encode(), "sha256").hexdigest()`; unealta gata: `tools/live-semneaza.py <cheie> <sesiune> <nr> <fel> [text]`.
 - Fișierul are cel mult 64 KiB.
 
 ## Răspunsul `r-NNNN.json`

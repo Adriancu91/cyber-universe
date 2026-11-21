@@ -221,6 +221,8 @@ pub fn self_test() {
     let mut t = [0u8; 32];
     cyber_crypto::hmac::hmac::<Sha256>(b"Jefe", b"what do ya want for nothing?", &mut t);
     assert!(t[..4] == [0x5b, 0xdc, 0xc1, 0x46], "live: HMAC-SHA-256 RFC 4231");
+    // The same signature as tools/live-semneaza.py (Python's hmac), so the command centre's end matches ours.
+    assert!(sign(&key, s, 1, "comanda", "hw") == "65628b225841c7f1d8e79dc3fdc4446005580ba569e6dd515534654e834bb2b4", "live: semnatura ca in Python");
     let mut g = Gate::new(s);
     let c1 = good(1, "comanda", "hw");
     assert!(g.check(&key, false, &c1) == Verdict::Run(Command { nr: 1, session: String::from(s), kind: String::from("comanda"), text: String::from("hw") }));
