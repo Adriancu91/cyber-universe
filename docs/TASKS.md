@@ -461,6 +461,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-103** C-152 punctul 3: ceasul de pază al plăcii de bază (TCO), doar în modul ciclu, termen larg. Plan: `docs/plans/P6-103.md`. Dep: P6-98.
 - [x] **P6-104** C-152 punctul 4: temperatura procesorului (MSR-uri Intel) + prag de oprire. Plan: `docs/plans/P6-104.md`. Dep: P6-98.
 - [x] **P6-105** C-152 punctul 5: `gpu stare` cu tabloul de bord al plăcii. Plan: `docs/plans/P6-105.md`. Dep: Cyber-GPU C-151 punctul 1.
+- [~] **P6-107** C-154: „dieta driverului” (Cyber-GPU `4925469`, C-147 punctul 7) doar în modul ciclu, rândurile `kt` noi, blocul „viteza fata de os-322”; Release `os-324` singur. Plan: `docs/plans/P6-107.md`. Dep: P6-106.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
