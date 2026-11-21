@@ -196,12 +196,16 @@ pub fn answer(session: &str, nr: Option<u32>, raw: &str, result: Result<&Outcome
     field("ecou", Value::str(raw), &mut out);
     match result {
         Ok(o) => {
+            // P6-113: the text that leaves for the hub never carries a key or token (the values of the secret files,
+            // also as hex, and anything shaped like a key), whatever the command did.
+            let secrets = super::raport::secrets();
+            let clean = |t: &str| super::raport::hide_secrets(t, &secrets);
             field("stare", Value::str("ok"), &mut out);
             field("cod", Value::int(o.code), &mut out);
             field("durata_ms", Value::int(o.ms.min(i64::MAX as u64) as i64), &mut out);
-            field("iesire", Value::str(&o.output), &mut out);
-            field("ecran", Value::str(&o.screen), &mut out);
-            field("sistem", Value::str(&o.system), &mut out);
+            field("iesire", Value::str(&clean(&o.output)), &mut out);
+            field("ecran", Value::str(&clean(&o.screen)), &mut out);
+            field("sistem", Value::str(&clean(&o.system)), &mut out);
         }
         Err(why) => {
             field("stare", Value::str("REFUZAT"), &mut out);
@@ -546,6 +550,26 @@ fn one(key: &[u8], board_key: bool, raw: &str, want: u32, gate: &mut Gate, local
         auto::say(&format!("live: {} nu a plecat in hub; ramane pe stick\n", name));
     }
     end
+}
+
+/// QEMU test (P6-113, C-159 note of 21 Nov 13:00), with the live key already on the test disk at `<dir>/live.cheie`:
+/// `cat` refuses it, a program cannot see it, and an answer whose text carries the key (raw or as hex) leaves without it.
+#[cfg(feature = "test-ghpush")]
+pub fn secret_test() {
+    let path = format!("{}/live.cheie", dir());
+    let raw = fs::read_all(&path).unwrap_or_default();
+    let key = String::from(String::from_utf8_lossy(&raw).trim());
+    assert!(key.len() >= 32, "test: live: cheia de proba lipseste");
+    let shown = run_captured(&format!("cat {}", path));
+    assert!(shown.contains("fisier secret") && !shown.contains(&key), "test: live: cat arata cheia: {}", shown);
+    let canon = crate::proc::rights::canonical(&path).unwrap_or_default();
+    assert!(crate::proc::rights::is_secret(&canon) && crate::proc::rights::is_kernel_only(&canon), "test: live: cheia nu e secreta");
+    let hex: String = key.bytes().map(|b| format!("{:02x}", b)).collect();
+    let o = Outcome { code: 0, ms: 1, output: format!("a {} b\n{}\n", key, hex), screen: format!("ecran {}", key), system: key.clone() };
+    let text = answer("s-test", Some(1), "{}", Ok(&o));
+    assert!(!text.contains(&key) && !text.contains(&hex) && !text.contains(&hex.to_ascii_uppercase()), "test: live: cheia in raspuns: {}", text);
+    assert!(text.contains("[ascuns]"), "test: live: nimic ascuns: {}", text);
+    crate::info!("test: live: cheia live.cheie e secreta (cat refuzat, ascunsa din raspuns, si ca hex) OK");
 }
 
 /// QEMU self-test (P6-108): the refusal probes the command centre counts (C-159 completion of 21 Nov 08:31) — a bad

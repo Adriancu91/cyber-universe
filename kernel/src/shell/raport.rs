@@ -19,7 +19,10 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 /// Files whose contents are secret; they are read only to hide them.
 const SECRET_FILES: &[&str] =
     &["/usb/claude.key", "/usb/github.token", "/disk/claude.key", "/disk/github.token", "/etc/claude.key", "/etc/github.token",
-      "/usb/remote.cheie", "/disk/remote.cheie", "/etc/remote.cheie"];
+      "/usb/remote.cheie", "/disk/remote.cheie", "/etc/remote.cheie",
+      // P6-113: the live channel's keys (the hub folder of the stick; /etc/hub in the QEMU tests).
+      "/usb/hub/live.cheie", "/disk/hub/live.cheie", "/etc/hub/live.cheie",
+      "/usb/hub/permite-live-placa", "/disk/hub/permite-live-placa", "/etc/hub/permite-live-placa"];
 /// Prefixes of keys and tokens: the prefix and the rest of the word are hidden.
 /// Header names (ending in ':') come first: their whole value, to the end of the line, is hidden.
 const SECRET_PREFIXES: &[&str] = &[
@@ -242,6 +245,10 @@ pub(super) fn secrets() -> Vec<String> {
                 let s = line.trim();
                 if s.len() >= 8 {
                     v.push(String::from(s));
+                    // P6-113: the same bytes written as hex (lower and upper case) are hidden too.
+                    let hex: String = s.bytes().map(|b| format!("{:02x}", b)).collect();
+                    v.push(hex.to_ascii_uppercase());
+                    v.push(hex);
                 }
             }
         }

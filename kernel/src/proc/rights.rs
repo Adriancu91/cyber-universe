@@ -35,6 +35,10 @@ pub const R_CREATE: u8 = 4;
 /// FAT). The real ones live on the stick; /disk and /etc are covered too (a copy there, and the QEMU tests).
 pub const SECRET_NAMES: &[&str] = &["claude.key", "github.token", "remote.cheie"];
 pub const SECRET_DIRS: &[&str] = &["/usb", "/disk", "/etc"];
+/// P6-113 (C-159 note of 21 Nov 13:00): the live channel's keys. Secret anywhere below the hub folders (at any depth),
+/// and kernel-only: no program may ask for them (the kernel's gate is the only reader).
+pub const KERNEL_ONLY_NAMES: &[&str] = &["live.cheie", "permite-live-placa"];
+pub const HUB_DIRS: &[&str] = &["/usb/hub", "/disk/hub", "/etc/hub"];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Denied {
@@ -95,7 +99,15 @@ fn under(path: &str, dir: &str) -> bool {
 }
 
 pub fn is_secret(canon: &str) -> bool {
-    canon.rsplit_once('/').is_some_and(|(dir, name)| SECRET_DIRS.contains(&dir) && SECRET_NAMES.contains(&name))
+    canon.rsplit_once('/').is_some_and(|(dir, name)| {
+        (SECRET_DIRS.contains(&dir) && SECRET_NAMES.contains(&name))
+            || ((SECRET_DIRS.contains(&dir) || HUB_DIRS.iter().any(|h| under(dir, h))) && (KERNEL_ONLY_NAMES.contains(&name) || SECRET_NAMES.contains(&name)))
+    })
+}
+
+/// A secret only the kernel reads (`secret(1, …)` refuses it).
+pub fn is_kernel_only(canon: &str) -> bool {
+    is_secret(canon) && canon.rsplit_once('/').is_some_and(|(_, name)| KERNEL_ONLY_NAMES.contains(&name))
 }
 
 impl Rights {
@@ -140,7 +152,7 @@ impl Rights {
     /// `secret(1, path)`: asks for one secret file. Refused after `secret(0)` or for a path that is not a secret.
     pub fn ask_secret(&mut self, path: &str) -> Result<(), Denied> {
         let canon = canonical(path).ok_or(Denied::Hidden)?;
-        if self.secrets_closed || !is_secret(&canon) {
+        if self.secrets_closed || !is_secret(&canon) || is_kernel_only(&canon) {
             return Err(Denied::NoRight);
         }
         if !self.secrets.contains(&canon) {
@@ -207,5 +219,13 @@ pub fn self_test() {
     assert!(r.unveil("", 0).is_ok() && r.unveil("/", R_READ).is_err(), "drepturi: lista redeschisa");
     assert!(r.promise(P_STDIO | P_RPATH) == P_STDIO | P_RPATH && r.promise(P_ALL) == P_STDIO | P_RPATH, "drepturi: promisiuni largite");
     assert!(r.check_call(P_INET) == Err(Denied::Promise) && r.check_call(P_RPATH).is_ok());
-    crate::info!("test: drepturi pe program OK (promisiuni, cai vizibile, secrete)");
+    // P6-113: the live channel's keys, anywhere below the hub folders, never given to a program.
+    let mut r = Rights::default();
+    for p in ["/usb/hub/live.cheie", "/USB/Hub/./LIVE.CHEIE", "/etc/hub/live.cheie", "/disk/hub/x/y/live.cheie", "/usb/hub/permite-live-placa", "/usb/live.cheie"] {
+        assert!(r.check_path(p, R_READ) == Err(Denied::Hidden), "drepturi: {} vizibil", p);
+        assert!(r.ask_secret(p).is_err(), "drepturi: {} dat unui program", p);
+    }
+    assert!(!r.visible_entry("/usb/hub", "live.cheie") && !r.visible_entry("/usb/hub", "PERMITE-LIVE-PLACA"));
+    assert!(r.check_path("/usb/hub/live/s-1/r-0001.json", R_READ).is_ok() && r.check_path("/usb/x/live.cheie", R_READ).is_ok());
+    crate::info!("test: drepturi pe program OK (promisiuni, cai vizibile, secrete, cheile canalului viu)");
 }

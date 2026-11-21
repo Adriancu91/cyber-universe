@@ -2158,6 +2158,7 @@ fn test_ghpush() {
     assert!(e.starts_with("cheia /etc/hub/live.cheie lipseste"), "test: live fara cheie: {}", e);
     info!("test: live: fara cheie nu porneste OK");
     put("/etc/hub/live.cheie", b"cheie-de-proba-a-canalului-viu-P6-109-qemu");
+    shell::live::secret_test(); // P6-113
     let sum = shell::live::test_session(1).expect("test: sesiunea vie");
     assert!(sum.ran == 4 && sum.refused == 5 && sum.unsent == 0 && sum.end.starts_with("gata"), "test: live: {:?}", sum);
     let live_take = |name: &str| {
