@@ -1251,8 +1251,9 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
             // noted), never guessed.
             let (embed, down) = (way.embed == kd::EmbedBy::Program, !self.from_vram);
             let kinds = match self.list {
-                kd::TokenList::Fused => kp::token_kinds_fused(m.layers.len(), embed, down),
                 kd::TokenList::Plain => kp::token_kinds(m.layers.len(), embed, down),
+                // `FusedLn` (C-155 point 2) is not sent by this Release: only `Fused` reaches here.
+                _ => kp::token_kinds_fused(m.layers.len(), embed, down),
             };
             if let Err(e) = self.prof.add_token(&kinds, &self.launch_ns) {
                 self.prof_err.get_or_insert_with(|| format!("pozitia {}: {} ({} lansari, {} timpi)", pos, e, kinds.len(), self.launch_ns.len()));
@@ -1544,6 +1545,9 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
         let _ = split.add(*t); // parts are clamped to the whole in `run_token`
     }
     split.journal(journal);
+    // P6-110 (C-157 point 2b, cyber-gpu `46078f4`): the time of the slow positions (over 2 x the median), clock reads only.
+    split.journal_slow(journal);
+    lines.extend(split.slow_lines(label).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
     if let Some(c) = out.shadow_changed {
         journal.push(Event::Value { what: KT_SHADOW, value: c.min(u32::MAX as usize) as u32 });
         lines.push(format!(
