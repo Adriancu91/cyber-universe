@@ -760,6 +760,24 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu dieta-sim: exista doar in build-ul de test (pe stick dieta o porneste doar ciclul)\n");
         }
+        Some("p8-sim") => {
+            // P6-117 (C-161 point 2): test build only: P8 (`mma16_f16`, 6 sets) after the next `kronos --gpu-sim`'s texts
+            // (in the stick's system only the cycle turns it on, with `test-placa … --p8`).
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::P8_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu p8-sim: pornita (SIMULARE: dupa texte, mma16_f16 de 6 ori, judecat pe procesor)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::P8_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu p8-sim: oprita\n");
+                }
+                _ => out!("folosire: gpu p8-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu p8-sim: exista doar in build-ul de test (pe stick P8 il porneste doar ciclul, test-placa --p8)\n");
+        }
         Some("lipit-sim") => {
             // P6-110 (C-155 point 1): test build only: P3's comparison (plain list, then glued) for the next
             // `kronos --gpu-sim` (in the stick's system only the cycle turns it on, with `test-placa … --lipit`).

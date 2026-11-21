@@ -1781,6 +1781,14 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
         if let Err(e) = vram_copy(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, &ctx) {
             lines.push(format!("{}: kronos --gpu: copierea VRAM -> VRAM: nemasurata: {}", p, e));
         }
+        // P6-117 (C-161 point 2, cyber-gpu `3199fa2`): P8, the first tensor-core computation, only when the cycle's
+        // list asks for it (`test-placa … --p8`), after everything of the generation (its rows are already written);
+        // its failure is a line, not a failure of `kronos --gpu`.
+        if super::gpu_tur::P8_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+            if let Err(e) = mma16_probe(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, &ctx) {
+                lines.push(format!("{}: kronos --gpu: P8 (mma16): oprita: {}", p, e));
+            }
+        }
     }
     Ok(all.pop().unwrap_or_default())
 }
@@ -1881,6 +1889,112 @@ fn vram_copy<V: Mmio + ?Sized, K: Clock + ?Sized>(
         s.share_permille()
     ));
     Ok(())
+}
+
+/// P6-117 (C-161 point 2, C-160 point 1; cyber-gpu note `C-160_P8_primul-calcul-tensor.md`, commit `3199fa2`): P8 —
+/// `D = A·B + C` (16×16, A and B binary16, C and D f32) on the tensor cores, with `mma16_f16` (Mesa NAK 26.3.1), once
+/// for each of the 6 fixed sets of `mma16_probe::SETS`, one submission per set; D (1 KiB) read back from host RAM and
+/// judged on the CPU against the written tolerance (`17 · 2⁻²³ · (|c| + Σ|a·b|)`). Outside the generation path: it
+/// runs after `kronos --gpu`'s rows. New for the board: this program (its SHA-256 checked first), its 0x800-byte cbuf
+/// (addresses at 0x700), 32 registers, one warp. A set the board does not finish stops the probe (no retry); the rows
+/// written are those of the sets judged so far. The host page is the logits page (no longer used by then).
+#[allow(clippy::too_many_arguments)]
+fn mma16_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    doorbell: &mut Bell<'_, V>,
+    subs: &mut u32,
+    ctx: &CopyCtx,
+) -> GpuResult<()> {
+    use nvidia_ga104::{mma16, mma16_probe as mp};
+    let label = if permit.is_some() { "placa" } else { "SIMULARE" };
+    let sha = sha256_hex(mma16::MMA16_F16);
+    if sha != mma16::MMA16_F16_SHA256 {
+        lines.push(format!("{}: kronos --gpu: P8 (mma16): SHA-256 al programului {} nu e cel din nota ({}): nimic trimis", p, sha, mma16::MMA16_F16_SHA256));
+        return Err(bad("P8: SHA-256 gresit pentru mma16_f16"));
+    }
+    if ctx.sys.size < mp::PAGE_BYTES as u64 || !ctx.sys.va.is_multiple_of(mp::PAGE_BYTES as u64) {
+        return Err(bad("P8: pagina de RAM nu are 4 KiB aliniati"));
+    }
+    lines.push(format!(
+        "{}: kronos --gpu: P8 (mma16, {}): programul mma16_f16 ({} octeti, SHA-256 {}...), {} seturi, cate o trimitere",
+        p,
+        label,
+        mma16::MMA16_F16.len(),
+        &sha[..16],
+        mp::SETS.len()
+    ));
+    // The program, then one VRAM page: the cbuf at +0 (0x800 bytes), the QMD at +0x800 (aligned to 256).
+    let prog = map_vram(st, mma16::MMA16_F16.len() as u64)?;
+    let zone = map_vram(st, PAGE)?;
+    put_bytes(st.mem.writer_mut(), prog.pa, mma16::MMA16_F16)?;
+    let mut maps = ctx.maps.clone();
+    maps.push(prog);
+    maps.push(zone);
+    let sys = [ctx.sys.clone()];
+    let qmd_va = zone.va + mma16::CBUF_SIZE as u64;
+    let mut probe = mp::Probe::default();
+    let mut stopped = None;
+    for (i, set) in mp::SETS.iter().enumerate() {
+        ram_write(&ctx.sys, &set.page()); // D starts as NaN
+        let (cb, q) = mp::launch_bytes(prog.va, zone.va, ctx.sys.va)?;
+        {
+            let w = st.mem.writer_mut();
+            put_bytes(w, zone.pa, &cb)?;
+            put_bytes(w, zone.pa + mma16::CBUF_SIZE as u64, &q)?;
+            put_bytes(w, ctx.rec.pa, &[0; 32])?;
+        }
+        let first = TOKEN_FIRST + STRIDE * *subs;
+        let mut words = alloc::vec![0u32; transfer::sequence_words(1)];
+        let mut pb = PushBuf::new(&mut words);
+        transfer::encode_sequence(&mut pb, &[qmd_va], ctx.rec.va, first)?;
+        let nw = pb.len();
+        let b = match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, 2, first + 1, &maps, &sys, doorbell)? {
+            Ok(b) => b,
+            Err(got) => {
+                lines.push(format!(
+                    "{}: kronos --gpu: P8 (mma16): placa nu a terminat la setul {} ({}): ultima inregistrare = {:#x} (asteptat {:#x}); proba oprita, fara reincercare",
+                    p, i, set.name, got, first + 1
+                ));
+                stopped = Some(i);
+                break;
+            }
+        };
+        *subs += 1;
+        let ns = transfer::analyze_sequence(&b, 1, first)?[0];
+        let page = ram_read(&ctx.sys, mp::D_OFF + mp::D_BYTES as u64);
+        let d = &page[mp::D_OFF as usize..];
+        probe.add(mp::judge_set(i, d, Some(ns))?);
+    }
+    probe.journal(journal);
+    lines.extend(probe.lines(label).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
+    let verdict = if stopped.is_some() {
+        "NU A TERMINAT"
+    } else if probe.passes() {
+        "TRECE"
+    } else {
+        "NU TRECE"
+    };
+    lines.push(format!(
+        "{}: kronos --gpu: P8 (mma16): {}: {} / {} seturi in toleranta, identitate {}/256 exacte, abaterea maxima {} promile din toleranta, timp median {} ns",
+        p,
+        verdict,
+        probe.in_tolerance(),
+        mp::SETS.len(),
+        probe.sets.first().map_or(0, |r| r.exact()),
+        probe.worst_permille(),
+        probe.median_ns().map_or(String::from("?"), |n| format!("{}", n))
+    ));
+    match stopped {
+        Some(_) => Err(GpuError::Timeout { waited_us: WAIT_US }),
+        None => Ok(()),
+    }
 }
 
 /// P6-99: positions per second × 100 with the check: every position's OS time (board + driver + journal) plus its check.

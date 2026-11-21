@@ -249,6 +249,11 @@ pub static FUSED_ONLY_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::ato
 /// within 1e-4; not bit for bit, the sums run in another order). Off by default.
 pub static LN_NEW_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-117 (C-161 point 2, cyber-gpu `3199fa2`): P8, the first tensor-core computation (`mma16_f16`, 6 sets), after
+/// `kronos --gpu`'s texts. Set only by the cycle when the list asks for it (`test-placa … --p8`) and, in the test
+/// build, by `gpu p8-sim on`. Off by default: every other run sends exactly what os-332 sent.
+pub static P8_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-101: set only for the FLR trial's second chain (`test-placa --flr-proba`, `gpu lant --flr-proba`); taken by
 /// `chain`. Without it no chain reads WPR2 for the reset nor writes anything for it.
 pub static FLR_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);

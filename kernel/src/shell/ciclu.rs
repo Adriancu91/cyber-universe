@@ -139,7 +139,7 @@ pub fn target(command: &str) -> Result<(String, String), &'static str> {
 
 /// P6-96: `test-placa [--i9 …]` of the automatic list -> the I9.
 pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
-    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou`, `--lipit`, `--simplu` sau `--ln-nou` la sfarsit (in aceasta ordine; doar una din ultimele trei)";
+    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou`, `--lipit`, `--simplu` sau `--ln-nou`, apoi `--p8` la sfarsit (in aceasta ordine; doar una din `--lipit`, `--simplu`, `--ln-nou`)";
     let words: Vec<&str> = command.split_whitespace().collect();
     let Some(("test-placa", rest)) = words.split_first().map(|(a, b)| (*a, b)) else { return None };
     let (i9, flags) = match rest {
@@ -152,17 +152,18 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
     // P6-110 (C-155 point 1): `--lipit` = #513 a second time with P3's glued list, compared bit for bit with the plain one.
     // P6-112: `--simplu` = #513 with the plain list alone (as in os-324); without either, the glued list alone.
     // P6-114 (C-155 point 2): `--ln-nou` = the glued list with the old LayerNorm, then with the new one, compared.
+    // P6-117 (C-161 point 2): `--p8` = after #513's texts, P8 (the first tensor-core computation), always last.
     // Each at most once, in this order (the I9 text carries them as suffixes, read back in the same order).
     let mut out = String::from(i9);
     let mut next = 0;
     for f in flags {
-        let Some(at) = [FLR_PROBA, TABLOU, LIPIT, SIMPLU, LN_NOU].iter().position(|x| x.trim() == *f) else { return Some(Err(FORM)) };
+        let Some(at) = [FLR_PROBA, TABLOU, LIPIT, SIMPLU, LN_NOU, P8].iter().position(|x| x.trim() == *f) else { return Some(Err(FORM)) };
         if at < next {
             return Some(Err(FORM));
         }
-        out.push_str([FLR_PROBA, TABLOU, LIPIT, SIMPLU, LN_NOU][at]);
+        out.push_str([FLR_PROBA, TABLOU, LIPIT, SIMPLU, LN_NOU, P8][at]);
         // `--lipit`, `--simplu` and `--ln-nou` exclude each other (each picks the lists #513 runs with).
-        next = if at >= 2 { 5 } else { at + 1 };
+        next = if (2..5).contains(&at) { 5 } else { at + 1 };
     }
     Some(Ok(out))
 }
@@ -470,7 +471,14 @@ pub const SIMPLU: &str = " --simplu";
 /// P6-114: suffix of the I9 text when the new LayerNorm is asked (`test-placa … --ln-nou`, always last).
 pub const LN_NOU: &str = " --ln-nou";
 
+/// P6-117 (C-161 point 2): suffix of the I9 text when P8 is asked (`test-placa … --p8`, always last).
+pub const P8: &str = " --p8";
+
 pub fn board_test(i9: &str) -> (String, String) {
+    let (i9, p8) = match i9.strip_suffix(P8) {
+        Some(x) => (x, true),
+        None => (i9, false),
+    };
     let (i9, ln_new) = match i9.strip_suffix(LN_NOU) {
         Some(x) => (x, true),
         None => (i9, false),
@@ -537,6 +545,11 @@ pub fn board_test(i9: &str) -> (String, String) {
     crate::drivers::gpu_tur::FUSED_ONLY_IN_CYCLE.store(!fused && !plain && !ln_new, core::sync::atomic::Ordering::SeqCst);
     // P6-114 (C-155 point 2): the new LayerNorm only when the list asked for it, only for this chain's #513.
     crate::drivers::gpu_tur::LN_NEW_IN_CYCLE.store(ln_new, core::sync::atomic::Ordering::SeqCst);
+    // P6-117 (C-161 point 2): P8 only when the list asked for it, only after this chain's #513 texts.
+    crate::drivers::gpu_tur::P8_IN_CYCLE.store(p8, core::sync::atomic::Ordering::SeqCst);
+    if p8 {
+        text.push_str("\n(P8, primul calcul cu circuitele speciale: cerut de lista (--p8); dupa textele lui #513, programul mma16_f16 de 6 ori cu 6 seturi fixe, judecat pe procesor cu toleranta scrisa; trece = 6 seturi in toleranta si identitate 256/256 exacte)\n");
+    }
     if ln_new {
         text.push_str("\n(LayerNorm nou: cerut de lista (--ln-nou); #513 ruleaza de doua ori pe acelasi text cu lista lipita: intai cu LayerNorm vechi, apoi cu layernorm256, comparate: aceleasi simboluri si abaterea sub 1e-4)\n");
     } else if fused {
@@ -581,6 +594,14 @@ pub fn board_test(i9: &str) -> (String, String) {
     crate::drivers::gpu_tur::FUSED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::FUSED_ONLY_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::LN_NEW_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::P8_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    // P6-117: P8's verdict next to the chain's in the answer (the rows themselves are in the report above).
+    let result = if p8 {
+        let verdict = text.lines().rev().find(|l| l.contains("P8 (mma16): ")).map_or("P8: niciun rezultat (vezi raportul)", |l| l.trim());
+        format!("{}; {}", result, verdict)
+    } else {
+        result
+    };
     text.push_str(&speed_comparison());
     text.push_str(&diet_comparison(&text));
     if !flr_trial {
@@ -735,6 +756,13 @@ pub fn self_test() {
     assert!(board_command("test-placa --lipit --ln-nou").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --simplu --ln-nou").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --ln-nou --tablou").is_some_and(|r| r.is_err()));
+    // P6-117: `--p8` last, alone or after any other option.
+    assert!(board_command("test-placa --p8") == Some(Ok(String::from("c135 --p8"))));
+    assert!(board_command("test-placa --ln-nou --p8") == Some(Ok(String::from("c135 --ln-nou --p8"))));
+    assert!(board_command("test-placa --i9 c133 --flr-proba --tablou --lipit --p8") == Some(Ok(String::from("c133 --flr-proba --tablou --lipit --p8"))));
+    assert!(board_command("test-placa --p8 --tablou").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --p8 --p8").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --simplu --p8 --ln-nou").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --i9 c999").is_some_and(|r| r.is_err()));
     let rec = |s: &str| alloc::vec![String::from("gpu0: Bus Master pornit"), String::from(s)];
     assert!(recovery_passed(&rec("gpu0: C-103: pregatirea I6 trece din nou: `gpu lant` poate rula in aceeasi pornire")));

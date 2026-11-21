@@ -206,6 +206,13 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     (`gpu_tur::LN_NEW_IN_CYCLE`; în build-ul de test `gpu lipit-sim ln`): #513 rulează de două ori pe același text, lista lipită cu
     LayerNorm vechi, apoi `TokenList::FusedLn` (programul `layernorm256`, 256 de fire, `shfl` + barieră); comparate cu pragul notei
     (aceleași simboluri, abaterea sub 1e-4): rândurile `kt ln nou fata de vechi: …` în ieșire și jurnal, `kt lista` = 3. Test: `kronos-gpu-ln`.
+    **P6-117 (C-161 punctul 2, C-160 punctul 1, cyber-gpu `3199fa2`): P8, primul calcul cu circuitele speciale.** Doar în ciclu cu
+    `test-placa … --p8` (ultima opțiune; `gpu_tur::P8_IN_CYCLE`; în build-ul de test `gpu p8-sim on|off`): după textele lui #513 și
+    copierea VRAM → VRAM, `gpu_i14::mma16_probe` verifică SHA-256 al lui `mma16_f16` (Mesa NAK 26.3.1), îl urcă în VRAM, pune cbuf-ul
+    (0x800 octeți) și QMD-ul într-o pagină VRAM și trimite cele 6 seturi din `mma16_probe::SETS`, câte o trimitere, pe pagina de RAM a
+    logit-urilor (A, B, C, D = NaN); D citit înapoi e judecat pe procesor (`judge_set`, toleranța scrisă) → rândurile `kt mma16 …` în
+    jurnal și `mma16 …` + `P8 (mma16): TRECE / NU TRECE / NU A TERMINAT` în ieșire și în răspunsul ciclului. Placa care nu termină un
+    set oprește proba (fără reîncercare); o eroare aici nu strică rezultatul lui #513. Test: `kronos-gpu-p8`.
     **P6-112 (C-157 punctul 2b, propunerile 1–3; nota centrului de comandă 21 nov 13:00): pozițiile lente.** (1) Cât rulează textele
     lui `kronos --gpu`, rândurile de rutină stau în memorie (`gpu_i6::GenHold`): nicio scriere pe stick între poziții; peste 1024 de
     rânduri ținute se aruncă jumătatea cea mai veche (inel, rândul `kt randuri de rutina aruncate`); se scriu la primul rând important,
