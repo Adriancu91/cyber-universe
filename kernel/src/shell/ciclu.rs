@@ -139,7 +139,7 @@ pub fn target(command: &str) -> Result<(String, String), &'static str> {
 
 /// P6-96: `test-placa [--i9 …]` of the automatic list -> the I9.
 pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
-    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou`, `--lipit` sau `--simplu` la sfarsit (in aceasta ordine)";
+    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou`, `--lipit`, `--simplu` sau `--ln-nou` la sfarsit (in aceasta ordine; doar una din ultimele trei)";
     let words: Vec<&str> = command.split_whitespace().collect();
     let Some(("test-placa", rest)) = words.split_first().map(|(a, b)| (*a, b)) else { return None };
     let (i9, flags) = match rest {
@@ -151,17 +151,18 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
     // P6-105 (C-152 point 5): `--tablou` = the board's dashboard at the end of the test's chain.
     // P6-110 (C-155 point 1): `--lipit` = #513 a second time with P3's glued list, compared bit for bit with the plain one.
     // P6-112: `--simplu` = #513 with the plain list alone (as in os-324); without either, the glued list alone.
+    // P6-114 (C-155 point 2): `--ln-nou` = the glued list with the old LayerNorm, then with the new one, compared.
     // Each at most once, in this order (the I9 text carries them as suffixes, read back in the same order).
     let mut out = String::from(i9);
     let mut next = 0;
     for f in flags {
-        let Some(at) = [FLR_PROBA, TABLOU, LIPIT, SIMPLU].iter().position(|x| x.trim() == *f) else { return Some(Err(FORM)) };
+        let Some(at) = [FLR_PROBA, TABLOU, LIPIT, SIMPLU, LN_NOU].iter().position(|x| x.trim() == *f) else { return Some(Err(FORM)) };
         if at < next {
             return Some(Err(FORM));
         }
-        out.push_str([FLR_PROBA, TABLOU, LIPIT, SIMPLU][at]);
-        // `--lipit` and `--simplu` exclude each other.
-        next = if at == 2 { 4 } else { at + 1 };
+        out.push_str([FLR_PROBA, TABLOU, LIPIT, SIMPLU, LN_NOU][at]);
+        // `--lipit`, `--simplu` and `--ln-nou` exclude each other (each picks the lists #513 runs with).
+        next = if at >= 2 { 5 } else { at + 1 };
     }
     Some(Ok(out))
 }
@@ -466,7 +467,14 @@ pub const LIPIT: &str = " --lipit";
 /// P6-112: suffix of the I9 text when the plain list alone is asked (`test-placa … --simplu`, always last).
 pub const SIMPLU: &str = " --simplu";
 
+/// P6-114: suffix of the I9 text when the new LayerNorm is asked (`test-placa … --ln-nou`, always last).
+pub const LN_NOU: &str = " --ln-nou";
+
 pub fn board_test(i9: &str) -> (String, String) {
+    let (i9, ln_new) = match i9.strip_suffix(LN_NOU) {
+        Some(x) => (x, true),
+        None => (i9, false),
+    };
     let (i9, plain) = match i9.strip_suffix(SIMPLU) {
         Some(x) => (x, true),
         None => (i9, false),
@@ -526,8 +534,12 @@ pub fn board_test(i9: &str) -> (String, String) {
     // P6-110 (C-155 point 1): P3 only when the list asked for it, only for this chain's #513.
     crate::drivers::gpu_tur::FUSED_IN_CYCLE.store(fused, core::sync::atomic::Ordering::SeqCst);
     // P6-112 (center's note 21 Nov 13:00): otherwise the glued list alone, unless the list says `--simplu`.
-    crate::drivers::gpu_tur::FUSED_ONLY_IN_CYCLE.store(!fused && !plain, core::sync::atomic::Ordering::SeqCst);
-    if fused {
+    crate::drivers::gpu_tur::FUSED_ONLY_IN_CYCLE.store(!fused && !plain && !ln_new, core::sync::atomic::Ordering::SeqCst);
+    // P6-114 (C-155 point 2): the new LayerNorm only when the list asked for it, only for this chain's #513.
+    crate::drivers::gpu_tur::LN_NEW_IN_CYCLE.store(ln_new, core::sync::atomic::Ordering::SeqCst);
+    if ln_new {
+        text.push_str("\n(LayerNorm nou: cerut de lista (--ln-nou); #513 ruleaza de doua ori pe acelasi text cu lista lipita: intai cu LayerNorm vechi, apoi cu layernorm256, comparate: aceleasi simboluri si abaterea sub 1e-4)\n");
+    } else if fused {
         text.push_str("\n(P3, lista lipita: cerut de lista; #513 ruleaza de doua ori pe acelasi text: intai lista simpla, apoi cea lipita, comparate bit cu bit)\n");
     } else if plain {
         text.push_str("\n(lista simpla: cerut de lista (--simplu); #513 ca in os-324)\n");
@@ -568,6 +580,7 @@ pub fn board_test(i9: &str) -> (String, String) {
     crate::drivers::gpu_tur::RUSD_ARMED.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::FUSED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::FUSED_ONLY_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::LN_NEW_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     text.push_str(&speed_comparison());
     text.push_str(&diet_comparison(&text));
     if !flr_trial {
@@ -716,6 +729,12 @@ pub fn self_test() {
     assert!(board_command("test-placa --tablou --simplu") == Some(Ok(String::from("c135 --tablou --simplu"))));
     assert!(board_command("test-placa --lipit --simplu").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --simplu --lipit").is_some_and(|r| r.is_err()));
+    // P6-114: `--ln-nou` last, alone among the three list choices.
+    assert!(board_command("test-placa --ln-nou") == Some(Ok(String::from("c135 --ln-nou"))));
+    assert!(board_command("test-placa --i9 c133 --flr-proba --tablou --ln-nou") == Some(Ok(String::from("c133 --flr-proba --tablou --ln-nou"))));
+    assert!(board_command("test-placa --lipit --ln-nou").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --simplu --ln-nou").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --ln-nou --tablou").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --i9 c999").is_some_and(|r| r.is_err()));
     let rec = |s: &str| alloc::vec![String::from("gpu0: Bus Master pornit"), String::from(s)];
     assert!(recovery_passed(&rec("gpu0: C-103: pregatirea I6 trece din nou: `gpu lant` poate rula in aceeasi pornire")));

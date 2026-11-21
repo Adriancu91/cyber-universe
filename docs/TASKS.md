@@ -472,6 +472,8 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [ ] **P6-111** C-159 pasul 2: mâinile canalului viu (`scrie`, `tasta`, `muta`, `clic`, `ecran`, `captura`). Plan: `docs/plans/P6-111.md`. Dep: P6-109.
 - [x] **P6-112** C-157 punctul 2b, propunerile 1–3: pozițiile lente (fără scrieri pe stick în generare, golirea înainte de poziția 0, `forget_range`); nimic nou pentru placă. + lista lipită implicită în ciclu (`--simplu`, `--lipit`), rândurile comparației în raport și jurnal (nota centrului 13:00). Plan: `docs/plans/P6-112.md`. Dep: P6-110.
 - [x] **P6-113** C-159 (nota centrului de comandă 13:00): `live.cheie` și `permite-live-placa` = fișiere secrete oriunde sub hub, doar ale nucleului; răspunsurile canalului viu trec prin ascunderea secretelor. Plan: `docs/plans/P6-113.md`. Dep: P6-109.
+- [x] **P6-114** C-155 punctul 2 (C-158 punctul 4): LayerNorm nou (`layernorm256`, `TokenList::FusedLn`), oprit implicit, doar `test-placa … --ln-nou`, comparat cu lista lipită cu LayerNorm vechi (aceleași simboluri, abaterea sub 1e-4); Release separat. Plan: `docs/plans/P6-114.md`. Dep: P6-112.
+  Gata (2026-11-21 ~16:40 RO): cyber-gpu rămâne `46078f4` (conține deja `139b145`); SIMULARE `kronos-gpu-ln`: 9 poziții, aceleași 5 simboluri, abaterea 0 la modelul mic, TRECE; `kronos-gpu`, `-dieta`, `-lipit`, `-singur`, `ghpush`, `shell` + build `--gpu-scrie --usb` trec.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)

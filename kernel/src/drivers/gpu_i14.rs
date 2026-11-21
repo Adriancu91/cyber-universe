@@ -115,7 +115,13 @@ const KT_DROPPED: &str = "kt randuri de rutina aruncate";
 const KT_FUSED_DIFFER: &str = "kt lipit fata de simplu: logit-uri diferite (0 = bit cu bit)";
 const KT_FUSED_SAME_TOKENS: &str = "kt lipit fata de simplu: simboluri identice (1/0)";
 /// P6-112: which list `kronos --gpu` sent (0 = simpla, 1 = lipita, 2 = amandoua, comparate).
-const KT_LIST: &str = "kt lista (0 simpla, 1 lipita, 2 comparate)";
+const KT_LIST: &str = "kt lista (0 simpla, 1 lipita, 2 comparate, 3 ln nou comparat)";
+/// P6-114 (C-155 point 2): the new LayerNorm against the old one on the glued list (threshold: same tokens, max |d| < 1e-4).
+const KT_LN_WORST_BITS: &str = "kt ln nou fata de vechi: max |d| (f32, biti)";
+const KT_LN_SAME_TOKENS: &str = "kt ln nou fata de vechi: simboluri identice (1/0)";
+const KT_LN_PASS: &str = "kt ln nou fata de vechi: trece pragul 1e-4 si aceleasi simboluri (1/0)";
+/// The note's threshold for the new LayerNorm against the old one (SIMULARE: 3.1e-7).
+const LN_NEW_MAX_DIFF: f32 = 1e-4;
 const KT_VRAM_WORDS: &str = "kt cuvinte VRAM pe simbol (median)";
 const KT_READ: &str = "kt median citirea logit-urilor (us)";
 const KT_ARGMAX: &str = "kt median argmax (us)";
@@ -562,10 +568,23 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let mut progs: Vec<(Prog, Mapping)> = Vec::new();
     // P6-110: P3's glued list needs its own program (`q8_fused`) too; uploaded only when a run uses that list.
     // P6-112: the glued list may now run alone (the cycle's default); compared only when both lists run.
-    let uses_fused = runs.iter().any(|r| r.list == kd::TokenList::Fused);
-    let compare = uses_fused && runs.iter().any(|r| r.list == kd::TokenList::Plain);
-    let extra_progs = if uses_fused { kd::TokenList::Fused.programs() } else { &[] };
-    for prog in PROGRAMS.iter().copied().chain(extra_progs.iter().copied().filter(|q| !PROGRAMS.contains(q))) {
+    // P6-114 (C-155 point 2): likewise `layernorm256` only when a run uses the new LayerNorm (`FusedLn`).
+    let mut lists: Vec<kd::TokenList> = Vec::new();
+    for r in runs {
+        if !lists.contains(&r.list) {
+            lists.push(r.list);
+        }
+    }
+    let compare = lists.len() >= 2;
+    let mut all_progs: Vec<Prog> = PROGRAMS.to_vec();
+    for list in &lists {
+        for q in list.programs() {
+            if !all_progs.contains(q) {
+                all_progs.push(*q);
+            }
+        }
+    }
+    for prog in all_progs {
         let pm = map_vram(st, prog.code().len() as u64)?;
         put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
         progs.push((prog, pm));
@@ -885,7 +904,11 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         all.push(greedy);
     }
     if compare {
-        let rows = fused_vs_plain(p, m.layers.len(), &by_list, &all, &mut *runner.journal);
+        let rows = if lists.contains(&kd::TokenList::FusedLn) {
+            ln_new_vs_old(p, m.layers.len(), &by_list, &all, &mut *runner.journal)
+        } else {
+            fused_vs_plain(p, m.layers.len(), &by_list, &all, &mut *runner.journal)
+        };
         runner.lines.extend(rows);
     }
     let from_vram = runner.from_vram;
@@ -956,6 +979,67 @@ fn fused_vs_plain(p: &str, layers: usize, by_list: &[(kd::TokenList, Vec<Vec<f32
         p,
         if same { String::from("identice") } else { format!("DIFERITE: simplu {:?}, lipit {:?}", all.get(all.len().wrapping_sub(2)), all.last()) }
     ));
+    out
+}
+
+/// P6-114 (C-155 point 2): the new LayerNorm's proof — the glued list with `layernorm256` against the glued list with the
+/// old LayerNorm on the same text. Not bit for bit (the sums run in another order): the note's threshold is the same greedy
+/// tokens and every logit within 1e-4 (SIMULARE: 3.1e-7). Both texts were already judged against the processor.
+fn ln_new_vs_old(p: &str, layers: usize, by_list: &[(kd::TokenList, Vec<Vec<f32>>)], all: &[Vec<usize>], journal: &mut Journal) -> Vec<String> {
+    let pick = |want: kd::TokenList| by_list.iter().find(|(l, _)| *l == want).map(|(_, v)| v);
+    let mut out = alloc::vec![format!(
+        "{}: kronos --gpu: kt lista: lipita-ln (aceleasi {} lansari pe simbol ca lista lipita; LayerNorm pe programul layernorm256, 256 de fire)",
+        p,
+        kd::TokenList::FusedLn.launches_per_token(layers)
+    )];
+    let (Some(old), Some(new)) = (pick(kd::TokenList::Fused), pick(kd::TokenList::FusedLn)) else {
+        out.push(format!("{}: kronos --gpu: kt ln nou fata de vechi: necomparat (o lista nu a terminat textul)", p));
+        journal.push(Event::Value { what: KT_LN_PASS, value: 0 });
+        return out;
+    };
+    let (mut differ, mut total, mut worst, mut finite) = (0usize, 0usize, 0.0f32, true);
+    for (a, b) in old.iter().zip(new) {
+        total += a.len().max(b.len());
+        differ += a.len().abs_diff(b.len());
+        for (x, y) in a.iter().zip(b) {
+            if x.to_bits() != y.to_bits() {
+                differ += 1;
+                let d = (x - y).abs();
+                if d.is_finite() {
+                    worst = worst.max(d);
+                } else {
+                    finite = false;
+                }
+            }
+        }
+    }
+    let same_len = old.len() == new.len();
+    let same = all.len() >= 2 && all[all.len() - 2] == all[all.len() - 1];
+    let pass = same && same_len && finite && worst < LN_NEW_MAX_DIFF;
+    out.push(format!(
+        "{}: kronos --gpu: kt ln nou fata de vechi: max |d| = {:e} ({} diferite din {} logit-uri, {} / {} pozitii), simboluri identice: {}",
+        p,
+        worst,
+        differ,
+        total,
+        old.len(),
+        new.len(),
+        if same { "da" } else { "nu" }
+    ));
+    out.push(format!(
+        "{}: kronos --gpu: kt ln nou fata de vechi: {}",
+        p,
+        if pass {
+            String::from("TRECE (aceleasi simboluri, abaterea sub 1e-4)")
+        } else if !same {
+            format!("NU TRECE: simbolurile DIFERITE: vechi {:?}, nou {:?}", all.get(all.len().wrapping_sub(2)), all.last())
+        } else {
+            String::from("NU TRECE: abaterea peste 1e-4 (sau logit-uri nefinite / pozitii lipsa)")
+        }
+    ));
+    journal.push(Event::Value { what: KT_LN_WORST_BITS, value: if finite { worst.to_bits() } else { u32::MAX } });
+    journal.push(Event::Value { what: KT_LN_SAME_TOKENS, value: u32::from(same) });
+    journal.push(Event::Value { what: KT_LN_PASS, value: u32::from(pass) });
     out
 }
 
@@ -1280,7 +1364,7 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
             let (embed, down) = (way.embed == kd::EmbedBy::Program, !self.from_vram);
             let kinds = match self.list {
                 kd::TokenList::Plain => kp::token_kinds(m.layers.len(), embed, down),
-                // `FusedLn` (C-155 point 2) is not sent by this Release: only `Fused` reaches here.
+                // `Fused` and `FusedLn` (P6-114): the same 88 launches and kinds, only the LayerNorm program differs.
                 _ => kp::token_kinds_fused(m.layers.len(), embed, down),
             };
             if let Err(e) = self.prof.add_token(&kinds, &self.launch_ns) {
@@ -1506,7 +1590,14 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // P6-110 (C-155 point 1): with P3 asked (`test-placa … --lipit`), the same text again with the glued list.
     // P6-112 (center's note 21 Nov 13:00): otherwise, in the cycle, the glued list alone (it passed on the board, bit for
     // bit, in os-328); `test-placa … --simplu` keeps the plain list alone, as in os-324. By hand: the plain list.
-    let list_kind = if super::gpu_tur::FUSED_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+    // P6-114 (C-155 point 2): `test-placa … --ln-nou` = the glued list with the old LayerNorm (as in os-329), then the
+    // same text with the new one (`layernorm256`), compared against the note's threshold.
+    let list_kind = if super::gpu_tur::LN_NEW_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+        runs[0].name = String::from("kronos --gpu (lista lipita)");
+        runs[0].list = kd::TokenList::Fused;
+        runs.push(Run { name: String::from("kronos --gpu (lista lipita, LayerNorm nou)"), list: kd::TokenList::FusedLn, ..runs[0].clone() });
+        3
+    } else if super::gpu_tur::FUSED_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
         runs.push(Run { name: String::from("kronos --gpu (lista lipita)"), list: kd::TokenList::Fused, ..runs[0].clone() });
         2
     } else if super::gpu_tur::FUSED_ONLY_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {

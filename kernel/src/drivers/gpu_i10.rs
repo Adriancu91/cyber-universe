@@ -387,6 +387,8 @@ impl SimGpu {
             cp.register_program(kl::EMBED, c::embed_on_cpu);
             // P6-110 (C-155 point 1): P3's glued program.
             cp.register_program_with_needs(nvidia_ga104::q8_fused::Q8_FUSED, c::q8_fused_on_cpu, c::Q8_FUSED_NEEDS);
+            // P6-114 (C-155 point 2): the new LayerNorm (256 threads, shfl + barrier).
+            cp.register_program_with_needs(nvidia_ga104::layernorm256::LAYERNORM256, c::layernorm256_on_cpu, c::LAYERNORM256_NEEDS);
         }
         cp.sim_launch_ns = 4000;
         if SIM_STALE_READS.load(core::sync::atomic::Ordering::Relaxed) {

@@ -242,6 +242,13 @@ pub static FUSED_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::
 /// plain list alone, as in os-324), and in the test build by `gpu lipit-sim singur`. Off by hand.
 pub static FUSED_ONLY_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-114 (C-155 point 2, cyber-gpu `139b145`): the new LayerNorm (`layernorm256`: 256 threads, one read, `shfl` +
+/// barrier) in the glued list (`TokenList::FusedLn`). Set only by the cycle when the list asks for it (`test-placa …
+/// --ln-nou`) and, in the test build, by `gpu lipit-sim ln`. Then the same text runs twice: first the glued list with the
+/// old LayerNorm (as in os-329), then with the new one, compared (the note's threshold: the same tokens and every logit
+/// within 1e-4; not bit for bit, the sums run in another order). Off by default.
+pub static LN_NEW_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-101: set only for the FLR trial's second chain (`test-placa --flr-proba`, `gpu lant --flr-proba`); taken by
 /// `chain`. Without it no chain reads WPR2 for the reset nor writes anything for it.
 pub static FLR_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);

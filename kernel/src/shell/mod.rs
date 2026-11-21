@@ -774,12 +774,18 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::FUSED_ONLY_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu lipit-sim: singura (SIMULARE: doar lista lipita, ca implicit in ciclu)\n");
                 }
+                Some("ln") if args.len() == 2 => {
+                    // P6-114 (C-155 point 2): the glued list with the old LayerNorm, then with the new one, compared.
+                    crate::drivers::gpu_tur::LN_NEW_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu lipit-sim: ln nou (SIMULARE: textul de doua ori, lista lipita cu LayerNorm vechi apoi cu layernorm256)\n");
+                }
                 Some("off") if args.len() == 2 => {
                     crate::drivers::gpu_tur::FUSED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::FUSED_ONLY_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::LN_NEW_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu lipit-sim: oprita\n");
                 }
-                _ => out!("folosire: gpu lipit-sim on|singur|off\n"),
+                _ => out!("folosire: gpu lipit-sim on|singur|ln|off\n"),
             }
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu lipit-sim: exista doar in build-ul de test (pe stick lista lipita o porneste doar ciclul, test-placa --lipit)\n");

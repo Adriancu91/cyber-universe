@@ -202,6 +202,10 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     `q8_fused`), oprită implicit: doar ciclul cu `test-placa … --lipit` (`gpu_tur::FUSED_IN_CYCLE`; în build-ul de test `gpu lipit-sim on|off`).
     Atunci același text rulează de două ori (lista simplă, apoi cea lipită, `kd::send_token_list`, `kp::token_kinds_fused`) și rândurile
     `kt lista: lipita (…)`, `kt lipit fata de simplu: identice / N diferite (max |d|)`, `… simbolurile generate identice`. Test: `kronos-gpu-lipit`.
+    **P6-114 (C-155 punctul 2, cyber-gpu `139b145`): LayerNorm nou.** Doar în ciclu cu `test-placa … --ln-nou`
+    (`gpu_tur::LN_NEW_IN_CYCLE`; în build-ul de test `gpu lipit-sim ln`): #513 rulează de două ori pe același text, lista lipită cu
+    LayerNorm vechi, apoi `TokenList::FusedLn` (programul `layernorm256`, 256 de fire, `shfl` + barieră); comparate cu pragul notei
+    (aceleași simboluri, abaterea sub 1e-4): rândurile `kt ln nou fata de vechi: …` în ieșire și jurnal, `kt lista` = 3. Test: `kronos-gpu-ln`.
     **P6-112 (C-157 punctul 2b, propunerile 1–3; nota centrului de comandă 21 nov 13:00): pozițiile lente.** (1) Cât rulează textele
     lui `kronos --gpu`, rândurile de rutină stau în memorie (`gpu_i6::GenHold`): nicio scriere pe stick între poziții; peste 1024 de
     rânduri ținute se aruncă jumătatea cea mai veche (inel, rândul `kt randuri de rutina aruncate`); se scriu la primul rând important,
