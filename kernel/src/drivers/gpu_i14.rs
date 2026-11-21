@@ -414,6 +414,7 @@ pub static KRONOS_JOB: crate::sched::Mutex<Option<KronosJob>> = crate::sched::Mu
 pub static KRONOS_RESULT: crate::sched::Mutex<Option<Result<Vec<usize>, String>>> = crate::sched::Mutex::new(None);
 
 /// One text run on the board: its prompt, how many greedy tokens, and (control texts only) Kronos's expected answer.
+#[derive(Clone)]
 struct Run<'a> {
     name: String,
     prompt: Vec<usize>,
@@ -422,6 +423,8 @@ struct Run<'a> {
     greedy: Option<&'a [usize]>,
     /// P6-99: checked after the board by `/bin/kronos` (`kronos --gpu` only); otherwise the reference engine between tokens.
     os_check: bool,
+    /// P6-110 (C-155 point 1): the launch list of every token (`Plain` everywhere except P3's second run in the cycle).
+    list: kd::TokenList,
 }
 
 /// What a run left behind: the greedy tokens of every text, the worst logit deviation, the median token time, and
@@ -548,7 +551,10 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let logits_bytes = (4 * m.vocab as u64).next_multiple_of(16);
     let host_logits = st.mem.alloc_sys_mapped(&arena_pages(I11_BOARD_BYTES / PAGE, logits_bytes.div_ceil(PAGE))?)?;
     let mut progs: Vec<(Prog, Mapping)> = Vec::new();
-    for prog in PROGRAMS {
+    // P6-110: P3's glued list needs its own program (`q8_fused`) too; uploaded only when a run uses that list.
+    let compare = runs.iter().any(|r| r.list == kd::TokenList::Fused);
+    let extra_progs = if compare { kd::TokenList::Fused.programs() } else { &[] };
+    for prog in PROGRAMS.iter().copied().chain(extra_progs.iter().copied().filter(|q| !PROGRAMS.contains(q))) {
         let pm = map_vram(st, prog.code().len() as u64)?;
         put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
         progs.push((prog, pm));
@@ -683,6 +689,7 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         prof_err: None,
         diet,
         push_shadow,
+        list: kd::TokenList::Plain,
         rec_zeroed: false,
         diet_words: Vec::new(),
         read_us: Vec::new(),
@@ -715,8 +722,16 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     }
     // 4. The texts: cyber-gpu's continuous generation (C-87 step 1, `kronos_gen::Generation`), every position judged
     //    against the CPU engine first; stop at the first error, explained in the journal (C-139).
-    for run in runs {
+    // P6-110: the logits of every position, per list (only when P3 is compared).
+    let mut by_list: Vec<(kd::TokenList, Vec<Vec<f32>>)> = Vec::new();
+    for (ri, run) in runs.iter().enumerate() {
         runner.name = run.name.clone();
+        runner.list = run.list;
+        if compare && ri > 0 {
+            // The launch kinds (`kp`) of the last run only: the glued list has other kinds than the plain one.
+            runner.prof = kp::KindProfile::new();
+            runner.prof_err = None;
+        }
         let (generation, positions) = loop {
             let plan = GenPlan::new(&run.prompt, run.steps, m.vocab, m.context)?;
             let positions = plan.positions();
@@ -727,7 +742,7 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
             runner.read_us.clear();
             runner.argmax_us.clear();
             runner.print = FNV_START;
-            runner.kept = run.os_check.then(Vec::new);
+            runner.kept = (run.os_check || compare).then(Vec::new);
             let mut check = CpuCheck { w: &weights, caches: Caches::new(m.layers.len(), e), us: Vec::new() };
             // P6-99 (C-148 point 2): `kronos --gpu` from `/bin/kronos`: the board first (`run_check_after`), then every
             // position judged by the same rule (`kronos_model::judge`, in the kernel) against the fast engine's logits.
@@ -818,6 +833,9 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
             }
             return Err(bad("I14: simbolul nu trece fata de procesor (diagnosticul i14d e in jurnal)"));
         };
+        if compare {
+            by_list.push((run.list, runner.kept.clone().unwrap_or_default()));
+        }
         let stats = generation.stats();
         worst = worst.max(generation.worst_abs);
         // C-139: the argmax against Kronos's vectors only after the text ended clean against the CPU engine.
@@ -845,6 +863,9 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         medians.push(stats.median_ns);
         all.push(greedy);
     }
+    if compare {
+        runner.lines.extend(fused_vs_plain(p, m.layers.len(), &by_list, &all));
+    }
     let from_vram = runner.from_vram;
     let speed = core::mem::replace(&mut runner.speed, ks::Speed::new(ks::Source::Simulare));
     let shadow_changed = runner.shadow_check()?;
@@ -867,6 +888,49 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let copy = fast.then(|| CopyCtx { src_va: vblob.va, src, launches, rec, maps: tmaps, sys: host_logits, copy_va });
     let os_check = runs.iter().any(|r| r.os_check);
     Ok(RunOut { all, worst, median, from_vram, speed, cpu_us, os_check, split: split_all, shadow_changed, prof, prof_err, copy, diet: diet_out })
+}
+
+/// P6-110 (C-155 point 1): P3's proof — the glued list's logits against the plain list's on the same text, bit for bit
+/// (the note's threshold is 0), and the same greedy tokens. Rows for the output (and so the cycle's report).
+fn fused_vs_plain(p: &str, layers: usize, by_list: &[(kd::TokenList, Vec<Vec<f32>>)], all: &[Vec<usize>]) -> Vec<String> {
+    let pick = |want: kd::TokenList| by_list.iter().find(|(l, _)| *l == want).map(|(_, v)| v);
+    let mut out = alloc::vec![format!(
+        "{}: kt lista: lipita ({} lansari pe simbol fata de {} cu lista simpla; programul q8_fused)",
+        p,
+        kd::TokenList::Fused.launches_per_token(layers),
+        kd::TokenList::Plain.launches_per_token(layers)
+    )];
+    let (Some(plain), Some(fused)) = (pick(kd::TokenList::Plain), pick(kd::TokenList::Fused)) else {
+        out.push(format!("{}: kt lipit fata de simplu: necomparat (o lista nu a terminat textul)", p));
+        return out;
+    };
+    let (mut differ, mut total, mut worst) = (0usize, 0usize, 0.0f32);
+    for (a, b) in plain.iter().zip(fused) {
+        total += a.len().max(b.len());
+        differ += a.len().abs_diff(b.len());
+        for (x, y) in a.iter().zip(b) {
+            if x.to_bits() != y.to_bits() {
+                differ += 1;
+                worst = worst.max((x - y).abs());
+            }
+        }
+    }
+    let positions = plain.len().min(fused.len());
+    out.push(if differ == 0 && plain.len() == fused.len() {
+        format!("{}: kt lipit fata de simplu: identice ({} pozitii, {} logit-uri, bit cu bit)", p, positions, total)
+    } else {
+        format!(
+            "{}: kt lipit fata de simplu: {} diferite din {} logit-uri ({} / {} pozitii; max |d| = {:e})",
+            p, differ, total, plain.len(), fused.len(), worst
+        )
+    });
+    let same = all.len() >= 2 && all[all.len() - 2] == all[all.len() - 1];
+    out.push(format!(
+        "{}: kt lipit fata de simplu: simbolurile generate {}",
+        p,
+        if same { String::from("identice") } else { format!("DIFERITE: simplu {:?}, lipit {:?}", all.get(all.len().wrapping_sub(2)), all.last()) }
+    ));
+    out
 }
 
 /// One position on the board for `kronos_gen::Generation`, and the 4 operations of cyber-gpu's diagnosis
@@ -930,6 +994,8 @@ struct BoardRunner<'r, 'b, V: Mmio + ?Sized, K: Clock + ?Sized> {
     /// P6-107 (C-154, cyber-gpu C-147 point 7): the driver's diet (only in the cycle's ordinary test): the pushbuffer
     /// written through `push_shadow` and the records not zeroed (except at the first submission of the run).
     diet: bool,
+    /// P6-110: the launch list of the run in progress.
+    list: kd::TokenList,
     /// The pushbuffer's shadow; forgotten after any error and after any other write through `TokenIo::write`.
     push_shadow: Option<kf::WriteShadow>,
     rec_zeroed: bool,
@@ -1142,7 +1208,7 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
         let host_t0 = crate::time::since_boot_us();
         let journal_t0 = super::gpu_i6::JOURNAL_US.load(core::sync::atomic::Ordering::Relaxed);
         let words0 = self.st.vram_words;
-        kd::send_token(self, &weights, vas, tok, pos, way, &extra)?;
+        kd::send_token_list(self, self.list, &weights, vas, tok, pos, way, &extra)?;
         *self.tokens_done += 1;
         let words = self.st.vram_words.saturating_sub(words0);
         let read_t0 = crate::time::since_boot_us();
@@ -1183,7 +1249,11 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
             self.journal.flush_live();
             // P6-98 (C-147 stage 0 (a)): this token's launch times by kind; a token that does not fit is left out (once
             // noted), never guessed.
-            let kinds = kp::token_kinds(m.layers.len(), way.embed == kd::EmbedBy::Program, !self.from_vram);
+            let (embed, down) = (way.embed == kd::EmbedBy::Program, !self.from_vram);
+            let kinds = match self.list {
+                kd::TokenList::Fused => kp::token_kinds_fused(m.layers.len(), embed, down),
+                kd::TokenList::Plain => kp::token_kinds(m.layers.len(), embed, down),
+            };
             if let Err(e) = self.prof.add_token(&kinds, &self.launch_ns) {
                 self.prof_err.get_or_insert_with(|| format!("pozitia {}: {} ({} lansari, {} timpi)", pos, e, kinds.len(), self.launch_ns.len()));
             }
@@ -1310,6 +1380,7 @@ pub(super) fn token_step<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 argmax: Some(c.argmax),
                 greedy: Some(&c.greedy),
                 os_check: false,
+                list: kd::TokenList::Plain,
             })
             .collect();
         let out = run_model(p, vbar, clock, journal, st, l, &m, &runs, permit, lines, doorbell, &mut tokens_done, &mut subs, &mut way)?;
@@ -1394,7 +1465,19 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let name = job.path.rsplit('/').next().unwrap_or(&job.path);
     journal.push(Event::text(KG_MODEL, name.as_bytes()));
     journal.push(Event::Value { what: KG_ASKED, value: job.n as u32 });
-    let runs = [Run { name: String::from("kronos --gpu"), prompt: job.prompt.clone(), steps: job.n, argmax: None, greedy: None, os_check: job.os_check }];
+    let mut runs = alloc::vec![Run {
+        name: String::from("kronos --gpu"),
+        prompt: job.prompt.clone(),
+        steps: job.n,
+        argmax: None,
+        greedy: None,
+        os_check: job.os_check,
+        list: kd::TokenList::Plain,
+    }];
+    // P6-110 (C-155 point 1): with P3 asked (`test-placa … --lipit`), the same text again with the glued list.
+    if super::gpu_tur::FUSED_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+        runs.push(Run { name: String::from("kronos --gpu (lista lipita)"), list: kd::TokenList::Fused, ..runs[0].clone() });
+    }
     let writes0 = super::gpu_i6::HELD_WRITES.load(core::sync::atomic::Ordering::Relaxed);
     // P6-97 (C-145 point 1): the routine rows (window moves, TLB invalidates, doorbell and their notes) are held in
     // memory during the upload and the text and go to the stick once per token; every other row as before.

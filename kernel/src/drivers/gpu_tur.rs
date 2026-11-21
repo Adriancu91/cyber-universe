@@ -231,6 +231,12 @@ pub static BOOST_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::
 /// chain) and, in the test build, by `gpu dieta-sim on`. Off everywhere else: `kronos --gpu` by hand is as in os-323.
 pub static DIET_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-110 (C-155 point 1, cyber-gpu `6f0fdbf`): P3, the glued launch list (88 launches per token at #513 instead of 196,
+/// the new program `q8_fused`) for `kronos --gpu`. Set only by the cycle when the list asks for it (`test-placa … --lipit`)
+/// and, in the test build, by `gpu lipit-sim on`. Then the same text runs twice: first the plain list (as in os-324), then
+/// the glued one, and their logits are compared bit for bit. Off by default: every other run is exactly as in os-324.
+pub static FUSED_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-101: set only for the FLR trial's second chain (`test-placa --flr-proba`, `gpu lant --flr-proba`); taken by
 /// `chain`. Without it no chain reads WPR2 for the reset nor writes anything for it.
 pub static FLR_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);

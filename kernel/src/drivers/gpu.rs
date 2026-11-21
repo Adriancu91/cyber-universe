@@ -284,7 +284,7 @@ pub fn identify() -> Vec<String> {
 // ---------------------------------------------------------------------------------------------------------------
 
 /// Pinned Cyber-GPU revision (kernel/Cargo.toml), shown in the report.
-pub const CYBER_GPU_REV: &str = "de4887d";
+pub const CYBER_GPU_REV: &str = "6f0fdbf";
 
 /// P6-85 (C-116): the line for a board the library knows only for reading (GA106, the ASUS TUF laptop).
 pub const GA106_READ_ONLY: &str =

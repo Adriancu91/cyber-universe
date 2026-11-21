@@ -760,6 +760,24 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu dieta-sim: exista doar in build-ul de test (pe stick dieta o porneste doar ciclul)\n");
         }
+        Some("lipit-sim") => {
+            // P6-110 (C-155 point 1): test build only: P3's comparison (plain list, then glued) for the next
+            // `kronos --gpu-sim` (in the stick's system only the cycle turns it on, with `test-placa … --lipit`).
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::FUSED_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu lipit-sim: pornita (SIMULARE: textul de doua ori, lista simpla apoi cea lipita)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::FUSED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu lipit-sim: oprita\n");
+                }
+                _ => out!("folosire: gpu lipit-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu lipit-sim: exista doar in build-ul de test (pe stick lista lipita o porneste doar ciclul, test-placa --lipit)\n");
+        }
         Some("stare") => {
             // P6-105 (C-152 point 5): the last dashboard read at the end of a chain; the board is not touched.
             if let Some(bad) = args[1..].first() {

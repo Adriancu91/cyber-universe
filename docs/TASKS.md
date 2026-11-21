@@ -467,6 +467,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
   Gata (2026-11-21 ~09:45 RO): `kernel/src/shell/live.rs` + `live::self_test` în scenariul `ghpush` (RFC 4231; cele 4 probe de refuz; jurnalul după o cădere; ecoul). Fără rețea, fără nimic pe placă; nu intră încă în niciun Release pentru placă.
 - [x] **P6-109** C-159 pasul 1, partea 2: `live <minute>` — bucla pe ramura `os/live` (ETag, 2–3 s), execuția și răspunsul complet; Release + predarea către centrul de comandă. Plan: `docs/plans/P6-109.md`. Dep: P6-108.
   Gata (2026-11-21 ~11:40 RO): bucla `live <minute>` în `live.rs` (shell și rând în `auto/teste.txt`, ceasul de siguranță împins); `gh-ia --live-dosar` (ETag, 304 = nimic nou) și `--live-ia`, `gh-trimite --live` (doar hub, doar `os/live`, doar `live/`, fără rescriere); `cod` = codul programului (126/127); refuz nou: `live` din modul viu. Test: `ghpush` (sesiune întreagă: fără cheie nu pornește; 9 comenzi — 5 refuzuri, 4 rulate, 304 apoi lotul 2, ecoul exact, jurnalul 13 rânduri); `shell`, `web`, `update`, `auto*` trec. `docs/LIVE.md` completat (pornirea, sesiunea, proba pe workstation).
+- [~] **P6-110** C-155 punctul 1 (C-158 punctul 2): P3 — lista lipită (88 lansări pe simbol la #513, programul `q8_fused`), oprită implicit, doar `test-placa … --lipit`, comparată bit cu bit cu lista simplă; Release separat. Plan: `docs/plans/P6-110.md`. Dep: P6-107.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
