@@ -10,6 +10,7 @@ pub mod auto;
 pub mod ciclu;
 pub mod compara;
 pub mod hubcmd;
+pub mod live;
 pub mod raport;
 mod testtot;
 #[cfg(feature = "qemu-test")]
