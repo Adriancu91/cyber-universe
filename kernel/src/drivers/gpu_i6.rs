@@ -82,6 +82,50 @@ const HELD_MAX: usize = 1024;
 /// P6-98: how many times held rows went to the stick (writes + syncs) since boot (for the `kronos --gpu` summary).
 pub(super) static HELD_WRITES: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
+/// P6-112 (C-157 point 2b, proposal 1, variant A): set while `kronos --gpu` runs its texts. Then the routine rows stay in
+/// memory (no write every 16 tokens or every second): they go to the stick with the next row that must be there
+/// (`Flush::Now`), at `live_close` or on a panic. More than `HELD_MAX` held rows: the oldest half is dropped (a ring;
+/// counted in `DROPPED`, the row `kt randuri de rutina aruncate`) instead of a write in the middle of the generation.
+static GEN_HOLD: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// P6-112: routine rows dropped from the memory ring since boot.
+pub(super) static DROPPED: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// P6-112: `GEN_HOLD` for as long as this lives (also on every error path).
+pub(super) struct GenHold(());
+
+impl GenHold {
+    pub(super) fn start() -> Self {
+        GEN_HOLD.store(true, core::sync::atomic::Ordering::SeqCst);
+        GenHold(())
+    }
+}
+
+impl Drop for GenHold {
+    fn drop(&mut self) {
+        GEN_HOLD.store(false, core::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Drops the oldest half of the held rows (whole lines); returns how many.
+fn drop_oldest_half(l: &mut Live) -> usize {
+    let want = l.held_lines / 2;
+    let mut cut = 0;
+    let mut n = 0;
+    for (i, b) in l.held.bytes().enumerate() {
+        if b == b'\n' {
+            n += 1;
+            cut = i + 1;
+            if n == want {
+                break;
+            }
+        }
+    }
+    l.held.drain(..cut);
+    l.held_lines -= n;
+    n
+}
+
 /// Set while the live journal writes to the stick: a panic in the middle of that write does not try it again.
 static WRITING: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
@@ -202,9 +246,14 @@ fn live_line(e: &Event, flush: Flush) {
         let mut live = LIVE.lock();
         if let Some(l) = live.as_mut() {
             if l.failed.is_none() {
+                let ring = flush == Flush::Later && GEN_HOLD.load(core::sync::atomic::Ordering::Relaxed);
+                if ring && l.held_lines >= HELD_MAX {
+                    let n = drop_oldest_half(l); // P6-112: a ring during the generation, never a write
+                    DROPPED.fetch_add(n, core::sync::atomic::Ordering::Relaxed);
+                }
                 l.held.push_str(&line);
                 l.held_lines += 1;
-                if flush == Flush::Now || l.held_lines >= HELD_MAX {
+                if flush == Flush::Now || (!ring && l.held_lines >= HELD_MAX) {
                     write_held(l);
                 }
             }
@@ -223,7 +272,9 @@ fn live_flush() {
         if let Some(l) = live.as_mut() {
             l.flush_calls += 1;
             let now = t0.unwrap_or(u64::MAX);
-            if l.flush_calls >= FLUSH_TOKENS || now.saturating_sub(l.last_write_us) >= FLUSH_US {
+            // P6-112: during `kronos --gpu`'s texts nothing goes to the stick here (see `GEN_HOLD`).
+            let hold = GEN_HOLD.load(core::sync::atomic::Ordering::Relaxed);
+            if !hold && (l.flush_calls >= FLUSH_TOKENS || now.saturating_sub(l.last_write_us) >= FLUSH_US) {
                 write_held(l);
             }
         }
@@ -313,6 +364,21 @@ pub fn self_test_panic() -> ! {
     }
     assert!(len(&path) > after_now, "test: randurile de rutina nu au ajuns pe disc la 16 simboluri");
     crate::info!("test: jurnal-panica: 15 randuri tinute, scrise la a 16-a golire");
+    // P6-112: during a generation (`GenHold`) nothing goes to the disk at the token flushes, and past `HELD_MAX` rows
+    // the oldest half is dropped (counted), never written.
+    {
+        let before = len(&path);
+        let dropped0 = DROPPED.load(core::sync::atomic::Ordering::Relaxed);
+        let _hold = GenHold::start();
+        for i in 0..1100u32 {
+            live_line(&Event::Value { what: "test jurnal-panica inel", value: i }, Flush::Later);
+            live_flush();
+        }
+        assert!(len(&path) == before, "test: in generare s-a scris pe disc");
+        let dropped = DROPPED.load(core::sync::atomic::Ordering::Relaxed) - dropped0;
+        assert!(dropped == HELD_MAX / 2, "test: randuri aruncate {} (astept {})", dropped, HELD_MAX / 2);
+        crate::info!("test: jurnal-panica: in generare 1100 randuri si 1100 goliri fara nicio scriere pe disc; {} aruncate din inel", dropped);
+    }
     for i in 15..20 {
         live_line(&row(i), Flush::Later);
     }

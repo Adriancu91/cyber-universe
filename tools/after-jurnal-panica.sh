@@ -13,4 +13,8 @@ grep -q "test jurnal-panica: inceput" "$TMP/j.txt" || fail "lipsește primul râ
 got="$(grep -o 'valoare test jurnal-panica rand = 0x[0-9a-f]*' "$TMP/j.txt" | sed 's/.*= //' | tr '\n' ' ')"
 want="$(for i in $(seq 0 19); do printf '0x%08x ' "$i"; done)"
 [[ "$got" == "$want" ]] || fail "rândurile ținute: găsit '$got', așteptat '$want'"
+# P6-112: the generation's ring: rows 512..1099 kept (the oldest 512 dropped), written by the panic, in order.
+got="$(grep -o 'valoare test jurnal-panica inel = 0x[0-9a-f]*' "$TMP/j.txt" | sed 's/.*= //' | tr '\n' ' ')"
+want="$(for i in $(seq 512 1099); do printf '0x%08x ' "$i"; done)"
+[[ "$got" == "$want" ]] || fail "inelul generarii: rândurile 512..1099 lipsesc sau nu sunt în ordine"
 echo "[after-jurnal-panica] cele 20 de rânduri ținute sunt pe disc, în ordine (5 scrise de panică)"

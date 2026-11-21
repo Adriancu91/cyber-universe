@@ -237,6 +237,11 @@ pub static DIET_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::A
 /// the glued one, and their logits are compared bit for bit. Off by default: every other run is exactly as in os-324.
 pub static FUSED_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-112 (center's note 21 Nov 13:00, after os-328 passed): the cycle's ordinary test sends #513 with the glued list
+/// alone (no comparison). Set by `ciclu::board_test` unless the list says `--lipit` (both, compared) or `--simplu` (the
+/// plain list alone, as in os-324), and in the test build by `gpu lipit-sim singur`. Off by hand.
+pub static FUSED_ONLY_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-101: set only for the FLR trial's second chain (`test-placa --flr-proba`, `gpu lant --flr-proba`); taken by
 /// `chain`. Without it no chain reads WPR2 for the reset nor writes anything for it.
 pub static FLR_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);

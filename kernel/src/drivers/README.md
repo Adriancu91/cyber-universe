@@ -202,6 +202,15 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     `q8_fused`), oprită implicit: doar ciclul cu `test-placa … --lipit` (`gpu_tur::FUSED_IN_CYCLE`; în build-ul de test `gpu lipit-sim on|off`).
     Atunci același text rulează de două ori (lista simplă, apoi cea lipită, `kd::send_token_list`, `kp::token_kinds_fused`) și rândurile
     `kt lista: lipita (…)`, `kt lipit fata de simplu: identice / N diferite (max |d|)`, `… simbolurile generate identice`. Test: `kronos-gpu-lipit`.
+    **P6-112 (C-157 punctul 2b, propunerile 1–3; nota centrului de comandă 21 nov 13:00): pozițiile lente.** (1) Cât rulează textele
+    lui `kronos --gpu`, rândurile de rutină stau în memorie (`gpu_i6::GenHold`): nicio scriere pe stick între poziții; peste 1024 de
+    rânduri ținute se aruncă jumătatea cea mai veche (inel, rândul `kt randuri de rutina aruncate`); se scriu la primul rând important,
+    la închiderea jurnalului sau la panică. (2) Înaintea textelor: `flush_live` + nota `kt generarea incepe` (scrise în afara ceasului
+    poziției 0). (3) `TokenIo::write` uită din umbre doar cuvintele scrise (`WriteShadow::forget_range`). În ciclu, lista lipită e acum
+    **implicită** (`gpu_tur::FUSED_ONLY_IN_CYCLE`): `test-placa` = doar lista lipită; `--lipit` = amândouă, comparate; `--simplu` = doar
+    lista simplă (ca `os-324`). Comparația `--lipit` are acum prefixul `kronos --gpu:` (ajunge în raportul ciclului) și rândurile de jurnal
+    `kt lipit fata de simplu: logit-uri diferite` / `… simboluri identice`; plus `kt lista (0 simpla, 1 lipita, 2 comparate)`.
+    Teste: `kronos-gpu-singur` (`gpu lipit-sim singur`), `jurnal-panica` (1100 de rânduri și goliri în generare, nicio scriere; 512 aruncate).
     **P6-107 (C-154, cyber-gpu `4925469` = C-147 punctul 7): „dieta driverului”**, doar pentru `kronos --gpu` și doar în testul
     obișnuit al ciclului (`gpu_tur::DIET_IN_CYCLE`, pus de `ciclu::board_test`; în build-ul de test `gpu dieta-sim on|off`): (1) pushbuffer-ul
     se scrie prin umbră (`kronos_fast::ShadowedMemory` în `gpu_i11::run_records_with`) — doar cuvintele schimbate de la simbolul de

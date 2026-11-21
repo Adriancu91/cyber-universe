@@ -769,11 +769,17 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::FUSED_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu lipit-sim: pornita (SIMULARE: textul de doua ori, lista simpla apoi cea lipita)\n");
                 }
+                Some("singur") if args.len() == 2 => {
+                    // P6-112: the glued list alone, as the cycle's default.
+                    crate::drivers::gpu_tur::FUSED_ONLY_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu lipit-sim: singura (SIMULARE: doar lista lipita, ca implicit in ciclu)\n");
+                }
                 Some("off") if args.len() == 2 => {
                     crate::drivers::gpu_tur::FUSED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::FUSED_ONLY_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu lipit-sim: oprita\n");
                 }
-                _ => out!("folosire: gpu lipit-sim on|off\n"),
+                _ => out!("folosire: gpu lipit-sim on|singur|off\n"),
             }
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu lipit-sim: exista doar in build-ul de test (pe stick lista lipita o porneste doar ciclul, test-placa --lipit)\n");
