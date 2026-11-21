@@ -480,6 +480,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-118** C-161 punctul 1 (nota C-159 16:35): comanda de placă a modului viu = `test-placa […]` (formele listei, cheile ciclului + `permite-live-placa`, raportul în `iesire` și în hub, cel mult una pe sesiune); orice întrebare „DA” primește răspuns pe loc în modul viu (niciodată DA); nimic nou pentru placă. Plan: `docs/plans/P6-118.md`. Dep: P6-113.
 - [x] **P6-119** Dieta 2 a driverului (PREDARE Cyber-GPU `367edf4`, C-157 punctul 3): `test-placa … --dieta2` = două înregistrări citite pe cele mai multe poziții, așteptarea planificată, amprenta după ceas, argmax pe biți; rânduri `kt dieta 2`; nimic nou pentru placă. Plan: `docs/plans/P6-119.md`. Dep: P6-116.
 - [x] **P6-120** LayerNorm nou implicit în ciclu (propunerea centrului 21 nov 19:25) + nota Cyber-GPU `C-157_P2d_os-331.md` (amprenta pe fel de LayerNorm, rândurile pe rulări, 88 de lansări); `--ln-vechi` = ca os-335; nimic nou pentru placă. Plan: `docs/plans/P6-120.md`. Dep: P6-119.
+- [x] **P6-121** C-161 punctul 3, prima bucată: `antrenare proba` — pasul de aur al lui Kronos (S132) refăcut în OS cu oracolul Cyber-GPU (`gpu_compute::train`, cyber-gpu `b157c7f`), verdictul „aceleași numere”; nimic pentru placă. Plan: `docs/plans/P6-121.md`. Dep: P6-120.
   Gata (2026-11-21 ~16:55 RO): `gpu-tablou` trece (rândul nou „oprirea zonei = nu se trimite …”).
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 

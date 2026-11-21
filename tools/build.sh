@@ -128,6 +128,14 @@ fi
 # P6-62 (C-83): I14 in `gpu lant --sim` reads Kronos's tiny control model (random weights, hub vectori/) from the disk.
 if [[ ",$EXTRA_FEATURES," == *",test-gpu-sim,"* ]]; then
     mkdir -p "$DISK_ROOT/kronos" && cp "$ROOT/tests/kronos/mic_q8_0.kgr" "$DISK_ROOT/kronos/"
+    # P6-121 (C-161 point 3): Kronos's golden step (hub integrare/kronos/pas_de_aur_mic/, S132) for `antrenare proba`,
+    # taken from the cyber-gpu commit the kernel is built with (gpu-compute's tests/date/pas_de_aur_mic/, 3.4 MB).
+    GC_DIR="$(cd "$ROOT/kernel" && cargo metadata --format-version 1 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(p["manifest_path"] for p in d["packages"] if p["name"]=="gpu-compute").rsplit("/",1)[0])' 2>/dev/null)"
+    if [[ -n "$GC_DIR" && -f "$GC_DIR/tests/date/pas_de_aur_mic/reteta.json" ]]; then
+        mkdir -p "$DISK_ROOT/antrenare" && cp -r "$GC_DIR/tests/date/pas_de_aur_mic" "$DISK_ROOT/antrenare/"
+    else
+        echo "[build] ATENTIE: pasul de aur (gpu-compute tests/date/pas_de_aur_mic) negasit; antrenare proba nu va avea date" >&2
+    fi
 fi
 DISK="$BUILD/disk.img"
 rm -f "$DISK" && truncate -s 40M "$DISK"

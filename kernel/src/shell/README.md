@@ -84,3 +84,9 @@
   Shell-ul unei sesiuni remote e un terminal „restricționat” (`term::open_restricted`): înainte de fiecare comandă se verifică
   `remote_allowed` (lista modului automat + `help`, `exit`, `remote stare|opreste`); refuzurile și comenzile merg în jurnal.
   Testat în scenariul `remote`.
+- **`antrenare proba [dosar]` (P6-121, C-161 punctul 3, `antrenare.rs`):** pasul de aur al lui Kronos (S132, hub
+  `integrare/kronos/pas_de_aur_mic/`) refăcut în OS cu oracolul Cyber-GPU al unui pas de antrenare (`gpu_compute::train::golden_run`,
+  doar procesorul, placa neatinsă): SHA-256 al rețetei verificat, 10 pași `sgd` și 10 `adamw_513`, comparați cu PyTorch cu pragurile
+  scrise (`train::TOL_*`) → `antrenare proba: ACELEASI NUMERE / DIFERITE / NU A RULAT`. Depinde de `gpu-compute` (cyber-gpu) și de
+  datele de pe disc (`/disk/antrenare/pas_de_aur_mic`, apoi `/usb/…`). Inspirația: testul T151 al Cyber-GPU (cod propriu). Testat în
+  scenariul `antrenare` (+ `self_test` în `ghpush`).

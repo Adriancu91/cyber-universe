@@ -6,6 +6,7 @@ use crate::fs::{self, Kind};
 use alloc::{format, string::String, vec::Vec};
 
 mod analiza;
+pub mod antrenare;
 pub mod auto;
 pub mod ciclu;
 pub mod compara;
@@ -147,6 +148,12 @@ fn dispatch(line: &str) -> bool {
         "http" => http(args),
         "mem" => mem(),
         "lspci" => lspci(),
+        "antrenare" => match args {
+            // P6-121 (C-161 point 3): Kronos's golden step checked in the OS (Cyber-GPU's CPU oracle; the board untouched).
+            ["proba"] => antrenare::proba(None).iter().for_each(|r| out!("{}\n", r)),
+            ["proba", dir] => antrenare::proba(Some(dir)).iter().for_each(|r| out!("{}\n", r)),
+            _ => out!("folosire: antrenare proba [dosar] (pasul de aur al lui Kronos, pe procesor; implicit {} sau {})\n", antrenare::DIRS[0], antrenare::DIRS[1]),
+        },
         "discuri" => {
             // P6-100 (C-148 point 5): the computer's own disks as seen at start-up (reads only).
             out!("discurile vazute de OS (doar citire, la pornire):\n");
