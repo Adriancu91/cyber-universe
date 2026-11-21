@@ -3,6 +3,10 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-21 ~00:40 UTC (02:40 ora RO) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5 rămâne în vigoare; nicio sarcină începută).
+  - `git pull`: clonele vechi erau superficiale (de aici „divergența” 50/50) → `git fetch --unshallow` + fast-forward pe `origin/main`, nimic șters/forțat. `env-check --install` nerulat (nicio sarcină de cod).
+  - Hub: nicio comandă `nou` pentru `cyber-universe` după C-152 (C-7/C-11 rămase `nou` sunt istorice). Noutăți doar ca context: Kronos stare 21 nov, Cyber-GPU sesiunea 128 fără schimbări. CI: ultima rulare pe `main` (os-323, run 44742250615) verde.
+  - **Pentru sesiunea următoare:** tot OPRIT — nu începe sarcini noi până la o comandă nouă de la Adrian în `COMENZI.md` sau analiza lui.
 - 2026-11-20 ~21:40–21:50 UTC (23:40–23:50 ora RO) — sesiune programată, fără Adrian — **OPRIT: necesită analiza lui Adrian** (regula 5: a treia sesiune la rând fără sarcină terminată după P6-105).
   - `git pull`: clonele vechi aveau `main` divergent (clonă superficială, `reset --hard` refuzat de paznic) → clone noi curate în `/home/claude/w/`. `env-check --install` nerulat (nicio sarcină de cod).
   - Hub: nicio comandă `nou` pentru `cyber-universe` (ultima a noastră: C-152, gata). Context: Cyber-GPU a terminat C-147 (punctul 6, studiul lanțului pe placă, 22:55). CI: ultima rulare pe `main` (os-323, run 44742250615) verde.
