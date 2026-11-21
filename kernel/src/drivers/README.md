@@ -206,6 +206,12 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     (`gpu_tur::LN_NEW_IN_CYCLE`; în build-ul de test `gpu lipit-sim ln`): #513 rulează de două ori pe același text, lista lipită cu
     LayerNorm vechi, apoi `TokenList::FusedLn` (programul `layernorm256`, 256 de fire, `shfl` + barieră); comparate cu pragul notei
     (aceleași simboluri, abaterea sub 1e-4): rândurile `kt ln nou fata de vechi: …` în ieșire și jurnal, `kt lista` = 3. Test: `kronos-gpu-ln`.
+    **P6-120 (propunerea centrului 21 nov 19:25; nota Cyber-GPU `C-157_P2d_os-331.md`): LayerNorm nou implicit în ciclu.** `test-placa`
+    fără opțiune de listă = doar `TokenList::FusedLn` (`gpu_tur::LN_ONLY_IN_CYCLE`, `kt lista` = 4; build de test: `gpu lipit-sim ln-singur`);
+    `--ln-vechi` = lista lipită cu LayerNorm vechi singură (ca os-329 … os-335). Rândul `kt lista: … singura (88 lansari …)` (numărul
+    cuprinde copierea logit-urilor); cu două rulări, rândul `kt rularile:` (mediana fiecărei rulări; `viteza` = toate rulările, `kt`/`kp`/
+    dieta/amprenta = ultima). În raportul ciclului: `amprenta fata de referinta: LayerNorm nou (0x46a07914) / vechi (0xda9ae084)`.
+    Test: `kronos-gpu-ln-singur`.
     **P6-117 (C-161 punctul 2, C-160 punctul 1, cyber-gpu `3199fa2`): P8, primul calcul cu circuitele speciale.** Doar în ciclu cu
     `test-placa … --p8` (ultima opțiune; `gpu_tur::P8_IN_CYCLE`; în build-ul de test `gpu p8-sim on|off`): după textele lui #513 și
     copierea VRAM → VRAM, `gpu_i14::mma16_probe` verifică SHA-256 al lui `mma16_f16` (Mesa NAK 26.3.1), îl urcă în VRAM, pune cbuf-ul

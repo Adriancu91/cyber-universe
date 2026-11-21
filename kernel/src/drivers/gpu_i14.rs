@@ -120,7 +120,8 @@ const KT_FUSED_SAME_TOKENS: &str = "kt lipit fata de simplu: simboluri identice 
 const KT_WARM: &str = "kt incalzirea: pozitia 0 trimisa o data inainte de ceas (numarul listelor)";
 const KT_WARM_US: &str = "kt incalzirea: durata totala (us, in afara ceasului)";
 const KT_WARM_WORDS: &str = "kt incalzirea: cuvinte VRAM scrise (prima lista)";
-const KT_LIST: &str = "kt lista (0 simpla, 1 lipita, 2 comparate, 3 ln nou comparat)";
+/// P6-120: 4 = the glued list with the new LayerNorm alone (the cycle's default from os-336 on).
+pub const KT_LIST: &str = "kt lista (0 simpla, 1 lipita, 2 comparate, 3 ln nou comparat, 4 lipita-ln)";
 /// P6-114 (C-155 point 2): the new LayerNorm against the old one on the glued list (threshold: same tokens, max |d| < 1e-4).
 const KT_LN_WORST_BITS: &str = "kt ln nou fata de vechi: max |d| (f32, biti)";
 const KT_LN_SAME_TOKENS: &str = "kt ln nou fata de vechi: simboluri identice (1/0)";
@@ -453,6 +454,8 @@ struct RunOut {
     all: Vec<Vec<usize>>,
     worst: f32,
     median: u64,
+    /// P6-120 (cyber-gpu note C-157_P2d, point 2): the median token time of every text, in the order they ran.
+    run_medians: Vec<u64>,
     from_vram: bool,
     /// P6-95 (C-141/C-142): the upload and every position (OS clock without the CPU check), and the CPU engine's time
     /// per position (`step_cpu`, the same weights) for the comparison.
@@ -981,6 +984,7 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         print: runner.print,
     });
     drop(runner);
+    let run_medians = medians.clone();
     medians.sort_unstable();
     let median = medians.get(medians.len() / 2).copied().unwrap_or(0);
     // P6-98 (C-147 stage 0 (d)): `kronos --gpu` keeps what the VRAM → VRAM copy needs (it runs after the result rows).
@@ -989,7 +993,7 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     src.truncate(blob.scratch as usize);
     let copy = fast.then(|| CopyCtx { src_va: vblob.va, src, launches, rec, maps: tmaps, sys: host_logits, copy_va });
     let os_check = runs.iter().any(|r| r.os_check);
-    Ok(RunOut { all, worst, median, from_vram, speed, cpu_us, os_check, split: split_all, shadow_changed, prof, prof_err, copy, diet: diet_out })
+    Ok(RunOut { all, worst, median, run_medians, from_vram, speed, cpu_us, os_check, split: split_all, shadow_changed, prof, prof_err, copy, diet: diet_out })
 }
 
 /// P6-110 (C-155 point 1): P3's proof — the glued list's logits against the plain list's on the same text, bit for bit
@@ -997,10 +1001,10 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
 fn fused_vs_plain(p: &str, layers: usize, by_list: &[(kd::TokenList, Vec<Vec<f32>>)], all: &[Vec<usize>], journal: &mut Journal) -> Vec<String> {
     let pick = |want: kd::TokenList| by_list.iter().find(|(l, _)| *l == want).map(|(_, v)| v);
     let mut out = alloc::vec![format!(
-        "{}: kronos --gpu: kt lista: lipita ({} lansari pe simbol fata de {} cu lista simpla; programul q8_fused)",
+        "{}: kronos --gpu: kt lista: lipita ({} lansari pe simbol fata de {} cu lista simpla, fiecare cu copierea logit-urilor; programul q8_fused)",
         p,
-        kd::TokenList::Fused.launches_per_token(layers),
-        kd::TokenList::Plain.launches_per_token(layers)
+        kd::TokenList::Fused.launches_per_token(layers) + 1,
+        kd::TokenList::Plain.launches_per_token(layers) + 1
     )];
     let (Some(plain), Some(fused)) = (pick(kd::TokenList::Plain), pick(kd::TokenList::Fused)) else {
         out.push(format!("{}: kronos --gpu: kt lipit fata de simplu: necomparat (o lista nu a terminat textul)", p));
@@ -1045,9 +1049,9 @@ fn fused_vs_plain(p: &str, layers: usize, by_list: &[(kd::TokenList, Vec<Vec<f32
 fn ln_new_vs_old(p: &str, layers: usize, by_list: &[(kd::TokenList, Vec<Vec<f32>>)], all: &[Vec<usize>], journal: &mut Journal) -> Vec<String> {
     let pick = |want: kd::TokenList| by_list.iter().find(|(l, _)| *l == want).map(|(_, v)| v);
     let mut out = alloc::vec![format!(
-        "{}: kronos --gpu: kt lista: lipita-ln (aceleasi {} lansari pe simbol ca lista lipita; LayerNorm pe programul layernorm256, 256 de fire)",
+        "{}: kronos --gpu: kt lista: lipita-ln (aceleasi {} lansari pe simbol ca lista lipita, cu copierea logit-urilor; LayerNorm pe programul layernorm256, 256 de fire)",
         p,
-        kd::TokenList::FusedLn.launches_per_token(layers)
+        kd::TokenList::FusedLn.launches_per_token(layers) + 1
     )];
     let (Some(old), Some(new)) = (pick(kd::TokenList::Fused), pick(kd::TokenList::FusedLn)) else {
         out.push(format!("{}: kronos --gpu: kt ln nou fata de vechi: necomparat (o lista nu a terminat textul)", p));
@@ -1695,6 +1699,7 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // bit, in os-328); `test-placa … --simplu` keeps the plain list alone, as in os-324. By hand: the plain list.
     // P6-114 (C-155 point 2): `test-placa … --ln-nou` = the glued list with the old LayerNorm (as in os-329), then the
     // same text with the new one (`layernorm256`), compared against the note's threshold.
+    // P6-120 (center's proposal 21 Nov 19:25): the cycle's default is now the new LayerNorm alone (`--ln-vechi` = the old).
     let list_kind = if super::gpu_tur::LN_NEW_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
         runs[0].name = String::from("kronos --gpu (lista lipita)");
         runs[0].list = kd::TokenList::Fused;
@@ -1707,6 +1712,10 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
         runs[0].name = String::from("kronos --gpu (lista lipita)");
         runs[0].list = kd::TokenList::Fused;
         1
+    } else if super::gpu_tur::LN_ONLY_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+        runs[0].name = String::from("kronos --gpu (lista lipita, LayerNorm nou)");
+        runs[0].list = kd::TokenList::FusedLn;
+        4
     } else {
         0
     };
@@ -1725,10 +1734,39 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
         return Err(String::from("copierea logit-urilor in RAM e gresita (logit-urile citite din VRAM)"));
     }
     let (mut all, worst, median) = (out.all, out.worst, out.median);
+    let many = runs.len() > 1;
     lines.push(format!(
-        "{}: kronos --gpu: abaterea maxima a logit-urilor fata de procesor {:e}; durata mediana a unui simbol {} ns (ceasul placii)",
-        p, worst, median
+        "{}: kronos --gpu: abaterea maxima a logit-urilor fata de procesor {:e}; durata mediana a unui simbol {} ns (ceasul placii{})",
+        p,
+        worst,
+        median,
+        if many { "; mediana cea mai mare dintre rulari, vezi kt rularile" } else { "" }
     ));
+    // P6-120 (cyber-gpu note C-157_P2d, point 3): the list run alone, with the copy of the logits in the count (88 at #513).
+    if list_kind == 1 || list_kind == 4 {
+        lines.push(format!(
+            "{}: kronos --gpu: kt lista: {} singura ({} lansari pe simbol, cu copierea logit-urilor; amprenta de referinta {})",
+            p,
+            if list_kind == 4 { "lipita-ln (LayerNorm nou, layernorm256)" } else { "lipita (LayerNorm vechi)" },
+            runs[0].list.launches_per_token(m.layers.len()) + 1,
+            if list_kind == 4 { "0x46a07914" } else { "0xda9ae084" }
+        ));
+    }
+    // P6-120 (note C-157_P2d, point 2): with two runs on the same text, which run every row speaks of.
+    if many {
+        let each: Vec<String> = runs
+            .iter()
+            .enumerate()
+            .map(|(i, r)| format!("rularea {} = {} ({} ns mediana pe simbol)", i + 1, r.name, out.run_medians.get(i).map_or(String::from("?"), |v| format!("{}", v))))
+            .collect();
+        lines.push(format!(
+            "{}: kronos --gpu: kt rularile: {} rulari pe acelasi text: {}; randurile viteza (placa / cu driverul / procesorul) = toate rularile; randurile kt, kp, dieta si amprenta = rularea {} (ultima)",
+            p,
+            runs.len(),
+            each.join("; "),
+            runs.len()
+        ));
+    }
     let made = all.last().map_or(0, |g| g.len());
     // P6-95 (C-141): the result and the speed in the gpu journal (it goes up to the hub by itself) and on the screen.
     journal.push(Event::Value { what: KG_MADE, value: made as u32 });
@@ -1764,8 +1802,9 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
         )
     };
     lines.push(format!(
-        "{}: kronos --gpu: viteza: placa {} simboluri/s (ceasul placii), cu driverul {} simboluri/s; {}",
+        "{}: kronos --gpu: viteza{}: placa {} simboluri/s (ceasul placii), cu driverul {} simboluri/s; {}",
         p,
+        if many { format!(" (toate cele {} rulari)", runs.len()) } else { String::new() },
         x100(out.speed.summary().board_per_s_x100),
         x100(out.speed.summary().host_per_s_x100),
         check_part

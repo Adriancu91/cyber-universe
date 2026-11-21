@@ -139,7 +139,7 @@ pub fn target(command: &str) -> Result<(String, String), &'static str> {
 
 /// P6-96: `test-placa [--i9 …]` of the automatic list -> the I9.
 pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
-    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou`, `--lipit`, `--simplu` sau `--ln-nou`, apoi `--dieta2`, apoi `--p8` la sfarsit (in aceasta ordine; doar una din `--lipit`, `--simplu`, `--ln-nou`)";
+    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou`, `--lipit`, `--simplu`, `--ln-nou` sau `--ln-vechi`, apoi `--dieta2`, apoi `--p8` la sfarsit (in aceasta ordine; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`)";
     let words: Vec<&str> = command.split_whitespace().collect();
     let Some(("test-placa", rest)) = words.split_first().map(|(a, b)| (*a, b)) else { return None };
     let (i9, flags) = match rest {
@@ -152,19 +152,21 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
     // P6-110 (C-155 point 1): `--lipit` = #513 a second time with P3's glued list, compared bit for bit with the plain one.
     // P6-112: `--simplu` = #513 with the plain list alone (as in os-324); without either, the glued list alone.
     // P6-114 (C-155 point 2): `--ln-nou` = the glued list with the old LayerNorm, then with the new one, compared.
+    // P6-120 (center's proposal 21 Nov 19:25): without any of them, the new LayerNorm alone (`FusedLn`); `--ln-vechi` =
+    // the glued list with the old LayerNorm alone (as in os-329 … os-335).
     // P6-119 (C-157 point 3): `--dieta2` = the driver's second diet for #513 (nothing new for the board).
     // P6-117 (C-161 point 2): `--p8` = after #513's texts, P8 (the first tensor-core computation), always last.
     // Each at most once, in this order (the I9 text carries them as suffixes, read back in the same order).
     let mut out = String::from(i9);
     let mut next = 0;
     for f in flags {
-        let Some(at) = [FLR_PROBA, TABLOU, LIPIT, SIMPLU, LN_NOU, DIETA2, P8].iter().position(|x| x.trim() == *f) else { return Some(Err(FORM)) };
+        let Some(at) = [FLR_PROBA, TABLOU, LIPIT, SIMPLU, LN_NOU, LN_VECHI, DIETA2, P8].iter().position(|x| x.trim() == *f) else { return Some(Err(FORM)) };
         if at < next {
             return Some(Err(FORM));
         }
-        out.push_str([FLR_PROBA, TABLOU, LIPIT, SIMPLU, LN_NOU, DIETA2, P8][at]);
-        // `--lipit`, `--simplu` and `--ln-nou` exclude each other (each picks the lists #513 runs with).
-        next = if (2..5).contains(&at) { 5 } else { at + 1 };
+        out.push_str([FLR_PROBA, TABLOU, LIPIT, SIMPLU, LN_NOU, LN_VECHI, DIETA2, P8][at]);
+        // `--lipit`, `--simplu`, `--ln-nou` and `--ln-vechi` exclude each other (each picks the lists #513 runs with).
+        next = if (2..6).contains(&at) { 6 } else { at + 1 };
     }
     Some(Ok(out))
 }
@@ -441,9 +443,29 @@ fn diet_block(path: &str, journal: &str, text: &str) -> String {
         ),
         None => String::from("necitit (randul lipseste din jurnal)"),
     };
-    let print = v("kt amprenta logit-urilor (FNV-1a, toate pozitiile)").map_or(String::from("?"), |w| format!("{:#010x}", w));
+    let print_v = v("kt amprenta logit-urilor (FNV-1a, toate pozitiile)");
+    let print = print_v.map_or(String::from("?"), |w| format!("{:#010x}", w));
+    // P6-120 (cyber-gpu note C-157_P2d, point 1): the print against the reference of the same kind of LayerNorm (the
+    // last run's list: 3 = the old one then the new one, 4 = the new one alone).
+    let reference = match v(crate::drivers::gpu_i14::KT_LIST) {
+        Some(k) => {
+            let (what, want) = if k == 3 || k == 4 { ("LayerNorm nou", REF_PRINT_LN_NEW) } else { ("LayerNorm vechi", REF_PRINT_LN_OLD) };
+            let last = if text.contains("kt rularile:") { "ultima rulare = " } else { "" };
+            match print_v {
+                Some(w) => format!("amprenta fata de referinta: {}{} (referinta {:#010x}): {}\n", last, what, want, if w == want { "ACEEASI" } else { "ALTA -> de vazut de Cyber-GPU" }),
+                None => format!("amprenta fata de referinta: necitita ({} {:#010x})\n", what, want),
+            }
+        }
+        None => String::from("amprenta fata de referinta: felul listei necitit (randul kt lista lipseste)\n"),
+    };
+    // P6-120 (note C-157_P2d, point 2): with two runs, which rows cover which.
+    let runs_note = if text.contains("kt rularile:") {
+        "atentie, doua rulari pe acelasi text: simboluri/s cu driverul = ambele rulari; driverul si simbolul (randurile kt), cuvintele VRAM, citirea, argmax si amprenta = ultima rulare\n"
+    } else {
+        ""
+    };
     format!(
-        "\n-- viteza fata de os-322 (dieta driverului {}; jurnalul {})\n{}{}{}cuvinte VRAM pe simbol (median): {}; citirea logit-urilor {} us, argmax {} us (median)\nlogit-urile identice bit cu bit cu os-322? {}\namprenta logit-urilor de acum (pentru testele urmatoare): {}\n",
+        "\n-- viteza fata de os-322 (dieta driverului {}; jurnalul {})\n{}{}{}cuvinte VRAM pe simbol (median): {}; citirea logit-urilor {} us, argmax {} us (median)\nlogit-urile identice bit cu bit cu os-322? {}\namprenta logit-urilor de acum (pentru testele urmatoare): {}\n{}{}",
         diet,
         path,
         us("driverul pe simbol (us, kt median driver)", OS322_DRIVER_US, v("kt median driver (us)")),
@@ -453,9 +475,16 @@ fn diet_block(path: &str, journal: &str, text: &str) -> String {
         read,
         argmax,
         bits,
-        print
+        print,
+        reference,
+        runs_note
     )
 }
+
+/// P6-120 (cyber-gpu note C-157_P2d, point 1): #513's logit print on the board with the old LayerNorm (os-328 … os-335)
+/// and with the new one (os-331, `layernorm256`).
+const REF_PRINT_LN_OLD: u32 = 0xda9a_e084;
+const REF_PRINT_LN_NEW: u32 = 0x46a0_7914;
 
 /// Suffix of the I9 text from `board_command` when the FLR trial is asked (`test-placa … --flr-proba`).
 pub const FLR_PROBA: &str = " --flr-proba";
@@ -472,6 +501,9 @@ pub const SIMPLU: &str = " --simplu";
 /// P6-114: suffix of the I9 text when the new LayerNorm is asked (`test-placa … --ln-nou`, always last).
 pub const LN_NOU: &str = " --ln-nou";
 
+/// P6-120: suffix of the I9 text when the old LayerNorm alone is asked (`test-placa … --ln-vechi`, as in os-329 … os-335).
+pub const LN_VECHI: &str = " --ln-vechi";
+
 /// P6-119 (C-157 point 3): suffix of the I9 text when the second diet is asked (`test-placa … --dieta2`, before `--p8`).
 pub const DIETA2: &str = " --dieta2";
 
@@ -484,6 +516,10 @@ pub fn board_test(i9: &str) -> (String, String) {
         None => (i9, false),
     };
     let (i9, diet2) = match i9.strip_suffix(DIETA2) {
+        Some(x) => (x, true),
+        None => (i9, false),
+    };
+    let (i9, ln_old) = match i9.strip_suffix(LN_VECHI) {
         Some(x) => (x, true),
         None => (i9, false),
     };
@@ -550,7 +586,10 @@ pub fn board_test(i9: &str) -> (String, String) {
     // P6-110 (C-155 point 1): P3 only when the list asked for it, only for this chain's #513.
     crate::drivers::gpu_tur::FUSED_IN_CYCLE.store(fused, core::sync::atomic::Ordering::SeqCst);
     // P6-112 (center's note 21 Nov 13:00): otherwise the glued list alone, unless the list says `--simplu`.
-    crate::drivers::gpu_tur::FUSED_ONLY_IN_CYCLE.store(!fused && !plain && !ln_new, core::sync::atomic::Ordering::SeqCst);
+    // P6-120 (center's proposal 21 Nov 19:25): the glued list with the old LayerNorm alone only with `--ln-vechi`;
+    // without any list option, the new LayerNorm alone (it passed on the board in os-331 and os-332).
+    crate::drivers::gpu_tur::FUSED_ONLY_IN_CYCLE.store(ln_old, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::LN_ONLY_IN_CYCLE.store(!fused && !plain && !ln_new && !ln_old, core::sync::atomic::Ordering::SeqCst);
     // P6-114 (C-155 point 2): the new LayerNorm only when the list asked for it, only for this chain's #513.
     crate::drivers::gpu_tur::LN_NEW_IN_CYCLE.store(ln_new, core::sync::atomic::Ordering::SeqCst);
     // P6-117 (C-161 point 2): P8 only when the list asked for it, only after this chain's #513 texts.
@@ -569,8 +608,10 @@ pub fn board_test(i9: &str) -> (String, String) {
         text.push_str("\n(P3, lista lipita: cerut de lista; #513 ruleaza de doua ori pe acelasi text: intai lista simpla, apoi cea lipita, comparate bit cu bit)\n");
     } else if plain {
         text.push_str("\n(lista simpla: cerut de lista (--simplu); #513 ca in os-324)\n");
+    } else if ln_old {
+        text.push_str("\n(lista lipita cu LayerNorm vechi: cerut de lista (--ln-vechi); #513 ca in os-329 ... os-335, amprenta de referinta 0xda9ae084)\n");
     } else {
-        text.push_str("\n(lista lipita implicit (P3, 88 de lansari pe simbol); --simplu = lista simpla, --lipit = amandoua, comparate)\n");
+        text.push_str("\n(lista lipita cu LayerNorm nou implicit (P3 + layernorm256, 88 de lansari pe simbol, amprenta de referinta 0x46a07914); --ln-vechi = LayerNorm vechi, --ln-nou = amandoua comparate, --simplu = lista simpla, --lipit = simpla + lipita comparate)\n");
     }
     let result = if let Some(model) = k513_path() {
         if model != K513 {
@@ -607,6 +648,7 @@ pub fn board_test(i9: &str) -> (String, String) {
     crate::drivers::gpu_tur::FUSED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::FUSED_ONLY_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::LN_NEW_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::LN_ONLY_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::P8_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::DIET2_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     // P6-117: P8's verdict next to the chain's in the answer (the rows themselves are in the report above).
@@ -777,6 +819,20 @@ pub fn self_test() {
     assert!(board_command("test-placa --p8 --tablou").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --p8 --p8").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --simplu --p8 --ln-nou").is_some_and(|r| r.is_err()));
+    // P6-120: `--ln-vechi` in the same place as `--ln-nou`, alone among the four list choices.
+    assert!(board_command("test-placa --ln-vechi") == Some(Ok(String::from("c135 --ln-vechi"))));
+    assert!(board_command("test-placa --tablou --ln-vechi --dieta2 --p8") == Some(Ok(String::from("c135 --tablou --ln-vechi --dieta2 --p8"))));
+    assert!(board_command("test-placa --ln-nou --ln-vechi").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --ln-vechi --lipit").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --ln-vechi --tablou").is_some_and(|r| r.is_err()));
+    // P6-120: the reference print by the kind of LayerNorm (cyber-gpu note C-157_P2d, point 1).
+    let jl = |kind: u32, print: u32| format!("x valoare {} = {:#010x}\nx valoare kt amprenta logit-urilor (FNV-1a, toate pozitiile) = {:#010x}\n", crate::drivers::gpu_i14::KT_LIST, kind, print);
+    let d = diet_block("/x", &jl(4, 0x46a0_7914), "");
+    assert!(d.contains("LayerNorm nou (referinta 0x46a07914): ACEEASI"), "test: amprenta ln nou: {}", d);
+    let d = diet_block("/x", &jl(1, 0x46a0_7914), "");
+    assert!(d.contains("LayerNorm vechi (referinta 0xda9ae084): ALTA"), "test: amprenta ln vechi: {}", d);
+    let d = diet_block("/x", &jl(3, 0x46a0_7914), "kronos --gpu: kt rularile: 2 rulari\n");
+    assert!(d.contains("ultima rulare = LayerNorm nou (referinta 0x46a07914): ACEEASI") && d.contains("ambele rulari"), "test: amprenta doua rulari: {}", d);
     // P6-119: `--dieta2` after the list choice, before `--p8`.
     assert!(board_command("test-placa --dieta2") == Some(Ok(String::from("c135 --dieta2"))));
     assert!(board_command("test-placa --ln-nou --dieta2 --p8") == Some(Ok(String::from("c135 --ln-nou --dieta2 --p8"))));

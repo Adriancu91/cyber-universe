@@ -249,6 +249,12 @@ pub static FUSED_ONLY_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::ato
 /// within 1e-4; not bit for bit, the sums run in another order). Off by default.
 pub static LN_NEW_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-120 (center's proposal 21 Nov 19:25; cyber-gpu note `C-157_P2d_os-331.md`): the new LayerNorm alone
+/// (`TokenList::FusedLn`, no comparison) — the cycle's default from os-336 on (it passed on the board twice, os-331 and
+/// os-332). Set by `ciclu::board_test` unless the list picks another list (`--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`)
+/// and, in the test build, by `gpu lipit-sim ln-singur`. Off by hand.
+pub static LN_ONLY_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-119 (C-157 point 3, cyber-gpu `367edf4`): the driver's second diet for `kronos --gpu` (two records read on most
 /// positions, the planned wait, the logits' fingerprint after the token's clock, the argmax on bits). Nothing new for
 /// the board. Set only by the cycle when the list asks for it (`test-placa … --dieta2`) and, in the test build, by
