@@ -198,6 +198,10 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     diagnosticul C-139 ca înainte, pe logit-urile chiar ale acelei poziții. Rânduri noi (alte nume decât `step_cpu`): `kv verificarea
     dupa placa median …`, `kv pozitii pe secunda x100 (verificarea dupa placa)`, `kv simboluri pe secunda x100 cu verificare …`.
     `kronos --gpu --verificare-nucleu` = verificarea veche între simboluri. Modelul de control I14 rămâne pe motorul de referință.
+    **P6-110 (C-155 punctul 1, cyber-gpu `6f0fdbf`): P3, lista lipită** (88 de lansări pe simbol la #513 în loc de 196, programul
+    `q8_fused`), oprită implicit: doar ciclul cu `test-placa … --lipit` (`gpu_tur::FUSED_IN_CYCLE`; în build-ul de test `gpu lipit-sim on|off`).
+    Atunci același text rulează de două ori (lista simplă, apoi cea lipită, `kd::send_token_list`, `kp::token_kinds_fused`) și rândurile
+    `kt lista: lipita (…)`, `kt lipit fata de simplu: identice / N diferite (max |d|)`, `… simbolurile generate identice`. Test: `kronos-gpu-lipit`.
     **P6-107 (C-154, cyber-gpu `4925469` = C-147 punctul 7): „dieta driverului”**, doar pentru `kronos --gpu` și doar în testul
     obișnuit al ciclului (`gpu_tur::DIET_IN_CYCLE`, pus de `ciclu::board_test`; în build-ul de test `gpu dieta-sim on|off`): (1) pushbuffer-ul
     se scrie prin umbră (`kronos_fast::ShadowedMemory` în `gpu_i11::run_records_with`) — doar cuvintele schimbate de la simbolul de
