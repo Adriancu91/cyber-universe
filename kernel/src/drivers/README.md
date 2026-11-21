@@ -198,6 +198,14 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     diagnosticul C-139 ca înainte, pe logit-urile chiar ale acelei poziții. Rânduri noi (alte nume decât `step_cpu`): `kv verificarea
     dupa placa median …`, `kv pozitii pe secunda x100 (verificarea dupa placa)`, `kv simboluri pe secunda x100 cu verificare …`.
     `kronos --gpu --verificare-nucleu` = verificarea veche între simboluri. Modelul de control I14 rămâne pe motorul de referință.
+    **P6-107 (C-154, cyber-gpu `4925469` = C-147 punctul 7): „dieta driverului”**, doar pentru `kronos --gpu` și doar în testul
+    obișnuit al ciclului (`gpu_tur::DIET_IN_CYCLE`, pus de `ciclu::board_test`; în build-ul de test `gpu dieta-sim on|off`): (1) pushbuffer-ul
+    se scrie prin umbră (`kronos_fast::ShadowedMemory` în `gpu_i11::run_records_with`) — doar cuvintele schimbate de la simbolul de
+    dinainte; umbra se uită la orice eroare și la orice `TokenIo::write`; (2) înregistrările nu se mai zerorizează (doar la prima trimitere
+    a generării). Nimic nou trimis la placă. Rânduri noi (cu sau fără dietă): `kt dieta (0/1)`, `kt cuvinte VRAM pe simbol (median)`,
+    `kt median citirea logit-urilor (us)`, `kt median argmax (us)`, `kt abaterea maxima … (f32, biti)`, `kt amprenta logit-urilor …`;
+    raportul ciclului are blocul „viteza fata de os-322”. Test: `kronos-gpu-dieta` + `tools/after-kronos-gpu-dieta.sh` (același text cu
+    și fără dietă: aceeași amprentă, aceleași 43 de sonerii, mai puține cuvinte VRAM cu dieta).
     Test: `kronos-gpu` (aceleași 43 sonerii) + `kronos-gpu-strica` (`--strica-verificarea 6`: refuzul exact la poziția 6).
     **`kronos --gpu` (P6-62 pas 3):** shell-ul întreabă `DA` (ca la `gpu lant`), apoi `/bin/kronos` cere prin apelul 43 lanțul întreg;
     la `i14-simbol`, după ce modelul de control a trecut, rulează cererea (modelul dat, textul + n simboluri greedy, fiecare simbol judecat

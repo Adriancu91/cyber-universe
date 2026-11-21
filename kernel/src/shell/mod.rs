@@ -728,6 +728,24 @@ fn gpu(args: &[&str]) {
             }
         }
         Some("recupereaza") => recupereaza(&args[1..]),
+        Some("dieta-sim") => {
+            // P6-107 (C-154): test build only: the driver's diet for the next `kronos --gpu-sim` (in the stick's system
+            // only the cycle turns it on, around its ordinary test).
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::DIET_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu dieta-sim: pornita (SIMULARE: pushbuffer prin umbra, inregistrari nezerorizate)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::DIET_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu dieta-sim: oprita\n");
+                }
+                _ => out!("folosire: gpu dieta-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu dieta-sim: exista doar in build-ul de test (pe stick dieta o porneste doar ciclul)\n");
+        }
         Some("stare") => {
             // P6-105 (C-152 point 5): the last dashboard read at the end of a chain; the board is not touched.
             if let Some(bad) = args[1..].first() {

@@ -131,10 +131,67 @@ pub(super) fn run_records<V: Mmio + ?Sized, K: Clock + ?Sized>(
     sys: &[SysMapping],
     doorbell: &mut Bell<'_, V>,
 ) -> GpuResult<Result<Vec<u8>, u32>> {
+    run_records_with(vbar, clock, journal, st, l, permit, words, rec, n_rec, last_payload, maps, sys, doorbell, None)
+}
+
+/// [`run_records`] with the pushbuffer optionally written through a shadow (P6-107, C-154: the driver's diet, cyber-gpu
+/// C-147 point 7): only the pushbuffer words that changed since the last submission through the same shadow are written
+/// (and read back). The shadow is valid only if EVERY write into the pushbuffer area goes through it: the caller forgets
+/// it before any other submission on this channel; here it is forgotten after any error (writing, the doorbell, the
+/// wait, a record that never came).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn run_records_with<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    words: &[u32],
+    rec: Mapping,
+    n_rec: u64,
+    last_payload: u32,
+    maps: &[Mapping],
+    sys: &[SysMapping],
+    doorbell: &mut Bell<'_, V>,
+    mut push_shadow: Option<&mut nvidia_ga104::kronos_fast::WriteShadow>,
+) -> GpuResult<Result<Vec<u8>, u32>> {
+    let r = run_records_inner(vbar, clock, journal, st, l, permit, words, rec, n_rec, last_payload, maps, sys, doorbell, push_shadow.as_deref_mut());
+    if !matches!(r, Ok(Ok(_))) {
+        if let Some(sh) = push_shadow {
+            sh.forget();
+        }
+    }
+    r
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_records_inner<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    words: &[u32],
+    rec: Mapping,
+    n_rec: u64,
+    last_payload: u32,
+    maps: &[Mapping],
+    sys: &[SysMapping],
+    doorbell: &mut Bell<'_, V>,
+    push_shadow: Option<&mut nvidia_ga104::kronos_fast::WriteShadow>,
+) -> GpuResult<Result<Vec<u8>, u32>> {
     let w = st.space.as_ref().map(|(_, w)| w.clone()).ok_or(GpuError::InvalidArgument("I11: lipseste canalul de lucru"))?;
     let last_va = rec.va + RECORD * (n_rec - 1);
     let last_pa = rec.pa + RECORD * (n_rec - 1);
-    let bell = l.wq.submit_fenced(st.mem.writer_mut(), words, last_va, u64::from(last_payload))?;
+    let bell = match push_shadow {
+        Some(sh) => {
+            let mut m = nvidia_ga104::kronos_fast::ShadowedMemory::new(st.mem.writer_mut(), sh);
+            l.wq.submit_fenced(&mut m, words, last_va, u64::from(last_payload))?
+        }
+        None => l.wq.submit_fenced(st.mem.writer_mut(), words, last_va, u64::from(last_payload))?,
+    };
     if bell.bar0_offset != DOORBELL || bell.value != w.doorbell_token {
         return Err(GpuError::InvalidArgument("I11: soneria nu e cea documentata sau jetonul difera"));
     }

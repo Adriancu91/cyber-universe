@@ -43,7 +43,7 @@ use nvidia_ga104::transfer;
 
 use super::gpu_golden::GpuState;
 use super::gpu_i10::{put_bytes, Launched, WAIT_US};
-use super::gpu_i11::{arena_pages, f32_bytes, map_vram, ram_read, ram_write, run_records, Bell, I11_BOARD_BYTES, PAGE};
+use super::gpu_i11::{arena_pages, f32_bytes, map_vram, ram_read, ram_write, run_records, run_records_with, Bell, I11_BOARD_BYTES, PAGE};
 
 /// Where I14 looks for the control model on the board's stick, and on the test disk in SIMULATION.
 pub(super) const MIC_BOARD: &str = "/usb/kronos/mic_q8_0.kgr";
@@ -105,6 +105,15 @@ const OS_CHECK_WAIT_US: u64 = 60_000_000;
 
 /// P6-97 (C-146): whether the board rewrote any word of the launch slots (read back after the text; 0 = the shadow held).
 const KT_SHADOW: &str = "kt umbra lansarilor: cuvinte schimbate de placa in sloturi (0 = umbra corecta)";
+/// P6-107 (C-154, cyber-gpu C-147 point 7): the driver's diet and what it saves (`kronos --gpu` only).
+const KT_DIET: &str = "kt dieta (0/1)";
+const KT_VRAM_WORDS: &str = "kt cuvinte VRAM pe simbol (median)";
+const KT_READ: &str = "kt median citirea logit-urilor (us)";
+const KT_ARGMAX: &str = "kt median argmax (us)";
+/// P6-107: the logits compared bit for bit between two runs (os-322 had neither row: its worst deviation was printed,
+/// 1.6212463e-5 = 0x37880000, so that one is compared).
+const KT_WORST_BITS: &str = "kt abaterea maxima a logit-urilor (f32, biti)";
+const KT_PRINT: &str = "kt amprenta logit-urilor (FNV-1a, toate pozitiile)";
 /// P6-97 (C-145): the notes the OS repeats with the routine writes of a generation (the permit's reason, the doorbell's
 /// note) — exactly the texts of `gpu_tur.rs`.
 const GEN_NOTES: [&str; 2] = ["C-55 gpu lant: fereastra cu Adrian (P6-42)", "soneria canalului de lucru (I10): scriere fara recitire"];
@@ -437,6 +446,37 @@ struct RunOut {
     prof_err: Option<String>,
     /// P6-98 (C-147 stage 0 (d), `kronos --gpu` only): what the VRAM → VRAM copy needs after the texts.
     copy: Option<CopyCtx>,
+    /// P6-107 (C-154): the diet's rows (`kronos --gpu` only).
+    diet: Option<DietOut>,
+}
+
+/// P6-107 (C-154): per position of the last text: the VRAM words the driver wrote, the logits read and the argmax
+/// (us, OS clock); whether the diet was on; the fingerprint of every logit of the text.
+struct DietOut {
+    on: bool,
+    words: Vec<u64>,
+    read_us: Vec<u64>,
+    argmax_us: Vec<u64>,
+    print: u32,
+}
+
+/// P6-107: FNV-1a (32 bits) over the logits' bits, in order (the fingerprint compared between two runs).
+fn fnv1a(mut h: u32, logits: &[f32]) -> u32 {
+    for v in logits {
+        for b in v.to_bits().to_le_bytes() {
+            h ^= u32::from(b);
+            h = h.wrapping_mul(0x0100_0193);
+        }
+    }
+    h
+}
+const FNV_START: u32 = 0x811c_9dc5;
+
+/// The median of `v` (`None` when empty).
+fn median_of(v: &[u64]) -> Option<u64> {
+    let mut s = v.to_vec();
+    s.sort_unstable();
+    s.get(s.len() / 2).copied()
 }
 
 /// P6-98 (C-147 stage 0 (d)): the pieces of a `kronos --gpu` run the VRAM → VRAM copy reuses (the weights as source,
@@ -599,6 +639,9 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let label = if permit.is_some() { "placa" } else { "SIMULARE" };
     let fast = runs.iter().all(|r| r.argmax.is_none());
     let mut split_all: Vec<kf::TokenSplit> = Vec::new();
+    // P6-107 (C-154): the diet only in the cycle's ordinary test (set by `ciclu::board_test`), only for `kronos --gpu`.
+    let diet = fast && super::gpu_tur::DIET_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    let push_shadow = if diet { Some(kf::WriteShadow::new(l.push.pa, l.push.size)?) } else { None };
     let mut runner = BoardRunner {
         p,
         vbar: &mut *vbar,
@@ -638,6 +681,13 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         launch_ns: Vec::new(),
         prof: kp::KindProfile::new(),
         prof_err: None,
+        diet,
+        push_shadow,
+        rec_zeroed: false,
+        diet_words: Vec::new(),
+        read_us: Vec::new(),
+        argmax_us: Vec::new(),
+        print: FNV_START,
     };
     // 3. C-139: the ladder, once, on the first token of the first control text, before the texts.
     if way.is_none() {
@@ -673,6 +723,10 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
             let mut generation = Generation::new(plan);
             runner.argmaxes.clear();
             runner.split.clear();
+            runner.diet_words.clear();
+            runner.read_us.clear();
+            runner.argmax_us.clear();
+            runner.print = FNV_START;
             runner.kept = run.os_check.then(Vec::new);
             let mut check = CpuCheck { w: &weights, caches: Caches::new(m.layers.len(), e), us: Vec::new() };
             // P6-99 (C-148 point 2): `kronos --gpu` from `/bin/kronos`: the board first (`run_check_after`), then every
@@ -796,6 +850,13 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let shadow_changed = runner.shadow_check()?;
     let prof = core::mem::take(&mut runner.prof);
     let prof_err = runner.prof_err.take();
+    let diet_out = fast.then(|| DietOut {
+        on: runner.diet,
+        words: core::mem::take(&mut runner.diet_words),
+        read_us: core::mem::take(&mut runner.read_us),
+        argmax_us: core::mem::take(&mut runner.argmax_us),
+        print: runner.print,
+    });
     drop(runner);
     medians.sort_unstable();
     let median = medians.get(medians.len() / 2).copied().unwrap_or(0);
@@ -805,7 +866,7 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     src.truncate(blob.scratch as usize);
     let copy = fast.then(|| CopyCtx { src_va: vblob.va, src, launches, rec, maps: tmaps, sys: host_logits, copy_va });
     let os_check = runs.iter().any(|r| r.os_check);
-    Ok(RunOut { all, worst, median, from_vram, speed, cpu_us, os_check, split: split_all, shadow_changed, prof, prof_err, copy })
+    Ok(RunOut { all, worst, median, from_vram, speed, cpu_us, os_check, split: split_all, shadow_changed, prof, prof_err, copy, diet: diet_out })
 }
 
 /// One position on the board for `kronos_gen::Generation`, and the 4 operations of cyber-gpu's diagnosis
@@ -866,6 +927,18 @@ struct BoardRunner<'r, 'b, V: Mmio + ?Sized, K: Clock + ?Sized> {
     launch_ns: Vec<u64>,
     prof: kp::KindProfile,
     prof_err: Option<String>,
+    /// P6-107 (C-154, cyber-gpu C-147 point 7): the driver's diet (only in the cycle's ordinary test): the pushbuffer
+    /// written through `push_shadow` and the records not zeroed (except at the first submission of the run).
+    diet: bool,
+    /// The pushbuffer's shadow; forgotten after any error and after any other write through `TokenIo::write`.
+    push_shadow: Option<kf::WriteShadow>,
+    rec_zeroed: bool,
+    /// Per position of the current text: VRAM words written by the driver, the logits read, the argmax (us).
+    diet_words: Vec<u64>,
+    read_us: Vec<u64>,
+    argmax_us: Vec<u64>,
+    /// FNV-1a of every logit of the current text.
+    print: u32,
 }
 
 impl<V: Mmio + ?Sized, K: Clock + ?Sized> BoardRunner<'_, '_, V, K> {
@@ -967,7 +1040,12 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> kd::TokenIo for BoardRunner<'_, '_, V,
             }
             qmds.push(cb_va + 256);
         }
-        put_bytes(w, self.rec.pa, &alloc::vec![0u8; 16 * (n + 1)])?;
+        // P6-107 (C-154): with the diet the records are zeroed only once per run (a guard against what an earlier chain
+        // of this power-on left there); after that every submission's payloads are new (`first` grows by STRIDE), the
+        // wait asks for the new last payload and `analyze_sequence` checks every record (cyber-gpu T141b).
+        if !self.diet || !self.rec_zeroed {
+            put_bytes(w, self.rec.pa, &alloc::vec![0u8; 16 * (n + 1)])?;
+        }
         let first = TOKEN_FIRST + STRIDE * *self.subs;
         let mut words = alloc::vec![0u32; kd::words(mode, n)];
         let mut pb = PushBuf::new(&mut words);
@@ -975,9 +1053,21 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> kd::TokenIo for BoardRunner<'_, '_, V,
         let nw = pb.len();
         let last = first + n as u32;
         let sys = [self.host_logits.clone()];
-        let b = match run_records(
-            self.vbar, self.clock, self.journal, self.st, self.l, self.permit, &words[..nw], self.rec, n as u64 + 1, last, self.tmaps, &sys,
+        let b = match run_records_with(
+            self.vbar,
+            self.clock,
+            self.journal,
+            self.st,
+            self.l,
+            self.permit,
+            &words[..nw],
+            self.rec,
+            n as u64 + 1,
+            last,
+            self.tmaps,
+            &sys,
             self.doorbell,
+            self.push_shadow.as_mut(),
         )? {
             Ok(b) => b,
             Err(got) => {
@@ -989,6 +1079,8 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> kd::TokenIo for BoardRunner<'_, '_, V,
             }
         };
         *self.subs += 1;
+        // The records were zeroed by this submission (with or without the diet).
+        self.rec_zeroed = true;
         let t = transfer::analyze_sequence(&b, n, first)?;
         if self.fast {
             self.launch_ns.extend_from_slice(&t);
@@ -1021,6 +1113,10 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> kd::TokenIo for BoardRunner<'_, '_, V,
         if let Some(sh) = self.shadow.as_mut() {
             sh.forget();
         }
+        // P6-107: the pushbuffer's shadow too (a write outside it may precede a submission that does not go through it).
+        if let Some(sh) = self.push_shadow.as_mut() {
+            sh.forget();
+        }
         let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
         put_bytes(self.st.mem.writer_mut(), pa, &bytes)
     }
@@ -1045,8 +1141,11 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
         };
         let host_t0 = crate::time::since_boot_us();
         let journal_t0 = super::gpu_i6::JOURNAL_US.load(core::sync::atomic::Ordering::Relaxed);
+        let words0 = self.st.vram_words;
         kd::send_token(self, &weights, vas, tok, pos, way, &extra)?;
         *self.tokens_done += 1;
+        let words = self.st.vram_words.saturating_sub(words0);
+        let read_t0 = crate::time::since_boot_us();
         let logits: Vec<f32> = if self.from_vram {
             let got = kd::TokenIo::read(self, &[(vas.logits, m.vocab)])?;
             got.into_iter().next().unwrap_or_default().into_iter().map(f32::from_bits).collect()
@@ -1056,8 +1155,21 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
                 .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                 .collect()
         };
+        let read_t1 = crate::time::since_boot_us();
         self.argmaxes.truncate(pos);
         self.argmaxes.push(cm::argmax(&logits).unwrap_or(usize::MAX));
+        if self.fast {
+            // P6-107 (C-154 point 2): measurement only (nothing changed): the logits read from RAM, the argmax.
+            let argmax_t1 = crate::time::since_boot_us();
+            let us = |a: Option<u64>, b: Option<u64>| a.zip(b).map(|(a, b)| b.saturating_sub(a)).unwrap_or(0);
+            self.diet_words.truncate(pos);
+            self.diet_words.push(words);
+            self.read_us.truncate(pos);
+            self.read_us.push(us(read_t0, read_t1));
+            self.argmax_us.truncate(pos);
+            self.argmax_us.push(us(read_t1, argmax_t1));
+            self.print = fnv1a(self.print, &logits);
+        }
         self.last_logits = logits.clone();
         if let Some(k) = self.kept.as_mut() {
             k.truncate(pos);
@@ -1358,6 +1470,33 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
         ));
     }
     lines.extend(split.lines(label).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
+    // P6-107 (C-154 points 2-3): the diet's rows (with or without it, so two runs compare).
+    if let Some(d) = &out.diet {
+        let words = median_of(&d.words);
+        let (read, argmax) = (median_of(&d.read_us), median_of(&d.argmax_us));
+        journal.push(Event::Value { what: KT_DIET, value: u32::from(d.on) });
+        journal.push(Event::Value { what: KT_VRAM_WORDS, value: row(words) });
+        journal.push(Event::Value { what: KT_READ, value: row(read) });
+        journal.push(Event::Value { what: KT_ARGMAX, value: row(argmax) });
+        journal.push(Event::Value { what: KT_WORST_BITS, value: worst.to_bits() });
+        journal.push(Event::Value { what: KT_PRINT, value: d.print });
+        let n = |v: Option<u64>| v.map_or(String::from("?"), |v| format!("{}", v));
+        lines.push(format!(
+            "{}: kronos --gpu: dieta driverului: {}; cuvinte VRAM scrise pe simbol (median) {}; citirea logit-urilor {} us, argmax {} us (median)",
+            p,
+            if d.on { "PORNITA (pushbuffer prin umbra, inregistrari nezerorizate)" } else { "oprita" },
+            n(words),
+            n(read),
+            n(argmax)
+        ));
+        lines.push(format!(
+            "{}: kronos --gpu: logit-urile: amprenta {:#010x} ({} pozitii), abaterea maxima {:#010x} (biti f32)",
+            p,
+            d.print,
+            d.words.len(),
+            worst.to_bits()
+        ));
+    }
     // P6-98 (C-147 stage 0 (a)): the time per kind of launch (`kp …` rows + the table in the output / cycle report).
     out.prof.journal(journal);
     lines.extend(kind_lines(&out.prof, label).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));

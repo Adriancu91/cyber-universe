@@ -368,6 +368,85 @@ fn speed_comparison() -> String {
     )
 }
 
+/// P6-107 (C-154 point 3): the os-322 figures (20 Nov 15:31, `gpu-jurnal-017.txt` + `ciclu-auto-20261120-1531.txt`):
+/// kt driver 3 081 us, kt token without the check 5 802 us, 94.84 tokens/s with the driver (`kv … (procesor)`), the
+/// worst deviation 1.6212463e-5 (f32 bits 0x37880000) and the 16 tokens.
+const OS322_DRIVER_US: u32 = 3_081;
+const OS322_TOKEN_US: u32 = 5_802;
+const OS322_HOST_X100: u32 = 9_484;
+const OS322_WORST_BITS: u32 = 0x3788_0000;
+const OS322_TOKENS: &str = "[44, 10, 73, 2524, 10766, 1438, 1505, 1428, 1765, 99, 1547, 3644, 44, 10, 15879, 1505]";
+
+/// P6-107: the block "viteza fata de os-322" from the gpu journal of this test and the cycle's text so far.
+fn diet_comparison(text: &str) -> String {
+    let Some(path) = crate::drivers::gpu_i6::last_journal() else {
+        return String::from("\n-- viteza fata de os-322: fara gpu-jurnal\n");
+    };
+    let now = String::from_utf8_lossy(&fs::read_all(&path).unwrap_or_default()).into_owned();
+    diet_block(&path, &now, text)
+}
+
+/// The last value of the journal row `name` (`None`: missing, or u32::MAX = not measured).
+fn journal_value(journal: &str, name: &str) -> Option<u32> {
+    journal
+        .lines()
+        .filter_map(nvidia_ga104::kronos_perf::value_row)
+        .filter(|(n, _)| *n == name)
+        .map(|(_, v)| v)
+        .last()
+        .filter(|&v| v != u32::MAX)
+}
+
+fn diet_block(path: &str, journal: &str, text: &str) -> String {
+    let v = |n: &str| journal_value(journal, n);
+    let us = |what: &str, before: u32, now: Option<u32>| match now {
+        Some(a) => format!("{}: os-322 {} -> acum {} ({} la mie)\n", what, before, a, u64::from(a) * 1000 / u64::from(before.max(1))),
+        None => format!("{}: necitit (randul lipseste din jurnal)\n", what),
+    };
+    let x100 = |x: u32| format!("{}.{:02}", x / 100, x % 100);
+    let host = match v("kv simboluri pe secunda x100 (procesor)") {
+        Some(a) => format!("simboluri/s cu driverul: os-322 {} -> acum {}\n", x100(OS322_HOST_X100), x100(a)),
+        None => String::from("simboluri/s cu driverul: necitit\n"),
+    };
+    let diet = match v("kt dieta (0/1)") {
+        Some(1) => "pornita",
+        Some(_) => "OPRITA (testul nu a folosit dieta)",
+        None => "necitita (randul lipseste)",
+    };
+    let words = v("kt cuvinte VRAM pe simbol (median)").map_or(String::from("?"), |w| format!("{}", w));
+    let read = v("kt median citirea logit-urilor (us)").map_or(String::from("?"), |w| format!("{}", w));
+    let argmax = v("kt median argmax (us)").map_or(String::from("?"), |w| format!("{}", w));
+    let tokens = text.lines().find(|l| l.contains("kronos: simboluri generate: ")).and_then(|l| l.split("simboluri generate: ").nth(1)).map(str::trim);
+    let same_tokens = tokens == Some(OS322_TOKENS);
+    let bits = match v("kt abaterea maxima a logit-urilor (f32, biti)") {
+        Some(b) if b == OS322_WORST_BITS && same_tokens => format!(
+            "DA, dupa cat se poate vedea: abaterea maxima fata de procesor {:#010x} = exact cea din os-322 si aceleasi 16 simboluri (os-322 nu a scris amprenta tuturor logit-urilor)",
+            b
+        ),
+        Some(b) => format!(
+            "NU: abaterea maxima {:#010x} (os-322 {:#010x}), simbolurile {} -> de vazut de Cyber-GPU",
+            b,
+            OS322_WORST_BITS,
+            if same_tokens { "aceleasi" } else { "DIFERITE" }
+        ),
+        None => String::from("necitit (randul lipseste din jurnal)"),
+    };
+    let print = v("kt amprenta logit-urilor (FNV-1a, toate pozitiile)").map_or(String::from("?"), |w| format!("{:#010x}", w));
+    format!(
+        "\n-- viteza fata de os-322 (dieta driverului {}; jurnalul {})\n{}{}{}cuvinte VRAM pe simbol (median): {}; citirea logit-urilor {} us, argmax {} us (median)\nlogit-urile identice bit cu bit cu os-322? {}\namprenta logit-urilor de acum (pentru testele urmatoare): {}\n",
+        diet,
+        path,
+        us("driverul pe simbol (us, kt median driver)", OS322_DRIVER_US, v("kt median driver (us)")),
+        us("simbolul fara verificare (us, kt)", OS322_TOKEN_US, v("kt median simbol fara verificare (us)")),
+        host,
+        words,
+        read,
+        argmax,
+        bits,
+        print
+    )
+}
+
 /// Suffix of the I9 text from `board_command` when the FLR trial is asked (`test-placa … --flr-proba`).
 pub const FLR_PROBA: &str = " --flr-proba";
 
@@ -416,6 +495,8 @@ pub fn board_test(i9: &str) -> (String, String) {
     }
     // P6-106 (C-148 completion 1): only the cycle's test asks the board for its maximum speed (not the FLR trial's chain).
     crate::drivers::gpu_tur::BOOST_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+    // P6-107 (C-154): the driver's diet, likewise only for the cycle's ordinary test.
+    crate::drivers::gpu_tur::DIET_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
     // P6-105: the dashboard only when the list asked for it, and only for this chain (not the FLR trial's second one).
     crate::drivers::gpu_tur::RUSD_ARMED.store(dashboard, core::sync::atomic::Ordering::SeqCst);
     if dashboard {
@@ -451,8 +532,10 @@ pub fn board_test(i9: &str) -> (String, String) {
         chain.iter().rev().find(|l| l.contains("rezultat lant:")).cloned().unwrap_or_else(|| String::from("(lantul nu a dat un rezultat)"))
     };
     crate::drivers::gpu_tur::BOOST_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::DIET_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::RUSD_ARMED.store(false, core::sync::atomic::Ordering::SeqCst);
     text.push_str(&speed_comparison());
+    text.push_str(&diet_comparison(&text));
     if !flr_trial {
         return (text, result);
     }
@@ -570,6 +653,20 @@ pub fn self_test() {
     let c = speed_comparison();
     crate::drivers::gpu_i6::set_last_journal(None);
     assert!(c.contains("os-313 22968 -> acum 11484 (500 la mie)") && c.contains("os-313 9165 -> acum 183300 (20000 la mie)") && c.contains("ln1 pe simbol (us, legat de ceasuri): necitit"), "test: comparatia cu os-313: {}", c);
+    // P6-107 (C-154): the block "viteza fata de os-322": the diet on, the driver halved, the same worst deviation and
+    // tokens = "DA"; another worst deviation = "NU"; a journal without the rows = "necitit".
+    let j = "x valoare kt median driver (us) = 0x00000604\nx valoare kt median simbol fara verificare (us) = 0x00000fa0\nx valoare kv simboluri pe secunda x100 (procesor) = 0x00006180\nx valoare kt dieta (0/1) = 0x00000001\nx valoare kt cuvinte VRAM pe simbol (median) = 0x000000d2\nx valoare kt median citirea logit-urilor (us) = 0x00000190\nx valoare kt median argmax (us) = 0x00000014\nx valoare kt abaterea maxima a logit-urilor (f32, biti) = 0x37880000\nx valoare kt amprenta logit-urilor (FNV-1a, toate pozitiile) = 0x1234abcd\n";
+    let t = format!("kronos: simboluri generate: {}\n", OS322_TOKENS);
+    let d = diet_block("/x", j, &t);
+    assert!(d.contains("dieta driverului pornita") && d.contains("os-322 3081 -> acum 1540 (499 la mie)") && d.contains("os-322 5802 -> acum 4000 (689 la mie)"), "test: dieta: {}", d);
+    assert!(d.contains("cu driverul: os-322 94.84 -> acum 249.60") && d.contains("(median): 210;") && d.contains("400 us, argmax 20 us"), "test: dieta: {}", d);
+    assert!(d.contains("bit cu bit cu os-322? DA") && d.contains("0x1234abcd"), "test: dieta: {}", d);
+    let d = diet_block("/x", &j.replace("0x37880000", "0x37880001"), &t);
+    assert!(d.contains("bit cu bit cu os-322? NU: abaterea maxima 0x37880001") && d.contains("simbolurile aceleasi"), "test: dieta NU: {}", d);
+    let d = diet_block("/x", &j.replace("0x37880000", "0x37880000"), "kronos: simboluri generate: [1]\n");
+    assert!(d.contains("simbolurile DIFERITE"), "test: dieta simboluri: {}", d);
+    let d = diet_block("/x", "", "");
+    assert!(d.contains("dieta driverului necitita") && d.contains("driverul pe simbol (us, kt median driver): necitit") && d.contains("os-322? necitit"), "test: dieta gol: {}", d);
     // P6-101: the FLR trial form.
     assert!(board_command("test-placa --flr-proba") == Some(Ok(String::from("c135 --flr-proba"))));
     assert!(board_command("test-placa --i9 c133 --flr-proba") == Some(Ok(String::from("c133 --flr-proba"))));

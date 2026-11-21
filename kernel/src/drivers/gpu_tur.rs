@@ -226,6 +226,11 @@ pub fn variants_list() -> Vec<String> {
 /// its maximum speed (C-147 point 4). Off everywhere else: `gpu lant` and `kronos --gpu` by hand behave as before.
 pub static BOOST_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-107 (C-154, cyber-gpu C-147 point 7): the driver's diet (the pushbuffer through a shadow, the records not zeroed)
+/// for `kronos --gpu`. Set only by the cycle (`ciclu::board_test`) around its ordinary test (not the FLR trial's second
+/// chain) and, in the test build, by `gpu dieta-sim on`. Off everywhere else: `kronos --gpu` by hand is as in os-323.
+pub static DIET_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-101: set only for the FLR trial's second chain (`test-placa --flr-proba`, `gpu lant --flr-proba`); taken by
 /// `chain`. Without it no chain reads WPR2 for the reset nor writes anything for it.
 pub static FLR_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
@@ -413,7 +418,11 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
     #[cfg(feature = "gpu-scrie")]
     let rusd_wanted = RUSD_ARMED.load(core::sync::atomic::Ordering::SeqCst);
     let mut refused = 0usize;
-    let report = run_chain_ready(WINDOW_CHAIN_C83, READY_IN_OS, writes_allowed, &mut j, |s, j| match s.id {
+    // P6-107 (C-158 note of 21 Nov 08:45): which steps had writes refused by the OS fences (the total alone did not say).
+    let mut refused_by_step: Vec<(&'static str, usize)> = Vec::new();
+    let report = run_chain_ready(WINDOW_CHAIN_C83, READY_IN_OS, writes_allowed, &mut j, |s, j| {
+        let before = refused;
+        let r = match s.id {
         "pregatire-i6" => {
             let mut win = ReadOnlyBar0Window::with_len(bar0, nvidia_ga104::fuse::FUSE_WINDOW);
             let r = gpu_i6::prepare(p, &mut win, j, &mut clock, &mut lines);
@@ -645,6 +654,11 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
         }
         // Writing steps in a build that cannot write never get here (the chain stops before them).
         _ => Err(GpuError::NotPermitted(NOT_IN_OS)),
+        };
+        if refused > before {
+            refused_by_step.push((s.id, refused - before));
+        }
+        r
     });
     // P6-106: the chain stopped after the boost was accepted: clear it while the channel may still answer (else it
     // ends by itself after 600 s).
@@ -661,6 +675,14 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
     report_lines(p, &report, &mut lines);
     if refused > 0 {
         lines.push(format!("{}: adaptoarele OS au REFUZAT {} scrieri cerute in afara gardului", p, refused));
+        let by: Vec<String> = refused_by_step.iter().map(|(id, n)| format!("{} {}", id, n)).collect();
+        let after = refused - refused_by_step.iter().map(|(_, n)| n).sum::<usize>();
+        lines.push(format!(
+            "{}: scrierile refuzate pe pasi: {}{}",
+            p,
+            if by.is_empty() { String::from("-") } else { by.join(", ") },
+            if after > 0 { format!("; in afara pasilor (stergerea cererii de viteza dupa o oprire) {}", after) } else { String::new() }
+        ));
     }
     gpu_i6::close_and_check(p, false, &mut lines);
     lines.push(format!(
