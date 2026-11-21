@@ -43,7 +43,7 @@ use nvidia_ga104::transfer;
 
 use super::gpu_golden::GpuState;
 use super::gpu_i10::{put_bytes, Launched, WAIT_US};
-use super::gpu_i11::{arena_pages, f32_bytes, map_vram, ram_read, ram_write, run_records, run_records_with, Bell, I11_BOARD_BYTES, PAGE};
+use super::gpu_i11::{arena_pages, f32_bytes, map_vram, ram_read, ram_write, run_records, Bell, I11_BOARD_BYTES, PAGE};
 
 /// Where I14 looks for the control model on the board's stick, and on the test disk in SIMULATION.
 pub(super) const MIC_BOARD: &str = "/usb/kronos/mic_q8_0.kgr";
@@ -476,6 +476,8 @@ struct RunOut {
 /// P6-107 (C-154): per position of the last text: the VRAM words the driver wrote, the logits read and the argmax
 /// (us, OS clock); whether the diet was on; the fingerprint of every logit of the text.
 struct DietOut {
+    /// P6-119: the second diet's per-position figures (only when it was on).
+    diet2: Option<nvidia_ga104::kronos_diet2::Diet2Stats>,
     on: bool,
     words: Vec<u64>,
     read_us: Vec<u64>,
@@ -683,6 +685,8 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // P6-107 (C-154): the diet only in the cycle's ordinary test (set by `ciclu::board_test`), only for `kronos --gpu`.
     let diet = fast && super::gpu_tur::DIET_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     let push_shadow = if diet { Some(kf::WriteShadow::new(l.push.pa, l.push.size)?) } else { None };
+    // P6-119 (C-157 point 3): the second diet only when the cycle's list asks for it, only for `kronos --gpu`.
+    let diet2 = fast && super::gpu_tur::DIET2_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     let mut runner = BoardRunner {
         p,
         vbar: &mut *vbar,
@@ -730,6 +734,10 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         read_us: Vec::new(),
         argmax_us: Vec::new(),
         print: FNV_START,
+        diet2,
+        wait_plan: nvidia_ga104::kronos_diet2::WaitPlan::new(),
+        d2_words: Vec::new(),
+        d2_polls: Vec::new(),
     };
     // 3. C-139: the ladder, once, on the first token of the first control text, before the texts.
     if way.is_none() {
@@ -816,6 +824,8 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
             runner.read_us.clear();
             runner.argmax_us.clear();
             runner.print = FNV_START;
+            runner.d2_words.clear();
+            runner.d2_polls.clear();
             runner.kept = (run.os_check || compare).then(Vec::new);
             let mut check = CpuCheck { w: &weights, caches: Caches::new(m.layers.len(), e), us: Vec::new() };
             // P6-99 (C-148 point 2): `kronos --gpu` from `/bin/kronos`: the board first (`run_check_after`), then every
@@ -960,6 +970,10 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let prof = core::mem::take(&mut runner.prof);
     let prof_err = runner.prof_err.take();
     let diet_out = fast.then(|| DietOut {
+        diet2: runner.diet2.then(|| nvidia_ga104::kronos_diet2::Diet2Stats {
+            record_words: core::mem::take(&mut runner.d2_words),
+            polls: core::mem::take(&mut runner.d2_polls),
+        }),
         on: runner.diet,
         words: core::mem::take(&mut runner.diet_words),
         read_us: core::mem::take(&mut runner.read_us),
@@ -1158,6 +1172,13 @@ struct BoardRunner<'r, 'b, V: Mmio + ?Sized, K: Clock + ?Sized> {
     argmax_us: Vec<u64>,
     /// FNV-1a of every logit of the current text.
     print: u32,
+    /// P6-119 (C-157 point 3, cyber-gpu `367edf4`): the second diet (only in the cycle with `test-placa … --dieta2`):
+    /// two records read on most positions, the planned wait, the fingerprint after the token's clock, the argmax on bits.
+    diet2: bool,
+    wait_plan: nvidia_ga104::kronos_diet2::WaitPlan,
+    /// Per position of the current text: record words read and reads of the wait (all its submissions).
+    d2_words: Vec<u32>,
+    d2_polls: Vec<u32>,
 }
 
 impl<V: Mmio + ?Sized, K: Clock + ?Sized> BoardRunner<'_, '_, V, K> {
@@ -1272,7 +1293,12 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> kd::TokenIo for BoardRunner<'_, '_, V,
         let nw = pb.len();
         let last = first + n as u32;
         let sys = [self.host_logits.clone()];
-        let b = match run_records_with(
+        // P6-119 (C-157 point 3 A+B): with the second diet, the planned wait and, except on the positions that feed the
+        // `kp` profile, only the first and the last record.
+        let all = !self.diet2 || nvidia_ga104::kronos_diet2::RecordPlan::DIET.reads_all(self.pos);
+        let mut polls = 0u32;
+        let d2 = self.diet2.then_some(super::gpu_i11::Diet2Wait { plan: &self.wait_plan, all, polls: &mut polls });
+        let b = match super::gpu_i11::run_records_d2(
             self.vbar,
             self.clock,
             self.journal,
@@ -1287,9 +1313,15 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> kd::TokenIo for BoardRunner<'_, '_, V,
             &sys,
             self.doorbell,
             self.push_shadow.as_mut(),
-        )? {
-            Ok(b) => b,
-            Err(got) => {
+            d2,
+        ) {
+            Ok(Ok(b)) => b,
+            Err(e) => {
+                self.wait_plan.forget();
+                return Err(e);
+            }
+            Ok(Err(got)) => {
+                self.wait_plan.forget();
                 self.lines.push(format!(
                     "{}: I14: \"{}\" pozitia {}: ultima inregistrare = {:#x} (asteptat {:#x}): placa nu a terminat",
                     self.p, self.name, self.pos, got, last
@@ -1300,12 +1332,25 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> kd::TokenIo for BoardRunner<'_, '_, V,
         *self.subs += 1;
         // The records were zeroed by this submission (with or without the diet).
         self.rec_zeroed = true;
-        let t = transfer::analyze_sequence(&b, n, first)?;
-        if self.fast {
-            self.launch_ns.extend_from_slice(&t);
+        let busy: u64 = if all {
+            let t = transfer::analyze_sequence(&b, n, first)?;
+            if self.fast {
+                self.launch_ns.extend_from_slice(&t);
+            }
+            t.iter().sum()
+        } else {
+            // P6-119 (C-157 point 3 A): the span from the two ends (the same number, cyber-gpu T147); no launch times.
+            nvidia_ga104::kronos_diet2::ends_span(&b[..16], &b[16 * n..16 * (n + 1)], n, first)?
+        };
+        if self.diet2 {
+            self.wait_plan.observe(busy / 1000);
+            let words = if all { 4 * (n as u32 + 1) } else { 8 };
+            if let (Some(w), Some(p)) = (self.d2_words.last_mut(), self.d2_polls.last_mut()) {
+                *w += words;
+                *p += polls;
+            }
         }
         let time = |k: usize| u64::from_le_bytes(b[16 * k + 8..16 * k + 16].try_into().unwrap_or([0; 8]));
-        let busy: u64 = t.iter().sum();
         self.timing = Some(match self.timing {
             None => (time(0), time(n), busy),
             Some((s, _, sum)) => (s, time(n), sum + busy),
@@ -1363,22 +1408,28 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
         let host_t0 = crate::time::since_boot_us();
         let journal_t0 = super::gpu_i6::JOURNAL_US.load(core::sync::atomic::Ordering::Relaxed);
         let words0 = self.st.vram_words;
+        if self.diet2 {
+            self.d2_words.truncate(pos);
+            self.d2_words.push(0);
+            self.d2_polls.truncate(pos);
+            self.d2_polls.push(0);
+        }
         kd::send_token_list(self, self.list, &weights, vas, tok, pos, way, &extra)?;
         *self.tokens_done += 1;
         let words = self.st.vram_words.saturating_sub(words0);
         let read_t0 = crate::time::since_boot_us();
-        let logits: Vec<f32> = if self.from_vram {
+        let bits: Vec<u32> = if self.from_vram {
             let got = kd::TokenIo::read(self, &[(vas.logits, m.vocab)])?;
-            got.into_iter().next().unwrap_or_default().into_iter().map(f32::from_bits).collect()
+            got.into_iter().next().unwrap_or_default()
         } else {
-            ram_read(&self.host_logits, 4 * m.vocab as u64)
-                .chunks(4)
-                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                .collect()
+            ram_read(&self.host_logits, 4 * m.vocab as u64).chunks(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
         };
+        let logits: Vec<f32> = bits.iter().map(|&b| f32::from_bits(b)).collect();
         let read_t1 = crate::time::since_boot_us();
         self.argmaxes.truncate(pos);
-        self.argmaxes.push(cm::argmax(&logits).unwrap_or(usize::MAX));
+        // P6-119 (C-157 point 3 D): with the second diet, the argmax on the bits (integer compares, the same choice).
+        let am = if self.diet2 { gpu_compute::model::argmax_bits(&bits) } else { cm::argmax(&logits) };
+        self.argmaxes.push(am.unwrap_or(usize::MAX));
         if self.fast {
             // P6-107 (C-154 point 2): measurement only (nothing changed): the logits read from RAM, the argmax.
             let argmax_t1 = crate::time::since_boot_us();
@@ -1389,7 +1440,10 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
             self.read_us.push(us(read_t0, read_t1));
             self.argmax_us.truncate(pos);
             self.argmax_us.push(us(read_t1, argmax_t1));
-            self.print = fnv1a(self.print, &logits);
+            // P6-119 (C-157 point 3 C): with the second diet the fingerprint is taken after the token's clock stops.
+            if !self.diet2 {
+                self.print = fnv1a(self.print, &logits);
+            }
         }
         self.last_logits = logits.clone();
         if let Some(k) = self.kept.as_mut() {
@@ -1410,12 +1464,18 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
                 // `Fused` and `FusedLn` (P6-114): the same 88 launches and kinds, only the LayerNorm program differs.
                 _ => kp::token_kinds_fused(m.layers.len(), embed, down),
             };
-            if let Err(e) = self.prof.add_token(&kinds, &self.launch_ns) {
+            // P6-119: a position of the second diet that read only the two ends has no launch times: left out, not guessed.
+            let skip = self.diet2 && self.launch_ns.is_empty();
+            let added = if skip { Ok(()) } else { self.prof.add_token(&kinds, &self.launch_ns) };
+            if let Err(e) = added {
                 self.prof_err.get_or_insert_with(|| format!("pozitia {}: {} ({} lansari, {} timpi)", pos, e, kinds.len(), self.launch_ns.len()));
             }
         }
         // P6-95: the OS clock from the first launch written to the logits read (without the CPU check, C-142 point 3).
         let host = host_t0.zip(crate::time::since_boot_us()).map(|(a, b)| b.saturating_sub(a));
+        if self.fast && self.diet2 {
+            self.print = fnv1a(self.print, &out.logits);
+        }
         let _ = self.speed.add_token(pos, &out, host); // a board clock that went back is counted by Generation itself
         if self.fast {
             // P6-97 (C-146): the split. The board's span is on the board's clock: never more than the OS's own span
@@ -1762,6 +1822,19 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
             d.print,
             d.words.len(),
             worst.to_bits()
+        ));
+    }
+    // P6-119 (C-157 point 3): the second diet's rows (only when it was on).
+    if let Some(d2) = out.diet.as_ref().and_then(|d| d.diet2.as_ref()) {
+        d2.journal(true, journal);
+        let rows = d2.rows(true);
+        lines.push(format!(
+            "{}: kronos --gpu: dieta 2: PORNITA (doua inregistrari citite pe {} din {} pozitii, asteptarea planificata, amprenta dupa ceas, argmax pe biti); cuvinte de inregistrari citite pe simbol (median) {}; citiri ale asteptarii pe simbol (median) {}",
+            p,
+            d2.record_words.iter().filter(|&&w| w == 8).count(),
+            d2.record_words.len(),
+            rows[1].1,
+            rows[2].1
         ));
     }
     // P6-98 (C-147 stage 0 (a)): the time per kind of launch (`kp …` rows + the table in the output / cycle report).

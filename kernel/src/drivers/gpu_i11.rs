@@ -154,9 +154,41 @@ pub(super) fn run_records_with<V: Mmio + ?Sized, K: Clock + ?Sized>(
     maps: &[Mapping],
     sys: &[SysMapping],
     doorbell: &mut Bell<'_, V>,
-    mut push_shadow: Option<&mut nvidia_ga104::kronos_fast::WriteShadow>,
+    push_shadow: Option<&mut nvidia_ga104::kronos_fast::WriteShadow>,
 ) -> GpuResult<Result<Vec<u8>, u32>> {
-    let r = run_records_inner(vbar, clock, journal, st, l, permit, words, rec, n_rec, last_payload, maps, sys, doorbell, push_shadow.as_deref_mut());
+    run_records_d2(vbar, clock, journal, st, l, permit, words, rec, n_rec, last_payload, maps, sys, doorbell, push_shadow, None)
+}
+
+/// P6-119 (C-157 point 3, cyber-gpu `367edf4`): the second diet's wait, for one token's submission. `plan` = the planned
+/// wait (`kronos_diet2::poll_planned`: sleep through the board's shortest recent time, then a read every few us);
+/// `all` = read every record (as today) or only the first and the last (the rest of the buffer stays zero); `polls` =
+/// the reads of the wait, written back.
+pub(super) struct Diet2Wait<'a> {
+    pub plan: &'a nvidia_ga104::kronos_diet2::WaitPlan,
+    pub all: bool,
+    pub polls: &'a mut u32,
+}
+
+/// [`run_records_with`] with the second diet's wait (`None` = exactly as [`run_records_with`]).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn run_records_d2<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    words: &[u32],
+    rec: Mapping,
+    n_rec: u64,
+    last_payload: u32,
+    maps: &[Mapping],
+    sys: &[SysMapping],
+    doorbell: &mut Bell<'_, V>,
+    mut push_shadow: Option<&mut nvidia_ga104::kronos_fast::WriteShadow>,
+    d2: Option<Diet2Wait<'_>>,
+) -> GpuResult<Result<Vec<u8>, u32>> {
+    let r = run_records_inner(vbar, clock, journal, st, l, permit, words, rec, n_rec, last_payload, maps, sys, doorbell, push_shadow.as_deref_mut(), d2);
     if !matches!(r, Ok(Ok(_))) {
         if let Some(sh) = push_shadow {
             sh.forget();
@@ -181,6 +213,7 @@ fn run_records_inner<V: Mmio + ?Sized, K: Clock + ?Sized>(
     sys: &[SysMapping],
     doorbell: &mut Bell<'_, V>,
     push_shadow: Option<&mut nvidia_ga104::kronos_fast::WriteShadow>,
+    d2: Option<Diet2Wait<'_>>,
 ) -> GpuResult<Result<Vec<u8>, u32>> {
     let w = st.space.as_ref().map(|(_, w)| w.clone()).ok_or(GpuError::InvalidArgument("I11: lipseste canalul de lucru"))?;
     let last_va = rec.va + RECORD * (n_rec - 1);
@@ -204,17 +237,37 @@ fn run_records_inner<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let GpuState { pending, zone, vram_words, .. } = &mut *st;
     kick_and_wait(vbar, clock, journal, permit, zone, pending, vram_words, root, (bell.bar0_offset, bell.value), &ring, doorbell, |rd, clock| {
         let mut last = 0;
-        if poll_until(clock, WAIT_US, 100, || {
+        let mut cond = || {
             last = rd.read_u32(last_pa).ok()?;
             (last == last_payload).then_some(())
-        })
-        .is_err()
-        {
+        };
+        let (waited, all) = match d2 {
+            // P6-119 (C-157 point 3 B): the planned wait (a timeout or Esc = as today: the last payload seen).
+            Some(d) => match nvidia_ga104::kronos_diet2::poll_planned(clock, WAIT_US, d.plan, &mut cond) {
+                Ok((_, ws)) => {
+                    *d.polls = ws.polls;
+                    (true, d.all)
+                }
+                Err(_) => (false, true),
+            },
+            None => (poll_until(clock, WAIT_US, 100, &mut cond).is_ok(), true),
+        };
+        if !waited {
             return Ok(Err(last));
         }
         let mut b = Vec::with_capacity((RECORD * n_rec) as usize);
-        for o in (0..RECORD * n_rec).step_by(4) {
-            b.extend_from_slice(&rd.read_u32(rec.pa + o)?.to_le_bytes());
+        if all {
+            for o in (0..RECORD * n_rec).step_by(4) {
+                b.extend_from_slice(&rd.read_u32(rec.pa + o)?.to_le_bytes());
+            }
+        } else {
+            // P6-119 (C-157 point 3 A): only the first and the last record (8 words); the buffer keeps its shape.
+            b.resize((RECORD * n_rec) as usize, 0);
+            for o in (0..RECORD).step_by(4) {
+                b[o as usize..o as usize + 4].copy_from_slice(&rd.read_u32(rec.pa + o)?.to_le_bytes());
+                let at = RECORD * (n_rec - 1) + o;
+                b[at as usize..at as usize + 4].copy_from_slice(&rd.read_u32(rec.pa + at)?.to_le_bytes());
+            }
         }
         wq.update_get(rd)?;
         wq.retire(last_va, u64::from(last_payload))?;

@@ -249,6 +249,12 @@ pub static FUSED_ONLY_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::ato
 /// within 1e-4; not bit for bit, the sums run in another order). Off by default.
 pub static LN_NEW_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-119 (C-157 point 3, cyber-gpu `367edf4`): the driver's second diet for `kronos --gpu` (two records read on most
+/// positions, the planned wait, the logits' fingerprint after the token's clock, the argmax on bits). Nothing new for
+/// the board. Set only by the cycle when the list asks for it (`test-placa … --dieta2`) and, in the test build, by
+/// `gpu dieta-sim 2`. Off by default: every other run is as in os-332.
+pub static DIET2_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-117 (C-161 point 2, cyber-gpu `3199fa2`): P8, the first tensor-core computation (`mma16_f16`, 6 sets), after
 /// `kronos --gpu`'s texts. Set only by the cycle when the list asks for it (`test-placa … --p8`) and, in the test
 /// build, by `gpu p8-sim on`. Off by default: every other run sends exactly what os-332 sent.

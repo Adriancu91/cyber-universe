@@ -213,6 +213,12 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     logit-urilor (A, B, C, D = NaN); D citit înapoi e judecat pe procesor (`judge_set`, toleranța scrisă) → rândurile `kt mma16 …` în
     jurnal și `mma16 …` + `P8 (mma16): TRECE / NU TRECE / NU A TERMINAT` în ieșire și în răspunsul ciclului. Placa care nu termină un
     set oprește proba (fără reîncercare); o eroare aici nu strică rezultatul lui #513. Test: `kronos-gpu-p8`.
+    **P6-119 (C-157 punctul 3, cyber-gpu `367edf4`): dieta 2 a driverului.** Doar în ciclu cu `test-placa … --dieta2` (după alegerea
+    listei, înainte de `--p8`; `gpu_tur::DIET2_IN_CYCLE`; în build-ul de test `gpu dieta-sim 2`). Nimic nou pentru placă: (A) pe
+    pozițiile care nu hrănesc profilul `kp` (toate în afară de 0, 1 și din 8 în 8) se citesc doar prima și ultima înregistrare
+    (`gpu_i11::run_records_d2`, `kronos_diet2::ends_span`); (B) așteptarea planificată (`kronos_diet2::poll_planned`, `WaitPlan`
+    uitat la orice eroare); (C) amprenta FNV-1a după oprirea ceasului simbolului; (D) argmax pe biți (`argmax_bits`). Rânduri
+    `kt dieta 2 …` + un rând în ieșire. Test: `kronos-gpu-dieta2` (aceeași amprentă `0x8b78e4e7` ca `kronos-gpu-singur`).
     **P6-112 (C-157 punctul 2b, propunerile 1–3; nota centrului de comandă 21 nov 13:00): pozițiile lente.** (1) Cât rulează textele
     lui `kronos --gpu`, rândurile de rutină stau în memorie (`gpu_i6::GenHold`): nicio scriere pe stick între poziții; peste 1024 de
     rânduri ținute se aruncă jumătatea cea mai veche (inel, rândul `kt randuri de rutina aruncate`); se scriu la primul rând important,

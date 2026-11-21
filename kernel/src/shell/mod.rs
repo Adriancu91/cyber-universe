@@ -762,11 +762,18 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::DIET_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu dieta-sim: pornita (SIMULARE: pushbuffer prin umbra, inregistrari nezerorizate)\n");
                 }
+                Some("2") if args.len() == 2 => {
+                    // P6-119 (C-157 point 3): the second diet (on top of the first one, as in the cycle).
+                    crate::drivers::gpu_tur::DIET_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::DIET2_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu dieta-sim: dieta 2 pornita (SIMULARE: doua inregistrari, asteptarea planificata, amprenta dupa ceas, argmax pe biti)\n");
+                }
                 Some("off") if args.len() == 2 => {
                     crate::drivers::gpu_tur::DIET_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::DIET2_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu dieta-sim: oprita\n");
                 }
-                _ => out!("folosire: gpu dieta-sim on|off\n"),
+                _ => out!("folosire: gpu dieta-sim on|2|off\n"),
             }
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu dieta-sim: exista doar in build-ul de test (pe stick dieta o porneste doar ciclul)\n");
