@@ -361,7 +361,7 @@ fn get(url: &str, method: &str, body: &[u8], address: Option<&str>, accept: &str
         k.trim().eq_ignore_ascii_case("location").then(|| v.trim().to_string())
     });
     raw.drain(..end + 4);
-    Ok(http_client::Response { status, location, body: raw })
+    Ok(http_client::Response { status, location, etag: None, body: raw })
 }
 
 fn write_file(path: &str, data: &[u8]) -> bool {

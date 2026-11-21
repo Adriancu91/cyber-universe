@@ -12,6 +12,12 @@
 //!
 //! `gh-ia --hub-ia <cale> <fisier>` (C-87 item 2, P6-64): one file of the hub to <fisier>, like the plain form (the kernel's
 //! `hub ruleaza` takes `integrare/cyber-universe/os-comenzi.md` this way).
+//!
+//! P6-109 (C-159, the live channel): always the hub, always the branch `os/live`, only under `live/`:
+//! `gh-ia --live-ia <cale> <fisier>` = one file (exit 0, 4 = not there yet, 1 = error);
+//! `gh-ia --live-dosar <dosar> <fisier>` = the names in the folder, one per line, with a conditional request (the ETag of
+//! the last answer is kept in `<fisier>.etag`): exit 0 = new list written, 3 = nothing changed (304, which GitHub does
+//! not count against the request limit), 4 = the folder does not exist yet, 1 = error.
 #![no_std]
 #![no_main]
 
@@ -62,6 +68,31 @@ fn main() -> i64 {
             Ok(()) => 0,
             Err(e) => {
                 println!("hub: {}", e);
+                1
+            }
+        };
+    }
+    if args.first() == Some(&"--live-ia") || args.first() == Some(&"--live-dosar") {
+        let c = config();
+        let (what, rest) = (args[0], &args[1..]);
+        let [path, file] = rest else {
+            println!("folosire: gh-ia --live-ia <live/...> <fisier>  sau  gh-ia --live-dosar <live/...> <fisier>");
+            return 1;
+        };
+        if !path.starts_with("live/") || !valid_path(path) {
+            println!("gh-ia: {}: canalul viu citeste doar sub live/", path);
+            return 1;
+        }
+        let r = if what == "--live-ia" {
+            fetch_on(&c, &c.hub, path, Some(LIVE_BRANCH)).and_then(|d| write_checked(file, &d).map(|()| 0))
+        } else {
+            live_list(&c, path, file)
+        };
+        return match r {
+            Ok(code) => code,
+            Err(e) if e.starts_with(NOT_THERE) => 4,
+            Err(e) => {
+                println!("gh-ia: {}", e);
                 1
             }
         };
@@ -224,8 +255,58 @@ fn list(c: &Config, repo: &str, dir: &str, branch: Option<&str>) -> Result<(), S
     Ok(())
 }
 
+/// The branch of the live channel (C-159).
+const LIVE_BRANCH: &str = "os/live";
+/// The start of the error for a missing file or folder (the live channel's exit code 4: "not yet").
+const NOT_THERE: &str = "nu exista: ";
+
+/// P6-109: the names of a folder of the hub on `os/live`, with `If-None-Match` from `<file>.etag`.
+fn live_list(c: &Config, dir: &str, file: &str) -> Result<i64, String> {
+    let etag_file = format!("{}.etag", file);
+    let old = read_file(&etag_file, 512).map(|t| String::from_utf8_lossy(&t).trim().to_string()).filter(|t| !t.is_empty());
+    let _ = cyber_user::rights::ask_secret(&c.token);
+    let token = read_file(&c.token, 512).map(|t| String::from_utf8_lossy(&t).trim().to_string()).filter(|t| !t.is_empty());
+    let _ = cyber_user::rights::drop_secrets();
+    let mut headers = String::from("Accept: application/vnd.github+json\r\nX-GitHub-Api-Version: 2022-11-28\r\n");
+    if let Some(t) = token {
+        headers += &format!("Authorization: Bearer {}\r\n", t);
+    }
+    // Only plain ETag characters go back into a header.
+    if let Some(e) = old.as_ref().filter(|e| e.len() < 200 && e.bytes().all(|b| (0x21..0x7f).contains(&b))) {
+        headers += &format!("If-None-Match: {}\r\n", e);
+    }
+    let api = format!("/repos/{}/contents/{}?ref={}", c.hub, encode_path(dir), encode_path(LIVE_BRANCH));
+    let r = http_client::request("gh-ia", c.address.as_deref(), &c.host, c.port, "GET", &api, &headers, &[], MAX_ANSWER)?;
+    match r.status {
+        200 => {}
+        304 => return Ok(3),
+        401 => return Err("tokenul GitHub e gresit sau a expirat (401)".to_string()),
+        403 => return Err("GitHub a refuzat (403): limita de cereri sau token fara drept de citire".to_string()),
+        404 => return Err(format!("{}{}", NOT_THERE, dir)),
+        s => return Err(format!("eroare {} de la GitHub", s)),
+    }
+    let j = core::str::from_utf8(&r.body).ok().and_then(|t| cyber_json::parse(t).ok()).ok_or("raspunsul GitHub nu e JSON")?;
+    let items = j.as_array().ok_or_else(|| format!("{} nu e un dosar", dir))?;
+    let mut names = String::new();
+    for name in items.iter().filter_map(|it| it.get("name").and_then(Value::as_str)) {
+        names.push_str(name);
+        names.push('\n');
+    }
+    write_checked(file, names.as_bytes())?;
+    let _ = cyber_user::remove(&etag_file);
+    if let Some(e) = r.etag {
+        let _ = write_checked(&etag_file, e.as_bytes());
+    }
+    Ok(0)
+}
+
 /// GET of one file through the contents API (base64 decoded, size checked).
 fn fetch(c: &Config, repo: &str, path: &str) -> Result<Vec<u8>, String> {
+    fetch_on(c, repo, path, None)
+}
+
+/// The same, from `branch` (None = the default branch).
+fn fetch_on(c: &Config, repo: &str, path: &str, branch: Option<&str>) -> Result<Vec<u8>, String> {
     if !valid_repo(repo) {
         return Err(format!("depozit invalid: {} (forma: proprietar/depozit)", repo));
     }
@@ -237,13 +318,17 @@ fn fetch(c: &Config, repo: &str, path: &str) -> Result<Vec<u8>, String> {
     let token = read_file(&c.token, 512).map(|t| String::from_utf8_lossy(&t).trim().to_string()).filter(|t| !t.is_empty());
     let _ = cyber_user::rights::drop_secrets();
     let auth = token.map(|t| format!("Authorization: Bearer {}\r\n", t)).unwrap_or_default();
-    let api = format!("/repos/{}/contents/{}", repo, encode_path(path));
+    let mut api = format!("/repos/{}/contents/{}", repo, encode_path(path));
+    if let Some(b) = branch {
+        api += &format!("?ref={}", encode_path(b));
+    }
     let headers = format!("Accept: application/vnd.github+json\r\nX-GitHub-Api-Version: 2022-11-28\r\n{}", auth);
     let r = http_client::request("gh-ia", c.address.as_deref(), &c.host, c.port, "GET", &api, &headers, &[], MAX_ANSWER)?;
     match r.status {
         200 => {}
         401 => return Err("tokenul GitHub e gresit sau a expirat (401)".to_string()),
         403 => return Err("GitHub a refuzat (403): limita de cereri sau token fara drept de citire".to_string()),
+        404 if branch.is_some() => return Err(format!("{}{}", NOT_THERE, path)),
         404 => return Err(format!("{} nu exista in {} (sau depozitul e privat si lipseste tokenul)", path, repo)),
         s => return Err(format!("eroare {} de la GitHub", s)),
     }

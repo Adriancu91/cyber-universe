@@ -17,6 +17,7 @@
 //! keys (`hub/permite-test-placa` on the stick + the decision `ciclu-test activat` in the hub's DECIZII.md, read over the
 //! network when the command comes): `gpu recupereaza`, the chain (+ #513 with `kronos --gpu` when it is on the stick), the
 //! report + the gpu journal sent to the hub. Without the keys it is refused like every other writing command.
+//! P6-109 (C-159): `live <minute>` opens the live channel (shell/live.rs); the safety clock is pushed on while it works.
 //! Idea: unattended test runners that boot once into a test image (CI hardware labs); our own code.
 
 use super::raport;
@@ -87,6 +88,15 @@ pub fn run_if_present() {
                     out.add(&format!("REFUZAT: {} (nimic nu s-a scris in placa)\n", why));
                 }
             }
+            continue;
+        }
+        // P6-109 (C-159 step 1): `live <minute>` = the live channel through the hub, until `gata` or <minute> without
+        // commands; then the list goes on (and the machine restarts at its end, as always).
+        if cmd.split_whitespace().next() == Some("live") {
+            say(&format!("auto: [{}/{}] {}\n", i + 1, total, cmd));
+            out.add(&format!("in lucru: {} (de la {})\n", cmd, now_text()));
+            out.add(&super::live::auto_line(cmd));
+            ran += 1;
             continue;
         }
         if let Err(why) = allowed(cmd) {
@@ -270,6 +280,16 @@ fn finish(list: &str, marker: &str, stamp: &str) -> ! {
     crate::info!("auto: lista terminata, repornesc");
     say("auto: repornesc\n");
     crate::power::reboot(None)
+}
+
+/// P6-109 (C-159): a live session in the list pushes the safety clock to at least `ms` from now while it works
+/// (nothing when the clock is not armed).
+pub(super) fn keep_alive(ms: u64) {
+    let now = crate::time::uptime_ms().unwrap_or(0);
+    let d = DEADLINE_MS.load(Ordering::Relaxed);
+    if d != 0 && d < now + ms {
+        DEADLINE_MS.store(now + ms, Ordering::Relaxed);
+    }
 }
 
 /// Starts the safety clock thread.

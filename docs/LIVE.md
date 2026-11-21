@@ -1,7 +1,26 @@
 # Canalul viu (C-159): forma fișierelor
 
-> Forma 1, scrisă de sesiunea OS (21 nov 2026, P6-108). Codul porții: `kernel/src/shell/live.rs`.
-> Pașii următori (P6-109: bucla din OS care citește hub-ul) folosesc exact forma de aici.
+> Forma 1, scrisă de sesiunea OS (21 nov 2026, P6-108; bucla P6-109). Codul: `kernel/src/shell/live.rs`.
+> Proba completă în QEMU: scenariul `ghpush` (`tools/ghpush-test-server.py` joacă rolul centrului de comandă).
+
+## Cum pornește
+- Pe stick: `/usb/github.token` (cel de azi, cu drept de scriere în hub) și **`/usb/hub/live.cheie`** (cel puțin 32 de octeți;
+  aceiași octeți la centrul de comandă). Fără cheie: `live: cheia /usb/hub/live.cheie lipseste …` și nimic nu pornește.
+- În `auto\teste.txt` un rând **`live <minute>`** (1–120), de ex. `live 10` (sau de mână, în shell, `live 10`).
+  `<minute>` = cât așteaptă OS-ul fără nicio comandă nouă; fiecare comandă repornește numărătoarea. Ceasul de siguranță al
+  listei e împins cât timp sesiunea lucrează. După sesiune lista continuă; la sfârșitul listei repornire în Windows, ca azi.
+- OS-ul alege sesiunea `s-AAAALLZZ-HHMM` (ora OS-ului; `-2`, `-3` dacă există deja pe stick), face ramura `os/live` din `main`
+  dacă lipsește și scrie **`live/<sesiune>/sesiune.json`**:
+  `{"forma":"cyber-live-1","sesiune":"s-…","pornit":"AAAA-LL-ZZ HH:MM:SS","minute":10,"intrebare_ms":2500,"placa":false,"sistem":"…"}`.
+  Centrul de comandă găsește sesiunea nouă listând `live/` pe ramura `os/live` (dosarul cel mai nou cu `sesiune.json`).
+- Apoi OS-ul întreabă dosarul `live/<sesiune>/` la fiecare **2,5 s**, cu cerere condiționată (ETag; un 304 nu se numără la
+  limita GitHub). Când apare `c-<următorul>.json`, îl ia, îl trece prin poartă, scrie rândul în jurnalul de pe stick
+  (`/usb/hub/live/<sesiune>/jurnal.txt`) ÎNAINTE de rulare, rulează și scrie `r-<același număr>.json`.
+- **Fiecare număr de fișier se citește o singură dată, și cel refuzat:** după un `c-0002.json` refuzat, următoarea comandă e
+  `c-0003.json`. Comenzile se pot pune mai multe deodată; OS-ul le ia în ordine.
+- Sfârșit: `fel: gata` (răspunsul vine, apoi sesiunea se închide), `<minute>` fără comenzi, sau Esc (doar de mână).
+  Copii pe stick: `/usb/hub/live/<sesiune>/` (c-, r-, jurnal). Un răspuns care nu pleacă după 3 încercări rămâne pe stick
+  (rând `# r-NNNN.json netrimis` în jurnal).
 
 ## Unde
 - Hub-ul `Adriancu91/Cyber-hub`, ramura **`os/live`**, dosarul `live/<sesiune>/`.
@@ -31,6 +50,10 @@
  "cod":0,"durata_ms":12,"iesire":"<tot ce a scris comanda>","ecran":"<textul ecranului după>","sistem":"<versiune, temperaturi, memorie>"}
 ```
 sau, la refuz: `"stare":"REFUZAT","motiv":"<de ce>"` (fără `cod`/`iesire`). `nr` e `null` dacă fișierul nu se putea citi.
+- `cod`: 0, sau codul de ieșire al programului pornit cu `run` (126 = programul nu pornește, 127 = comandă necunoscută).
+- `iesire`: tot ce a scris comanda (shell + programe). `ecran` (pasul 1): ultimele 25 de rânduri din jurnalul sistemului;
+  textul ecranului adevărat vine la pasul 2. `sistem`: versiunea, `/usb/VERSIUNE`, de cât timp merge, ora, memoria liberă, temperatura procesorului.
+- `fel: stare` → `iesire` = rândul `sistem`. `fel: gata` → `iesire` = „sesiunea se incheie (gata)”.
 **`ecou` e mereu fișierul primit, octet cu octet** — centrul de comandă îl compară cu ce a trimis.
 
 ## Refuzurile (fiecare are proba ei în testul QEMU)
@@ -40,9 +63,17 @@ sau, la refuz: `"stare":"REFUZAT","motiv":"<de ce>"` (fără `cod`/`iesire`). `n
 | `numar gresit: astept nr N` | numărul nu e exact următorul |
 | `comanda repetata: nr N s-a executat deja (o singura data)` | numărul e deja în jurnalul de pe stick (scris ÎNAINTE de execuție) |
 | `comanda scrie in placa video: fara cheia permite-live-placa …` | `gpu lant/i6/recupereaza/…`, `--scrie`, `--gpu`, `test-placa`, `ciclu-test`, `gpu tur --trezire` fără `/usb/hub/permite-live-placa` |
+| `o sesiune vie nu porneste alta sesiune vie` | comanda `live …` din modul viu |
 | `alta sesiune`, `fisierul comenzii nu e JSON valid`, `lipseste un camp …`, `fel necunoscut …`, `comanda goala` | forma greșită |
 | `cheia live.cheie lipseste sau e prea scurta …` | fără cheie modul viu nu pornește deloc |
 
 ## Ce rămâne păzit de nucleu (neschimbat)
 Fișierele secrete nu se arată; scrieri pe disc doar pe partiții `cyber.rw`; placa video doar cu `permite-live-placa`
 (o pune doar centrul de comandă, după „da”-ul lui Adrian).
+
+## Proba pe workstation (pentru centrul de comandă)
+1. Pune pe stick `hub\live.cheie` (aceeași cheie ca la tine) și în `auto\teste.txt` rândul `live 10`.
+2. Când apare `live/<sesiune>/sesiune.json` pe ramura `os/live`, scrie comenzile cu `tools/live-semneaza.py` și urcă-le pe
+   `os/live`: întâi doar citiri (`hw`, `mem`, `stare`, `gpu stare`), apoi probele de refuz (semnătură greșită, număr greșit,
+   comandă repetată, `gpu lant` fără `permite-live-placa`), la sfârșit `gata`.
+3. Compară `ecou` din fiecare `r-NNNN.json` cu ce ai trimis, octet cu octet.

@@ -9,11 +9,19 @@
 //!   - a command that writes to the video card is `REFUZAT` without `/usb/hub/permite-live-placa`;
 //!   - the answer always carries the exact echo of what came in.
 //!
+//! P6-109: the loop (`live <minute>`, and the line `live <minute>` in `auto/teste.txt`): opens `live/<sesiune>/` on the
+//! hub branch `os/live` (`sesiune.json`), asks every 2.5 s for the folder with a conditional request (`gh-ia
+//! --live-dosar`, ETag: an unchanged folder costs nothing), takes `c-NNNN.json` in order (`gh-ia --live-ia`), passes it
+//! through the gate, notes it in the stick journal BEFORE it runs, runs it with every printed line captured and sends
+//! `r-NNNN.json` (`gh-trimite --live`, never over another file). It ends at `gata`, after <minute> without commands, or
+//! with Esc (by hand). Every command file number is read once: a refused one is used up too (the next one is N+1).
+//!
 //! Idea: signed, numbered remote commands (like job queues of hardware test labs); our own code.
 
-#![cfg_attr(not(feature = "test-ghpush"), allow(dead_code))]
-
+use super::auto;
+use crate::fs::{self, Kind};
 use alloc::{format, string::String, vec::Vec};
+use core::sync::atomic::{AtomicBool, Ordering};
 use cyber_crypto::sha2::Sha256;
 use cyber_json::Value;
 
@@ -89,6 +97,7 @@ impl Gate {
     }
 
     /// From the journal lines `<nr> <incepe|gata|refuz> …` (the first word of a line is the number).
+    #[cfg_attr(not(feature = "test-ghpush"), allow(dead_code))] // step 3 (a session that survives a restart)
     pub fn from_journal(session: &str, text: &str) -> Self {
         let mut g = Gate::new(session);
         for nr in text.lines().filter_map(|l| l.split_whitespace().next()?.parse::<u32>().ok()) {
@@ -149,6 +158,9 @@ impl Gate {
         if kind == "comanda" && text.trim().is_empty() {
             return refuse(Some(nr), "comanda goala");
         }
+        if kind == "comanda" && text.split_whitespace().next() == Some("live") {
+            return refuse(Some(nr), "o sesiune vie nu porneste alta sesiune vie");
+        }
         if kind == "comanda" && writes_to_board(text) && !board_key {
             return refuse(Some(nr), "comanda scrie in placa video: fara cheia permite-live-placa (pusa doar cu da-ul lui Adrian) nu ruleaza");
         }
@@ -205,8 +217,340 @@ pub fn file_name(prefix: char, nr: u32) -> String {
     format!("{}-{:04}.json", prefix, nr)
 }
 
+/// How often the hub folder is asked for (ms), and the longest session (minutes without commands).
+pub const POLL_MS: u64 = 2_500;
+pub const MAX_MINUTES: u64 = 120;
+/// Tries for sending one answer before it stays only on the stick.
+const SEND_TRIES: u32 = 3;
+
+/// One live session at a time.
+static ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// What a session did.
+#[derive(Debug, Default, Clone)]
+pub struct Summary {
+    pub session: String,
+    pub ran: u32,
+    pub refused: u32,
+    pub unsent: u32,
+    pub end: String,
+}
+
+impl Summary {
+    pub fn line(&self) -> String {
+        format!(
+            "live: sesiunea {} incheiata ({}): {} rulate, {} refuzate{}\n",
+            self.session,
+            self.end,
+            self.ran,
+            self.refused,
+            if self.unsent > 0 { format!(", {} raspunsuri netrimise (raman pe stick)", self.unsent) } else { String::new() }
+        )
+    }
+}
+
+/// `live <minute>` in the shell.
+pub fn command(args: &[&str]) {
+    let Some(minutes) = parse_minutes(args) else {
+        super::emit(&format!("folosire: live <minute>   (1-{}; canalul viu prin hub: comenzile din live/<sesiune>/ pe ramura os/live, docs/LIVE.md)\n", MAX_MINUTES));
+        return;
+    };
+    match run(minutes, POLL_MS, true) {
+        Ok(s) => super::emit(&s.line()),
+        Err(why) => super::emit(&format!("live: {}\n", why)),
+    }
+}
+
+fn parse_minutes(args: &[&str]) -> Option<u64> {
+    match args {
+        [m] => m.parse::<u64>().ok().filter(|m| (1..=MAX_MINUTES).contains(m)),
+        _ => None,
+    }
+}
+
+/// The line `live <minute>` of the automatic list: the text for its report.
+pub fn auto_line(line: &str) -> String {
+    let words: Vec<&str> = line.split_whitespace().skip(1).collect();
+    let Some(minutes) = parse_minutes(&words) else {
+        return format!("REFUZAT: forma corecta: `live <minute>` (1-{})\n", MAX_MINUTES);
+    };
+    match run(minutes, POLL_MS, false) {
+        Ok(s) => s.line(),
+        Err(why) => format!("live: {}\n", why),
+    }
+}
+
+/// QEMU (`ghpush`): a whole session against the test server, asking every second.
+#[cfg(feature = "test-ghpush")]
+pub fn test_session(minutes: u64) -> Result<Summary, String> {
+    run(minutes, 1_000, false)
+}
+
+fn dir() -> &'static str {
+    super::hubcmd::dir()
+}
+
+/// Runs a program to the end; its exit code.
+fn spawn(path: &str, args: &[&str]) -> i64 {
+    match crate::proc::spawn_path(path, args) {
+        Ok(id) => crate::proc::wait(id),
+        Err(e) => {
+            auto::say(&format!("live: {} nu porneste: {}\n", path, e.message()));
+            -1
+        }
+    }
+}
+
+/// Sends a local file to `live/<path>` (a few tries; the same content again is harmless).
+fn send(local: &str, remote: &str) -> bool {
+    for t in 0..SEND_TRIES {
+        if t > 0 {
+            crate::sched::sleep_ms(2_000);
+        }
+        if spawn("/bin/gh-trimite", &["gh-trimite", "--live", local, remote]) == 0 {
+            return true;
+        }
+    }
+    false
+}
+
+fn write_new(path: &str, data: &[u8]) -> bool {
+    let _ = fs::remove(path);
+    fs::create(path, Kind::File).is_ok() && fs::write(path, 0, data).is_ok() && fs::flush(path).is_ok()
+}
+
+/// One line at the end of the stick journal, on the stick before anything else happens.
+fn journal(path: &str, line: &str) {
+    if fs::kind(path).is_err() {
+        let _ = fs::create(path, Kind::File);
+    }
+    let at = fs::size(path).unwrap_or(0);
+    let _ = fs::write(path, at, format!("{}\n", line).as_bytes());
+    let _ = fs::flush(path);
+}
+
+/// The state of the machine, for every answer (and the kind `stare`).
+pub fn system_text() -> String {
+    use crate::mem::{frame, map::PAGE_SIZE};
+    let stick = fs::read_all("/usb/VERSIUNE").map(|v| String::from_utf8_lossy(&v).lines().next().unwrap_or("").trim().into()).unwrap_or_else(|_| String::from("-"));
+    format!(
+        "cyber-universe {} (cyber-gpu {}); /usb/VERSIUNE: {}; pornit de {} s; ora {}; memorie libera {} MiB; {}",
+        env!("CARGO_PKG_VERSION"),
+        crate::drivers::gpu::CYBER_GPU_REV,
+        stick,
+        crate::time::uptime_ms().unwrap_or(0) / 1000,
+        auto::now_text(),
+        frame::free_frames() * PAGE_SIZE / (1024 * 1024),
+        crate::hw::temp::line()
+    )
+}
+
+/// The text of the screen after a command: in step 1, the last lines of the system log (step 2 brings the screen).
+fn screen_text() -> String {
+    let lines = crate::log::recent();
+    lines[lines.len().saturating_sub(25)..].join("\n")
+}
+
+/// Runs one shell line with everything it prints captured (inside the automatic mode's own capture, which is kept).
+fn run_captured(line: &str) -> String {
+    let outer = super::CAPTURE.lock().take();
+    let outer_programs = super::PROGRAM_CAPTURE.lock().take();
+    super::emit_capture_begin();
+    super::program_capture_begin();
+    super::dispatch(line);
+    let mut text = super::emit_capture_end();
+    text.push_str(&super::program_capture_end());
+    *super::CAPTURE.lock() = outer;
+    *super::PROGRAM_CAPTURE.lock() = outer_programs;
+    text
+}
+
+/// The session's name: `s-AAAALLZZ-HHMM` (`-2`, `-3` … when that folder is already on the stick).
+fn session_name(base: &str) -> String {
+    let stamp = auto::date_stamp();
+    let first = format!("s-{}", stamp);
+    if fs::kind(&format!("{}/{}", base, first)).is_err() {
+        return first;
+    }
+    (2..100).map(|n| format!("s-{}-{}", stamp, n)).find(|s| fs::kind(&format!("{}/{}", base, s)).is_err()).unwrap_or(first)
+}
+
+/// A whole session. `by_hand` = Esc stops it.
+fn run(minutes: u64, poll_ms: u64, by_hand: bool) -> Result<Summary, String> {
+    if ACTIVE.swap(true, Ordering::Acquire) {
+        return Err(String::from("o sesiune vie ruleaza deja"));
+    }
+    let r = session(minutes, poll_ms, by_hand);
+    ACTIVE.store(false, Ordering::Release);
+    r
+}
+
+fn session(minutes: u64, poll_ms: u64, by_hand: bool) -> Result<Summary, String> {
+    let d = dir();
+    let key = fs::read_all(&format!("{}/live.cheie", d)).unwrap_or_default();
+    if key.len() < 32 {
+        return Err(format!("cheia {}/live.cheie lipseste sau e prea scurta (cel putin 32 de octeti): modul viu nu porneste", d));
+    }
+    let (_, token) = super::raport::hub_paths();
+    if fs::kind(token).is_err() {
+        return Err(format!("fara {}: nu pot vorbi cu hub-ul; modul viu nu porneste", token));
+    }
+    if crate::net::config().is_none() || !crate::net::wait_ready(15_000) {
+        return Err(String::from("reteaua nu are adresa: modul viu nu porneste"));
+    }
+    let board_key = fs::kind(&format!("{}/permite-live-placa", d)).is_ok();
+    let base = format!("{}/live", d);
+    if fs::kind(d).is_err() {
+        let _ = fs::create(d, Kind::Dir);
+    }
+    if fs::kind(&base).is_err() && fs::create(&base, Kind::Dir).is_err() {
+        return Err(format!("nu pot face {} (stick doar citire? lipseste cyber.rw)", base));
+    }
+    let s = session_name(&base);
+    let local = format!("{}/{}", base, s);
+    if fs::create(&local, Kind::Dir).is_err() {
+        return Err(format!("nu pot face {}", local));
+    }
+    let remote = format!("live/{}", s);
+    let mut head = String::new();
+    cyber_json::Value::object([
+        ("forma", cyber_json::Value::str(FORM)),
+        ("sesiune", cyber_json::Value::str(&s)),
+        ("pornit", cyber_json::Value::str(&auto::now_text())),
+        ("minute", cyber_json::Value::int(minutes as i64)),
+        ("intrebare_ms", cyber_json::Value::int(poll_ms as i64)),
+        ("placa", cyber_json::Value::Bool(board_key)),
+        ("sistem", cyber_json::Value::str(&system_text())),
+    ])
+    .write_to(&mut head);
+    let head_path = format!("{}/sesiune.json", local);
+    if !write_new(&head_path, head.as_bytes()) || !send(&head_path, &format!("{}/sesiune.json", remote)) {
+        return Err(format!("sesiunea {} nu s-a putut deschide in hub (ramura os/live)", s));
+    }
+    let journal_path = format!("{}/jurnal.txt", local);
+    journal(&journal_path, &format!("# sesiunea {} pornita {} ({} minute fara comenzi = sfarsit)", s, auto::now_text(), minutes));
+    auto::say(&format!(
+        "live: sesiunea {} deschisa in hub ({}/, ramura os/live); astept comenzi la {} s; {} minute fara comenzi = sfarsit{}; placa video: {}\n",
+        s,
+        remote,
+        poll_ms / 1000,
+        minutes,
+        if by_hand { "; Esc opreste" } else { "" },
+        if board_key { "PERMISA (permite-live-placa)" } else { "oprita" }
+    ));
+
+    let idle_ms = minutes * 60_000;
+    let mut sum = Summary { session: s.clone(), ..Summary::default() };
+    let mut gate = Gate::new(&s);
+    let mut last = crate::time::uptime_ms().unwrap_or(0);
+    let list_path = format!("{}/lista.txt", local);
+    let mut errors = 0u32;
+    'outer: loop {
+        if by_hand && crate::drivers::keyboard::take_escape() {
+            sum.end = String::from("oprita cu Esc");
+            break;
+        }
+        let now = crate::time::uptime_ms().unwrap_or(0);
+        if now.saturating_sub(last) >= idle_ms {
+            sum.end = format!("{} minute fara comenzi", minutes);
+            break;
+        }
+        auto::keep_alive(idle_ms.saturating_sub(now - last) + 5 * 60_000);
+        match spawn("/bin/gh-ia", &["gh-ia", "--live-dosar", &remote, &list_path]) {
+            0 => {
+                errors = 0;
+                let names = String::from_utf8_lossy(&fs::read_all(&list_path).unwrap_or_default()).into_owned();
+                loop {
+                    let want = gate.next;
+                    let name = file_name('c', want);
+                    if !names.lines().any(|l| l.trim() == name) {
+                        break;
+                    }
+                    let copy = format!("{}/{}", local, name);
+                    if spawn("/bin/gh-ia", &["gh-ia", "--live-ia", &format!("{}/{}", remote, name), &copy]) != 0 {
+                        break; // not readable yet: at the next look
+                    }
+                    let raw = String::from_utf8_lossy(&fs::read_all(&copy).unwrap_or_default()).into_owned();
+                    let end = one(&key, board_key, &raw, want, &mut gate, &local, &remote, &journal_path, &mut sum);
+                    last = crate::time::uptime_ms().unwrap_or(0);
+                    if end {
+                        sum.end = String::from("gata (cerut de centrul de comanda)");
+                        break 'outer;
+                    }
+                }
+            }
+            3 | 4 => errors = 0,
+            code => {
+                errors += 1;
+                if errors == 1 || errors % 20 == 0 {
+                    auto::say(&format!("live: hub-ul nu raspunde (gh-ia codul {}, de {} ori la rand); mai incerc\n", code, errors));
+                }
+            }
+        }
+        let mut waited = 0;
+        while waited < poll_ms {
+            if by_hand && crate::drivers::keyboard::take_escape() {
+                sum.end = String::from("oprita cu Esc");
+                break 'outer;
+            }
+            let step = (poll_ms - waited).min(200);
+            crate::sched::sleep_ms(step);
+            waited += step;
+        }
+    }
+    journal(&journal_path, &format!("# sfarsit {}: {}", auto::now_text(), sum.end));
+    auto::say(&sum.line());
+    Ok(sum)
+}
+
+/// One command file (number `want`): the gate, the journal BEFORE it runs, the run, the answer. `true` = `gata`.
+#[allow(clippy::too_many_arguments)]
+fn one(key: &[u8], board_key: bool, raw: &str, want: u32, gate: &mut Gate, local: &str, remote: &str, journal_path: &str, sum: &mut Summary) -> bool {
+    let verdict = gate.check(key, board_key, raw);
+    let (answer_text, end) = match verdict {
+        Verdict::Refused { nr, why } => {
+            journal(journal_path, &format!("{} refuz {} ({})", want, auto::now_text(), why));
+            gate.take(want);
+            sum.refused += 1;
+            auto::say(&format!("live: c-{:04} REFUZAT: {}\n", want, why));
+            (answer(&gate.session, nr, raw, Err(&why)), false)
+        }
+        Verdict::Run(cmd) => {
+            journal(journal_path, &format!("{} incepe {} {} {}", want, auto::now_text(), cmd.kind, cmd.text.replace('\n', " ")));
+            gate.take(want);
+            auto::say(&format!("live: c-{:04} {}: {}\n", want, cmd.kind, cmd.text));
+            let t0 = crate::time::uptime_ms().unwrap_or(0);
+            super::LAST_EXIT.store(0, Ordering::Relaxed);
+            let output = match cmd.kind.as_str() {
+                "comanda" => run_captured(&cmd.text),
+                "stare" => format!("{}\n", system_text()),
+                _ => String::from("sesiunea se incheie (gata)\n"),
+            };
+            let o = Outcome {
+                code: super::LAST_EXIT.load(Ordering::Relaxed),
+                ms: crate::time::uptime_ms().unwrap_or(0).saturating_sub(t0),
+                output,
+                screen: screen_text(),
+                system: system_text(),
+            };
+            journal(journal_path, &format!("{} gata {} ms cod {}", want, o.ms, o.code));
+            sum.ran += 1;
+            (answer(&gate.session, Some(cmd.nr), raw, Ok(&o)), cmd.kind == "gata")
+        }
+    };
+    let name = file_name('r', want);
+    let path = format!("{}/{}", local, name);
+    if !(write_new(&path, answer_text.as_bytes()) && send(&path, &format!("{}/{}", remote, name))) {
+        sum.unsent += 1;
+        journal(journal_path, &format!("# {} netrimis (ramane pe stick: {})", name, path));
+        auto::say(&format!("live: {} nu a plecat in hub; ramane pe stick\n", name));
+    }
+    end
+}
+
 /// QEMU self-test (P6-108): the refusal probes the command centre counts (C-159 completion of 21 Nov 08:31) — a bad
 /// signature, a wrong number, a repeated command, a board command without the key — and the echo of every answer.
+#[cfg_attr(not(feature = "test-ghpush"), allow(dead_code))]
 pub fn self_test() {
     let key = [7u8; 32];
     let s = "s-20261121-0900";
@@ -255,6 +599,7 @@ pub fn self_test() {
     assert!(why(g.check(&key, false, "{nr: 2")) == "fisierul comenzii nu e JSON valid");
     assert!(why(g.check(&key, false, &good(2, "tasta", "ctrl+c"))).contains("pasul 2"));
     assert!(why(g.check(&key, false, &good(2, "sterge", "x"))).starts_with("fel necunoscut"));
+    assert!(why(g.check(&key, false, &good(2, "comanda", "live 5"))).starts_with("o sesiune vie nu porneste"));
     assert!(matches!(g.check(&key, false, &good(2, "gata", "")), Verdict::Run(_)));
     // The journal: numbers taken before a crash are never run again.
     let j = Gate::from_journal(s, "1 incepe 09:00:01\n1 gata 09:00:02\n2 incepe 09:00:05\n");

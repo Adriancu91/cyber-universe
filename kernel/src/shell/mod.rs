@@ -49,6 +49,9 @@ fn program_capture_end() -> String {
     PROGRAM_CAPTURE.lock().take().unwrap_or_default()
 }
 
+/// P6-109: the exit code of the last program `run` started (0 before every live command; 127 = unknown command).
+static LAST_EXIT: core::sync::atomic::AtomicI64 = core::sync::atomic::AtomicI64::new(0);
+
 /// Called by the `write` system call for console output: keeps a copy for the automatic mode's report.
 pub fn program_output(text: &str) {
     if let Some(buf) = PROGRAM_CAPTURE.lock().as_mut()
@@ -209,6 +212,7 @@ fn dispatch(line: &str) -> bool {
         "timp" => time_command(args),
         "uptime" => uptime(),
         "remote" => remote(args),
+        "live" => live::command(args), // C-159 step 1 (P6-108, P6-109)
         "reboot" => reboot(args),
         "porneste" => porneste(args),
         "exit" => match crate::term::of_shell(crate::sched::current_id()) {
@@ -231,7 +235,10 @@ fn dispatch(line: &str) -> bool {
                 core::hint::spin_loop();
             }
         }
-        _ => out!("comanda necunoscuta: {} (scrie help)\n", cmd),
+        _ => {
+            LAST_EXIT.store(127, core::sync::atomic::Ordering::Relaxed);
+            out!("comanda necunoscuta: {} (scrie help)\n", cmd)
+        }
     }
     true
 }
@@ -294,6 +301,7 @@ fn help() {
     out!("  hub ruleaza [--arata]  ruleaza comenzile lui Adrian din hub (os-comenzi.md), doar din lista alba; raport -> hub\n");
     out!("  hub asculta [--la N]   la fiecare N minute (implicit 2) ia si ruleaza comenzile noi din hub; Esc opreste\n");
     out!("  hub opreste      opreste bucla `hub asculta` pornita la pornire (/usb/hub/asculta)\n");
+    out!("  live <minute>    canalul viu (C-159): comenzi semnate din hub, live/<sesiune>/ pe ramura os/live; cere /usb/hub/live.cheie\n");
     out!("  trimite          rapoartele noi din /usb/raport -> hub (rezultate/os-automat/<data>/), doar cu /usb/github.token\n");
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
     out!("  log --avertismente [n]  doar avertismentele si erorile; log --sumar = cate randuri pe nivel si pe modul\n");
@@ -418,6 +426,7 @@ fn run_program(args: &[&str]) {
         // Whatever happens, the permission never outlives this one program.
         if let Ok(id) = &spawned {
             let code = crate::proc::wait(*id);
+            LAST_EXIT.store(code, core::sync::atomic::Ordering::Relaxed);
             crate::drivers::gpu_tur::KRONOS_ARMED.store(false, core::sync::atomic::Ordering::SeqCst);
             if code != 0 {
                 out!("({} a iesit cu codul {})\n", name, code);
@@ -429,11 +438,15 @@ fn run_program(args: &[&str]) {
     match spawned {
         Ok(id) => {
             let code = crate::proc::wait(id);
+            LAST_EXIT.store(code, core::sync::atomic::Ordering::Relaxed);
             if code != 0 {
                 out!("({} a iesit cu codul {})\n", name, code);
             }
         }
-        Err(e) => out!("run: {}: {}\n", path, e.message()),
+        Err(e) => {
+            LAST_EXIT.store(126, core::sync::atomic::Ordering::Relaxed);
+            out!("run: {}: {}\n", path, e.message())
+        }
     }
 }
 

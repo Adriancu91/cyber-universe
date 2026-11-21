@@ -11,6 +11,10 @@
 //! `gh-trimite --rapoarte [dosar]` (C-84 item 1, P6-61): sends every report from /usb/raport that is not yet in its list
 //! `trimise.txt` to the hub (`Adriancu91/Cyber-hub`, `rezultate/os-automat/<date>/<name>`), so Adrian no longer copies
 //! files in Windows. Without a token it says so and the reports stay on the stick (exit code 2).
+//!
+//! `gh-trimite --live <fisier> <live/...>` (P6-109, C-159 the live channel): always the hub, always the branch `os/live`
+//! (made from main when missing), only under `live/`, and never over a different existing file (the same content again =
+//! nothing to do, so a retry after a cut connection is safe).
 #![no_std]
 #![no_main]
 
@@ -51,6 +55,30 @@ fn main() -> i64 {
         }
         branch = Some(b);
         args.drain(i..i + 2);
+    }
+    if args.first() == Some(&"--live") {
+        let (Some(file), Some(dest), None) = (args.get(1).copied(), args.get(2).copied(), args.get(3)) else {
+            println!("folosire: gh-trimite --live <fisier> <live/...>");
+            return 1;
+        };
+        if !dest.starts_with("live/") || !valid_path(dest) {
+            println!("gh-trimite: {}: canalul viu scrie doar sub live/", dest);
+            return 1;
+        }
+        let c = config();
+        let message = format!("cyber-universe: canalul viu {}", dest);
+        let r = load(file).and_then(|data| {
+            let token = read_token(&c).ok_or_else(|| format!("lipseste tokenul GitHub (un rand in {})", c.token))?;
+            ensure_branch(&c, &token, &c.hub, "os/live")?;
+            put_on(&c, &token, &c.hub, dest, &data, &message, Some("os/live"), true)
+        });
+        return match r {
+            Ok(()) => 0,
+            Err(e) => {
+                println!("gh-trimite: {}", e);
+                1
+            }
+        };
     }
     if args.first() == Some(&"--rapoarte") {
         return reports(&config(), args.get(1).copied().unwrap_or(REPORTS_DIR));
@@ -269,7 +297,7 @@ fn run(c: &Config, file: &str, repo: &str, path: &str, message: &str, branch: Op
     if let Some(b) = branch {
         ensure_branch(c, &token, repo, b)?;
     }
-    put_on(c, &token, repo, path, &data, message, branch)
+    put_on(c, &token, repo, path, &data, message, branch, false)
 }
 
 /// The branch `b` exists after this: if GitHub does not have it, it is made from the tip of `main` (git refs API).
@@ -304,11 +332,13 @@ fn ensure_branch(c: &Config, token: &str, repo: &str, b: &str) -> Result<(), Str
 }
 
 fn put(c: &Config, token: &str, repo: &str, path: &str, data: &[u8], message: &str) -> Result<(), String> {
-    put_on(c, token, repo, path, data, message, None)
+    put_on(c, token, repo, path, data, message, None, false)
 }
 
 /// GET (is it there, is it the same?) then PUT, on `branch` (None = the default branch). Prints what happened.
-fn put_on(c: &Config, token: &str, repo: &str, path: &str, data: &[u8], message: &str, branch: Option<&str>) -> Result<(), String> {
+/// `only_new`: a different file already there is an error, never replaced (the live channel only adds).
+#[allow(clippy::too_many_arguments)]
+fn put_on(c: &Config, token: &str, repo: &str, path: &str, data: &[u8], message: &str, branch: Option<&str>, only_new: bool) -> Result<(), String> {
     if !valid_repo(repo) || !valid_path(path) {
         return Err(format!("depozit sau cale invalida: {} {}", repo, path));
     }
@@ -336,6 +366,9 @@ fn put_on(c: &Config, token: &str, repo: &str, path: &str, data: &[u8], message:
             if same {
                 println!("gh-trimite: {} e deja la fel in {} (nimic de trimis)", path, repo);
                 return Ok(());
+            }
+            if only_new {
+                return Err(format!("{} exista deja in {} cu alt continut (canalul viu nu rescrie)", path, repo));
             }
             Some(sha)
         }

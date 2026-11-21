@@ -2150,6 +2150,57 @@ fn test_ghpush() {
     assert!(list(&[R, "note", "--ramura", "os/test-f8"], "ramura") == 0);
     assert!(list(&[R, "nu-exista"], "dosar lipsa") == 1);
     info!("test: git simplu pe ramuri os/ OK");
+    // P6-109 (C-159 step 1): a whole live session against the test server (tools/ghpush-test-server.py plays the command
+    // centre): no key = no session; with the key 9 command files, 5 refused (bad signature, wrong number, repeated,
+    // board without the key, nested `live`), 4 run (`uptime`, `stare`, a missing program with its exit code, `gata`).
+    let _ = fs::remove("/etc/hub/live.cheie");
+    let e = shell::live::test_session(1).expect_err("test: live fara cheie a pornit");
+    assert!(e.starts_with("cheia /etc/hub/live.cheie lipseste"), "test: live fara cheie: {}", e);
+    info!("test: live: fara cheie nu porneste OK");
+    put("/etc/hub/live.cheie", b"cheie-de-proba-a-canalului-viu-P6-109-qemu");
+    let sum = shell::live::test_session(1).expect("test: sesiunea vie");
+    assert!(sum.ran == 4 && sum.refused == 5 && sum.unsent == 0 && sum.end.starts_with("gata"), "test: live: {:?}", sum);
+    let live_take = |name: &str| {
+        let remote = alloc::format!("live/{}/{}", sum.session, name);
+        let local = alloc::format!("/etc/live-{}", name);
+        let id = proc::spawn_path("/bin/gh-ia", &["gh-ia", "--live-ia", &remote, &local]).expect("test: /bin/gh-ia");
+        assert!(proc::wait_child(id) == 0, "test: live: {} lipseste din hub", remote);
+        alloc::string::String::from_utf8(fs::read_all(&local).unwrap_or_default()).unwrap_or_default()
+    };
+    let want = [
+        (1, "ok", ""),
+        (2, "REFUZAT", "semnatura gresita"),
+        (3, "REFUZAT", "numar gresit: astept nr 3"),
+        (4, "REFUZAT", "comanda repetata: nr 1"),
+        (5, "REFUZAT", "comanda scrie in placa video"),
+        (6, "ok", ""),
+        (7, "REFUZAT", "o sesiune vie nu porneste"),
+        (8, "ok", ""),
+        (9, "ok", ""),
+    ];
+    for (nr, state, why) in want {
+        let c = live_take(&alloc::format!("c-{:04}.json", nr));
+        let r = live_take(&alloc::format!("r-{:04}.json", nr));
+        let v = cyber_json::parse(&r).unwrap_or_else(|_| panic!("test: live: r-{:04} nu e JSON: {}", nr, r));
+        let field = |k: &str| v.get(k).and_then(cyber_json::Value::as_str).unwrap_or("");
+        assert!(field("ecou") == c, "test: live: r-{:04}: ecoul difera", nr);
+        assert!(field("stare") == state && field("motiv").starts_with(why), "test: live: r-{:04}: {}", nr, r);
+        assert!(field("sesiune") == sum.session && field("forma") == "cyber-live-1", "test: live: r-{:04}: {}", nr, r);
+        if state == "ok" {
+            assert!(field("sistem").starts_with("cyber-universe ") && v.get("durata_ms").is_some(), "test: live: r-{:04}: {}", nr, r);
+        }
+    }
+    let r1 = live_take("r-0001.json");
+    let v1 = cyber_json::parse(&r1).expect("test: live: r-0001");
+    assert!(v1.get("cod").and_then(cyber_json::Value::as_i64) == Some(0) && v1.get("iesire").and_then(cyber_json::Value::as_str).is_some_and(|t| !t.is_empty()), "test: live: uptime: {}", r1);
+    let r6 = live_take("r-0006.json");
+    assert!(cyber_json::parse(&r6).ok().and_then(|v| v.get("iesire").and_then(cyber_json::Value::as_str).map(|t| t.contains("memorie libera"))) == Some(true), "test: live: stare: {}", r6);
+    let r8 = live_take("r-0008.json");
+    assert!(cyber_json::parse(&r8).ok().and_then(|v| v.get("cod").and_then(cyber_json::Value::as_i64)) == Some(126), "test: live: cod: {}", r8);
+    let jr = alloc::string::String::from_utf8(fs::read_all(&alloc::format!("/etc/hub/live/{}/jurnal.txt", sum.session)).unwrap_or_default()).unwrap_or_default();
+    let lines: alloc::vec::Vec<&str> = jr.lines().filter(|l| !l.starts_with('#')).collect();
+    assert!(lines.len() == 13 && lines[0].starts_with("1 incepe ") && lines[1].starts_with("1 gata ") && lines[2].starts_with("2 refuz "), "test: live: jurnalul: {}", jr);
+    info!("test: live: sesiunea {} prin hub: 4 rulate, 5 refuzate, ecoul exact, jurnalul pe stick OK", sum.session);
 }
 
 /// HTTPS with real web sites (P6-02): /bin/fetch resolves the name, connects through QEMU's network to the

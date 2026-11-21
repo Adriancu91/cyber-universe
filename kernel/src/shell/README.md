@@ -41,6 +41,12 @@
   (1–60, implicit 2), până la Esc; `/usb/hub/asculta` (gol sau cu numărul de minute) = pornită la pornire pe un fir al sistemului,
   oprită cu `hub opreste`. Fiecare comandă (și cele refuzate) primește răspunsul ei în hub, `integrare/cyber-universe/raspunsuri/K-<nr>.txt`
   (`gh-trimite --raspuns`, doar acel dosar), copie pe stick în `/usb/hub/raspunsuri/`. Test: `ghpush` (3 runde la 1 s, K-5 apoi K-6).
+- **`live <minute>` — canalul viu (P6-108, P6-109, comanda C-159 pasul 1):** `live.rs` — poarta (semnătura HMAC-SHA-256 cu
+  `/usb/hub/live.cheie`, numărul exact următor, o singură dată, placa doar cu `permite-live-placa`, ecoul exact) și bucla: deschide
+  `live/<sesiune>/` pe ramura `os/live` a hub-ului, întreabă dosarul la 2,5 s cu ETag (`gh-ia --live-dosar`), ia `c-NNNN.json` în
+  ordine (`gh-ia --live-ia`), notează în `/usb/hub/live/<sesiune>/jurnal.txt` ÎNAINTE de rulare, rulează cu ieșirea prinsă, trimite
+  `r-NNNN.json` (`gh-trimite --live`, fără rescriere). Sfârșit: `gata`, <minute> fără comenzi, Esc. Și ca rând `live <minute>` în
+  `auto/teste.txt` (ceasul de siguranță e împins cât lucrează). Forma fișierelor: `docs/LIVE.md`. Test: `ghpush` (9 comenzi: 5 refuzuri, 4 rulate).
 - **`ciclu-test os-<N>` din hub (P6-75, comanda C-105) — DEZACTIVAT implicit:** `ciclu.rs` — actualizare la exact acel Release
   (`actualizeaza --versiune`), repornire (încercare + confirmare, `revenire.rs`), `gpu recupereaza` + `gpu lant` fără DA, raport +
   răspuns în hub; fazele în `/usb/hub/ciclu.txt` (`actualizare` → `test` → `test-pornit`); eșecul ciclului = versiunea veche înapoi

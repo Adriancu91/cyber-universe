@@ -3,8 +3,13 @@
 test.cyber.local from tls/tests/data) on 127.0.0.1:18447 (guest: 10.0.2.2:18447). Files live in memory; one is there
 from the start (note/vechi.txt). GET answers like GitHub (sha = git blob sha, content in base64 split into lines of 60);
 PUT checks the request like GitHub would (token, JSON, base64, message, and the sha of the current version when the
-file exists — a wrong or missing one gets 409/422) and stores the file. Token "tok-gh" is the good one."""
-import base64, hashlib, json, socket, ssl, sys, urllib.parse
+file exists — a wrong or missing one gets 409/422) and stores the file. Token "tok-gh" is the good one.
+
+P6-109 (the live channel, docs/LIVE.md): every GET 200 carries an ETag; `If-None-Match` with the same one gets 304.
+When the OS opens `live/<s>/sesiune.json` on `os/live`, the command centre's side is played here: c-0001..c-0004 at once
+(a good one, a bad signature, a wrong number, a repeated one), c-0005..c-0009 after the first 304 on that folder (board
+without the key, `stare`, a nested `live`, a program that does not exist, `gata`), signed with LIVE_KEY."""
+import base64, hashlib, hmac, json, socket, ssl, sys, urllib.parse
 
 D = sys.path[0] + "/../tls/tests/data"
 REPO = "Adriancu91/note-test"
@@ -20,6 +25,33 @@ FILES = {"note/vechi.txt": b"versiunea veche\n",
          # P6-64 (C-87 item 2): Adrian's commands for the OS: one to run, one refused (writes to the card), one done by hand.
          "integrare/cyber-universe/os-comenzi.md": "# Comenzi pentru OS\n\n- [ ] K-1: uptime\n- [ ] K-2: `gpu lant`\n"
                                                    "- [x] K-3: hw\n- [ ] K-4: mem\n".encode()}
+# The same bytes as /etc/hub/live.cheie in the guest (kernel/src/main.rs, test_ghpush).
+LIVE_KEY = b"cheie-de-proba-a-canalului-viu-P6-109-qemu"
+LIVE_LATER = {}  # session -> the command files released after the first 304
+
+
+def live_file(session, nr, kind, text, signed_nr=None, sig=None):
+    n = signed_nr if signed_nr is not None else nr
+    if sig is None:
+        sig = hmac.new(LIVE_KEY, f"cyber-live-1\n{session}\n{n}\n{kind}\n{text}".encode(), "sha256").hexdigest()
+    return json.dumps({"nr": n, "sesiune": session, "fel": kind, "text": text, "semnatura": sig}).encode()
+
+
+def live_open(files, session):
+    d = f"live/{session}/"
+    c1 = live_file(session, 1, "comanda", "uptime")
+    files[d + "c-0001.json"] = c1
+    files[d + "c-0002.json"] = live_file(session, 2, "comanda", "mem", sig="0" * 64)
+    files[d + "c-0003.json"] = live_file(session, 3, "comanda", "mem", signed_nr=4)
+    files[d + "c-0004.json"] = c1
+    LIVE_LATER[session] = {d + "c-0005.json": live_file(session, 5, "comanda", "gpu lant"),
+                           d + "c-0006.json": live_file(session, 6, "stare", ""),
+                           d + "c-0007.json": live_file(session, 7, "comanda", "live 3"),
+                           d + "c-0008.json": live_file(session, 8, "comanda", "run nu-exista"),
+                           d + "c-0009.json": live_file(session, 9, "gata", "")}
+    print(f"ghpush-test-server: live: sesiunea {session}: c-0001..c-0004 puse", flush=True)
+
+
 ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 ctx.minimum_version = ssl.TLSVersion.TLSv1_3
 ctx.load_cert_chain(D + "/ec.pem", D + "/ec.key")
@@ -99,6 +131,8 @@ def handle(method, path, h, body):
         return 409 if "sha" in req else 422, {"message": f"{name} does not match" if "sha" in req else "\"sha\" wasn't supplied."}
     created = name not in FILES_B
     FILES_B[name] = data
+    if branch == "os/live" and name.startswith("live/") and name.endswith("/sesiune.json"):
+        live_open(FILES_B, name.split("/")[1])
     commits += 1
     print(f"ghpush-test-server: {'creat' if created else 'actualizat'} {name} ({len(data)} octeti, ramura {branch}): {req['message']!r}", flush=True)
     return (201 if created else 200), {"content": {"path": name, "sha": blob_sha(data), "html_url": f"https://github.com/{REPO}/blob/main/{name}"},
@@ -131,9 +165,21 @@ while True:
         method, path, _ = lines[0].split(" ")
         status, answer = handle(method, path, h, body)
         payload = json.dumps(answer).encode()
-        reason = {200: "OK", 201: "Created", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 409: "Conflict", 422: "Unprocessable Entity"}[status]
-        conn.sendall(b"HTTP/1.1 %d %s\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: %d\r\nConnection: close\r\n\r\n"
-                     % (status, reason.encode(), len(payload)) + payload)
+        extra = b""
+        if method == "GET" and status == 200:
+            etag = '"%s"' % hashlib.sha1(payload).hexdigest()
+            extra = b"ETag: " + etag.encode() + b"\r\n"
+            if h.get("if-none-match") == etag:
+                status, payload = 304, b""
+                p = urllib.parse.unquote(path.partition("?")[0])
+                for session, later in list(LIVE_LATER.items()):
+                    if p.endswith("/contents/live/" + session):
+                        BRANCHES["os/live"].update(later)
+                        del LIVE_LATER[session]
+                        print(f"ghpush-test-server: live: 304, apoi c-0005..c-0009 puse ({session})", flush=True)
+        reason = {200: "OK", 304: "Not Modified", 201: "Created", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 409: "Conflict", 422: "Unprocessable Entity"}[status]
+        conn.sendall(b"HTTP/1.1 %d %s\r\nContent-Type: application/json; charset=utf-8\r\n%sContent-Length: %d\r\nConnection: close\r\n\r\n"
+                     % (status, reason.encode(), extra, len(payload)) + payload)
         print("ghpush-test-server:", method, path, status, flush=True)
         conn.unwrap()
     except Exception as e:

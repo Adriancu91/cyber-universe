@@ -14,6 +14,9 @@ static mut TLS_BUF: [u8; MIN_BUFFER] = [0; MIN_BUFFER];
 pub struct Response {
     pub status: u16,
     pub location: Option<String>,
+    /// The `ETag` header (P6-109: conditional requests of the live channel).
+    #[allow(dead_code)] // used by /bin/gh-ia only
+    pub etag: Option<String>,
     pub body: Vec<u8>,
 }
 
@@ -104,12 +107,15 @@ pub fn request(
     let mut lines = head.split("\r\n");
     let status = lines.next().and_then(|l| l.split(' ').nth(1)).and_then(|s| s.parse().ok()).ok_or("raspuns HTTP fara cod")?;
     let mut location = None;
+    let mut etag = None;
     let mut chunked = false;
     for l in lines {
         let Some((name, value)) = l.split_once(':') else { continue };
         let name = name.trim().to_ascii_lowercase();
         if name == "location" {
             location = Some(value.trim().to_string());
+        } else if name == "etag" {
+            etag = Some(value.trim().to_string());
         } else if name == "transfer-encoding" && value.to_ascii_lowercase().contains("chunked") {
             chunked = true;
         }
@@ -122,7 +128,7 @@ pub fn request(
         raw.truncate(e - end - 4);
     }
     let body = if chunked { dechunk(&raw).ok_or("corp chunked stricat")? } else { raw };
-    Ok(Response { status, location, body })
+    Ok(Response { status, location, etag, body })
 }
 
 /// "https://host[:port]/path" -> (host, port, path).
