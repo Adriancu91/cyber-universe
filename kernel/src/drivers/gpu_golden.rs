@@ -534,7 +534,9 @@ pub(super) fn dashboard_finish<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?S
     let r = {
         let mut t = OsRm { bar, vbar: &mut *vbar, journal: &mut *journal, permit, prep, clock, poll, zone, pending, calls: rm_calls, words: vram_words };
         let mut rm = |sent: &[u8]| t.call(nvidia_ga104::gsp::rpc::function::GSP_RM_CONTROL, sent);
-        kd::rusd_stop(start, client, sub, &mut rm, &mut rows)
+        // P6-115 (cyber-gpu `fb22ffb`, after os-323): the stop without `INIT(0)` — the board refused it (0x8000001f + an
+        // ASSERT) and NVIDIA's own driver never sends it. Polling off only; the page stays reserved until FLR / power-on.
+        kd::rusd_stop_poll_only(start, client, sub, &mut rm, &mut rows)
     };
     for e in rows.events() {
         journal.push(*e);
@@ -590,12 +592,18 @@ pub(super) fn dashboard_lines(
         }
         None => l.push(format!("{}: kd tabloul nu s-a citit (placa nu a acceptat toate comenzile)", p)),
     }
+    // P6-115: the zone is left on on purpose (no `INIT(0)`, as NVIDIA's driver); said as such, not as "not sent".
+    let zone = if start.page_given() && stop.deinit.is_none() {
+        String::from("nu se trimite (zona lasata pornita, ca driverul NVIDIA, fara INIT(0))")
+    } else {
+        kd_answer(stop.deinit)
+    };
     l.push(format!(
         "{}: kd oprirea citirilor = {}, oprirea zonei = {}{}",
         p,
         kd_answer(stop.mask),
-        kd_answer(stop.deinit),
-        if stop.page_free(start) { "" } else { "; pagina ramane rezervata pana la repornire" }
+        zone,
+        if stop.page_free(start) { "" } else { "; pagina ramane rezervata pana la FLR sau repornire" }
     ));
     l
 }

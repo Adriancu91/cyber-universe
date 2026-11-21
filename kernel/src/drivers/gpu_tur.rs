@@ -1336,6 +1336,9 @@ pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: sup
                                         lines.extend(l);
                                         if rm.rusd.as_ref().is_some_and(|m| m.phys.is_none()) {
                                             lines.push(format!("{}: kd modelul: zona comuna oprita (adresa stearsa)", p));
+                                        } else if rm.rusd.as_ref().is_some_and(|m| m.phys.is_some()) {
+                                            // P6-115: no `INIT(0)` sent: the model still holds the page (as on the board).
+                                            lines.push(format!("{}: kd modelul: zona comuna lasata pornita (adresa pastrata, ca driverul NVIDIA)", p));
                                         }
                                     }
                                     Err(e) => lines.push(format!("{}: kd tabloul de bord: eroare la oprire ({}); pagina ramane rezervata", p, e)),

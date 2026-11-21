@@ -474,6 +474,8 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-113** C-159 (nota centrului de comandă 13:00): `live.cheie` și `permite-live-placa` = fișiere secrete oriunde sub hub, doar ale nucleului; răspunsurile canalului viu trec prin ascunderea secretelor. Plan: `docs/plans/P6-113.md`. Dep: P6-109.
 - [x] **P6-114** C-155 punctul 2 (C-158 punctul 4): LayerNorm nou (`layernorm256`, `TokenList::FusedLn`), oprit implicit, doar `test-placa … --ln-nou`, comparat cu lista lipită cu LayerNorm vechi (aceleași simboluri, abaterea sub 1e-4); Release separat. Plan: `docs/plans/P6-114.md`. Dep: P6-112.
   Gata (2026-11-21 ~16:40 RO): cyber-gpu rămâne `46078f4` (conține deja `139b145`); SIMULARE `kronos-gpu-ln`: 9 poziții, aceleași 5 simboluri, abaterea 0 la modelul mic, TRECE; `kronos-gpu`, `-dieta`, `-lipit`, `-singur`, `ghpush`, `shell` + build `--gpu-scrie --usb` trec.
+- [x] **P6-115** Oprirea tabloului de bord fără `INIT(0)` (PREDARE Cyber-GPU `fb22ffb`, după os-323): `rusd_stop_poll_only`, zona lăsată pornită ca la driverul NVIDIA, pagina rezervată până la FLR/repornire; nimic nou pentru placă. Plan: `docs/plans/P6-115.md`. Dep: P6-105.
+  Gata (2026-11-21 ~16:55 RO): `gpu-tablou` trece (rândul nou „oprirea zonei = nu se trimite …”).
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
