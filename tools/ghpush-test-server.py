@@ -37,8 +37,21 @@ def live_file(session, nr, kind, text, signed_nr=None, sig=None):
     return json.dumps({"nr": n, "sesiune": session, "fel": kind, "text": text, "semnatura": sig}).encode()
 
 
+LIVE_SESSIONS = []  # the sessions opened, in order
+
+
 def live_open(files, session):
     d = f"live/{session}/"
+    LIVE_SESSIONS.append(session)
+    if len(LIVE_SESSIONS) == 2:
+        # P6-118 (C-161 point 1): the second session, with /etc/hub/permite-live-placa on the test disk but without
+        # permite-test-placa: a `DA` question answered at once, a wrong `test-placa` form, a correct one refused for the
+        # missing key, a second correct one refused (one board command per session), `gata`.
+        for nr, kind, text in [(1, "comanda", "gpu lant"), (2, "comanda", "test-placa --p8 --tablou"), (3, "comanda", "test-placa --p8"),
+                               (4, "comanda", "test-placa"), (5, "gata", "")]:
+            files[d + "c-%04d.json" % nr] = live_file(session, nr, kind, text)
+        print(f"ghpush-test-server: live: sesiunea a doua {session}: c-0001..c-0005 puse (placa)", flush=True)
+        return
     c1 = live_file(session, 1, "comanda", "uptime")
     files[d + "c-0001.json"] = c1
     files[d + "c-0002.json"] = live_file(session, 2, "comanda", "mem", sig="0" * 64)

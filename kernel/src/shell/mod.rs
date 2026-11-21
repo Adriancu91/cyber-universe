@@ -243,6 +243,17 @@ fn dispatch(line: &str) -> bool {
     true
 }
 
+/// P6-118 (C-161 point 1): the answer to a `DA` question. During a live session nobody is at the keyboard and keys sent
+/// through the channel must never answer it: the answer comes at once and is never `DA` (the command stops as without DA).
+fn read_da() -> Option<String> {
+    if live::in_session() {
+        out!("\ncere DA de la tastatura: doar cu Adrian de fata (in modul viu intrebarea primeste raspuns pe loc, fara DA)\n");
+        crate::info!("live: o intrebare DA a primit raspuns pe loc, fara DA");
+        return Some(String::new());
+    }
+    read_line()
+}
+
 /// Reads one line, echoing it; Backspace erases the last character. `None` if the terminal closed.
 fn read_line() -> Option<String> {
     let mut line = String::new();
@@ -413,7 +424,7 @@ fn run_program(args: &[&str]) {
         out!("kronos --gpu: lantul de mai sus ruleaza o data, apoi textul tau pe placa (fiecare simbol comparat cu procesorul);\n");
         out!("la orice eroare kronos continua pe procesor.\n");
         out!("Scrie DA (litere mari) si Enter ca sa continui; orice altceva = doar procesorul: ");
-        let Some(answer) = read_line() else { return };
+        let Some(answer) = read_da() else { return };
         if answer.trim() == "DA" {
             crate::info!("gpu: kronos --gpu: confirmat cu DA");
             crate::drivers::gpu_tur::KRONOS_ARMED.store(true, core::sync::atomic::Ordering::SeqCst);
@@ -893,7 +904,7 @@ fn lant(rest: &[&str]) {
         out!("(acest sistem nu poate scrie in placa: lantul va rula doar citire, oprit inainte de primul pas care scrie)\n");
     }
     out!("Scrie DA (litere mari) si Enter ca sa continui; orice altceva opreste: ");
-    let Some(answer) = read_line() else { return };
+    let Some(answer) = read_da() else { return };
     if answer.trim() != "DA" {
         out!("gpu lant: oprit, nimic scris in placa\n");
         crate::info!("gpu: lant: oprit la confirmare (nimic scris)");
@@ -967,7 +978,7 @@ fn tur_trezire(sim: bool) {
         out!("{}\n", l);
     }
     out!("Scrie DA (litere mari) si Enter ca sa continui; orice altceva opreste: ");
-    let Some(answer) = read_line() else { return };
+    let Some(answer) = read_da() else { return };
     if answer.trim() != "DA" {
         out!("gpu tur --trezire: oprit, nimic scris in placa\n");
         crate::info!("gpu: tur --trezire: oprit la confirmare (nimic scris)");
@@ -1009,7 +1020,7 @@ fn recupereaza(rest: &[&str]) {
         out!("{}\n", l);
     }
     out!("Scrie DA (litere mari) si Enter ca sa continui; orice altceva opreste: ");
-    let Some(answer) = read_line() else { return };
+    let Some(answer) = read_da() else { return };
     if answer.trim() != "DA" {
         out!("gpu recupereaza: oprit, nimic scris in placa\n");
         crate::info!("gpu: recupereaza: oprit la confirmare (nimic scris)");
@@ -1054,7 +1065,7 @@ fn i6(rest: &[&str]) {
         out!("{}\n", l);
     }
     out!("Scrie DA (litere mari) si Enter ca sa continui; orice altceva opreste: ");
-    let Some(answer) = read_line() else { return };
+    let Some(answer) = read_da() else { return };
     if answer.trim() != "DA" {
         out!("gpu i6: oprit, nimic scris in placa\n");
         crate::info!("gpu: i6 --scrie: oprit la confirmare (nimic scris)");

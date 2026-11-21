@@ -230,6 +230,20 @@ const SEND_TRIES: u32 = 3;
 /// One live session at a time.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 
+/// P6-118 (C-161 point 1): a board command (`test-placa …` with a correct form) already came in this session. At most one
+/// per session until "several tests in one power-on" works (C-158 point 5); the second is refused with the reason.
+static BOARD_TAKEN: AtomicBool = AtomicBool::new(false);
+
+/// P6-118 (C-161 point 1): whether a live session is running. A `DA` question asked meanwhile is answered at once and
+/// never with `DA` (nobody is at the keyboard; keys sent through the channel never answer it — `hubcmd.rs`: "DA il
+/// tasteaza doar Adrian, la calculator").
+pub fn in_session() -> bool {
+    ACTIVE.load(Ordering::Acquire)
+}
+
+/// The reason a second board command in one session is refused.
+pub const BOARD_ONCE: &str = "a doua comanda pe placa in aceeasi sesiune: cel mult una pe sesiune pana merge „mai multe teste intr-o pornire” (C-158 punctul 5); deschide o sesiune noua";
+
 /// What a session did.
 #[derive(Debug, Default, Clone)]
 pub struct Summary {
@@ -369,6 +383,25 @@ fn run_captured(line: &str) -> String {
     text
 }
 
+/// P6-118 (C-161 point 1, C-159 note of 21 Nov 16:35): `test-placa […]` in live mode — the same forms as in
+/// `auto/teste.txt`, the same `board_test` (Adrian's keys: `permite-test-placa` + the line in DECIZII.md; the gate has
+/// already asked for `permite-live-placa`), no `DA` from the keyboard; the whole report in `iesire` and sent to the hub
+/// as from the list. A wrong form or a missing key = `REFUZAT: …` in `iesire` with code 1, nothing written to the board.
+fn board_command(parsed: Result<String, &'static str>) -> String {
+    let outer = super::CAPTURE.lock().take();
+    let outer_programs = super::PROGRAM_CAPTURE.lock().take();
+    let text = match auto::board_test(parsed) {
+        Ok(text) => text,
+        Err(why) => {
+            super::LAST_EXIT.store(1, Ordering::Relaxed);
+            format!("REFUZAT: {} (nimic nu s-a scris in placa)\n", why)
+        }
+    };
+    *super::CAPTURE.lock() = outer;
+    *super::PROGRAM_CAPTURE.lock() = outer_programs;
+    text
+}
+
 /// The session's name: `s-AAAALLZZ-HHMM` (`-2`, `-3` … when that folder is already on the stick).
 fn session_name(base: &str) -> String {
     let stamp = auto::date_stamp();
@@ -384,6 +417,7 @@ fn run(minutes: u64, poll_ms: u64, by_hand: bool) -> Result<Summary, String> {
     if ACTIVE.swap(true, Ordering::Acquire) {
         return Err(String::from("o sesiune vie ruleaza deja"));
     }
+    BOARD_TAKEN.store(false, Ordering::SeqCst);
     let r = session(minutes, poll_ms, by_hand);
     ACTIVE.store(false, Ordering::Release);
     r
@@ -510,7 +544,13 @@ fn session(minutes: u64, poll_ms: u64, by_hand: bool) -> Result<Summary, String>
 /// One command file (number `want`): the gate, the journal BEFORE it runs, the run, the answer. `true` = `gata`.
 #[allow(clippy::too_many_arguments)]
 fn one(key: &[u8], board_key: bool, raw: &str, want: u32, gate: &mut Gate, local: &str, remote: &str, journal_path: &str, sum: &mut Summary) -> bool {
-    let verdict = gate.check(key, board_key, raw);
+    let mut verdict = gate.check(key, board_key, raw);
+    // P6-118 (C-161 point 1): one board command per session (a correct `test-placa` form counts, whatever its keys say).
+    if let Verdict::Run(cmd) = &verdict {
+        if cmd.kind == "comanda" && matches!(super::ciclu::board_command(&cmd.text), Some(Ok(_))) && BOARD_TAKEN.swap(true, Ordering::SeqCst) {
+            verdict = Verdict::Refused { nr: Some(cmd.nr), why: String::from(BOARD_ONCE) };
+        }
+    }
     let (answer_text, end) = match verdict {
         Verdict::Refused { nr, why } => {
             journal(journal_path, &format!("{} refuz {} ({})", want, auto::now_text(), why));
@@ -526,7 +566,10 @@ fn one(key: &[u8], board_key: bool, raw: &str, want: u32, gate: &mut Gate, local
             let t0 = crate::time::uptime_ms().unwrap_or(0);
             super::LAST_EXIT.store(0, Ordering::Relaxed);
             let output = match cmd.kind.as_str() {
-                "comanda" => run_captured(&cmd.text),
+                "comanda" => match super::ciclu::board_command(&cmd.text) {
+                    Some(parsed) => board_command(parsed),
+                    None => run_captured(&cmd.text),
+                },
                 "stare" => format!("{}\n", system_text()),
                 _ => String::from("sesiunea se incheie (gata)\n"),
             };

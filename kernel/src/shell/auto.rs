@@ -213,7 +213,7 @@ pub fn allowed(line: &str) -> Result<(), &'static str> {
 
 /// P6-96: `test-placa` from the list. `Err` = refused (form or keys; nothing touched). `Ok` = what ran, for the list's report;
 /// the same text is also a report in the hub folder of the stick, sent with the gpu journal (`trimite`).
-fn board_test(parsed: Result<String, &'static str>) -> Result<String, String> {
+pub(super) fn board_test(parsed: Result<String, &'static str>) -> Result<String, String> {
     let i9 = parsed.map_err(String::from)?;
     super::ciclu::keys()?;
     say(&format!("auto: test-placa (I9 {}): cheile lui Adrian sunt puse; gpu recupereaza, apoi lantul\n", i9));

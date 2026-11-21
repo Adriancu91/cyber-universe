@@ -64,8 +64,24 @@ sau, la refuz: `"stare":"REFUZAT","motiv":"<de ce>"` (fără `cod`/`iesire`). `n
 | `comanda repetata: nr N s-a executat deja (o singura data)` | numărul e deja în jurnalul de pe stick (scris ÎNAINTE de execuție) |
 | `comanda scrie in placa video: fara cheia permite-live-placa …` | `gpu lant/i6/recupereaza/…`, `--scrie`, `--gpu`, `test-placa`, `ciclu-test`, `gpu tur --trezire` fără `/usb/hub/permite-live-placa` |
 | `o sesiune vie nu porneste alta sesiune vie` | comanda `live …` din modul viu |
+| `a doua comanda pe placa in aceeasi sesiune: …` | al doilea `test-placa …` cu formă corectă în aceeași sesiune (P6-118; cel mult unul pe sesiune până la C-158 punctul 5) |
 | `alta sesiune`, `fisierul comenzii nu e JSON valid`, `lipseste un camp …`, `fel necunoscut …`, `comanda goala` | forma greșită |
 | `cheia live.cheie lipseste sau e prea scurta …` | fără cheie modul viu nu pornește deloc |
+
+## Comanda de placă a modului viu (P6-118, C-161 punctul 1)
+- **`test-placa […]`** cu `fel: comanda`, exact formele din `auto\teste.txt` (`--i9 …`, `--flr-proba`, `--tablou`, `--lipit` /
+  `--simplu` / `--ln-nou`, `--p8`). Merge la același test ca lista automată, fără „DA” de la tastatură; cere **trei chei**:
+  `permite-live-placa` (poarta), `permite-test-placa` pe stick și rândul din `DECIZII.md` (ca lista).
+- `iesire` = raportul întreg al testului (ca în raportul listei), care pleacă și în hub (`trimite`), ca de la listă.
+- Formă greșită sau o cheie lipsă: `stare: ok`, `cod: 1`, `iesire` = `REFUZAT: <motivul> (nimic nu s-a scris in placa)`.
+- **Cel mult o comandă `test-placa` pe sesiune** (orice formă corectă se numără, chiar dacă o cheie lipsește); a doua: `REFUZAT`
+  cu motivul de mai sus. Pentru încă un test: o sesiune nouă.
+- **Orice comandă care cere „DA” de la tastatură** (`gpu lant`, `gpu recupereaza`, `gpu i6 --scrie`, `gpu tur --trezire`,
+  `run kronos --gpu`) primește în modul viu răspuns **pe loc, niciodată „DA”**: rândul `cere DA de la tastatura: doar cu Adrian
+  de fata …`, apoi comanda se oprește ca fără DA (nimic scris în placă). Tastele trimise prin canal (pasul 2) nu pot răspunde la
+  „DA”: cât merge o sesiune vie, întrebarea nici nu citește tastatura.
+- Proba în QEMU (`ghpush`, a doua sesiune): `gpu lant` → DA refuzat pe loc; `test-placa --p8 --tablou` → formă greșită;
+  `test-placa --p8` fără `permite-test-placa` → refuzat pentru cheie; al doilea `test-placa` → refuzat de poartă.
 
 ## Ce rămâne păzit de nucleu (neschimbat)
 Fișierele secrete nu se arată; scrieri pe disc doar pe partiții `cyber.rw`; placa video doar cu `permite-live-placa`

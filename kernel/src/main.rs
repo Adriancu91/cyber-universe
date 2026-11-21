@@ -2202,6 +2202,36 @@ fn test_ghpush() {
     let lines: alloc::vec::Vec<&str> = jr.lines().filter(|l| !l.starts_with('#')).collect();
     assert!(lines.len() == 13 && lines[0].starts_with("1 incepe ") && lines[1].starts_with("1 gata ") && lines[2].starts_with("2 refuz "), "test: live: jurnalul: {}", jr);
     info!("test: live: sesiunea {} prin hub: 4 rulate, 5 refuzate, ecoul exact, jurnalul pe stick OK", sum.session);
+    // P6-118 (C-161 point 1): a second session with `permite-live-placa` (and without `permite-test-placa`): `gpu lant`
+    // gets its DA question answered at once (never DA), `test-placa` with a wrong form and without Adrian's key is
+    // `REFUZAT` in `iesire` (code 1, nothing on the board), a second correct `test-placa` is refused by the gate.
+    let _ = fs::remove("/etc/hub/permite-test-placa");
+    put("/etc/hub/permite-live-placa", b"proba");
+    let t0 = crate::time::uptime_ms().unwrap_or(0);
+    let sum2 = shell::live::test_session(1).expect("test: sesiunea vie a doua");
+    let _ = fs::remove("/etc/hub/permite-live-placa");
+    assert!(sum2.ran == 4 && sum2.refused == 1 && sum2.end.starts_with("gata"), "test: live placa: {:?}", sum2);
+    let take2 = |name: &str| {
+        let remote = alloc::format!("live/{}/{}", sum2.session, name);
+        let local = alloc::format!("/etc/live2-{}", name);
+        let id = proc::spawn_path("/bin/gh-ia", &["gh-ia", "--live-ia", &remote, &local]).expect("test: /bin/gh-ia");
+        assert!(proc::wait_child(id) == 0, "test: live placa: {} lipseste din hub", remote);
+        let r = alloc::string::String::from_utf8(fs::read_all(&local).unwrap_or_default()).unwrap_or_default();
+        cyber_json::parse(&r).unwrap_or_else(|_| panic!("test: live placa: {} nu e JSON: {}", name, r))
+    };
+    let s = |v: &cyber_json::Value, k: &str| alloc::string::String::from(v.get(k).and_then(cyber_json::Value::as_str).unwrap_or(""));
+    let r1 = take2("r-0001.json");
+    let o1 = s(&r1, "iesire");
+    assert!(s(&r1, "stare") == "ok" && o1.contains("cere DA de la tastatura: doar cu Adrian de fata") && o1.contains("gpu lant: oprit, nimic scris in placa"), "test: live placa: gpu lant: {}", o1);
+    let r2 = take2("r-0002.json");
+    assert!(s(&r2, "stare") == "ok" && r2.get("cod").and_then(cyber_json::Value::as_i64) == Some(1) && s(&r2, "iesire").starts_with("REFUZAT: forma corecta"), "test: live placa: forma: {:?}", s(&r2, "iesire"));
+    let r3 = take2("r-0003.json");
+    let o3 = s(&r3, "iesire");
+    assert!(s(&r3, "stare") == "ok" && r3.get("cod").and_then(cyber_json::Value::as_i64) == Some(1) && o3.starts_with("REFUZAT: ciclul de test e DEZACTIVAT") && o3.contains("permite-test-placa"), "test: live placa: cheia: {}", o3);
+    let r4 = take2("r-0004.json");
+    assert!(s(&r4, "stare") == "REFUZAT" && s(&r4, "motiv") == shell::live::BOARD_ONCE, "test: live placa: a doua: {:?}", s(&r4, "motiv"));
+    let ms = crate::time::uptime_ms().unwrap_or(0).saturating_sub(t0);
+    info!("test: live: comanda de placa a modului viu (DA raspuns pe loc, forma, cheia, una pe sesiune) OK in {} ms", ms);
 }
 
 /// HTTPS with real web sites (P6-02): /bin/fetch resolves the name, connects through QEMU's network to the
