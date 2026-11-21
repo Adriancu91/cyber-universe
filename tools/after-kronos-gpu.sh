@@ -43,7 +43,8 @@ gsp_rm = [i for i in seg if 0x110000 <= off(i) <= 0x113FFF]
 assert gsp_rm and all(bell_i[-1] < i < ks[0] for i in gsp_rm), "ks: scrierile GSP trebuie sa fie dupa ultima sonerie si inaintea randului ks"
 assert all(allowed(i) or i in gsp_rm for i in seg), f"I14: alte scrieri: {[ev[i] for i in seg if not allowed(i) and i not in gsp_rm][:3]}"
 bells = len(bell_i)
-assert bells == 43, f"I14 + kronos --gpu: trebuie 43 sonerii (30 control + 2 scara C-139 + 10 cererea + 1 copierea VRAM), sunt {bells}"
+# P6-116 (C-157 point 2): + 1 doorbell for the warm-up (position 0 of the request sent once before the clock) = 44.
+assert bells == 44, f"I14 + kronos --gpu: trebuie 44 sonerii (30 control + 2 scara C-139 + 1 incalzirea + 10 cererea + 1 copierea VRAM), sunt {bells}"
 assert not [i for i in gsp if i14[0] < i < cfg[1]], "scriere dupa I14"
 assert not [i for i, b in enumerate(ev) if i > cfg[1] and (b.startswith("cfg  w ") or b.startswith("bar0 w "))], "scriere dupa Bus Master oprit"
 # P6-95 (C-141): the request's result and speed rows in the journal (they go up to the hub with it), inside I14.

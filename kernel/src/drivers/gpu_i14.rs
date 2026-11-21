@@ -115,6 +115,11 @@ const KT_DROPPED: &str = "kt randuri de rutina aruncate";
 const KT_FUSED_DIFFER: &str = "kt lipit fata de simplu: logit-uri diferite (0 = bit cu bit)";
 const KT_FUSED_SAME_TOKENS: &str = "kt lipit fata de simplu: simboluri identice (1/0)";
 /// P6-112: which list `kronos --gpu` sent (0 = simpla, 1 = lipita, 2 = amandoua, comparate).
+/// P6-116 (C-157 point 2, cyber-gpu note `C-157_P2c_pozitia-0.md`): position 0 of every list sent once before the clock
+/// (the warm-up), so the launch and pushbuffer shadows hold that list's slots before the timed position 0.
+const KT_WARM: &str = "kt incalzirea: pozitia 0 trimisa o data inainte de ceas (numarul listelor)";
+const KT_WARM_US: &str = "kt incalzirea: durata totala (us, in afara ceasului)";
+const KT_WARM_WORDS: &str = "kt incalzirea: cuvinte VRAM scrise (prima lista)";
 const KT_LIST: &str = "kt lista (0 simpla, 1 lipita, 2 comparate, 3 ln nou comparat)";
 /// P6-114 (C-155 point 2): the new LayerNorm against the old one on the glued list (threshold: same tokens, max |d| < 1e-4).
 const KT_LN_WORST_BITS: &str = "kt ln nou fata de vechi: max |d| (f32, biti)";
@@ -764,6 +769,8 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     } else {
         None
     };
+    // P6-116: the warm-ups (lists warmed, total us outside the clock, VRAM words of the first one).
+    let mut warm: (u32, u64, u64) = (0, 0, 0);
     for (ri, run) in runs.iter().enumerate() {
         runner.name = run.name.clone();
         runner.list = run.list;
@@ -771,6 +778,33 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
             // The launch kinds (`kp`) of the last run only: the glued list has other kinds than the plain one.
             runner.prof = kp::KindProfile::new();
             runner.prof_err = None;
+        }
+        // P6-116 (C-157 point 2, cyber-gpu `538e3b4`): the warm-up. Outside the clock, position 0 of this run is sent
+        // once exactly as `run_token` sends it (the same list, token and logits copy), so the launch and pushbuffer
+        // shadows hold this list's slots: the timed position 0 then writes only the records' payloads (os-329: the
+        // only slow position, 11 264 + 1 064 words). Nothing new for the board; nothing of it is kept: the speed
+        // counters and the token count are put back, the per-position rows and the kinds' profile start empty, and
+        // the K/V rows of position 0 are written again with the same bits. An error here is the error position 0
+        // would have given: the chain stops as before.
+        if fast {
+            if let Some(&t0) = run.prompt.first() {
+                let (speed0, done0, words0) = (runner.speed.clone(), *runner.tokens_done, runner.st.vram_words);
+                let w0 = crate::time::since_boot_us();
+                runner.run_token(t0, 0)?;
+                let w_us = w0.zip(crate::time::since_boot_us()).map(|(a, b)| b.saturating_sub(a)).unwrap_or(0);
+                let w_words = runner.st.vram_words.saturating_sub(words0);
+                runner.speed = speed0;
+                *runner.tokens_done = done0;
+                runner.prof = kp::KindProfile::new();
+                runner.prof_err = None;
+                runner.split.clear();
+                runner.launch_ns.clear();
+                warm.0 += 1;
+                warm.1 = warm.1.saturating_add(w_us);
+                if warm.0 == 1 {
+                    warm.2 = w_words;
+                }
+            }
         }
         let (generation, positions) = loop {
             let plan = GenPlan::new(&run.prompt, run.steps, m.vocab, m.context)?;
@@ -902,6 +936,15 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
         medians.push(stats.median_ns);
         all.push(greedy);
+    }
+    if warm.0 > 0 {
+        runner.journal.push(Event::Value { what: KT_WARM, value: warm.0 });
+        runner.journal.push(Event::Value { what: KT_WARM_US, value: warm.1.min(u64::from(u32::MAX)) as u32 });
+        runner.journal.push(Event::Value { what: KT_WARM_WORDS, value: warm.2.min(u64::from(u32::MAX)) as u32 });
+        runner.lines.push(format!(
+            "{}: kronos --gpu: kt incalzirea: pozitia 0 trimisa o data inainte de ceas pe {} liste ({} us in afara ceasului, {} cuvinte VRAM la prima)",
+            p, warm.0, warm.1, warm.2
+        ));
     }
     if compare {
         let rows = if lists.contains(&kd::TokenList::FusedLn) {

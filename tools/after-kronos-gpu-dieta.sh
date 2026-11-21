@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # After scenario `kronos-gpu-dieta` (P6-107, C-154): the same `kronos --gpu-sim` text twice in one power-on, first with
 # the driver's diet (`gpu dieta-sim on`: the pushbuffer through a shadow, the records not zeroed), then without it.
-#   - two journals (001 = with the diet, 002 = without), each with I14 passed and the same 43 work-channel doorbells;
+#   - two journals (001 = with the diet, 002 = without), each with I14 passed and the same 44 work-channel doorbells (P6-116: one is the warm-up);
 #   - `kt dieta` 1 / 0; the logits the same bit for bit (`kt amprenta …` and the worst deviation's f32 bits equal);
 #   - with the diet the driver writes fewer VRAM words per token (median) than without it.
 set -uo pipefail
@@ -32,7 +32,8 @@ def bells(ev):
 on, off = load(sys.argv[1]), load(sys.argv[2])
 assert val(on, "kt dieta (0/1)") == [1] and val(off, "kt dieta (0/1)") == [0], ("kt dieta", val(on, "kt dieta (0/1)"), val(off, "kt dieta (0/1)"))
 b_on, b_off = bells(on), bells(off)
-assert b_on == b_off == 43, f"sonerii: cu dieta {b_on}, fara {b_off} (trebuie 43 si 43)"
+# P6-116: + 1 doorbell for the warm-up in both runs = 44.
+assert b_on == b_off == 44, f"sonerii: cu dieta {b_on}, fara {b_off} (trebuie 44 si 44)"
 for name in ["kt amprenta logit-urilor (FNV-1a, toate pozitiile)", "kt abaterea maxima a logit-urilor (f32, biti)"]:
     a, b = val(on, name), val(off, name)
     assert len(a) == 1 and a == b, f"{name}: cu dieta {a}, fara {b} (trebuie identice)"
