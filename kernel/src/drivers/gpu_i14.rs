@@ -551,7 +551,19 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // 0. C-87 step 4 + P6-95 (C-142 `kronos_speed::ModelLimits`): the VRAM, the pushbuffer area (two tokens in the way that
     //    needs the most words) and the records' stride, from the model's shapes, checked before anything is uploaded.
     let budget = VramBudget::of_model(m)?;
-    let lim = ks::ModelLimits::of(&s, m.layers.len(), m.vocab, m.context, I11_BOARD_BYTES)?;
+    // P6-122 (C-158 point 3, cyber-gpu note C-157_P4 `839704f`): the pushbuffer area and the records' stride from the
+    // lists that actually run (the ladder, when it runs, sends the plain list: then it is counted too). With the plain
+    // list alone, #651 (24 layers, 388 launches) would be refused even when only the glued list runs (172 launches).
+    let mut run_lists: Vec<kd::TokenList> = Vec::new();
+    if way.is_none() {
+        run_lists.push(kd::TokenList::Plain);
+    }
+    for r in runs {
+        if !run_lists.contains(&r.list) {
+            run_lists.push(r.list);
+        }
+    }
+    let lim = ks::ModelLimits::of_lists(&s, m.layers.len(), m.vocab, m.context, I11_BOARD_BYTES, &run_lists, &[])?;
     let (free, largest) = st.mem.vram_free();
     lines.push(format!("{}: i14: {}; VRAM liber {} MiB (cea mai lunga bucata {} MiB)", p, budget.line(m.layers.len()), free >> 20, largest >> 20));
     let vram_line = budget.line(m.layers.len());
@@ -1749,7 +1761,8 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
             p,
             if list_kind == 4 { "lipita-ln (LayerNorm nou, layernorm256)" } else { "lipita (LayerNorm vechi)" },
             runs[0].list.launches_per_token(m.layers.len()) + 1,
-            if list_kind == 4 { "0x46a07914" } else { "0xda9ae084" }
+            // P6-122: the reference prints are #513's (12 layers); a deeper model (#651, 24) has none yet.
+            if m.layers.len() > 12 { "doar la #513; acest model nu are inca una" } else if list_kind == 4 { "0x46a07914" } else { "0xda9ae084" }
         ));
     }
     // P6-120 (note C-157_P2d, point 2): with two runs on the same text, which run every row speaks of.

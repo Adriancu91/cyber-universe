@@ -128,6 +128,8 @@ fi
 # P6-62 (C-83): I14 in `gpu lant --sim` reads Kronos's tiny control model (random weights, hub vectori/) from the disk.
 if [[ ",$EXTRA_FEATURES," == *",test-gpu-sim,"* ]]; then
     mkdir -p "$DISK_ROOT/kronos" && cp "$ROOT/tests/kronos/mic_q8_0.kgr" "$DISK_ROOT/kronos/"
+    # P6-122 (C-158 point 3): the same tiny model with 24 layers (as many as #651), for `kronos-gpu-24`.
+    python3 "$ROOT/tools/kgr-straturi.py" "$ROOT/tests/kronos/mic_q8_0.kgr" "$DISK_ROOT/kronos/mic24_q8_0.kgr" 24 >/dev/null
     # P6-121 (C-161 point 3): Kronos's golden step (hub integrare/kronos/pas_de_aur_mic/, S132) for `antrenare proba`,
     # taken from the cyber-gpu commit the kernel is built with (gpu-compute's tests/date/pas_de_aur_mic/, 3.4 MB).
     GC_DIR="$(cd "$ROOT/kernel" && cargo metadata --format-version 1 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(p["manifest_path"] for p in d["packages"] if p["name"]=="gpu-compute").rsplit("/",1)[0])' 2>/dev/null)"

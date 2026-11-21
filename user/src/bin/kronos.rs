@@ -158,7 +158,9 @@ const fn control(i: usize, greedy: &'static [u32], greedy_text: &'static str) ->
 /// Hub `integrare/kronos/MODEL.md` (S83b, C-82) for #513, (S54, C-44) for #477 and #459;
 /// `integrare/kronos/vectori/vectori.json` (q8_0) for the tiny random model of the official vectors (on the test disk,
 /// so the control path is tested in QEMU). The order of the first three is the default choice (P6-60).
-const KNOWN: [Known; 4] = [
+/// P6-122 (C-158 point 3): #651 (hub `integrare/kronos/MODEL_651.md`, S128), run by the test cycle with `--model`
+/// (`test-placa … --k651`); never the default choice (the first three stay as they were).
+const KNOWN: [Known; 5] = [
     Known {
         name: "#513",
         file: "kronos_513_q8_0.kgr",
@@ -187,6 +189,16 @@ const KNOWN: [Known; 4] = [
             control(0, &[2233, 1585, 32, 475, 50], " Acum are 1192"),
             control(1, &[8369, 1497, 4444, 6882, 46], " orașul Baia Mare."),
             control(2, &[1510, 1947, 1358, 1646, 1376], "\n    return a + b"),
+        ],
+    },
+    Known {
+        name: "#651",
+        file: "kronos_651_q8_0.kgr",
+        sha256: "2edf75ac12eedb54bd2eace55d82bf5c14cc3240e11c0fca40263d3e65ea0bf2",
+        controls: [
+            control(0, &[1471, 1988, 4397, 1547, 3666], " Ana stă la et"),
+            control(1, &[8369, 4043, 46, 10, 10], " orașul București.\n\n"),
+            control(2, &[1510, 1947, 5017, 40, 97], "\n    return sum(a"),
         ],
     },
     Known {

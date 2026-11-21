@@ -83,6 +83,24 @@ pub fn k513_path() -> Option<&'static str> {
 /// P6-96: what `kronos --gpu` generates in the cycle (the command of CITESTE.txt).
 pub const K513_ARGS: [&str; 6] = ["kronos", "--gpu", "--n", "16", "Buna", "ziua"];
 
+/// P6-122 (C-158 point 3): Kronos #651 (24 layers, hub `integrare/kronos/MODEL_651.md`), run by the cycle only when the
+/// list asks for it (`test-placa … --k651`); #513 stays the default.
+pub const K651: &str = "/usb/kronos/kronos_651_q8_0.kgr";
+pub const K651_DISK: &str = "/disk/kronos/kronos_651_q8_0.kgr";
+
+/// P6-122: where the cycle finds #651 (as `k513_path`: the own disk first, then the stick).
+pub fn k651_path() -> Option<&'static str> {
+    if fs::own_disk_writable() && fs::kind(K651_DISK).is_ok() {
+        return Some(K651_DISK);
+    }
+    fs::kind(K651).is_ok().then_some(K651)
+}
+
+/// P6-122: the same text as #513 (`K513_ARGS`), with #651's file named.
+pub fn k651_args(path: &str) -> [&str; 8] {
+    ["kronos", "--gpu", "--model", path, "--n", "16", "Buna", "ziua"]
+}
+
 /// What to do at boot with the state found on the stick.
 #[derive(Debug, PartialEq, Eq)]
 pub enum AtBoot {
@@ -139,7 +157,7 @@ pub fn target(command: &str) -> Result<(String, String), &'static str> {
 
 /// P6-96: `test-placa [--i9 …]` of the automatic list -> the I9.
 pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
-    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou`, `--lipit`, `--simplu`, `--ln-nou` sau `--ln-vechi`, apoi `--dieta2`, apoi `--p8` la sfarsit (in aceasta ordine; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`)";
+    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou`, `--lipit`, `--simplu`, `--ln-nou` sau `--ln-vechi`, apoi `--k651`, apoi `--dieta2`, apoi `--p8` la sfarsit (in aceasta ordine; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`; `--k651` nu merge cu `--lipit` sau `--simplu`)";
     let words: Vec<&str> = command.split_whitespace().collect();
     let Some(("test-placa", rest)) = words.split_first().map(|(a, b)| (*a, b)) else { return None };
     let (i9, flags) = match rest {
@@ -154,17 +172,23 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
     // P6-114 (C-155 point 2): `--ln-nou` = the glued list with the old LayerNorm, then with the new one, compared.
     // P6-120 (center's proposal 21 Nov 19:25): without any of them, the new LayerNorm alone (`FusedLn`); `--ln-vechi` =
     // the glued list with the old LayerNorm alone (as in os-329 … os-335).
+    // P6-122 (C-158 point 3): `--k651` = Kronos #651 instead of #513, with the glued lists only (the plain one does not
+    // fit #651's pushbuffer area and records' stride: 388 launches).
     // P6-119 (C-157 point 3): `--dieta2` = the driver's second diet for #513 (nothing new for the board).
     // P6-117 (C-161 point 2): `--p8` = after #513's texts, P8 (the first tensor-core computation), always last.
     // Each at most once, in this order (the I9 text carries them as suffixes, read back in the same order).
     let mut out = String::from(i9);
     let mut next = 0;
+    let all = [FLR_PROBA, TABLOU, LIPIT, SIMPLU, LN_NOU, LN_VECHI, K651_OPT, DIETA2, P8];
     for f in flags {
-        let Some(at) = [FLR_PROBA, TABLOU, LIPIT, SIMPLU, LN_NOU, LN_VECHI, DIETA2, P8].iter().position(|x| x.trim() == *f) else { return Some(Err(FORM)) };
+        let Some(at) = all.iter().position(|x| x.trim() == *f) else { return Some(Err(FORM)) };
         if at < next {
             return Some(Err(FORM));
         }
-        out.push_str([FLR_PROBA, TABLOU, LIPIT, SIMPLU, LN_NOU, LN_VECHI, DIETA2, P8][at]);
+        if at == 6 && (out.ends_with(LIPIT) || out.ends_with(SIMPLU)) {
+            return Some(Err(FORM));
+        }
+        out.push_str(all[at]);
         // `--lipit`, `--simplu`, `--ln-nou` and `--ln-vechi` exclude each other (each picks the lists #513 runs with).
         next = if (2..6).contains(&at) { 6 } else { at + 1 };
     }
@@ -380,6 +404,37 @@ fn speed_comparison() -> String {
     )
 }
 
+/// P6-122 (C-158 point 3, cyber-gpu note C-157_P4): #651's figures from the gpu journal of this test, next to what
+/// Cyber-GPU expects (DEDUS): ~5.1-5.6 ms per token without the check (~180-195 tokens/s); far above ~6 ms = something
+/// does not scale with the layers as expected.
+fn k651_comparison() -> String {
+    let Some(path) = crate::drivers::gpu_i6::last_journal() else {
+        return String::from("\n-- #651: fara gpu-jurnal\n");
+    };
+    let now = String::from_utf8_lossy(&fs::read_all(&path).unwrap_or_default()).into_owned();
+    k651_block(&path, &now)
+}
+
+fn k651_block(path: &str, journal: &str) -> String {
+    let v = |n: &str| journal_value(journal, n);
+    let token = match v("kt median simbol fara verificare (us)") {
+        Some(us) => format!(
+            "{} us ({}; asteptat ~5 100-5 600 us)",
+            us,
+            if us <= 6_000 { "in asteptari" } else { "PESTE ~6 ms -> de vazut de Cyber-GPU" }
+        ),
+        None => String::from("necitit (randul lipseste din jurnal)"),
+    };
+    let x100 = |x: u32| format!("{}.{:02}", x / 100, x % 100);
+    let host = v("kv simboluri pe secunda x100 (procesor)").map_or(String::from("necitit"), x100);
+    let driver = v("kt median driver (us)").map_or(String::from("?"), |w| format!("{}", w));
+    let print = v("kt amprenta logit-urilor (FNV-1a, toate pozitiile)").map_or(String::from("?"), |w| format!("{:#010x}", w));
+    format!(
+        "\n-- Kronos #651 (jurnalul {})\nsimbolul fara verificare (kt median): {}\ndriverul pe simbol (kt median): {} us; simboluri/s cu driverul: {}\namprenta logit-urilor (prima la #651, pentru testele urmatoare): {}\n(asteptat de Cyber-GPU: VRAM ~270 MiB, urcarea in 25 de bucati, 172 de lansari pe simbol cu LayerNorm nou; simbolurile = cele ale procesorului)\n",
+        path, token, driver, host, print
+    )
+}
+
 /// P6-107 (C-154 point 3): the os-322 figures (20 Nov 15:31, `gpu-jurnal-017.txt` + `ciclu-auto-20261120-1531.txt`):
 /// kt driver 3 081 us, kt token without the check 5 802 us, 94.84 tokens/s with the driver (`kv … (procesor)`), the
 /// worst deviation 1.6212463e-5 (f32 bits 0x37880000) and the 16 tokens.
@@ -507,6 +562,9 @@ pub const LN_VECHI: &str = " --ln-vechi";
 /// P6-119 (C-157 point 3): suffix of the I9 text when the second diet is asked (`test-placa … --dieta2`, before `--p8`).
 pub const DIETA2: &str = " --dieta2";
 
+/// P6-122 (C-158 point 3): suffix of the I9 text when #651 is asked (`test-placa … --k651`, before `--dieta2`).
+pub const K651_OPT: &str = " --k651";
+
 /// P6-117 (C-161 point 2): suffix of the I9 text when P8 is asked (`test-placa … --p8`, always last).
 pub const P8: &str = " --p8";
 
@@ -516,6 +574,10 @@ pub fn board_test(i9: &str) -> (String, String) {
         None => (i9, false),
     };
     let (i9, diet2) = match i9.strip_suffix(DIETA2) {
+        Some(x) => (x, true),
+        None => (i9, false),
+    };
+    let (i9, k651) = match i9.strip_suffix(K651_OPT) {
         Some(x) => (x, true),
         None => (i9, false),
     };
@@ -613,14 +675,38 @@ pub fn board_test(i9: &str) -> (String, String) {
     } else {
         text.push_str("\n(lista lipita cu LayerNorm nou implicit (P3 + layernorm256, 88 de lansari pe simbol, amprenta de referinta 0x46a07914); --ln-vechi = LayerNorm vechi, --ln-nou = amandoua comparate, --simplu = lista simpla, --lipit = simpla + lipita comparate)\n");
     }
-    let result = if let Some(model) = k513_path() {
-        if model != K513 {
+    // P6-122 (C-158 point 3): #651 only when the list asked for it; when its file is missing, #513 as usual (said in
+    // the report and in the result line).
+    let mut k651_note = "";
+    let big = if k651 {
+        match k651_path() {
+            Some(path) => {
+                text.push_str(&format!("\n(Kronos #651: cerut de lista (--k651); 24 de straturi, {}; aceleasi optiuni de lista ca la #513; #513 ramane implicit)\n", path));
+                Some(path)
+            }
+            None => {
+                text.push_str(&format!("\n(Kronos #651: cerut de lista (--k651), dar {} lipseste: rulez #513 ca de obicei)\n", K651));
+                k651_note = "#651 LIPSESTE de pe stick (rulat #513); ";
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let result = if let Some(model) = big.or_else(k513_path) {
+        let args651 = big.map(k651_args);
+        let args: &[&str] = match &args651 {
+            Some(a) => a,
+            None => &K513_ARGS,
+        };
+        let which = if big.is_some() { "#651" } else { "#513" };
+        if big.is_none() && model != K513 {
             text.push_str(&format!("\n(#513 de pe discul propriu: {})\n", model));
         }
-        text.push_str(&format!("\n-- run {} (lantul cu I9 {}, apoi #513 la i14-simbol; DA dat de cheile ciclului)\n", K513_ARGS.join(" "), i9));
+        text.push_str(&format!("\n-- run {} (lantul cu I9 {}, apoi {} la i14-simbol; DA dat de cheile ciclului)\n", args.join(" "), i9, which));
         *crate::drivers::gpu_tur::KRONOS_I9.lock() = Some(choice);
         crate::drivers::gpu_tur::KRONOS_ARMED.store(true, core::sync::atomic::Ordering::SeqCst);
-        let (code, printed) = run_program("/bin/kronos", &K513_ARGS);
+        let (code, printed) = run_program("/bin/kronos", args);
         // The permission never outlives this one program (as in the shell).
         crate::drivers::gpu_tur::KRONOS_ARMED.store(false, core::sync::atomic::Ordering::SeqCst);
         *crate::drivers::gpu_tur::KRONOS_I9.lock() = None;
@@ -630,7 +716,7 @@ pub fn board_test(i9: &str) -> (String, String) {
         let board = printed.lines().find(|l| l.contains("kronos: PE PLACA")).map(String::from);
         match (chain, board) {
             (Some(c), Some(b)) => format!("{}; {}", c.trim(), b.trim()),
-            (Some(c), None) => format!("{}; #513 NU a rulat pe placa (vezi randurile kronos de mai sus)", c.trim()),
+            (Some(c), None) => format!("{}; {} NU a rulat pe placa (vezi randurile kronos de mai sus)", c.trim(), which),
             (None, _) => String::from("(lantul nu a dat un rezultat; vezi randurile kronos de mai sus)"),
         }
     } else {
@@ -658,8 +744,14 @@ pub fn board_test(i9: &str) -> (String, String) {
     } else {
         result
     };
-    text.push_str(&speed_comparison());
-    text.push_str(&diet_comparison(&text));
+    let result = format!("{}{}", k651_note, result);
+    // P6-122: the comparisons with os-313 / os-322 are #513's; #651 gets its own block (Cyber-GPU's expected figures).
+    if big.is_some() {
+        text.push_str(&k651_comparison());
+    } else {
+        text.push_str(&speed_comparison());
+        text.push_str(&diet_comparison(&text));
+    }
     if !flr_trial {
         return (text, result);
     }
@@ -824,6 +916,18 @@ pub fn self_test() {
     assert!(board_command("test-placa --tablou --ln-vechi --dieta2 --p8") == Some(Ok(String::from("c135 --tablou --ln-vechi --dieta2 --p8"))));
     assert!(board_command("test-placa --ln-nou --ln-vechi").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --ln-vechi --lipit").is_some_and(|r| r.is_err()));
+    // P6-122 (C-158 point 3): `--k651` after the list choice, before `--dieta2`; never with the plain list.
+    assert!(board_command("test-placa --k651") == Some(Ok(String::from("c135 --k651"))));
+    assert!(board_command("test-placa --tablou --ln-nou --k651 --dieta2 --p8") == Some(Ok(String::from("c135 --tablou --ln-nou --k651 --dieta2 --p8"))));
+    assert!(board_command("test-placa --ln-vechi --k651") == Some(Ok(String::from("c135 --ln-vechi --k651"))));
+    assert!(board_command("test-placa --simplu --k651").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --lipit --k651").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --k651 --ln-nou").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --dieta2 --k651").is_some_and(|r| r.is_err()));
+    assert!(k651_args("/usb/kronos/kronos_651_q8_0.kgr").join(" ") == "kronos --gpu --model /usb/kronos/kronos_651_q8_0.kgr --n 16 Buna ziua");
+    let b = k651_block("j.txt", "valoare kt median simbol fara verificare (us) = 0x000015e0\nvaloare kv simboluri pe secunda x100 (procesor) = 0x00004a38\n");
+    assert!(b.contains("5600 us (in asteptari") && b.contains("simboluri/s cu driverul: 190.00"), "test: blocul #651: {}", b);
+    assert!(k651_block("j.txt", "valoare kt median simbol fara verificare (us) = 0x00001b58\n").contains("PESTE ~6 ms"), "test: #651 lent");
     assert!(board_command("test-placa --ln-vechi --tablou").is_some_and(|r| r.is_err()));
     // P6-120: the reference print by the kind of LayerNorm (cyber-gpu note C-157_P2d, point 1).
     let jl = |kind: u32, print: u32| format!("x valoare {} = {:#010x}\nx valoare kt amprenta logit-urilor (FNV-1a, toate pozitiile) = {:#010x}\n", crate::drivers::gpu_i14::KT_LIST, kind, print);
