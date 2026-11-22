@@ -153,14 +153,12 @@ pub fn top_window() -> Option<(u64, (usize, usize))> {
     SERVER.lock().as_ref().and_then(|s| s.windows().last().map(|w| (w.owner, w.client_origin())))
 }
 
-/// Where the mouse cursor is (for the self-tests, which move it with simulated events).
-#[cfg(feature = "qemu-test")]
+/// Where the mouse cursor is (the self-tests, and `muta` / `clic` of the live channel, P6-127).
 pub fn cursor() -> Option<(usize, usize)> {
     SERVER.lock().as_ref().map(|s| s.cursor())
 }
 
-/// Whether the window server has the screen now (for the self-tests).
-#[cfg(feature = "qemu-test")]
+/// Whether the window server has the screen now (the self-tests, and the live channel, P6-127).
 pub fn running() -> bool {
     RUNNING.load(Ordering::Acquire)
 }

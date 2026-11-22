@@ -43,6 +43,14 @@ LIVE_SESSIONS = []  # the sessions opened, in order
 def live_open(files, session):
     d = f"live/{session}/"
     LIVE_SESSIONS.append(session)
+    if len(LIVE_SESSIONS) == 4:
+        # P6-127 (C-159 step 2, part 2): the desktop started from the live terminal, the mouse moved and pressed (left,
+        # then right at another place), Esc sent to the desktop (it closes), a move without the desktop (code 1), `gata`.
+        for nr, kind, text in [(1, "scrie", "desktop\n"), (2, "muta", "100 80"), (3, "clic", ""), (4, "clic", "200 150 dreapta"),
+                               (5, "tasta", "esc"), (6, "muta", "5 5"), (7, "gata", "")]:
+            files[d + "c-%04d.json" % nr] = live_file(session, nr, kind, text)
+        print(f"ghpush-test-server: live: sesiunea a patra {session}: c-0001..c-0007 puse (mouse, desktop)", flush=True)
+        return
     if len(LIVE_SESSIONS) == 3:
         # P6-111 (C-159 step 2, part 1): the live terminal — its screen, a typed `uptime` + Enter, a typed board command
         # (refused by the terminal's shell), `alt+tab` (refused at the gate), other keys, the screen again, a screen

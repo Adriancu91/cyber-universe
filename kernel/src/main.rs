@@ -2274,6 +2274,28 @@ fn test_ghpush() {
     assert!(png.starts_with(b"\x89PNG\r\n\x1a\n") && png == local && w > 0 && h > 0 && png[24..26] == [8, 0], "test: live captura: PNG gresit ({} octeti)", png.len());
     assert!(gfx::png::crc32(&[&png[12..29]]) == u32::from_be_bytes(png[29..33].try_into().unwrap()), "test: live captura: CRC IHDR");
     info!("test: live: captura ecranului {} x {} ({} octeti, PNG gri) in hub OK", w, h, png.len());
+    // P6-127: the desktop started from the live terminal; `muta` / `clic` move and press the cursor (the window server's
+    // own position), Esc through the channel closes the desktop, a move without the desktop is code 1.
+    let sum4 = shell::live::test_session(1).expect("test: sesiunea vie a patra");
+    assert!(sum4.ran == 7 && sum4.refused == 0 && sum4.end.starts_with("gata") && !ui::running(), "test: live mouse: {:?}", sum4);
+    let take4 = |name: &str| {
+        let remote = alloc::format!("live/{}/{}", sum4.session, name);
+        let local = alloc::format!("/etc/live4-{}", name);
+        let id = proc::spawn_path("/bin/gh-ia", &["gh-ia", "--live-ia", &remote, &local]).expect("test: /bin/gh-ia");
+        assert!(proc::wait_child(id) == 0, "test: live mouse: {} lipseste din hub", remote);
+        let r = alloc::string::String::from_utf8(fs::read_all(&local).unwrap_or_default()).unwrap_or_default();
+        cyber_json::parse(&r).unwrap_or_else(|_| panic!("test: live mouse: {} nu e JSON: {}", name, r))
+    };
+    let code = |v: &cyber_json::Value| v.get("cod").and_then(cyber_json::Value::as_i64);
+    for (nr, want) in [(2, "mouse: cursorul la 100 80\n"), (3, "mouse: cursorul la 100 80; clic stanga\n"), (4, "mouse: cursorul la 200 150; clic dreapta\n")] {
+        let r = take4(&alloc::format!("r-{:04}.json", nr));
+        assert!(code(&r) == Some(0) && s(&r, "iesire") == want, "test: live mouse: r-{:04}: {:?}", nr, s(&r, "iesire"));
+    }
+    let r5 = take4("r-0005.json");
+    assert!(code(&r5) == Some(0) && s(&r5, "iesire").starts_with("1 taste trimise desktopului"), "test: live mouse: esc: {:?}", s(&r5, "iesire"));
+    let r6 = take4("r-0006.json");
+    assert!(code(&r6) == Some(1) && s(&r6, "iesire").starts_with("mouse: desktopul nu ruleaza"), "test: live mouse: fara desktop: {:?}", s(&r6, "iesire"));
+    info!("test: live: mouse-ul prin canal (desktop pornit din terminalul viu, muta, clic stanga/dreapta, Esc il inchide) OK");
 }
 
 /// HTTPS with real web sites (P6-02): /bin/fetch resolves the name, connects through QEMU's network to the

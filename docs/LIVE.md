@@ -35,7 +35,7 @@
 - `nr`: întreg pozitiv, exact următorul (prima comandă = 1).
 - `sesiune`: numele dosarului (`s-AAAALLZZ-HHMM`, ales de OS la pornire și scris în `live/<sesiune>/sesiune.json` — P6-109).
 - `fel` (pasul 1): `comanda` (un rând de shell), `stare`, `gata` (încheie sesiunea). Pasul 2, partea 1 (P6-111): `scrie`,
-  `tasta`, `ecran` (terminalul viu, mai jos); P6-127: `captura`. `clic`, `muta` sunt încă `REFUZAT` cu motivul „pasului 2”.
+  `tasta`, `ecran` (terminalul viu, mai jos); P6-127: `captura`, `muta`, `clic` (desktopul, mai jos). Pasul 2 e complet.
 - `semnatura` = HMAC-SHA-256 cu cheia `/usb/hub/live.cheie` (cel puțin 32 de octeți, aceeași la centrul de comandă) peste textul:
   ```
   cyber-live-1\n<sesiune>\n<nr>\n<fel>\n<text>
@@ -108,6 +108,20 @@ sau, la refuz: `"stare":"REFUZAT","motiv":"<de ce>"` (fără `cod`/`iesire`). `n
   răspunsuri, și copia pe stick. `iesire`: `captura: captura-NNNN.png (L x I pixeli, tonuri de gri, N octeti; …)`.
 - Fără ecran sau dacă nu pleacă în hub: `cod: 1` și motivul în `iesire`.
 - Proba în QEMU (`ghpush`, a treia sesiune): PNG-ul din hub = cel de pe stick, semnătura PNG, IHDR cu CRC corect (320×200).
+
+## Desktopul: `muta`, `clic` și tastele (P6-127)
+- Desktopul se pornește **din terminalul viu**: `scrie` cu textul `desktop\n`. Terminalul îl rulează pe firul lui, deci bucla
+  vie citește în continuare comenzi.
+- **`muta x y`**: cursorul la (x, y) — pixeli de la colțul din stânga sus (0–8192; marginea ecranului îl oprește).
+- **`clic`**, **`clic stanga|dreapta`**, **`clic x y`**, **`clic x y stanga|dreapta`**: întâi mutarea (dacă are x y), apoi
+  apăsat + eliberat. `iesire`: `mouse: cursorul la X Y[; clic stanga|dreapta]` (poziția citită din serverul de ferestre).
+- Fără desktop (așteaptă 3 s să pornească): `cod: 1`, `mouse: desktopul nu ruleaza …`. Formă greșită → `REFUZAT` la poartă.
+- **Cât rulează desktopul, `scrie` / `tasta` merg la fereastra din față** (aceeași coadă ca tastatura adevărată);
+  `iesire`: `N taste trimise desktopului …`. `tasta esc` închide desktopul (ecranul revine la text). Într-o sesiune pornită
+  **de mână** (`live` tastat), Esc nu se trimite cât rulează desktopul (ar opri sesiunea) — `cod: 1` cu motivul.
+- Placa video nu are buton în desktop azi; orice program de placă rămâne doar `comanda`, cu cheile ei.
+- Proba în QEMU (`ghpush`, a patra sesiune): desktop pornit, `muta 100 80`, `clic`, `clic 200 150 dreapta`, `tasta esc`
+  (desktopul se închide), `muta 5 5` fără desktop (cod 1).
 
 ## Ce rămâne păzit de nucleu (neschimbat)
 Fișierele secrete nu se arată; scrieri pe disc doar pe partiții `cyber.rw`; placa video doar cu `permite-live-placa`

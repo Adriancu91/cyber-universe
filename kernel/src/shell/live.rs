@@ -31,9 +31,8 @@ pub const FORM: &str = "cyber-live-1";
 /// Largest command file accepted (bytes).
 pub const MAX_COMMAND: usize = 64 * 1024;
 /// The kinds that run: step 1 (`comanda`, `stare`, `gata`) and P6-111 (C-159 step 2, part 1: the live terminal's keys and
-/// its screen text; P6-127: `captura`). The rest of step 2 (`clic`, `muta`) is refused with a clear reason.
-pub const KINDS: [&str; 7] = ["comanda", "stare", "gata", "scrie", "tasta", "ecran", "captura"];
-const LATER: [&str; 2] = ["clic", "muta"];
+/// its screen text; P6-127: `captura`, `muta`, `clic`).
+pub const KINDS: [&str; 9] = ["comanda", "stare", "gata", "scrie", "tasta", "ecran", "captura", "muta", "clic"];
 /// P6-127: `captura` = the screen reduced this many times in each direction, gray PNG; the largest file sent.
 const CAPTURE_SCALE: usize = 4;
 const CAPTURE_MAX: usize = 900 * 1024;
@@ -74,6 +73,41 @@ pub fn parse_keys(text: &str) -> Result<Vec<Key>, String> {
         return Err(String::from("prea multe taste intr-o comanda (cel mult 64)"));
     }
     Ok(keys)
+}
+
+/// P6-127: where `muta` / `clic` go and which button: `muta x y`, `clic`, `clic stanga|dreapta`, `clic x y [stanga|dreapta]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MouseOrder {
+    pub to: Option<(usize, usize)>,
+    /// 0 = only a move; 1 = left button, 2 = right button (the bits of `MouseEvent::buttons`).
+    pub button: u8,
+}
+
+/// The largest coordinate accepted (screens up to 8K).
+const MAX_XY: usize = 8192;
+
+pub fn parse_mouse(kind: &str, text: &str) -> Result<MouseOrder, String> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let xy = |a: &str, b: &str| -> Result<(usize, usize), String> {
+        match (a.parse::<usize>(), b.parse::<usize>()) {
+            (Ok(x), Ok(y)) if x <= MAX_XY && y <= MAX_XY => Ok((x, y)),
+            _ => Err(format!("{}: x si y = numere intregi de la 0 la {} (pixeli de la coltul din stanga sus)", kind, MAX_XY)),
+        }
+    };
+    let button = |w: &str| match w {
+        "stanga" | "left" => Ok(1),
+        "dreapta" | "right" => Ok(2),
+        _ => Err(format!("clic: butonul e stanga sau dreapta, nu {}", w)),
+    };
+    match (kind, words.as_slice()) {
+        ("muta", [x, y]) => Ok(MouseOrder { to: Some(xy(x, y)?), button: 0 }),
+        ("muta", _) => Err(String::from("muta: forma e `muta x y`")),
+        ("clic", []) => Ok(MouseOrder { to: None, button: 1 }),
+        ("clic", [b]) => Ok(MouseOrder { to: None, button: button(b)? }),
+        ("clic", [x, y]) => Ok(MouseOrder { to: Some(xy(x, y)?), button: 1 }),
+        ("clic", [x, y, b]) => Ok(MouseOrder { to: Some(xy(x, y)?), button: button(b)? }),
+        _ => Err(String::from("clic: forma e `clic [x y] [stanga|dreapta]`")),
+    }
 }
 
 /// P6-111: the keys of a `scrie` text (a line end = Enter, a tab = Tab); other control characters are refused.
@@ -222,11 +256,8 @@ impl Gate {
         if nr != self.next {
             return Verdict::Refused { nr: Some(nr), why: format!("numar gresit: astept nr {}", self.next) };
         }
-        if LATER.contains(&kind) {
-            return refuse(Some(nr), "felul acesta vine in a doua parte a pasului 2 al agentului viu (inca nu exista)");
-        }
         if !KINDS.contains(&kind) {
-            return refuse(Some(nr), "fel necunoscut (comanda, stare, gata, scrie, tasta, ecran, captura)");
+            return refuse(Some(nr), "fel necunoscut (comanda, stare, gata, scrie, tasta, ecran, captura, muta, clic)");
         }
         if kind == "scrie" {
             if let Err(why) = typed_keys(text) {
@@ -235,6 +266,11 @@ impl Gate {
         }
         if kind == "tasta" {
             if let Err(why) = parse_keys(text) {
+                return Verdict::Refused { nr: Some(nr), why };
+            }
+        }
+        if kind == "muta" || kind == "clic" {
+            if let Err(why) = parse_mouse(kind, text) {
                 return Verdict::Refused { nr: Some(nr), why };
             }
         }
@@ -312,6 +348,8 @@ const SEND_TRIES: u32 = 3;
 
 /// One live session at a time.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
+/// P6-127: the session was started by hand (`live <minute>` typed): Esc on the real keyboard stops it.
+static BY_HAND: AtomicBool = AtomicBool::new(false);
 
 /// P6-118 (C-161 point 1): a board command (`test-placa …` with a correct form) already came in this session. At most one
 /// per session until "several tests in one power-on" works (C-158 point 5); the second is refused with the reason.
@@ -547,8 +585,21 @@ impl Terminal {
         text
     }
 
-    /// `scrie` / `tasta`: sends the keys and returns what the terminal printed after them.
+    /// `scrie` / `tasta`: sends the keys and returns what the terminal printed after them. P6-127: while the desktop runs
+    /// (started from the live terminal: `scrie "desktop\n"`), the keys go to its window in front, like the real keyboard.
     fn keys(&mut self, keys: &[Key]) -> String {
+        if crate::ui::running() {
+            if BY_HAND.load(Ordering::Acquire) && keys.contains(&Key::Escape) {
+                super::LAST_EXIT.store(1, Ordering::Relaxed);
+                return String::from("esc: sesiunea pornita de mana se opreste cu Esc; cat ruleaza desktopul, Esc nu se trimite prin canal\n");
+            }
+            for &k in keys {
+                crate::drivers::keyboard::push_key(k);
+                crate::sched::sleep_ms(5);
+            }
+            crate::sched::sleep_ms(QUIET_MS);
+            return format!("{} taste trimise desktopului (fereastra din fata){}\n", keys.len(), if crate::ui::running() { "" } else { "; desktopul s-a inchis" });
+        }
         let id = self.ensure();
         let mut before = self.settle(id); // the welcome text and prompt of a new terminal stay on the screen
         before.clear();
@@ -623,6 +674,7 @@ fn run(minutes: u64, poll_ms: u64, by_hand: bool) -> Result<Summary, String> {
         return Err(String::from("o sesiune vie ruleaza deja"));
     }
     BOARD_TAKEN.store(false, Ordering::SeqCst);
+    BY_HAND.store(by_hand, Ordering::Release);
     let r = session(minutes, poll_ms, by_hand);
     ACTIVE.store(false, Ordering::Release);
     r
@@ -783,6 +835,7 @@ fn one(key: &[u8], board_key: bool, raw: &str, want: u32, gate: &mut Gate, local
                 "tasta" => terminal.keys(&parse_keys(&cmd.text).unwrap_or_default()),
                 "ecran" => terminal.look(),
                 "captura" => capture(cmd.nr, local, remote),
+                "muta" | "clic" => mouse(parse_mouse(&cmd.kind, &cmd.text).unwrap_or(MouseOrder { to: None, button: 0 })),
                 _ => String::from("sesiunea se incheie (gata)\n"),
             };
             let o = Outcome {
@@ -805,6 +858,49 @@ fn one(key: &[u8], board_key: bool, raw: &str, want: u32, gate: &mut Gate, local
         auto::say(&format!("live: {} nu a plecat in hub; ramane pe stick\n", name));
     }
     end
+}
+
+/// P6-127: `muta` / `clic` — mouse events in the same queue as the real mouse, read by the window server; only while the
+/// desktop runs (waits up to 3 s for it, right after `scrie "desktop\n"`). `iesire` says where the cursor ended up.
+fn mouse(order: MouseOrder) -> String {
+    use crate::input::{MouseEvent, push_mouse};
+    let start = crate::time::uptime_ms().unwrap_or(0);
+    while !crate::ui::running() && crate::time::uptime_ms().unwrap_or(0).saturating_sub(start) < 3_000 {
+        crate::sched::sleep_ms(100);
+    }
+    let Some(at) = crate::ui::cursor().filter(|_| crate::ui::running()) else {
+        super::LAST_EXIT.store(1, Ordering::Relaxed);
+        return String::from("mouse: desktopul nu ruleaza (porneste-l din terminalul viu: scrie \"desktop\\n\")\n");
+    };
+    let wait_cursor = |want: (usize, usize)| {
+        let t0 = crate::time::uptime_ms().unwrap_or(0);
+        while crate::ui::cursor() != Some(want) && crate::time::uptime_ms().unwrap_or(0).saturating_sub(t0) < 1_000 {
+            crate::sched::sleep_ms(20);
+        }
+    };
+    if let Some((x, y)) = order.to {
+        let (mut dx, mut dy) = (x as i64 - at.0 as i64, y as i64 - at.1 as i64);
+        while dx != 0 || dy != 0 {
+            let (sx, sy) = (dx.clamp(-1000, 1000), dy.clamp(-1000, 1000));
+            push_mouse(MouseEvent { dx: sx as i16, dy: sy as i16, buttons: 0 });
+            dx -= sx;
+            dy -= sy;
+        }
+        let (w, h) = crate::ui::screen_size().unwrap_or((usize::MAX, usize::MAX));
+        wait_cursor((x.min(w.saturating_sub(1)), y.min(h.saturating_sub(1))));
+    }
+    if order.button != 0 {
+        push_mouse(MouseEvent { dx: 0, dy: 0, buttons: order.button });
+        push_mouse(MouseEvent { dx: 0, dy: 0, buttons: 0 });
+        crate::sched::sleep_ms(QUIET_MS);
+    }
+    let end = crate::ui::cursor().unwrap_or(at);
+    let what = match order.button {
+        1 => "; clic stanga",
+        2 => "; clic dreapta",
+        _ => "",
+    };
+    format!("mouse: cursorul la {} {}{}\n", end.0, end.1, what)
 }
 
 /// P6-127 (C-159 step 2): `captura` — the screen as a gray PNG reduced `CAPTURE_SCALE` times, on the stick and in the hub
@@ -899,7 +995,13 @@ pub fn self_test() {
     assert!(why(g.check(&key, false, &good(2, "comanda", "hw").replace(s, "s-alta"))) == "alta sesiune");
     assert!(why(g.check(&key[..16], false, &good(2, "comanda", "hw"))).starts_with("cheia live.cheie"));
     assert!(why(g.check(&key, false, "{nr: 2")) == "fisierul comenzii nu e JSON valid");
-    assert!(why(g.check(&key, false, &good(2, "clic", "10 10"))).contains("pasului 2"));
+    // P6-127: the forms of `muta` / `clic`.
+    assert!(matches!(g.check(&key, false, &good(2, "clic", "10 10")), Verdict::Run(_)));
+    assert!(parse_mouse("clic", "5 6 dreapta") == Ok(MouseOrder { to: Some((5, 6)), button: 2 }) && parse_mouse("clic", "") == Ok(MouseOrder { to: None, button: 1 }));
+    assert!(parse_mouse("muta", "7 8") == Ok(MouseOrder { to: Some((7, 8)), button: 0 }));
+    assert!(why(g.check(&key, false, &good(2, "muta", "10"))).starts_with("muta: forma"));
+    assert!(why(g.check(&key, false, &good(2, "muta", "-1 5"))).starts_with("muta: x si y"));
+    assert!(why(g.check(&key, false, &good(2, "clic", "mijloc"))).starts_with("clic: butonul"));
     // P6-111: the keys of `tasta` and `scrie`, checked at the gate; typed lines never write to the board.
     assert!(matches!(g.check(&key, false, &good(2, "tasta", "ctrl+c")), Verdict::Run(_)));
     assert!(parse_keys("ctrl+c Enter sus esc spatiu") == Ok(alloc::vec![Key::Ctrl('c'), Key::Enter, Key::Up, Key::Escape, Key::Char(' ')]));
