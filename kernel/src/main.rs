@@ -321,6 +321,8 @@ fn run_tests() -> ! {
     pornire::self_test();
     #[cfg(feature = "test-tco")]
     hw::tco::self_test();
+    #[cfg(feature = "test-tco-viu")]
+    shell::live::guard_test(); // P6-133
     #[cfg(feature = "test-ghpush")]
     test_ghpush();
     #[cfg(feature = "test-usb")]

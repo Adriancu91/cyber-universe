@@ -133,7 +133,7 @@ sau, la refuz: `"stare":"REFUZAT","motiv":"<de ce>"` (fără `cod`/`iesire`). `n
   dată la sfârșit:
   ```json
   {"forma":"cyber-live-1","sesiune":"s-…","puls":3,"ora":"AAAA-LL-ZZ HH:MM:SS","stare":"merge","astept_nr":12,
-   "rulate":9,"refuzate":2,"sistem":"<ca în răspunsuri>"}
+   "rulate":9,"refuzate":2,"paza":"<P6-133, mai jos>","sistem":"<ca în răspunsuri>"}
   ```
   `puls` crește cu 1 la fiecare bătaie; `astept_nr` = numărul comenzii pe care o așteaptă OS-ul; `stare` = `merge`, iar la
   sfârșit `incheiata: <motiv>` (`gata (cerut de centrul de comanda)`, `<minute> minute fara comenzi`, `oprita cu Esc`).
@@ -193,6 +193,20 @@ sau, la refuz: `"stare":"REFUZAT","motiv":"<de ce>"` (fără `cod`/`iesire`). `n
 - Proba în QEMU (`ghpush`, sesiunea a șasea; stick-ul e `/etc` acolo): `salveaza` un text cu diacritice, `citeste` același fișier
   (textul în `iesire`, `fisier-0002.bin` din hub = octeții salvați), `citeste` dosarul, cheia `live.cheie`, o salvare în `hub/` și
   una cu `..` — refuzate; nimic scris în afara `schimb/`.
+
+## Ceasul de pază în modul viu (P6-133, C-159 pasul 4, leagă C-158 punctul 6)
+- Cât merge o sesiune vie (nouă sau reluată), OS-ul armează ceasul de pază al plăcii de bază (TCO, `kernel/src/hw/tco.rs`):
+  **~5 minute fără hrănire = repornire**. Un fir al sistemului îl hrănește la 10 s, dar **doar cât bucla sesiunii s-a mișcat în
+  ultimele 45 de minute** — deci un OS înghețat (planificatorul oprit) SAU o comandă blocată pentru totdeauna se termină cu o
+  repornire singură. La sfârșitul sesiunii (gata, minutele, Esc, `actualizeaza`) ceasul se oprește.
+- Dacă ciclul automat îl hrănește deja, sesiunea îl lasă așa (`armat si hranit deja de ciclu`).
+- **Pe calculatoare reale armarea e încă OPRITĂ** (ca la ciclu, P6-103: întâi citirea pe workstation): sesiunea scrie
+  `ceasul de paza: neactivat (…)` și merge ca înainte. Pornirea pe workstation = o comandă nouă (C-158 punctul 6: „pe workstation
+  doar după o comandă nouă”); atunci se schimbă un singur rând (`ARM_ON_HARDWARE`) + lămurirea NO_REBOOT pe PCH-ul nou.
+- Unde se vede: un rând `# ceasul de paza: …` în jurnalul de pe stick, pe ecran, și câmpul **`paza`** din `puls.json`
+  (`armat de sesiune (~300 s fara hranire = repornire)`, `armat de ciclu`, `neactivat (…)`).
+- Proba în QEMU: scenariul `tco-viu` (q35, reset așteptat): armat + bucla merge 12 s = nicio repornire; sfârșitul sesiunii =
+  ceasul oprit, 10 s fără repornire; armat din nou și bucla oprită (comandă blocată) = repornire.
 
 ## Ce rămâne păzit de nucleu (neschimbat)
 Fișierele secrete nu se arată; scrieri pe disc doar pe partiții `cyber.rw`; placa video doar cu `permite-live-placa`

@@ -67,6 +67,7 @@ test-tcp = ["qemu-test"]
 test-revenire = ["qemu-test"]
 # P6-103: the chipset's watchdog (TCO): armed and fed = no restart; not fed = restart (QEMU q35, noreboot=false).
 test-tco = ["qemu-test"]
+test-tco-viu = ["qemu-test"]
 # P6-49 (F2): the remote console against tools/remote-test.py (QEMU hostfwd 127.0.0.1:12323 -> 2323); the key is
 # made by tools/before-remote.sh on the test disk, never in the repository.
 test-remote = ["qemu-test"]

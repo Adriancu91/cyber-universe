@@ -492,6 +492,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-130** C-159 pasul 3, partea 2: `actualizeaza os-N` prin canalul viu + sesiunea reluată după repornire (același nume, numărul următor din jurnal, `reluare-<k>.json`). Plan: `docs/plans/P6-130.md`. Dep: P6-129, P6-50.
 - [x] **P6-131** CI în patru bucăți (teste-1..3 + stick): run-ul os-345 a atins limita de 60 de minute în teste-1. Plan: `docs/plans/P6-131.md`. Dep: P6-67.
 - [x] **P6-132** C-159 pasul 3, partea 3: fișiere prin canalul viu — `citeste` (orice fișier sau dosar de pe stick, fără cele secrete; fișierul urcat în hub) și `salveaza` (doar în dosarul `schimb/` de pe stick). Plan: `docs/plans/P6-132.md`. Dep: P6-130.
+- [x] **P6-133** C-159 pasul 4 (leagă C-158 punctul 6): ceasul de pază armat cât merge o sesiune vie, hrănit doar cât bucla sesiunii se mișcă (OS înghețat sau comandă blocată = repornire); pe calculatoare reale tot oprit până la o comandă nouă. Plan: `docs/plans/P6-133.md`. Dep: P6-103, P6-130.
   Gata (2026-11-21 ~16:55 RO): `gpu-tablou` trece (rândul nou „oprirea zonei = nu se trimite …”).
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 

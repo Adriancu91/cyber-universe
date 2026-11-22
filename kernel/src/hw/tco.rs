@@ -94,7 +94,8 @@ pub fn line() -> String {
     }
 }
 
-fn armed_allowed() -> bool {
+/// Whether this build may arm the watchdog (test builds; on real computers only with ARM_ON_HARDWARE).
+pub fn armed_allowed() -> bool {
     ARM_ON_HARDWARE || cfg!(feature = "qemu-test")
 }
 
@@ -180,6 +181,11 @@ pub fn start_feeding(every_ms: u64) {
             crate::sched::sleep_ms(EVERY.load(Ordering::Relaxed));
         }
     });
+}
+
+/// Whether the feeding thread of the cycle runs (P6-133: the live session then leaves the watchdog to the cycle).
+pub fn feeding() -> bool {
+    FEEDING.load(Ordering::Acquire)
 }
 
 /// Stops the feeding thread (the watchdog keeps running: test of the restart).

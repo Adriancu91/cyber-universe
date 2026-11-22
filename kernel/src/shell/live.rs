@@ -21,7 +21,7 @@
 use super::auto;
 use crate::fs::{self, Kind};
 use alloc::{format, string::String, vec::Vec};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use cyber_crypto::sha2::Sha256;
 use cyber_json::Value;
 use crate::drivers::keyboard::Key;
@@ -903,6 +903,110 @@ fn session(minutes: u64, poll_ms: u64, puls_ms: u64, by_hand: bool) -> Result<Su
     Ok(serve(&ctx, Gate::new(&s), sum, 0))
 }
 
+/// P6-133 (C-159 step 4, C-158 point 6): the chipset watchdog (TCO, `hw/tco.rs`) armed while a live session runs — a
+/// frozen OS restarts by itself. A system thread reloads it every 10 s, but only while the session's loop has moved in
+/// the last 45 minutes (`tick`): a frozen scheduler AND a command stuck forever both end in a restart. Arming is allowed
+/// where `tco::armed_allowed` says (test builds; on the workstation only after a new command of Adrian — until then
+/// the session says `neactivat` and runs as before). If the cycle already feeds the watchdog, the session leaves it alone.
+pub const GUARD_SECS: u64 = 5 * 60;
+pub const STUCK_MS: u64 = 45 * 60_000;
+const GUARD_FEED_MS: u64 = 10_000;
+static GUARD_ON: AtomicBool = AtomicBool::new(false);
+static FEEDER: AtomicBool = AtomicBool::new(false);
+static LAST_TICK: AtomicU64 = AtomicU64::new(0);
+static STUCK_LIMIT: AtomicU64 = AtomicU64::new(STUCK_MS);
+static FEED_EVERY: AtomicU64 = AtomicU64::new(GUARD_FEED_MS);
+
+/// The session's loop is alive (every look at the hub, every command).
+pub fn tick() {
+    LAST_TICK.store(crate::time::uptime_ms().unwrap_or(0), Ordering::Release);
+}
+
+/// The test timings of the guard (QEMU scenario `tco`): feed every `feed_ms`, a loop silent for `stuck_ms` = no feeding.
+#[cfg_attr(not(feature = "test-tco-viu"), allow(dead_code))]
+pub fn guard_timing(feed_ms: u64, stuck_ms: u64) {
+    FEED_EVERY.store(feed_ms, Ordering::Release);
+    STUCK_LIMIT.store(stuck_ms, Ordering::Release);
+}
+
+/// Arms the watchdog for the session (`true` = this session armed it and must stop it at the end) and the line saying so.
+pub fn guard_start(secs: u64) -> (bool, String) {
+    if crate::hw::tco::feeding() {
+        return (false, String::from("ceasul de paza: armat si hranit deja de ciclu (sesiunea il lasa asa)"));
+    }
+    match crate::hw::tco::arm(secs) {
+        Ok(msg) => {
+            tick();
+            GUARD_ON.store(true, Ordering::Release);
+            if !FEEDER.swap(true, Ordering::AcqRel) {
+                crate::sched::spawn_system(|| {
+                    while GUARD_ON.load(Ordering::Acquire) {
+                        let now = crate::time::uptime_ms().unwrap_or(0);
+                        if now.saturating_sub(LAST_TICK.load(Ordering::Acquire)) <= STUCK_LIMIT.load(Ordering::Acquire) {
+                            crate::hw::tco::feed();
+                        }
+                        crate::sched::sleep_ms(FEED_EVERY.load(Ordering::Acquire));
+                    }
+                    FEEDER.store(false, Ordering::Release);
+                });
+            }
+            let stuck = STUCK_LIMIT.load(Ordering::Acquire);
+            let span = if stuck >= 60_000 { format!("{} min", stuck / 60_000) } else { format!("{} s", stuck / 1000) };
+            (true, format!("{}; hranit cat bucla sesiunii merge (o bucla oprita {} = repornire)", msg, span))
+        }
+        Err(why) => (false, format!("ceasul de paza: neactivat ({})", why)),
+    }
+}
+
+/// Stops the watchdog armed by `guard_start` (the end of the session; a restart asked by `actualizeaza` too).
+pub fn guard_end(ours: bool) {
+    if ours {
+        GUARD_ON.store(false, Ordering::Release);
+        crate::hw::tco::disarm();
+    }
+}
+
+/// Scenario `tco-viu` (QEMU q35 with `-global ICH9-LPC.noreboot=false`): the guard of a live session — armed, the loop
+/// ticking = no restart for longer than the term; stopped at the end of the session = the timer halted; armed again and
+/// the loop silent (a stuck command) = the feeding stops and the machine restarts (the scenario expects a reset).
+#[cfg(feature = "test-tco-viu")]
+pub fn guard_test() {
+    guard_timing(500, 3_000);
+    assert!(guard_state().starts_with("neactivat"), "test: paza: {}", guard_state());
+    let (ours, line) = guard_start(5);
+    crate::info!("{}", line);
+    assert!(ours && line.contains("armat") && guard_state().starts_with("armat de sesiune"), "test: paza: {}", line);
+    let start = crate::time::uptime_ms().unwrap_or(0);
+    while crate::time::uptime_ms().unwrap_or(0) < start + 12_000 {
+        tick();
+        crate::sched::sleep_ms(500);
+    }
+    assert!(crate::hw::tco::line().contains("PORNIT"), "test: paza: ceasul trebuia sa fie pornit");
+    crate::info!("test: paza: bucla sesiunii merge 12 s, nicio repornire");
+    guard_end(true);
+    assert!(crate::hw::tco::line().contains("oprit") && guard_state().starts_with("neactivat"), "test: paza: dupa sfarsit: {}", crate::hw::tco::line());
+    crate::sched::sleep_ms(10_000);
+    crate::info!("test: paza: sesiunea incheiata, ceasul oprit, 10 s fara repornire");
+    let (ours, _) = guard_start(5);
+    assert!(ours, "test: paza: a doua armare");
+    crate::info!("test: paza: bucla sesiunii nu mai merge (comanda blocata); astept repornirea");
+    crate::sched::sleep_ms(30_000);
+    panic!("test: paza: ceasul de paza nu a repornit calculatorul in 30 s");
+}
+
+/// The state of the guard for `puls.json`.
+pub fn guard_state() -> String {
+    if GUARD_ON.load(Ordering::Acquire) {
+        format!("armat de sesiune (~{} s fara hranire = repornire)", GUARD_SECS)
+    } else if crate::hw::tco::feeding() {
+        String::from("armat de ciclu")
+    } else if !crate::hw::tco::armed_allowed() {
+        String::from("neactivat (armarea pe calculatoare reale asteapta o comanda a lui Adrian)")
+    } else {
+        String::from("neactivat")
+    }
+}
+
 /// The loop of a session, until `gata`, `<minute>` without commands, Esc (by hand) or a restart asked by `actualizeaza`.
 /// `puls_count` = the beats already sent (a resumed session goes on from there).
 fn serve(ctx: &Ctx, mut gate: Gate, mut sum: Summary, puls_count: u32) -> Summary {
@@ -920,7 +1024,12 @@ fn serve(ctx: &Ctx, mut gate: Gate, mut sum: Summary, puls_count: u32) -> Summar
         ..Puls::default()
     };
     puls.at = last;
+    // P6-133: the watchdog for the whole loop (a resumed session arms it again).
+    let (guard_ours, guard_line) = guard_start(GUARD_SECS);
+    journal(&ctx.journal_path, &format!("# {}", guard_line));
+    auto::say(&format!("live: {}\n", guard_line));
     'outer: loop {
+        tick();
         if ctx.by_hand && crate::drivers::keyboard::take_escape() {
             sum.end = String::from("oprita cu Esc");
             break;
@@ -948,6 +1057,7 @@ fn serve(ctx: &Ctx, mut gate: Gate, mut sum: Summary, puls_count: u32) -> Summar
                     }
                     let raw = String::from_utf8_lossy(&fs::read_all(&copy).unwrap_or_default()).into_owned();
                     let end = one(ctx, &raw, want, &mut gate, &mut sum, &mut terminal);
+                    tick();
                     last = crate::time::uptime_ms().unwrap_or(0);
                     if end {
                         sum.end = match &sum.restart {
@@ -978,6 +1088,7 @@ fn serve(ctx: &Ctx, mut gate: Gate, mut sum: Summary, puls_count: u32) -> Summar
         }
     }
     terminal.close();
+    guard_end(guard_ours);
     puls.send(s, &gate, &sum, Some(&sum.end));
     journal(&ctx.journal_path, &format!("# sfarsit {}: {}", auto::now_text(), sum.end));
     auto::say(&sum.line());
@@ -1215,6 +1326,7 @@ pub fn puls_text(s: &str, count: u32, next: u32, sum: &Summary, end: Option<&str
         ("astept_nr", cyber_json::Value::int(next as i64)),
         ("rulate", cyber_json::Value::int(sum.ran as i64)),
         ("refuzate", cyber_json::Value::int(sum.refused as i64)),
+        ("paza", cyber_json::Value::str(&guard_state())),
         ("sistem", cyber_json::Value::str(&system_text())),
     ])
     .write_to(&mut out);
