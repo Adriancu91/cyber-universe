@@ -334,6 +334,12 @@ pub static FLR_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::Atomi
 /// stopped at the end of the chain, after I14 and the `ks` rows. Off by default: every other chain is as in os-322.
 pub static RUSD_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-142 (C-157 point 5, cyber-gpu `1922eb2`): with `RUSD_ARMED`, only in the cycle (`test-placa … --tablou-viteza`):
+/// the dashboard is started right after the work channel, BEFORE the max-speed request, read before it and 1 s after
+/// it (`compare_boost`), kept on and read a third time at the end of the chain; every read goes through the thermal
+/// watch. "Stop" at the first read = the max-speed request is not sent. Off by default.
+pub static RUSD_EARLY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-105: the last dashboard read in this power-on (the `kd` screen lines), for `gpu stare`.
 pub static LAST_DASHBOARD: crate::sched::Mutex<Option<Vec<String>>> = crate::sched::Mutex::new(None);
 
@@ -415,6 +421,21 @@ impl nvidia_ga104::gsp::rusd::RusdMem for SimRusdPage {
 /// The page's address in SIMULARE (a system-memory address the RM model only records).
 #[cfg(feature = "test-gpu-sim")]
 const SIM_RUSD_PHYS: u64 = 0x0200_0000;
+
+/// P6-142 (SIMULARE, DEDUS): the core clock the dashboard's model shows after an accepted max-speed request
+/// (the RTX 3070 Ti's boost clock, NVIDIA's public sheet: 1 770 MHz).
+#[cfg(feature = "test-gpu-sim")]
+const SIM_BOOST_CLK_MHZ: u32 = 1770;
+
+/// P6-142 (SIMULARE): the page as the RM model renders it now (all zero when the model is not polling).
+#[cfg(feature = "test-gpu-sim")]
+fn sim_render(rm: &gpu_sim::fake_rm::FakeRm, clock: &mut impl Clock, page: &mut SimRusdPage) {
+    if let Some(m) = rm.rusd.as_ref() {
+        let now = clock.now_us().saturating_mul(1000).max(1);
+        let b = m.render(now);
+        page.0[..b.len()].copy_from_slice(&b);
+    }
+}
 
 /// P6-105 (SIMULARE): `gpu lant --sim --tablou-refuz` = the RM model refuses the start (as the board might refuse our
 /// client, C-151 note).
@@ -511,6 +532,10 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
     let boost_wanted = BOOST_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     #[cfg(feature = "gpu-scrie")]
     let rusd_wanted = RUSD_ARMED.load(core::sync::atomic::Ordering::SeqCst);
+    #[cfg(feature = "gpu-scrie")]
+    let rusd_early = rusd_wanted && RUSD_EARLY.load(core::sync::atomic::Ordering::SeqCst);
+    #[cfg(feature = "gpu-scrie")]
+    let mut early: Option<gpu_golden::EarlyDashboard<RusdPage>> = None;
     let mut refused = 0usize;
     // P6-107 (C-158 note of 21 Nov 08:45): which steps had writes refused by the OS fences (the total alone did not say).
     let mut refused_by_step: Vec<(&'static str, usize)> = Vec::new();
@@ -645,9 +670,23 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
             let r = gpu_golden::channel_step(p, &mut rw, &mut vf, &mut clock, j, prep, st, Some(&permit), &mut lines, i9, |_| {});
             // P6-106: only in the cycle, once, right after the work channel is open.
             if r.is_ok() && boost_wanted {
-                match gpu_golden::boost_begin(p, &mut rw, &mut vf, &mut clock, j, prep, st, Some(&permit), &mut lines, |_| {}) {
-                    Ok(b) => boost = Some(b),
-                    Err(e) => lines.push(format!("{}: ks: cererea de viteza maxima nu s-a putut trimite: {}", p, e)),
+                // P6-142: the dashboard before the request (and the thermal watch's first read).
+                if rusd_early {
+                    early = early_dashboard_hw(p, &mut rw, &mut vf, &mut clock, j, prep, st, &permit, &mut lines);
+                }
+                if early.as_ref().is_some_and(|e| e.says_stop()) {
+                    lines.push(format!("{}: ks: cererea de viteza maxima NU se trimite: ceasul termic spune oprire", p));
+                } else {
+                    match gpu_golden::boost_begin(p, &mut rw, &mut vf, &mut clock, j, prep, st, Some(&permit), &mut lines, |_| {}) {
+                        Ok(b) => boost = Some(b),
+                        Err(e) => lines.push(format!("{}: ks: cererea de viteza maxima nu s-a putut trimite: {}", p, e)),
+                    }
+                    if let (Some(e), true) = (early.as_mut(), boost.is_some()) {
+                        clock.delay_us((nvidia_ga104::gsp::rusd_watch::after_wait_ms(e.plan.poll_ms) * 1000) as u32);
+                        if let (Some(b), Some((a, _))) = (e.before, e.read(p, "dupa cererea de viteza maxima (1 s)", &mut clock, j, &mut lines)) {
+                            lines.push(gpu_golden::boost_seen_line(p, &b, &a, j));
+                        }
+                    }
                 }
             }
             refused += rw.refused + vf.refused;
@@ -706,6 +745,10 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
                 if let Some(prep) = i7.last_mut() {
                     let mut rw = gpu_i6::hw::GspWriteWindow::new(bar0);
                     let mut vf = gpu_i6::hw::VramFence::new(bar0);
+                    // P6-142: the early dashboard's last read while the max-speed request still holds (after the texts).
+                    if let Some(e) = early.as_mut() {
+                        let _ = e.read(p, "la final (dupa texte, inainte de stergerea cererii)", &mut clock, j, &mut lines);
+                    }
                     let r = match boost.take() {
                         Some(b) => gpu_golden::boost_end(p, &mut rw, &mut vf, &mut clock, j, prep, st, &b, Some(&permit), &mut lines, |_| {}),
                         None => gpu_golden::pstate_step(p, &mut rw, &mut vf, &mut clock, j, prep, st, Some(&permit), &mut lines, |_| {}),
@@ -715,7 +758,11 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
                     }
                     // P6-105 (C-151 point 1): the dashboard, only when armed, after everything above is on the stick.
                     if rusd_wanted {
-                        dashboard_hw(p, &mut rw, &mut vf, &mut clock, j, prep, st, &permit, &mut lines);
+                        match early.take() {
+                            // P6-142: the early dashboard, read a third time and stopped.
+                            Some(e) => early_finish_hw(p, &mut rw, &mut vf, &mut clock, j, prep, st, &permit, &mut lines, e, false),
+                            None => dashboard_hw(p, &mut rw, &mut vf, &mut clock, j, prep, st, &permit, &mut lines),
+                        }
                     }
                     refused += rw.refused + vf.refused;
                 }
@@ -765,6 +812,15 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
         }
         refused += rw.refused + vf.refused;
     }
+    // P6-142: the chain stopped with the early dashboard still polling: its reads stopped all the same.
+    #[cfg(feature = "gpu-scrie")]
+    if let (Some(e), Some(prep), Some(st)) = (early.take(), i7.last_mut(), gs.as_mut()) {
+        let mut rw = gpu_i6::hw::GspWriteWindow::new(bar0);
+        let mut vf = gpu_i6::hw::VramFence::new(bar0);
+        lines.push(format!("{}: kd lantul s-a oprit cu tabloul pornit devreme: opresc citirile", p));
+        early_finish_hw(p, &mut rw, &mut vf, &mut clock, &mut j, prep, st, &permit, &mut lines, e, true);
+        refused += rw.refused + vf.refused;
+    }
     drop(_guard);
     report_lines(p, &report, &mut lines);
     if refused > 0 {
@@ -810,7 +866,7 @@ fn dashboard_hw(
         lines.push(format!("{}: kd tabloul de bord: nicio pagina libera sub 4 GiB; nimic trimis", p));
         return;
     };
-    let start = match gpu_golden::dashboard_begin(rw, vf, clock, j, prep, st, &plan, page.phys, Some(permit), |_| {}) {
+    let start = match gpu_golden::dashboard_begin(rw, vf, clock, j, prep, st, &plan, page.phys, gpu_golden::DASHBOARD_BEGIN, Some(permit), |_| {}) {
         Ok(s) => s,
         Err(e) => {
             // A transport error: the page may already be GSP-RM's; it is never reused in this power-on.
@@ -831,6 +887,82 @@ fn dashboard_hw(
             }
         }
         Err(e) => lines.push(format!("{}: kd tabloul de bord: eroare la oprire ({}); pagina ramane rezervata", p, e)),
+    }
+}
+
+/// P6-142 on the board: page → start (before the max-speed request) → 3 × the interval → the "before" read.
+/// `None` = no page, a refusal or a transport error (the line says which; the request then goes as before).
+#[cfg(feature = "gpu-scrie")]
+#[allow(clippy::too_many_arguments)]
+fn early_dashboard_hw(
+    p: &str,
+    rw: &mut gpu_i6::hw::GspWriteWindow,
+    vf: &mut gpu_i6::hw::VramFence,
+    clock: &mut TscClock,
+    j: &mut Journal,
+    prep: &mut gpu_i7::I7Prep,
+    st: &mut gpu_golden::GpuState,
+    permit: &nvidia_ga104::gsp::HardwareWritePermit,
+    lines: &mut Vec<String>,
+) -> Option<gpu_golden::EarlyDashboard<RusdPage>> {
+    let plan = nvidia_ga104::gsp::rusd::RusdPlan { enabled: true, ..Default::default() };
+    let Some(page) = RusdPage::new() else {
+        lines.push(format!("{}: kd tabloul de bord: nicio pagina libera sub 4 GiB; nimic trimis", p));
+        return None;
+    };
+    let phys = page.phys;
+    let t0 = clock.now_us();
+    let start = match gpu_golden::dashboard_begin(rw, vf, clock, j, prep, st, &plan, phys, gpu_golden::DASHBOARD_EARLY, Some(permit), |_| {}) {
+        Ok(s) => s,
+        Err(e) => {
+            lines.push(format!("{}: kd tabloul de bord (devreme): eroare la pornire ({}); pagina ramane rezervata", p, e));
+            return None;
+        }
+    };
+    let Some(mut e) = gpu_golden::EarlyDashboard::new(start, plan, page, phys, t0) else {
+        lines.push(format!("{}: kd ceasul termic: limitele propuse refuzate de biblioteca", p));
+        return None;
+    };
+    if !e.start.polling() {
+        lines.push(format!("{}: kd tabloul de bord (devreme): placa nu a acceptat toate comenzile; fara citiri", p));
+        return Some(e);
+    }
+    clock.delay_us(plan.poll_ms.saturating_mul(3).saturating_mul(1000));
+    e.before = e.read(p, "inainte de cererea de viteza maxima", clock, j, lines).map(|(d, _)| d);
+    Some(e)
+}
+
+/// P6-142 on the board: the thermal watch's summary, then the reads stopped (`rusd_stop_poll_only`); `read_last` = one more
+/// read first (the chain stopped early; otherwise the last read was taken before the max-speed request was cleared).
+#[cfg(feature = "gpu-scrie")]
+#[allow(clippy::too_many_arguments)]
+fn early_finish_hw(
+    p: &str,
+    rw: &mut gpu_i6::hw::GspWriteWindow,
+    vf: &mut gpu_i6::hw::VramFence,
+    clock: &mut TscClock,
+    j: &mut Journal,
+    prep: &mut gpu_i7::I7Prep,
+    st: &mut gpu_golden::GpuState,
+    permit: &nvidia_ga104::gsp::HardwareWritePermit,
+    lines: &mut Vec<String>,
+    mut e: gpu_golden::EarlyDashboard<RusdPage>,
+    read_last: bool,
+) {
+    if read_last {
+        let _ = e.read(p, "la oprirea lantului", clock, j, lines);
+    }
+    lines.push(gpu_golden::watch_summary_line(p, &e.watch, j));
+    match gpu_golden::dashboard_finish(rw, vf, clock, j, prep, st, &e.start, &mut e.page, Some(permit), |_| {}) {
+        Ok((dash, stop)) => {
+            let l = gpu_golden::dashboard_lines(p, &e.start, dash.as_ref(), &stop);
+            *LAST_DASHBOARD.lock() = Some(l.clone());
+            lines.extend(l);
+            if stop.page_free(&e.start) {
+                crate::mem::frame::free_frame(e.phys);
+            }
+        }
+        Err(err) => lines.push(format!("{}: kd tabloul de bord: eroare la oprire ({}); pagina ramane rezervata", p, err)),
     }
 }
 
@@ -1222,6 +1354,9 @@ pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: sup
     if rusd_wanted {
         rm.rusd = Some(gpu_sim::fake_rm::SimRusd::new(SIM_RUSD_RULE.lock().unwrap_or_default()));
     }
+    // P6-142 (SIMULARE): the early dashboard, as on the board.
+    let rusd_early = rusd_wanted && RUSD_EARLY.load(core::sync::atomic::Ordering::SeqCst);
+    let mut early: Option<gpu_golden::EarlyDashboard<SimRusdPage>> = None;
     let mut vram = gpu_sim::pramin::SimBar0Vram::new(gpu_sim::vram::SimVram::new(8 << 30), 0);
     let mut sim_gpu: Option<gpu_i10::SimGpu> = None;
     let mut launched: Option<gpu_i10::Launched> = None;
@@ -1311,9 +1446,48 @@ pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: sup
             lines.push(format!("{}: modelul RM: {} mesaje servite in total", p, peer.served));
             // P6-106 (SIMULARE): as on the board, only in the cycle; the RM model answers the performance controls.
             if r.is_ok() && boost_wanted {
-                match gpu_golden::boost_begin(p, &mut g, &mut vram, &mut clock, j, prep, st, None, &mut lines, |m| peer.serve(m, &mut rm)) {
-                    Ok(b) => boost = Some(b),
-                    Err(e) => lines.push(format!("{}: ks: cererea de viteza maxima nu s-a putut trimite: {}", p, e)),
+                // P6-142 (SIMULARE): the dashboard before the request; the RM model renders the page before each read.
+                if rusd_early {
+                    let plan = nvidia_ga104::gsp::rusd::RusdPlan { enabled: true, ..Default::default() };
+                    let t0 = clock.now_us();
+                    match gpu_golden::dashboard_begin(&mut g, &mut vram, &mut clock, j, prep, st, &plan, SIM_RUSD_PHYS, gpu_golden::DASHBOARD_EARLY, None, |m| peer.serve(m, &mut rm)) {
+                        Err(e) => lines.push(format!("{}: kd tabloul de bord (devreme): eroare la pornire ({}); pagina ramane rezervata", p, e)),
+                        Ok(start) => {
+                            early = gpu_golden::EarlyDashboard::new(start, plan, SimRusdPage(vec![0u8; 4096]), SIM_RUSD_PHYS, t0);
+                            if let Some(e) = early.as_mut() {
+                                if e.start.polling() {
+                                    clock.delay_us(plan.poll_ms.saturating_mul(3).saturating_mul(1000));
+                                    sim_render(&rm, &mut clock, &mut e.page);
+                                    e.before = e.read(p, "inainte de cererea de viteza maxima", &mut clock, j, &mut lines).map(|(d, _)| d);
+                                } else {
+                                    lines.push(format!("{}: kd tabloul de bord (devreme): placa nu a acceptat toate comenzile; fara citiri", p));
+                                }
+                            }
+                        }
+                    }
+                }
+                if early.as_ref().is_some_and(|e| e.says_stop()) {
+                    lines.push(format!("{}: ks: cererea de viteza maxima NU se trimite: ceasul termic spune oprire", p));
+                } else {
+                    match gpu_golden::boost_begin(p, &mut g, &mut vram, &mut clock, j, prep, st, None, &mut lines, |m| peer.serve(m, &mut rm)) {
+                        Ok(b) => boost = Some(b),
+                        Err(e) => lines.push(format!("{}: ks: cererea de viteza maxima nu s-a putut trimite: {}", p, e)),
+                    }
+                    // P6-142 (SIMULARE, model DEDUS): an accepted request puts the dashboard's model in P0 with the core
+                    // clock raised, as NVIDIA's driver shows a boosted board.
+                    if boost.as_ref().is_some_and(|b| b.answer == nvidia_ga104::gsp::perf::BoostAnswer::Accepted) {
+                        if let Some(m) = rm.rusd.as_mut() {
+                            m.pstate_mask = 1;
+                            m.clk_graphics_mhz = SIM_BOOST_CLK_MHZ;
+                        }
+                    }
+                    if let (Some(e), true) = (early.as_mut(), boost.is_some()) {
+                        clock.delay_us((nvidia_ga104::gsp::rusd_watch::after_wait_ms(e.plan.poll_ms) * 1000) as u32);
+                        sim_render(&rm, &mut clock, &mut e.page);
+                        if let (Some(b), Some((a, _))) = (e.before, e.read(p, "dupa cererea de viteza maxima (1 s)", &mut clock, j, &mut lines)) {
+                            lines.push(gpu_golden::boost_seen_line(p, &b, &a, j));
+                        }
+                    }
                 }
             }
             r
@@ -1382,6 +1556,12 @@ pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: sup
             // P6-98 (C-148 point 3): the performance state at the end of the chain, as on the board (the RM model answers).
             if s.id == "i14-simbol" && r.is_ok() {
                 if let (Some(prep), Some(peer)) = (i7p.as_mut(), sim_peer.as_mut()) {
+                    // P6-142 (SIMULARE): the early dashboard's last read while the request still holds, as on the board.
+                    if let Some(e) = early.as_mut() {
+                        sim_render(&rm, &mut clock, &mut e.page);
+                        let _ = e.read(p, "la final (dupa texte, inainte de stergerea cererii)", &mut clock, j, &mut lines);
+                    }
+                    let cleared = boost.is_some();
                     let r = match boost.take() {
                         Some(b) => gpu_golden::boost_end(p, &mut g, &mut vram, &mut clock, j, prep, st, &b, None, &mut lines, |m| peer.serve(m, &mut rm)),
                         None => gpu_golden::pstate_step(p, &mut g, &mut vram, &mut clock, j, prep, st, None, &mut lines, |m| peer.serve(m, &mut rm)),
@@ -1389,11 +1569,29 @@ pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: sup
                     if let Err(e) = r {
                         lines.push(format!("{}: ks: starea de performanta necitita: {}", p, e));
                     }
+                    // P6-142 (SIMULARE): the early dashboard stopped (its model back to idle once the request is cleared).
+                    if let Some(mut e) = early.take() {
+                        if cleared {
+                            if let Some(m) = rm.rusd.as_mut() {
+                                m.pstate_mask = 1 << 8;
+                                m.clk_graphics_mhz = 210;
+                            }
+                        }
+                        sim_render(&rm, &mut clock, &mut e.page);
+                        lines.push(gpu_golden::watch_summary_line(p, &e.watch, j));
+                        match gpu_golden::dashboard_finish(&mut g, &mut vram, &mut clock, j, prep, st, &e.start, &mut e.page, None, |m| peer.serve(m, &mut rm)) {
+                            Ok((dash, stop)) => {
+                                let l = gpu_golden::dashboard_lines(p, &e.start, dash.as_ref(), &stop);
+                                *LAST_DASHBOARD.lock() = Some(l.clone());
+                                lines.extend(l);
+                            }
+                            Err(err) => lines.push(format!("{}: kd tabloul de bord: eroare la oprire ({}); pagina ramane rezervata", p, err)),
+                        }
+                    } else if rusd_wanted {
                     // P6-105 (SIMULARE): the dashboard as on the board; the RM model renders the page during the wait.
-                    if rusd_wanted {
                         let plan = nvidia_ga104::gsp::rusd::RusdPlan { enabled: true, ..Default::default() };
                         let phys = SIM_RUSD_PHYS;
-                        match gpu_golden::dashboard_begin(&mut g, &mut vram, &mut clock, j, prep, st, &plan, phys, None, |m| peer.serve(m, &mut rm)) {
+                        match gpu_golden::dashboard_begin(&mut g, &mut vram, &mut clock, j, prep, st, &plan, phys, gpu_golden::DASHBOARD_BEGIN, None, |m| peer.serve(m, &mut rm)) {
                             Err(e) => lines.push(format!("{}: kd tabloul de bord: eroare la pornire ({}); pagina ramane rezervata", p, e)),
                             Ok(start) => {
                                 let mut page = SimRusdPage(vec![0u8; 4096]);

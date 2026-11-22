@@ -1026,7 +1026,7 @@ fn lant(rest: &[&str]) {
     }
     let i9 = i9.unwrap_or_default();
     let rest = &opts[..];
-    if let Some(bad) = rest.iter().find(|a| !matches!(**a, "--sim" | "--eroare" | "--doar-citire" | "--date-vechi" | "--flr-proba" | "--ciclu-viteza" | "--ciclu-viteza-refuz" | "--tablou" | "--tablou-refuz")) {
+    if let Some(bad) = rest.iter().find(|a| !matches!(**a, "--sim" | "--eroare" | "--doar-citire" | "--date-vechi" | "--flr-proba" | "--ciclu-viteza" | "--ciclu-viteza-refuz" | "--tablou" | "--tablou-refuz" | "--tablou-viteza")) {
         out!("gpu lant: optiune necunoscuta: {} (folosire: gpu lant [--varianta N] [--i9 c125|c133|c135] [--flr-proba] [--tablou])\n", bad);
         return;
     }
@@ -1040,6 +1040,11 @@ fn lant(rest: &[&str]) {
     // P6-106: `--ciclu-viteza[-refuz]` = the chain as the cycle runs it (the boost asked), only in SIMULATION.
     if rest.iter().any(|a| a.starts_with("--ciclu-viteza")) && !sim {
         out!("gpu lant: --ciclu-viteza exista doar cu --sim (viteza maxima o cere doar ciclul); nimic scris in placa\n");
+        return;
+    }
+    // P6-142: `--tablou-viteza` = the dashboard before the max-speed request (the cycle's chain), only in SIMULATION here.
+    if rest.contains(&"--tablou-viteza") && !sim {
+        out!("gpu lant: --tablou-viteza exista doar cu --sim (pe placa il cere ciclul: test-placa --tablou-viteza); nimic scris in placa\n");
         return;
     }
     if rest.contains(&"--date-vechi") && !sim {
@@ -1084,12 +1089,14 @@ fn lant(rest: &[&str]) {
             .store(rest.iter().any(|a| a.starts_with("--tablou")), core::sync::atomic::Ordering::SeqCst);
         *crate::drivers::gpu_tur::SIM_RUSD_RULE.lock() =
             rest.contains(&"--tablou-refuz").then_some(gpu_sim::fake_rm::RusdRule::RefuseInit(0x56));
+        crate::drivers::gpu_tur::RUSD_EARLY.store(rest.contains(&"--tablou-viteza"), core::sync::atomic::Ordering::SeqCst);
         for l in crate::drivers::gpu_tur::chain_sim(rest.contains(&"--eroare"), !rest.contains(&"--doar-citire"), variant, i9, flr_trial) {
             out!("{}\n", l);
         }
         crate::drivers::gpu_i10::SIM_STALE_READS.store(false, core::sync::atomic::Ordering::Relaxed);
         crate::drivers::gpu_tur::BOOST_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
         crate::drivers::gpu_tur::RUSD_ARMED.store(false, core::sync::atomic::Ordering::SeqCst);
+        crate::drivers::gpu_tur::RUSD_EARLY.store(false, core::sync::atomic::Ordering::SeqCst);
         return;
     }
     // P6-105: `--tablou` = the dashboard at the end of this chain only (not the FLR trial's second chain).

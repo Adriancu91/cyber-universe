@@ -258,6 +258,15 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     sărite), intervalele citite înapoi → `judge_set` → rândurile `kt atentie …` în jurnal, `atentie …` și `proba atentiei pe placi:
     TRECE / NU TRECE / NU A TERMINAT` în ieșire și în răspunsul ciclului. `SimGpu` cunoaște cele trei programe. Test:
     `kronos-gpu-atentie-placi` (ca T176: 5/5 în margine, toate elementele exacte).
+    **P6-142 (C-157 punctul 5 = C-151 punctul 2, cyber-gpu `0d22357`, nota `C-157_P5_ceas-termic.md`): ceasul termic în testul pe
+    placă.** Doar în ciclu cu `test-placa … --tablou-viteza` (în locul lui `--tablou`; `gpu_tur::RUSD_EARLY`; în build-ul de test
+    `gpu lant --sim --ciclu-viteza --tablou-viteza`): tabloul de bord e pornit imediat după canalul de lucru, ÎNAINTE de cererea de
+    viteză maximă, citit „înainte”, la 1 s după cerere (`rusd_watch::compare_boost` → `kw viteza maxima vazuta pe tablou: URCATA / era
+    deja sus / FARA EFECT`) și la final; fiecare citire trece prin ceasul termic (`rusd_watch::Watch`, pragurile propuse 80 / 85 / 70 °C,
+    tablou mut > 10 s = oprire) → rândurile `kw`. „Oprire” la prima citire = cererea de viteză maximă nu se mai trimite. La final
+    `rusd_stop_poll_only` (fără `INIT(0)`, ca de la os-323); dacă lanțul se oprește mai devreme, citirile se opresc oricum. Nicio comandă
+    nouă pentru placă, doar momentul. În SIMULARE modelul tabloului trece în P0 / 1 770 MHz după o cerere acceptată (DEDUS).
+    Test: `gpu-tablou-viteza`.
     **P6-138 (C-157 punctul 2, nota Cyber-GPU `C-157_P2j`, `0c46879`): dieta 2 și cu argmax fără copie.** `test-placa …
     --argmax-fara-copie --dieta2` e acceptat acum: merg doar bucățile A (două înregistrări pe pozițiile care nu hrănesc profilul
     `kp`) și B (așteptarea planificată), care sunt în `submit`; C și D (amprenta, argmax pe biți) rămân în `run_token`. În `run_top`:

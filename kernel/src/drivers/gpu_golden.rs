@@ -486,6 +486,7 @@ pub(super) fn dashboard_begin<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Si
     st: &mut GpuState,
     plan: &nvidia_ga104::gsp::rusd::RusdPlan,
     phys: u64,
+    note: &'static str,
     permit: Option<&HardwareWritePermit>,
     poll: impl FnMut(&mut dyn SharedMem),
 ) -> GpuResult<nvidia_ga104::gsp::rusd::RusdStart> {
@@ -493,7 +494,7 @@ pub(super) fn dashboard_begin<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Si
     let Some((u, _)) = st.space.as_ref() else { return Err(GpuError::InvalidArgument("kd: lipseste canalul de lucru")) };
     let (client, sub) = (u.client, u.subdevice);
     // An important row: everything held so far (I14, kronos, ks) goes to the stick before the first new command.
-    journal.push(Event::Note(DASHBOARD_BEGIN));
+    journal.push(Event::Note(note));
     let GpuState { pending, zone, rm_calls, vram_words, .. } = st;
     let mut rows = Journal::new(16);
     let r = {
@@ -606,6 +607,127 @@ pub(super) fn dashboard_lines(
         if stop.page_free(start) { "" } else { "; pagina ramane rezervata pana la FLR sau repornire" }
     ));
     l
+}
+
+/// P6-142 (C-157 point 5, cyber-gpu `1922eb2`): the dashboard kept on from before the max-speed request until the end
+/// of the chain (`test-placa … --tablou-viteza`). Every read goes through the thermal watch (the proposed limits:
+/// warn 80 °C, stop 85 °C, start again at 70 °C or below, silent dashboard > 10 s = stop).
+pub(super) struct EarlyDashboard<M> {
+    pub start: nvidia_ga104::gsp::rusd::RusdStart,
+    pub plan: nvidia_ga104::gsp::rusd::RusdPlan,
+    pub page: M,
+    pub phys: u64,
+    pub watch: nvidia_ga104::gsp::rusd_watch::Watch,
+    /// The clock (µs) when the dashboard was started: the watch's times are ms from here.
+    pub t0_us: u64,
+    /// The "before" reading (for `compare_boost`).
+    pub before: Option<nvidia_ga104::gsp::rusd::Dashboard>,
+    /// The verdict of the last reading.
+    pub last: Option<nvidia_ga104::gsp::rusd_watch::Verdict>,
+}
+
+/// The note written right before the early dashboard's first command.
+pub(super) const DASHBOARD_EARLY: &str =
+    "kd tabloul de bord pornit devreme (C-157 punctul 5): inainte de cererea de viteza maxima, tinut pornit pana la sfarsitul lantului";
+
+fn verdict_text(v: nvidia_ga104::gsp::rusd_watch::Verdict) -> String {
+    use nvidia_ga104::gsp::rusd_watch::{StopReason, Verdict};
+    match v {
+        Verdict::Continue => String::from("continua"),
+        Verdict::Warn => String::from("AVERTIZARE (80 grade C sau peste)"),
+        Verdict::Stop(StopReason::Hot(t)) => format!("OPRIRE: {} grade C (pragul 85)", t),
+        Verdict::Stop(StopReason::Slowdown(b)) => format!("OPRIRE: incetinire termica / de urgenta (motive {:#x})", b),
+        Verdict::Stop(StopReason::Silent(ms)) => format!("OPRIRE: tabloul neschimbat de {} ms", ms),
+        Verdict::Stop(StopReason::NoTemperature) => String::from("OPRIRE: temperatura necitita"),
+    }
+}
+
+impl<M: nvidia_ga104::gsp::rusd::RusdMem> EarlyDashboard<M> {
+    /// The page after `rusd_start`: the watch with the proposed limits, read every 5 s.
+    pub fn new(start: nvidia_ga104::gsp::rusd::RusdStart, plan: nvidia_ga104::gsp::rusd::RusdPlan, page: M, phys: u64, t0_us: u64) -> Option<Self> {
+        use nvidia_ga104::gsp::rusd_watch::{ThermalLimits, Watch};
+        let watch = Watch::new(ThermalLimits::PROPOSED, Watch::EVERY_MS_DEFAULT).ok()?;
+        Some(EarlyDashboard { start, plan, page, phys, watch, t0_us, before: None, last: None })
+    }
+
+    /// One reading (only when GSP-RM accepted the three commands): the dashboard, its temperature mark and the
+    /// thermal watch; one screen line. `None` = not polling.
+    pub fn read<K: Clock + ?Sized>(
+        &mut self,
+        p: &str,
+        what: &str,
+        clock: &mut K,
+        journal: &mut Journal,
+        lines: &mut Vec<String>,
+    ) -> Option<(nvidia_ga104::gsp::rusd::Dashboard, nvidia_ga104::gsp::rusd_watch::Verdict)> {
+        use nvidia_ga104::gsp::{rusd as kd, rusd_watch as kw};
+        if !self.start.polling() {
+            return None;
+        }
+        let d = kd::read_dashboard(&mut self.page, journal);
+        let stamp = kw::temp_stamp(&mut self.page);
+        let t_ms = clock.now_us().saturating_sub(self.t0_us) / 1000;
+        let v = self.watch.observe(t_ms, &d, stamp, journal);
+        self.last = Some(v);
+        lines.push(format!(
+            "{}: kw tabloul {} (la {} ms): temperatura {}, ceasul nucleului {}, stare {}; ceasul termic: {}",
+            p,
+            what,
+            t_ms,
+            d.temp_c().map_or_else(|| String::from("necitita"), |c| format!("{} grade C", c)),
+            d.clk_graphics_mhz.map_or_else(|| String::from("necitit"), |x| format!("{} MHz", x)),
+            d.pstate().map_or_else(|| String::from("necitita"), pstate_text),
+            verdict_text(v)
+        ));
+        Some((d, v))
+    }
+
+    /// True when the last reading said "stop" (the max-speed request is then not sent).
+    pub fn says_stop(&self) -> bool {
+        matches!(self.last, Some(nvidia_ga104::gsp::rusd_watch::Verdict::Stop(_)))
+    }
+}
+
+/// P6-142: what the dashboard says the max-speed request did (`compare_boost`, `kw viteza maxima` rows + one line).
+pub(super) fn boost_seen_line(
+    p: &str,
+    before: &nvidia_ga104::gsp::rusd::Dashboard,
+    after: &nvidia_ga104::gsp::rusd::Dashboard,
+    journal: &mut Journal,
+) -> String {
+    use nvidia_ga104::gsp::rusd_watch::{self as kw, BoostSeen};
+    let seen = kw::compare_boost(before, after, journal);
+    let ps = |d: &nvidia_ga104::gsp::rusd::Dashboard| d.pstate().map_or_else(|| String::from("-"), pstate_text);
+    let clk = |d: &nvidia_ga104::gsp::rusd::Dashboard| d.clk_graphics_mhz.map_or_else(|| String::from("-"), |x| format!("{}", x));
+    format!(
+        "{}: kw viteza maxima vazuta pe tablou: {} (starea {} -> {}, ceasul nucleului {} -> {} MHz)",
+        p,
+        match seen {
+            BoostSeen::Raised => "URCATA",
+            BoostSeen::AlreadyUp => "era deja sus (P0 inainte)",
+            BoostSeen::NoEffect => "FARA EFECT",
+            BoostSeen::Unknown => "necunoscut (starea sau ceasul necitite)",
+        },
+        ps(before),
+        ps(after),
+        clk(before),
+        clk(after)
+    )
+}
+
+/// P6-142: the thermal watch's summary (`kw ceas termic rezumat` rows + one line).
+pub(super) fn watch_summary_line(p: &str, w: &nvidia_ga104::gsp::rusd_watch::Watch, journal: &mut Journal) -> String {
+    w.summary(journal);
+    format!(
+        "{}: kw ceas termic rezumat: {} citiri, temperatura {}..{} grade C, puterea maxima {}, citiri cu tabloul neschimbat {}{}",
+        p,
+        w.reads,
+        w.temp_min.map_or_else(|| String::from("-"), |t| format!("{}", t)),
+        w.temp_max.map_or_else(|| String::from("-"), |t| format!("{}", t)),
+        w.power_max_mw.map_or_else(|| String::from("-"), |x| format!("{} mW", x)),
+        w.silent_reads,
+        w.stopped().map_or_else(String::new, |r| format!("; oprirea ceasului: {}", verdict_text(nvidia_ga104::gsp::rusd_watch::Verdict::Stop(r))))
+    )
 }
 
 /// P6-91/P6-92: the I9 choice of `gpu lant --i9 ...`. `Default` = what os-302/os-303 sent without the option.

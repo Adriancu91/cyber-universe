@@ -157,7 +157,7 @@ pub fn target(command: &str) -> Result<(String, String), &'static str> {
 
 /// P6-96: `test-placa [--i9 …]` of the automatic list -> the I9.
 pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
-    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi` sau `--ln-32`, apoi `--k651`, apoi `--argmax-placa` sau `--argmax-fara-copie`, apoi `--dieta2`, apoi `--p8`, apoi `--colsum`, apoi `--pas-aur`, apoi `--mm-tc`, apoi `--atentie-placi` la sfarsit (in aceasta ordine; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi`, `--ln-32`; `--k651` nu merge cu `--lipit` sau `--simplu`; `--argmax-fara-copie` nu merge cu `--lipit`, `--ln-nou`, `--sferturi` sau `--ln-32`)";
+    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou` sau `--tablou-viteza`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi` sau `--ln-32`, apoi `--k651`, apoi `--argmax-placa` sau `--argmax-fara-copie`, apoi `--dieta2`, apoi `--p8`, apoi `--colsum`, apoi `--pas-aur`, apoi `--mm-tc`, apoi `--atentie-placi` la sfarsit (in aceasta ordine; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi`, `--ln-32`; `--k651` nu merge cu `--lipit` sau `--simplu`; `--argmax-fara-copie` nu merge cu `--lipit`, `--ln-nou`, `--sferturi` sau `--ln-32`)";
     let words: Vec<&str> = command.split_whitespace().collect();
     let Some(("test-placa", rest)) = words.split_first().map(|(a, b)| (*a, b)) else { return None };
     let (i9, flags) = match rest {
@@ -167,6 +167,7 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
     };
     // P6-101 (C-152 point 1): `--flr-proba` = the usual test, then the chain a second time in the same power-on.
     // P6-105 (C-152 point 5): `--tablou` = the board's dashboard at the end of the test's chain.
+    // P6-142 (C-157 point 5): `--tablou-viteza` = in its place, the dashboard before the max-speed request, kept on.
     // P6-110 (C-155 point 1): `--lipit` = #513 a second time with P3's glued list, compared bit for bit with the plain one.
     // P6-112: `--simplu` = #513 with the plain list alone (as in os-324); without either, the glued list alone.
     // P6-114 (C-155 point 2): `--ln-nou` = the glued list with the old LayerNorm, then with the new one, compared.
@@ -191,7 +192,7 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
     // P6-128: `--ln-32` = `lipita-ln`, then `lipita-ln-32` (every product on quarters), compared; one more list choice.
     // P6-135 (note C-157_P2i, point 1): `--lipita-ln` = the default until now (`lipita-ln` alone); without any list
     // choice the cycle now runs `lipita-ln-32` alone. The checks below go by name, not by position.
-    let all = [FLR_PROBA, TABLOU, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, P8, COLSUM, PAS_AUR, MM_TC, ATTN_TILE];
+    let all = [FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, P8, COLSUM, PAS_AUR, MM_TC, ATTN_TILE];
     let pos = |x: &str| all.iter().position(|y| *y == x).unwrap_or(0);
     let lists = pos(LIPIT)..=pos(LN_32);
     // The two-run lists: the argmax without the copy reads no logits, they need both runs' logits.
@@ -214,6 +215,9 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
             pos(K651_OPT)
         } else if all[at] == ARGMAX_PLACA {
             pos(DIETA2)
+        } else if all[at] == TABLOU {
+            // P6-142: `--tablou` or `--tablou-viteza`, not both.
+            pos(LIPIT)
         } else {
             at + 1
         };
@@ -622,6 +626,9 @@ pub const FLR_PROBA: &str = " --flr-proba";
 
 /// P6-105: suffix of the I9 text when the dashboard is asked (`test-placa … --tablou`, always last).
 pub const TABLOU: &str = " --tablou";
+/// P6-142 (C-157 point 5): in place of `--tablou`: the dashboard started before the max-speed request, read before it,
+/// 1 s after it and at the end, every read through the thermal watch.
+pub const TABLOU_VITEZA: &str = " --tablou-viteza";
 
 /// P6-110: suffix of the I9 text when P3's glued list is asked (`test-placa … --lipit`, always last).
 pub const LIPIT: &str = " --lipit";
@@ -802,9 +809,13 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
         Some(x) => (x, true),
         None => (i9, false),
     };
-    let (i9, dashboard) = match i9.strip_suffix(TABLOU) {
+    let (i9, dashboard_early) = match i9.strip_suffix(TABLOU_VITEZA) {
         Some(x) => (x, true),
         None => (i9, false),
+    };
+    let (i9, dashboard) = match i9.strip_suffix(TABLOU) {
+        Some(x) => (x, true),
+        None => (i9, dashboard_early),
     };
     let (i9, flr_trial) = match i9.strip_suffix(FLR_PROBA) {
         Some(x) => (x, true),
@@ -859,7 +870,11 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::DIET_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
     // P6-105: the dashboard only when the list asked for it, and only for this chain (not the FLR trial's second one).
     crate::drivers::gpu_tur::RUSD_ARMED.store(dashboard, core::sync::atomic::Ordering::SeqCst);
-    if dashboard {
+    // P6-142: the dashboard before the max-speed request, kept on (the thermal watch).
+    crate::drivers::gpu_tur::RUSD_EARLY.store(dashboard_early, core::sync::atomic::Ordering::SeqCst);
+    if dashboard_early {
+        text.push_str("\n(tabloul de bord al placii: cerut de lista, pornit INAINTE de cererea de viteza maxima, citit inainte / dupa 1 s / la final, cu ceasul termic 80/85/70 grade C)\n");
+    } else if dashboard {
         text.push_str("\n(tabloul de bord al placii: cerut de lista, la sfarsitul lantului, dupa randurile ks)\n");
     }
     // P6-110 (C-155 point 1): P3 only when the list asked for it, only for this chain's #513.
@@ -998,6 +1013,7 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::BOOST_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::DIET_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::RUSD_ARMED.store(false, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::RUSD_EARLY.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::FUSED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::FUSED_ONLY_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::LN_NEW_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
@@ -1228,6 +1244,12 @@ pub fn self_test() {
     assert!(board_command("test-placa --tablou") == Some(Ok(String::from("c135 --tablou"))));
     assert!(board_command("test-placa --i9 c133 --flr-proba --tablou") == Some(Ok(String::from("c133 --flr-proba --tablou"))));
     assert!(board_command("test-placa --tablou --flr-proba").is_some_and(|r| r.is_err()));
+    // P6-142: `--tablou-viteza` in place of `--tablou` (not both), before the list options.
+    assert!(board_command("test-placa --tablou-viteza") == Some(Ok(String::from("c135 --tablou-viteza"))));
+    assert!(board_command("test-placa --flr-proba --tablou-viteza --k651 --argmax-fara-copie --dieta2") == Some(Ok(String::from("c135 --flr-proba --tablou-viteza --k651 --argmax-fara-copie --dieta2"))));
+    assert!(board_command("test-placa --tablou --tablou-viteza").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --tablou-viteza --tablou").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --lipit --tablou-viteza").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --lipit") == Some(Ok(String::from("c135 --lipit"))));
     assert!(board_command("test-placa --i9 c133 --flr-proba --tablou --lipit") == Some(Ok(String::from("c133 --flr-proba --tablou --lipit"))));
     assert!(board_command("test-placa --tablou --lipit") == Some(Ok(String::from("c135 --tablou --lipit"))));

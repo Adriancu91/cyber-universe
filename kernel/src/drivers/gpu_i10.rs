@@ -423,6 +423,10 @@ impl SimGpu {
                         T::Gnorm => cp.register_program_with_needs(code, c::gnorm_on_cpu, c::GNORM_NEEDS),
                         T::OptStep => cp.register_program(code, c::opt_step_on_cpu),
                         T::Colsum | T::Vadd => 0,
+                        // P6-142 (cyber-gpu session 168): `train_step::Prog` gets `AttnP` next; this arm keeps the OS building
+                        // until its exact row (`T::AttnP => cp.register_program(code, c::attn_p_on_cpu)`) is bound with it.
+                        #[allow(unreachable_patterns)]
+                        _ => 0,
                     };
                 }
             }
