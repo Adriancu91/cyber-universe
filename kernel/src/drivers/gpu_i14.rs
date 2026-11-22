@@ -2383,6 +2383,13 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 lines.push(format!("{}: kronos --gpu: P8 (mma16): oprita: {}", p, e));
             }
         }
+        // P6-134 (C-161 point 4, cyber-gpu `3b4ca77`): the first backward program of the training (`colsum`), only when
+        // the cycle's list asks for it (`test-placa … --colsum`), after everything else; its failure is a line.
+        if super::gpu_tur::COLSUM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+            if let Err(e) = colsum_probe(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, &ctx) {
+                lines.push(format!("{}: kronos --gpu: colsum (primul program inapoi): oprita: {}", p, e));
+            }
+        }
     }
     Ok(all.pop().unwrap_or_default())
 }
@@ -2596,6 +2603,113 @@ fn mma16_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         probe.in_tolerance(),
         mp::SETS.len(),
         probe.sets.first().map_or(0, |r| r.exact()),
+        probe.worst_permille(),
+        probe.median_ns().map_or(String::from("?"), |n| format!("{}", n))
+    ));
+    match stopped {
+        Some(_) => Err(GpuError::Timeout { waited_us: WAIT_US }),
+        None => Ok(()),
+    }
+}
+
+/// P6-134 (C-161 point 4, C-160 point 6; cyber-gpu note `C-160_P6_primul-program-inapoi.md`, commit `3b4ca77`): the
+/// first backward program of the training on the board — `colsum` (column sums of a gradient: a bias's gradient, or
+/// LayerNorm's dγ and dβ), once for each of the 5 fixed sets of `colsum_probe::SETS`, one submission per set. Each set's
+/// 64 KiB buffer (inputs, then the two outputs with NaN fill and NaN guards) lives in host RAM: the arena's upload pages
+/// (page 0 on), no longer used once the texts are done. The outputs are read back and judged on the CPU against the
+/// written margin (and bit for bit against the model). Outside the generation path. New for the board: this program
+/// (its SHA-256 checked first), 19 registers, blocks of 256, 1–3 blocks; cbuf 0x100 as today. A set the board does
+/// not finish stops the probe (no retry).
+#[allow(clippy::too_many_arguments)]
+fn colsum_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    doorbell: &mut Bell<'_, V>,
+    subs: &mut u32,
+    ctx: &CopyCtx,
+) -> GpuResult<()> {
+    use nvidia_ga104::{colsum as cs, colsum_probe as cp};
+    let label = if permit.is_some() { "placa" } else { "SIMULARE" };
+    let sha = sha256_hex(cs::COLSUM);
+    if sha != cs::COLSUM_SHA256 {
+        lines.push(format!("{}: kronos --gpu: colsum: SHA-256 al programului {} nu e cel din nota ({}): nimic trimis", p, sha, cs::COLSUM_SHA256));
+        return Err(bad("colsum: SHA-256 gresit"));
+    }
+    lines.push(format!(
+        "{}: kronos --gpu: colsum (primul program inapoi, {}): programul colsum ({} octeti, SHA-256 {}...), {} seturi, cate o trimitere",
+        p,
+        label,
+        cs::COLSUM.len(),
+        &sha[..16],
+        cp::SETS.len()
+    ));
+    // The program, then one VRAM page: the cbuf at +0 (0x100 bytes), the QMD at +0x800 (as P8); the buffer in host RAM.
+    let prog = map_vram(st, cs::COLSUM.len() as u64)?;
+    let zone = map_vram(st, PAGE)?;
+    put_bytes(st.mem.writer_mut(), prog.pa, cs::COLSUM)?;
+    let buf = st.mem.alloc_sys_mapped(&arena_pages(0, (cp::BUF_BYTES as u64).div_ceil(PAGE))?)?;
+    if !buf.va.is_multiple_of(PAGE) {
+        return Err(bad("colsum: bufferul nu e aliniat la 4 KiB"));
+    }
+    let mut maps = ctx.maps.clone();
+    maps.push(prog);
+    maps.push(zone);
+    let sys = [ctx.sys.clone(), buf.clone()];
+    let qmd_va = zone.va + 0x800;
+    let mut probe = cp::Probe::default();
+    let mut stopped = None;
+    for (i, set) in cp::SETS.iter().enumerate() {
+        ram_write(&buf, &set.buffer()); // the outputs and guards start as NaN
+        let (cb, q) = cp::launch_bytes(i, prog.va, zone.va, buf.va)?;
+        {
+            let w = st.mem.writer_mut();
+            put_bytes(w, zone.pa, &cb)?;
+            put_bytes(w, zone.pa + 0x800, &q)?;
+            put_bytes(w, ctx.rec.pa, &[0; 32])?;
+        }
+        let first = TOKEN_FIRST + STRIDE * *subs;
+        let mut words = alloc::vec![0u32; transfer::sequence_words(1)];
+        let mut pb = PushBuf::new(&mut words);
+        transfer::encode_sequence(&mut pb, &[qmd_va], ctx.rec.va, first)?;
+        let nw = pb.len();
+        let b = match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, 2, first + 1, &maps, &sys, doorbell)? {
+            Ok(b) => b,
+            Err(got) => {
+                lines.push(format!(
+                    "{}: kronos --gpu: colsum: placa nu a terminat la setul {} ({}): ultima inregistrare = {:#x} (asteptat {:#x}); proba oprita, fara reincercare",
+                    p, i, set.name, got, first + 1
+                ));
+                stopped = Some(i);
+                break;
+            }
+        };
+        *subs += 1;
+        let ns = transfer::analyze_sequence(&b, 1, first)?[0];
+        let (o, n) = set.out_range();
+        let out = ram_read_at(&buf, o as u64, n as u64);
+        probe.add(cp::judge_set(i, &out, Some(ns))?);
+    }
+    probe.journal(journal);
+    lines.extend(probe.lines(label).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
+    let verdict = match stopped {
+        Some(i) => format!("NU A TERMINAT (la setul {})", i),
+        None if probe.passes() => String::from("TRECE"),
+        None => String::from("NU TRECE"),
+    };
+    lines.push(format!(
+        "{}: kronos --gpu: colsum (primul program inapoi): {}: {} / {} seturi in margine, {} / {} elemente exacte fata de model, abaterea maxima {} promile din margine, timp median {} ns",
+        p,
+        verdict,
+        probe.in_margin(),
+        cp::SETS.len(),
+        probe.exact(),
+        probe.elements(),
         probe.worst_permille(),
         probe.median_ns().map_or(String::from("?"), |n| format!("{}", n))
     ));

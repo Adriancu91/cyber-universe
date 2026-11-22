@@ -821,6 +821,24 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu argmax-sim: exista doar in build-ul de test (pe stick argmax-ul pe placa il porneste doar ciclul, test-placa --argmax-placa)\n");
         }
+        Some("colsum-sim") => {
+            // P6-134 (C-161 point 4): test build only: the `colsum` probe (5 sets) after the next `kronos --gpu-sim`'s
+            // texts (in the stick's system only the cycle turns it on, with `test-placa … --colsum`).
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::COLSUM_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu colsum-sim: pornita (SIMULARE: dupa texte, colsum de 5 ori, judecat pe procesor)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::COLSUM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu colsum-sim: oprita\n");
+                }
+                _ => out!("folosire: gpu colsum-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu colsum-sim: exista doar in build-ul de test (pe stick proba colsum o porneste doar ciclul, test-placa --colsum)\n");
+        }
         Some("p8-sim") => {
             // P6-117 (C-161 point 2): test build only: P8 (`mma16_f16`, 6 sets) after the next `kronos --gpu-sim`'s texts
             // (in the stick's system only the cycle turns it on, with `test-placa … --p8`).

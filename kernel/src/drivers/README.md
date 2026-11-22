@@ -219,6 +219,14 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     logit-urilor (A, B, C, D = NaN); D citit înapoi e judecat pe procesor (`judge_set`, toleranța scrisă) → rândurile `kt mma16 …` în
     jurnal și `mma16 …` + `P8 (mma16): TRECE / NU TRECE / NU A TERMINAT` în ieșire și în răspunsul ciclului. Placa care nu termină un
     set oprește proba (fără reîncercare); o eroare aici nu strică rezultatul lui #513. Test: `kronos-gpu-p8`.
+    **P6-134 (C-161 punctul 4, C-160 punctul 6, cyber-gpu `3b4ca77`): primul program „înapoi” al antrenării pe placă — proba
+    `colsum`.** Doar în ciclu cu `test-placa … --colsum` (ultima opțiune, după `--p8`; `gpu_tur::COLSUM_IN_CYCLE`; în build-ul de test
+    `gpu colsum-sim on|off`): după textele lui #513 (și după P8, dacă e cerut), `gpu_i14::colsum_probe` verifică SHA-256 al lui `colsum`
+    (Mesa NAK 25.0.7), îl urcă în VRAM, pune cbuf-ul (0x100 octeți) la +0 și QMD-ul la +0x800 într-o pagină VRAM și trimite cele 5
+    seturi din `colsum_probe::SETS`, câte o trimitere; bufferul de 64 KiB al fiecărui set (intrări, apoi ieșirile și gărzile = NaN) stă
+    în RAM, pe paginile de urcare ale arenei (nefolosite după texte). Ieșirile citite înapoi (`out_range`) sunt judecate pe procesor
+    (`judge_set`: marginea scrisă în T155 + bit cu bit față de model) → rândurile `kt colsum …` în jurnal și `colsum …` +
+    `colsum (primul program inapoi): TRECE / NU TRECE / NU A TERMINAT` în ieșire și în răspunsul ciclului. Test: `kronos-gpu-colsum`.
     **P6-123 (C-155 punctul 3, cyber-gpu `3683ef4`): argmax pe placă, proba.** Doar în ciclu cu `test-placa … --argmax-placa` (după
     `--k651`, înainte de `--dieta2`; `gpu_tur::ARGMAX_IN_CYCLE`; în build-ul de test `gpu argmax-sim on|off`): fiecare simbol al lui
     `kronos --gpu` se termină cu copia logit-urilor și programul `argmax` (`nvidia_ga104::argmax::launch`; 16 octeți imediat după

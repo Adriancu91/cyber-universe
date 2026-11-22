@@ -296,6 +296,11 @@ pub static ARGMAX_TOP_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::ato
 /// build, by `gpu p8-sim on`. Off by default: every other run sends exactly what os-332 sent.
 pub static P8_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-134 (C-161 point 4, cyber-gpu `3b4ca77`): the first backward program of the training on the board, the `colsum`
+/// probe (5 fixed sets), after `kronos --gpu`'s texts (and after P8 when asked). Set only by the cycle when the list
+/// asks for it (`test-placa … --colsum`) and, in the test build, by `gpu colsum-sim on`. Off by default.
+pub static COLSUM_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-101: set only for the FLR trial's second chain (`test-placa --flr-proba`, `gpu lant --flr-proba`); taken by
 /// `chain`. Without it no chain reads WPR2 for the reset nor writes anything for it.
 pub static FLR_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
