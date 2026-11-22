@@ -107,6 +107,22 @@ pub(super) fn ram_read(m: &SysMapping, len: u64) -> Vec<u8> {
     v
 }
 
+/// P6-126 (cyber-gpu note C-157_P2f, proposal 1): `len` bytes of a host-RAM mapping from byte `off` (only the pages
+/// they span are touched; bytes past the mapping are not returned).
+pub(super) fn ram_read_at(m: &SysMapping, off: u64, len: u64) -> Vec<u8> {
+    let (off, len) = (off as usize, len as usize);
+    let mut v = Vec::with_capacity(len);
+    for (i, page) in ram(m).enumerate().skip(off / PAGE as usize) {
+        let start = if i == off / PAGE as usize { off % PAGE as usize } else { 0 };
+        let n = (len - v.len()).min(page.len() - start);
+        v.extend_from_slice(&page[start..start + n]);
+        if v.len() == len {
+            break;
+        }
+    }
+    v
+}
+
 pub(super) fn map_vram(st: &mut GpuState, bytes: u64) -> GpuResult<Mapping> {
     st.mem.alloc_mapped(bytes.next_multiple_of(PAGE), PAGE)
 }

@@ -33,7 +33,7 @@ use nvidia_ga104::gsp::HardwareWritePermit;
 use nvidia_ga104::kronos_layer::{self as kl, LayerVas, OwnedLayer, Prog, WeightVas, PROGRAMS};
 use nvidia_ga104::kronos_diag as kd;
 use nvidia_ga104::kronos_fast as kf;
-use nvidia_ga104::kronos_gen::{GenPlan, Generation, Stop, TokenCheck, TokenOutput, TokenRunner, VramBudget};
+use nvidia_ga104::kronos_gen::{GenPlan, Generation, Stop, TokenCheck, TokenOutput, TokenRunner, TopOutput, TopRunner, VramBudget};
 use nvidia_ga104::kronos_model::{self as km, ModelVas, OwnedModel};
 use nvidia_ga104::kronos_perf as kp;
 use nvidia_ga104::kronos_speed as ks;
@@ -43,7 +43,7 @@ use nvidia_ga104::transfer;
 
 use super::gpu_golden::GpuState;
 use super::gpu_i10::{put_bytes, Launched, WAIT_US};
-use super::gpu_i11::{arena_pages, f32_bytes, map_vram, ram_read, ram_write, run_records, Bell, I11_BOARD_BYTES, PAGE};
+use super::gpu_i11::{arena_pages, f32_bytes, map_vram, ram_read, ram_read_at, ram_write, run_records, Bell, I11_BOARD_BYTES, PAGE};
 
 /// Where I14 looks for the control model on the board's stick, and on the test disk in SIMULATION.
 pub(super) const MIC_BOARD: &str = "/usb/kronos/mic_q8_0.kgr";
@@ -144,6 +144,12 @@ const KT_AM_ON: &str = "kt argmax placa (0/1)";
 const KT_AM_AGREE: &str = "kt argmax placa = procesor: pozitii la care cele 4 cuvinte = argmax_result al logit-urilor copiate";
 const KT_AM_TOTAL: &str = "kt argmax placa: pozitii verificate";
 const KT_AM_MEDIAN_NS: &str = "kt median argmax placa (ns, lansarea, din inregistrari)";
+/// P6-126 (C-155 point 4, cyber-gpu note C-157_P2f): the argmax without the copy: the token chosen on the board, every
+/// position's token checked after the board against the processor's.
+pub const KT_TOP_ON: &str = "kt argmax fara copie (0/1)";
+const KT_TOP_AGREE: &str = "kt argmax fara copie: pozitii la care simbolul placii = simbolul procesorului";
+const KT_TOP_TOTAL: &str = "kt argmax fara copie: pozitii verificate";
+const KT_TOP_READ: &str = "kt median citirea rezultatului (us)";
 const KT_VRAM_WORDS: &str = "kt cuvinte VRAM pe simbol (median)";
 const KT_READ: &str = "kt median citirea logit-urilor (us)";
 const KT_ARGMAX: &str = "kt median argmax (us)";
@@ -504,6 +510,8 @@ struct DietOut {
     read_us: Vec<u64>,
     argmax_us: Vec<u64>,
     print: u32,
+    /// P6-126: the argmax without the copy: no logits read (no print, no deviation).
+    top: bool,
 }
 
 /// P6-107: FNV-1a (32 bits) over the logits' bits, in order (the fingerprint compared between two runs).
@@ -567,7 +575,13 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let n_tok = km::launches_per_token(m.layers.len());
     // P6-123 (C-155 point 3): with the argmax on the board (only for `kronos --gpu`), one launch more after the copy.
     let argmax_board = runs.iter().all(|r| r.argmax.is_none()) && super::gpu_tur::ARGMAX_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
-    let n = n_tok + 1 + usize::from(argmax_board); // + the copy of the logits down (+ the argmax)
+    // P6-126 (C-155 point 4): the argmax WITHOUT the copy (only for `kronos --gpu`, not with the trial): the argmax
+    // launch takes the copy's place, the token is chosen on the board.
+    let argmax_top = !argmax_board
+        && runs.iter().all(|r| r.argmax.is_none())
+        && super::gpu_tur::ARGMAX_TOP_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    let am_prog = argmax_board || argmax_top;
+    let n = n_tok + 1 + usize::from(argmax_board); // + the copy of the logits down or the argmax (+ the argmax)
     // 0. C-87 step 4 + P6-95 (C-142 `kronos_speed::ModelLimits`): the VRAM, the pushbuffer area (two tokens in the way that
     //    needs the most words) and the records' stride, from the model's shapes, checked before anything is uploaded.
     let budget = VramBudget::of_model(m)?;
@@ -583,7 +597,7 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
             run_lists.push(r.list);
         }
     }
-    let extra_progs: &[Prog] = if argmax_board { &[Prog::Argmax] } else { &[] };
+    let extra_progs: &[Prog] = if am_prog { &[Prog::Argmax] } else { &[] };
     let lim = ks::ModelLimits::of_lists(&s, m.layers.len(), m.vocab, m.context, I11_BOARD_BYTES, &run_lists, extra_progs)?;
     let (free, largest) = st.mem.vram_free();
     lines.push(format!("{}: i14: {}; VRAM liber {} MiB (cea mai lunga bucata {} MiB)", p, budget.line(m.layers.len()), free >> 20, largest >> 20));
@@ -608,7 +622,7 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let host = st.mem.alloc_sys_mapped(&arena_pages(0, piece.div_ceil(PAGE))?)?;
     let logits_bytes = (4 * m.vocab as u64).next_multiple_of(16);
     // P6-123: the argmax's 16-byte result right after the logits (`logits_bytes` is a multiple of 16), same arena.
-    let am_bytes = if argmax_board { nvidia_ga104::argmax::RESULT_BYTES } else { 0 };
+    let am_bytes = if am_prog { nvidia_ga104::argmax::RESULT_BYTES } else { 0 };
     let host_logits = st.mem.alloc_sys_mapped(&arena_pages(I11_BOARD_BYTES / PAGE, (logits_bytes + am_bytes).div_ceil(PAGE))?)?;
     let mut progs: Vec<(Prog, Mapping)> = Vec::new();
     // P6-110: P3's glued list needs its own program (`q8_fused`) too; uploaded only when a run uses that list.
@@ -621,8 +635,13 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
     }
     let compare = lists.len() >= 2;
+    // P6-126: two runs compared need the logits of both; without the copy there are none.
+    if argmax_top && compare {
+        lines.push(format!("{}: I14: argmax fara copie nu merge cu doua rulari comparate (logit-urile nu se citesc): nimic urcat", p));
+        return Err(bad("I14: argmax fara copie cu doua rulari comparate"));
+    }
     let mut all_progs: Vec<Prog> = PROGRAMS.to_vec();
-    if argmax_board {
+    if am_prog {
         all_progs.push(Prog::Argmax);
     }
     for list in &lists {
@@ -727,7 +746,8 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let diet = fast && super::gpu_tur::DIET_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     let push_shadow = if diet { Some(kf::WriteShadow::new(l.push.pa, l.push.size)?) } else { None };
     // P6-119 (C-157 point 3): the second diet only when the cycle's list asks for it, only for `kronos --gpu`.
-    let diet2 = fast && super::gpu_tur::DIET2_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    // P6-126: not with the argmax without the copy (the second diet's argmax and print are on the logits).
+    let diet2 = fast && !argmax_top && super::gpu_tur::DIET2_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     let mut runner = BoardRunner {
         p,
         vbar: &mut *vbar,
@@ -784,6 +804,10 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         am_total: 0,
         am_first_bad: None,
         am_ns: Vec::new(),
+        argmax_top,
+        top_agree: 0,
+        top_total: 0,
+        top_first_bad: None,
     };
     // 3. C-139: the ladder, once, on the first token of the first control text, before the texts.
     if way.is_none() {
@@ -850,7 +874,12 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 let (speed0, done0, words0) = (runner.speed.clone(), *runner.tokens_done, runner.st.vram_words);
                 let am0 = (runner.am_agree, runner.am_total, runner.am_first_bad.clone(), runner.am_ns.len());
                 let w0 = crate::time::since_boot_us();
-                runner.run_token(t0, 0)?;
+                // P6-126: without the copy, the warm-up is the same argmax-only token.
+                if runner.argmax_top {
+                    runner.run_top(t0, 0)?;
+                } else {
+                    runner.run_token(t0, 0)?;
+                }
                 let w_us = w0.zip(crate::time::since_boot_us()).map(|(a, b)| b.saturating_sub(a)).unwrap_or(0);
                 let w_words = runner.st.vram_words.saturating_sub(words0);
                 runner.speed = speed0;
@@ -886,11 +915,43 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
             // P6-99 (C-148 point 2): `kronos --gpu` from `/bin/kronos`: the board first (`run_check_after`), then every
             // position judged by the same rule (`kronos_model::judge`, in the kernel) against the fast engine's logits.
             let mut os = OsCheck { us: Vec::new(), why: None };
-            let stop = if run.os_check {
+            let stop = if runner.argmax_top {
+                // P6-126 (C-155 point 4): the token chosen on the board (its 16 bytes), no logits read.
+                generation.run_top(&mut runner).clone()
+            } else if run.os_check {
                 generation.run_check_after(&mut runner, &mut os).clone()
             } else {
                 generation.run(&mut runner, Some(&mut check)).clone()
             };
+            // P6-126: the check after the board: the processor (the same engine as the check of `kronos --gpu`, in
+            // order) computes every position's token from the board's sequence; it must be the board's token.
+            if runner.argmax_top && stop.is_clean_end() {
+                let seq = generation.seq.clone();
+                let board = runner.argmaxes.clone();
+                let chk: &mut dyn TokenCheck = if run.os_check { &mut os } else { &mut check };
+                for (q, &got) in board.iter().enumerate() {
+                    let cpu = match chk.cpu_logits(seq[q], q) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            runner.lines.push(format!("{}: kronos --gpu: argmax fara copie: verificarea dupa placa nu a putut judeca pozitia {}", p, q));
+                            return Err(e);
+                        }
+                    };
+                    let want = cm::argmax(&cpu);
+                    runner.top_total += 1;
+                    if want == Some(got) {
+                        runner.top_agree += 1;
+                    } else if runner.top_first_bad.is_none() {
+                        runner.top_first_bad = Some(format!(
+                            "\"{}\" pozitia {}: placa {}, procesorul {}",
+                            run.name,
+                            q,
+                            got,
+                            want.map_or(String::from("-"), |w| format!("{}", w))
+                        ));
+                    }
+                }
+            }
             let mut us = if run.os_check { core::mem::take(&mut os.us) } else { core::mem::take(&mut check.us) };
             // P6-97: the CPU check of each position next to its token (Generation checks every position once, in order).
             let mut split = core::mem::take(&mut runner.split);
@@ -905,6 +966,13 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 break (generation, positions);
             }
             runner.lines.push(format!("{}: I14: \"{}\": {}", p, run.name, stop.line()));
+            // P6-126: without the copy there are no logits to explain: the stop is the error.
+            if runner.argmax_top {
+                return Err(match stop {
+                    Stop::Eroare { err, .. } => err,
+                    _ => bad("I14: argmax fara copie: generarea s-a oprit (randul de mai sus)"),
+                });
+            }
             if let Some(why) = os.why.take() {
                 runner.lines.push(format!("{}: kronos --gpu: verificarea dupa placa: {}", p, why));
             }
@@ -1040,6 +1108,47 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
             p, verdict, agree, total
         ));
     }
+    if argmax_top {
+        // P6-126 (C-155 point 4): the verdict (the board's token = the processor's at every position) and the reads.
+        let (agree, total) = (runner.top_agree, runner.top_total);
+        let mut ns = runner.am_ns.clone();
+        ns.sort_unstable();
+        let med = ns.get(ns.len() / 2).copied();
+        let read = median_of(&runner.read_us);
+        runner.journal.push(Event::Value { what: KT_TOP_ON, value: 1 });
+        runner.journal.push(Event::Value { what: KT_TOP_AGREE, value: agree });
+        runner.journal.push(Event::Value { what: KT_TOP_TOTAL, value: total });
+        runner.journal.push(Event::Value { what: KT_TOP_READ, value: read.map_or(u32::MAX, |r| r.min(u64::from(u32::MAX - 1)) as u32) });
+        if let Some(t) = med {
+            runner.journal.push(Event::Value { what: KT_AM_MEDIAN_NS, value: t.min(u64::from(u32::MAX)) as u32 });
+        }
+        runner.lines.push(format!(
+            "{}: kronos --gpu: kt argmax fara copie: simbolul placii = procesorului: {}/{} (logit-urile raman pe placa; procesorul verifica dupa placa)",
+            p, agree, total
+        ));
+        runner.lines.push(match read {
+            Some(r) => format!("{}: kronos --gpu: kt median citirea rezultatului (us): {} (cei 16 octeti ai programului argmax)", p, r),
+            None => format!("{}: kronos --gpu: kt median citirea rezultatului (us): -", p),
+        });
+        runner.lines.push(match med {
+            Some(t) => format!("{}: kronos --gpu: kt median argmax placa (us): {}.{:03} (lansarea argmax, din inregistrari, {} pozitii)", p, t / 1000, t % 1000, ns.len()),
+            None => format!("{}: kronos --gpu: kt median argmax placa (us): - (nicio pozitie cu toate inregistrarile citite)", p),
+        });
+        if let Some(why) = runner.top_first_bad.take() {
+            runner.lines.push(format!("{}: kronos --gpu: kt argmax fara copie: prima pozitie diferita: {}", p, why));
+        }
+        let pass = total > 0 && agree == total;
+        runner.lines.push(format!(
+            "{}: kronos --gpu: argmax fara copie (simbolul ales pe placa): {} ({}/{} pozitii identice cu procesorul)",
+            p,
+            if pass { "TRECE" } else { "NU TRECE" },
+            agree,
+            total
+        ));
+        if !pass {
+            return Err(bad("I14: argmax fara copie: simbolul placii difera de procesor (randul de mai sus)"));
+        }
+    }
     if compare {
         let rows = if lists.contains(&kd::TokenList::Fused32) {
             quarters_vs_fused(p, m.layers.len(), &by_list, &all, &mut *runner.journal)
@@ -1065,6 +1174,7 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         read_us: core::mem::take(&mut runner.read_us),
         argmax_us: core::mem::take(&mut runner.argmax_us),
         print: runner.print,
+        top: runner.argmax_top,
     });
     drop(runner);
     let run_medians = medians.clone();
@@ -1374,6 +1484,12 @@ struct BoardRunner<'r, 'b, V: Mmio + ?Sized, K: Clock + ?Sized> {
     am_first_bad: Option<String>,
     /// P6-123: the argmax launch's time of every position that read all records (ns, board clock).
     am_ns: Vec<u64>,
+    /// P6-126 (C-155 point 4): the argmax without the copy (`TopRunner`): the token chosen on the board.
+    argmax_top: bool,
+    /// P6-126: positions whose board token = the processor's token / positions checked after the board.
+    top_agree: u32,
+    top_total: u32,
+    top_first_bad: Option<String>,
 }
 
 impl<V: Mmio + ?Sized, K: Clock + ?Sized> BoardRunner<'_, '_, V, K> {
@@ -1628,14 +1744,15 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
         let logits: Vec<f32> = bits.iter().map(|&b| f32::from_bits(b)).collect();
         let read_t1 = crate::time::since_boot_us();
         // P6-123 (C-155 point 3): the board's 16 bytes, read after the token's logits (outside the read's clock row).
-        let am_bytes = (self.argmax_board && !self.from_vram).then(|| {
-            let all = ram_read(&self.host_logits, self.logits_bytes + nvidia_ga104::argmax::RESULT_BYTES);
-            all[self.logits_bytes as usize..].to_vec()
-        });
+        // P6-126 (cyber-gpu note C-157_P2f, proposal 1): only those 16 bytes (not the whole 64 KiB arena again), and
+        // their check (`agrees`) after the argmax row's clock below: the trial's result is the same.
+        let am_bytes = (self.argmax_board && !self.from_vram)
+            .then(|| ram_read_at(&self.host_logits, self.logits_bytes, nvidia_ga104::argmax::RESULT_BYTES));
         self.argmaxes.truncate(pos);
         // P6-119 (C-157 point 3 D): with the second diet, the argmax on the bits (integer compares, the same choice).
         let am = if self.diet2 { gpu_compute::model::argmax_bits(&bits) } else { cm::argmax(&logits) };
         self.argmaxes.push(am.unwrap_or(usize::MAX));
+        let argmax_t1 = crate::time::since_boot_us();
         if let Some(b) = am_bytes.as_ref().filter(|_| self.fast) {
             // Threshold 0: the 4 words exactly as the oracle computes them from the same copied logits, and the token
             // the same as the processor's argmax. Never a stop: the token is still the processor's (the trial).
@@ -1655,7 +1772,6 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
         }
         if self.fast {
             // P6-107 (C-154 point 2): measurement only (nothing changed): the logits read from RAM, the argmax.
-            let argmax_t1 = crate::time::since_boot_us();
             let us = |a: Option<u64>, b: Option<u64>| a.zip(b).map(|(a, b)| b.saturating_sub(a)).unwrap_or(0);
             self.diet_words.truncate(pos);
             self.diet_words.push(words);
@@ -1722,6 +1838,73 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TokenRunner for BoardRunner<'_, '_, V,
             });
         }
         Ok(out)
+    }
+}
+
+/// P6-126 (C-155 point 4, cyber-gpu notes `C-155_argmax-pe-placa.md` point 4 and `C-157_P2f`): one token whose last
+/// launch is the `argmax` program alone (in the copy's place): the OS reads only its 16 bytes and the token is the
+/// board's. The same bookkeeping as `run_token` (clock, speed, split, kinds' profile without the copy's kind); no
+/// logits, so no print and no CPU check here (it runs after the board, in `run_model`).
+impl<V: Mmio + ?Sized, K: Clock + ?Sized> TopRunner for BoardRunner<'_, '_, V, K> {
+    fn run_top(&mut self, tok: usize, pos: usize) -> GpuResult<TopOutput> {
+        let (m, vas, way) = (self.m, self.vas, self.way);
+        let weights = m.weights();
+        self.pos = pos;
+        self.timing = None;
+        self.launch_ns.clear();
+        let am = nvidia_ga104::argmax::RESULT_BYTES;
+        // The result's 16 bytes filled with 0xEE first: a launch that did not write is seen (`ArgmaxResult::token`).
+        let mut fill = alloc::vec![0u8; (self.logits_bytes + am) as usize];
+        fill[self.logits_bytes as usize..].fill(0xee);
+        ram_write(&self.host_logits, &fill);
+        let extra = alloc::vec![nvidia_ga104::argmax::launch(vas.logits, self.host_logits.va + self.logits_bytes, m.vocab)?];
+        let host_t0 = crate::time::since_boot_us();
+        let journal_t0 = super::gpu_i6::JOURNAL_US.load(core::sync::atomic::Ordering::Relaxed);
+        let words0 = self.st.vram_words;
+        kd::send_token_list(self, self.list, &weights, vas, tok, pos, way, &extra)?;
+        *self.tokens_done += 1;
+        let words = self.st.vram_words.saturating_sub(words0);
+        let read_t0 = crate::time::since_boot_us();
+        let bytes = ram_read_at(&self.host_logits, self.logits_bytes, am);
+        let read_t1 = crate::time::since_boot_us();
+        let result = nvidia_ga104::argmax::ArgmaxResult::from_bytes(&bytes)?;
+        let top = result.token(m.vocab).ok().flatten();
+        self.argmaxes.truncate(pos);
+        self.argmaxes.push(top.unwrap_or(usize::MAX));
+        let us = |a: Option<u64>, b: Option<u64>| a.zip(b).map(|(a, b)| b.saturating_sub(a)).unwrap_or(0);
+        self.diet_words.truncate(pos);
+        self.diet_words.push(words);
+        self.read_us.truncate(pos);
+        self.read_us.push(us(read_t0, read_t1));
+        self.argmax_us.truncate(pos);
+        self.argmax_us.push(0); // no argmax on the processor: the board chose the token
+        let (start_ns, end_ns, busy_ns) = self.timing.unwrap_or((0, 0, 0));
+        self.journal.flush_live();
+        // The kinds' profile: the token's launches without the copy's kind; the argmax launch (the last) on its own.
+        let kinds = match self.list {
+            kd::TokenList::Plain => kp::token_kinds(m.layers.len(), way.embed == kd::EmbedBy::Program, false),
+            _ => kp::token_kinds_fused(m.layers.len(), way.embed == kd::EmbedBy::Program, false),
+        };
+        if let Some(t) = self.launch_ns.pop() {
+            self.am_ns.push(t);
+        }
+        if let Err(e) = self.prof.add_token(&kinds, &self.launch_ns) {
+            self.prof_err.get_or_insert_with(|| format!("pozitia {}: {} ({} lansari, {} timpi)", pos, e, kinds.len(), self.launch_ns.len()));
+        }
+        let host = host_t0.zip(crate::time::since_boot_us()).map(|(a, b)| b.saturating_sub(a));
+        let out = TokenOutput { logits: Vec::new(), start_ns, end_ns, busy_ns };
+        let _ = self.speed.add_token(pos, &out, host);
+        let host_us = host.unwrap_or(0);
+        let journal_us = super::gpu_i6::JOURNAL_US.load(core::sync::atomic::Ordering::Relaxed).saturating_sub(journal_t0);
+        self.split.push(kf::TokenSplit {
+            pos,
+            host_us,
+            board_us: (end_ns.saturating_sub(start_ns) / 1000).min(host_us),
+            journal_us: journal_us.min(host_us),
+            screen_us: 0,
+            check_us: 0,
+        });
+        Ok(TopOutput { result, start_ns, end_ns, busy_ns })
     }
 }
 
@@ -2077,8 +2260,11 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
         journal.push(Event::Value { what: KT_VRAM_WORDS, value: row(words) });
         journal.push(Event::Value { what: KT_READ, value: row(read) });
         journal.push(Event::Value { what: KT_ARGMAX, value: row(argmax) });
-        journal.push(Event::Value { what: KT_WORST_BITS, value: worst.to_bits() });
-        journal.push(Event::Value { what: KT_PRINT, value: d.print });
+        // P6-126: without the copy there is no deviation and no print (the logits stayed on the board).
+        if !d.top {
+            journal.push(Event::Value { what: KT_WORST_BITS, value: worst.to_bits() });
+            journal.push(Event::Value { what: KT_PRINT, value: d.print });
+        }
         let n = |v: Option<u64>| v.map_or(String::from("?"), |v| format!("{}", v));
         lines.push(format!(
             "{}: kronos --gpu: dieta driverului: {}; cuvinte VRAM scrise pe simbol (median) {}; citirea logit-urilor {} us, argmax {} us (median)",
@@ -2088,13 +2274,21 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
             n(read),
             n(argmax)
         ));
-        lines.push(format!(
-            "{}: kronos --gpu: logit-urile: amprenta {:#010x} ({} pozitii), abaterea maxima {:#010x} (biti f32)",
-            p,
-            d.print,
-            d.words.len(),
-            worst.to_bits()
-        ));
+        if d.top {
+            lines.push(format!(
+                "{}: kronos --gpu: logit-urile: necitite (argmax fara copie, {} pozitii): fara amprenta si fara abatere in aceasta rulare",
+                p,
+                d.words.len()
+            ));
+        } else {
+            lines.push(format!(
+                "{}: kronos --gpu: logit-urile: amprenta {:#010x} ({} pozitii), abaterea maxima {:#010x} (biti f32)",
+                p,
+                d.print,
+                d.words.len(),
+                worst.to_bits()
+            ));
+        }
     }
     // P6-119 (C-157 point 3): the second diet's rows (only when it was on).
     if let Some(d2) = out.diet.as_ref().and_then(|d| d.diet2.as_ref()) {

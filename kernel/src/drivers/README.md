@@ -225,6 +225,14 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     logit-uri, umpluți cu `0xEE`); la fiecare poziție cele 4 cuvinte = `argmax_result` al logit-urilor copiate (prag 0), altfel
     prima poziție diferită e scrisă. Simbolul se alege tot pe procesor; timpul lansării argmax e ținut separat de profilul `kp`.
     Rânduri `kt argmax placa = procesor: X/Y`, `kt median argmax placa (us)`, verdictul și în răspunsul ciclului. Test: `kronos-gpu-argmax`.
+    **P6-126 (C-155 punctul 4, nota Cyber-GPU `C-157_P2f`, `dc4edf0`): argmax fără copie — simbolul ales pe placă.** Doar în ciclu cu
+    `test-placa … --argmax-fara-copie` (în locul lui `--argmax-placa`; nu cu `--lipit`/`--ln-nou`/`--sferturi`/`--dieta2`;
+    `gpu_tur::ARGMAX_TOP_IN_CYCLE`; în build-ul de test `gpu argmax-sim fara-copie`): fiecare simbol se termină doar cu programul `argmax`
+    (în locul copiei), OS-ul citește cei 16 octeți (`gpu_i11::ram_read_at`) și ia simbolul de acolo (`TopRunner for BoardRunner`,
+    `Generation::run_top`). După placă, procesorul (aceeași verificare ca la `kronos --gpu`) calculează simbolul fiecărei poziții:
+    trebuie să fie al plăcii. Logit-urile nu se citesc: fără amprentă și fără abatere. Rânduri `kt argmax fara copie: simbolul placii =
+    procesorului: X/Y`, `kt median citirea rezultatului (us)`, verdictul și în răspunsul ciclului. Tot aici, proba cu copie citește doar
+    cei 16 octeți și verifică după ceasul rândului „argmax” (propunerea 1 a notei). Test: `kronos-gpu-argmax-top`.
     **P6-124 (C-155 punctul 4, cyber-gpu `9d256ca`): cursa înmulțirilor pe sferturi.** Doar în ciclu cu `test-placa … --sferturi` (în
     locul celorlalte alegeri de listă, înainte de `--k651`; `gpu_tur::QUARTERS_IN_CYCLE`; în build-ul de test `gpu lipit-sim sferturi`):
     același text de două ori, lista lipită (`Fused`), apoi lista lipită pe sferturi (`Fused32`: `q8_fused32`, `q8_matvec32`, aceleași
