@@ -2310,6 +2310,7 @@ fn mma16_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let qmd_va = zone.va + mma16::CBUF_SIZE as u64;
     let mut probe = mp::Probe::default();
     let mut stopped = None;
+    let mut fits: Vec<(u32, u32)> = Vec::new();
     for (i, set) in mp::SETS.iter().enumerate() {
         ram_write(&ctx.sys, &set.page()); // D starts as NaN
         let (cb, q) = mp::launch_bytes(prog.va, zone.va, ctx.sys.va)?;
@@ -2340,9 +2341,22 @@ fn mma16_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         let page = ram_read(&ctx.sys, mp::D_OFF + mp::D_BYTES as u64);
         let d = &page[mp::D_OFF as usize..];
         probe.add(mp::judge_set(i, d, Some(ns))?);
+        // P6-125 (cyber-gpu `cf9e911`, note C-157_P2e): D's FNV + whether it is bit for bit Cyber-GPU's adder model.
+        mp::journal_fit(journal, i, d)?;
+        let rows = mp::fit_rows(i, d)?;
+        fits.push((rows[0].1, rows[1].1));
     }
     probe.journal(journal);
     lines.extend(probe.lines(label).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
+    let fit_ok = fits.iter().filter(|f| f.1 == 1).count();
+    let fnvs: Vec<String> = fits.iter().map(|f| format!("{:#010x}", f.0)).collect();
+    lines.push(format!(
+        "{}: kronos --gpu: P8 model ga104 (sumatorul potrivit pe os-335): {}/{} seturi bit cu bit; iesirea pe seturi (fnv): {}",
+        p,
+        fit_ok,
+        fits.len(),
+        fnvs.join(" ")
+    ));
     let verdict = if stopped.is_some() {
         "NU A TERMINAT"
     } else if probe.passes() {

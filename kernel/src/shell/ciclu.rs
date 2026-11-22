@@ -782,7 +782,11 @@ pub fn board_test(i9: &str) -> (String, String) {
     // P6-117: P8's verdict next to the chain's in the answer (the rows themselves are in the report above).
     let result = if p8 {
         let verdict = text.lines().rev().find(|l| l.contains("P8 (mma16): ")).map_or("P8: niciun rezultat (vezi raportul)", |l| l.trim());
-        format!("{}; {}", result, verdict)
+        // P6-125: the adder model's bit-for-bit count, when the probe got that far.
+        match text.lines().rev().find(|l| l.contains("P8 model ga104")) {
+            Some(fit) => format!("{}; {}; {}", result, verdict, fit.trim()),
+            None => format!("{}; {}", result, verdict),
+        }
     } else {
         result
     };
