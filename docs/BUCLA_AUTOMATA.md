@@ -83,7 +83,7 @@ resetul din interior (FLR, exact calea dovedită pe placă în proba os-323). Fi
 5-lea test e refuzat („cel mult 4”). Dacă un test lasă placa blocată (`gpu recupereaza` cere pornire rece sau resetul din
 interior nu coboară WPR2), restul testelor din pornire sunt refuzate, fără altă încercare. Fiecare test împinge ceasul de
 siguranță la cel puțin 20 min de la începutul lui. Rezumatul listei: `teste pe placa pornite: N`. Ciclul din hub și modul viu
-numără în aceeași socoteală (modul viu rămâne la cel mult o comandă de placă pe sesiune până trece proba pe placă).
+numără în aceeași socoteală (de la os-359 modul viu nu mai are limita lui de o comandă pe sesiune, P6-143).
 **Viteza maximă (P6-106, C-148 completarea 1):** doar în ciclu (`test-placa`, `ciclu-test`), imediat după ce canalul de lucru
 e deschis, placa e rugată să urce la viteza maximă (600 s, forma NVIDIA); la sfârșit cererea e ștearsă. În raport: rândul
 `ks: viteza maxima ceruta …` (înainte, răspunsul, după, verdictul 0–3), `ks: inainte de stergere …` și blocul „viteza fata de

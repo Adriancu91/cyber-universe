@@ -2231,7 +2231,8 @@ fn test_ghpush() {
     let t0 = crate::time::uptime_ms().unwrap_or(0);
     let sum2 = shell::live::test_session(1).expect("test: sesiunea vie a doua");
     let _ = fs::remove("/etc/hub/permite-live-placa");
-    assert!(sum2.ran == 4 && sum2.refused == 1 && sum2.end.starts_with("gata"), "test: live placa: {:?}", sum2);
+    // P6-143: the second correct `test-placa` is no longer refused by the session (the power-on's limit holds).
+    assert!(sum2.ran == 5 && sum2.refused == 0 && sum2.end.starts_with("gata"), "test: live placa: {:?}", sum2);
     let take2 = |name: &str| {
         let remote = alloc::format!("live/{}/{}", sum2.session, name);
         let local = alloc::format!("/etc/live2-{}", name);
@@ -2250,9 +2251,10 @@ fn test_ghpush() {
     let o3 = s(&r3, "iesire");
     assert!(s(&r3, "stare") == "ok" && r3.get("cod").and_then(cyber_json::Value::as_i64) == Some(1) && o3.starts_with("REFUZAT: ciclul de test e DEZACTIVAT") && o3.contains("permite-test-placa"), "test: live placa: cheia: {}", o3);
     let r4 = take2("r-0004.json");
-    assert!(s(&r4, "stare") == "REFUZAT" && s(&r4, "motiv") == shell::live::BOARD_ONCE, "test: live placa: a doua: {:?}", s(&r4, "motiv"));
+    let o4 = s(&r4, "iesire");
+    assert!(s(&r4, "stare") == "ok" && r4.get("cod").and_then(cyber_json::Value::as_i64) == Some(1) && o4.starts_with("REFUZAT: ciclul de test e DEZACTIVAT"), "test: live placa: a doua: {}", o4);
     let ms = crate::time::uptime_ms().unwrap_or(0).saturating_sub(t0);
-    info!("test: live: comanda de placa a modului viu (DA raspuns pe loc, forma, cheia, una pe sesiune) OK in {} ms", ms);
+    info!("test: live: comanda de placa a modului viu (DA raspuns pe loc, forma, cheia, a doua comanda ajunge la chei) OK in {} ms", ms);
     // P6-111 (C-159 step 2, part 1): the live terminal — `ecran` shows its prompt, `scrie uptime` + `tasta enter` runs
     // the command in the terminal's own shell, a typed board command is refused by that shell (never by keys), `alt+tab`
     // is refused at the gate, `ecran` at the end shows all of it.

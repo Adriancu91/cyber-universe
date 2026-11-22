@@ -83,7 +83,7 @@ def live_open(files, session):
     if len(LIVE_SESSIONS) == 2:
         # P6-118 (C-161 point 1): the second session, with /etc/hub/permite-live-placa on the test disk but without
         # permite-test-placa: a `DA` question answered at once, a wrong `test-placa` form, a correct one refused for the
-        # missing key, a second correct one refused (one board command per session), `gata`.
+        # missing key, a second correct one (P6-143: no longer refused by the session; refused for the missing key too), `gata`.
         for nr, kind, text in [(1, "comanda", "gpu lant"), (2, "comanda", "test-placa --p8 --tablou"), (3, "comanda", "test-placa --p8"),
                                (4, "comanda", "test-placa"), (5, "gata", "")]:
             files[d + "c-%04d.json" % nr] = live_file(session, nr, kind, text)

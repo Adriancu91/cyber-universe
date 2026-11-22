@@ -68,7 +68,6 @@ sau, la refuz: `"stare":"REFUZAT","motiv":"<de ce>"` (fără `cod`/`iesire`). `n
 | `comanda repetata: nr N s-a executat deja (o singura data)` | numărul e deja în jurnalul de pe stick (scris ÎNAINTE de execuție) |
 | `comanda scrie in placa video: fara cheia permite-live-placa …` | `gpu lant/i6/recupereaza/…`, `--scrie`, `--gpu`, `test-placa`, `ciclu-test`, `gpu tur --trezire` fără `/usb/hub/permite-live-placa` |
 | `o sesiune vie nu porneste alta sesiune vie` | comanda `live …` din modul viu |
-| `a doua comanda pe placa in aceeasi sesiune: …` | al doilea `test-placa …` cu formă corectă în aceeași sesiune (P6-118; cel mult unul pe sesiune până la C-158 punctul 5) |
 | `alta sesiune`, `fisierul comenzii nu e JSON valid`, `lipseste un camp …`, `fel necunoscut …`, `comanda goala` | forma greșită |
 | `cheia live.cheie lipseste sau e prea scurta …` | fără cheie modul viu nu pornește deloc |
 
@@ -78,14 +77,16 @@ sau, la refuz: `"stare":"REFUZAT","motiv":"<de ce>"` (fără `cod`/`iesire`). `n
   `permite-live-placa` (poarta), `permite-test-placa` pe stick și rândul din `DECIZII.md` (ca lista).
 - `iesire` = raportul întreg al testului (ca în raportul listei), care pleacă și în hub (`trimite`), ca de la listă.
 - Formă greșită sau o cheie lipsă: `stare: ok`, `cod: 1`, `iesire` = `REFUZAT: <motivul> (nimic nu s-a scris in placa)`.
-- **Cel mult o comandă `test-placa` pe sesiune** (orice formă corectă se numără, chiar dacă o cheie lipsește); a doua: `REFUZAT`
-  cu motivul de mai sus. Pentru încă un test: o sesiune nouă.
+- **Mai multe comenzi `test-placa` într-o sesiune** (P6-143, de la os-359; până atunci: una pe sesiune, P6-118): limita e a pornirii,
+  comună cu lista automată și ciclul din hub — cel mult 4 teste pe placă într-o pornire, niciunul după o placă care nu a revenit
+  (`trebuie pornire rece` / `oprit la resetul din interior`); al doilea … al patrulea merg fără `gpu recupereaza`, cu resetul din
+  interior (P6-139). Peste limită: `cod: 1`, `iesire` = `REFUZAT: cel mult 4 teste pe placa intr-o pornire …`.
 - **Orice comandă care cere „DA” de la tastatură** (`gpu lant`, `gpu recupereaza`, `gpu i6 --scrie`, `gpu tur --trezire`,
   `run kronos --gpu`) primește în modul viu răspuns **pe loc, niciodată „DA”**: rândul `cere DA de la tastatura: doar cu Adrian
   de fata …`, apoi comanda se oprește ca fără DA (nimic scris în placă). Tastele trimise prin canal (pasul 2) nu pot răspunde la
   „DA”: cât merge o sesiune vie, întrebarea nici nu citește tastatura.
 - Proba în QEMU (`ghpush`, a doua sesiune): `gpu lant` → DA refuzat pe loc; `test-placa --p8 --tablou` → formă greșită;
-  `test-placa --p8` fără `permite-test-placa` → refuzat pentru cheie; al doilea `test-placa` → refuzat de poartă.
+  `test-placa --p8` fără `permite-test-placa` → refuzat pentru cheie; al doilea `test-placa` → tot refuzat pentru cheie (nu mai e oprit de poartă).
 
 ## Terminalul viu: `scrie`, `tasta`, `ecran` (P6-111, C-159 pasul 2, partea 1)
 - Sesiunea vie are **terminalul ei**: un shell întreg, pe firul lui (ca terminalul din desktop), deschis la primul `scrie` /
@@ -159,7 +160,7 @@ sau, la refuz: `"stare":"REFUZAT","motiv":"<de ce>"` (fără `cod`/`iesire`). `n
   până atunci.
 - La pornire, înaintea listei automate, OS-ul găsește `reluare.txt`, îl **șterge întâi** (o cădere în sesiunea reluată nu
   produce o buclă) și reia **aceeași sesiune**: același dosar, numărul următor din jurnalul de pe stick (aceleași reguli: o
-  comandă deja rulată nu mai rulează), cel mult o comandă de placă pe sesiune ținută peste repornire. Trimite un fișier nou:
+  comandă deja rulată nu mai rulează); numărătoarea testelor pe placă e a pornirii noi. Trimite un fișier nou:
   ```json
   {"forma":"cyber-live-1","sesiune":"s-…","reluare":1,"ora":"…","ceruta":"os-346","versiune":"<rândul 1 din /usb/VERSIUNE>",
    "dupa_nr":2,"astept_nr":3,"placa":true,"sistem":"…"}

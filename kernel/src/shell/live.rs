@@ -472,10 +472,6 @@ static ACTIVE: AtomicBool = AtomicBool::new(false);
 /// P6-127: the session was started by hand (`live <minute>` typed): Esc on the real keyboard stops it.
 static BY_HAND: AtomicBool = AtomicBool::new(false);
 
-/// P6-118 (C-161 point 1): a board command (`test-placa …` with a correct form) already came in this session. At most one
-/// per session until "several tests in one power-on" works (C-158 point 5); the second is refused with the reason.
-static BOARD_TAKEN: AtomicBool = AtomicBool::new(false);
-
 /// P6-118 (C-161 point 1): whether a live session is running. A `DA` question asked meanwhile is answered at once and
 /// never with `DA` (nobody is at the keyboard; keys sent through the channel never answer it — `hubcmd.rs`: "DA il
 /// tasteaza doar Adrian, la calculator").
@@ -483,8 +479,6 @@ pub fn in_session() -> bool {
     ACTIVE.load(Ordering::Acquire)
 }
 
-/// The reason a second board command in one session is refused.
-pub const BOARD_ONCE: &str = "a doua comanda pe placa in aceeasi sesiune: cel mult una pe sesiune pana merge „mai multe teste intr-o pornire” (C-158 punctul 5); deschide o sesiune noua";
 
 /// What a session did.
 #[derive(Debug, Default, Clone)]
@@ -817,7 +811,6 @@ fn run(minutes: u64, poll_ms: u64, puls_ms: u64, by_hand: bool) -> Result<Summar
     if ACTIVE.swap(true, Ordering::Acquire) {
         return Err(String::from("o sesiune vie ruleaza deja"));
     }
-    BOARD_TAKEN.store(false, Ordering::SeqCst);
     BY_HAND.store(by_hand, Ordering::Release);
     let r = session(minutes, poll_ms, puls_ms, by_hand);
     ACTIVE.store(false, Ordering::Release);
@@ -1226,8 +1219,7 @@ fn resumed(r: &Resume, poll_ms: u64, puls_ms: u64) -> Result<Summary, String> {
     if !gate.taken.contains(&r.nr) {
         return Err(format!("jurnalul sesiunii {} nu are comanda nr {} (actualizeaza): nimic reluat", s, r.nr));
     }
-    let (ran, refused, resumes, board) = journal_counts(&jtext);
-    BOARD_TAKEN.store(board, Ordering::SeqCst);
+    let (ran, refused, resumes, _board) = journal_counts(&jtext);
     let k = resumes + 1;
     let version = fs::read_all("/usb/VERSIUNE")
         .ok()
@@ -1337,13 +1329,9 @@ pub fn puls_text(s: &str, count: u32, next: u32, sum: &Summary, end: Option<&str
 /// ends (`gata`, or P6-130: `actualizeaza` put a new version on the stick — `sum.restart`).
 fn one(ctx: &Ctx, raw: &str, want: u32, gate: &mut Gate, sum: &mut Summary, terminal: &mut Terminal) -> bool {
     let (local, remote, journal_path) = (ctx.local.as_str(), ctx.remote.as_str(), ctx.journal_path.as_str());
-    let mut verdict = gate.check(&ctx.key, ctx.board_key, raw);
-    // P6-118 (C-161 point 1): one board command per session (a correct `test-placa` form counts, whatever its keys say).
-    if let Verdict::Run(cmd) = &verdict {
-        if cmd.kind == "comanda" && matches!(super::ciclu::board_command(&cmd.text), Some(Ok(_))) && BOARD_TAKEN.swap(true, Ordering::SeqCst) {
-            verdict = Verdict::Refused { nr: Some(cmd.nr), why: String::from(BOARD_ONCE) };
-        }
-    }
+    // P6-143 (C-158 point 5 passed on the board in os-355): no more "one board command per session" (P6-118); the
+    // power-on's own limit holds (`ciclu::board_slot`: at most 4, none after a board that did not come back).
+    let verdict = gate.check(&ctx.key, ctx.board_key, raw);
     let (answer_text, end) = match verdict {
         Verdict::Refused { nr, why } => {
             journal(journal_path, &format!("{} refuz {} ({})", want, auto::now_text(), why));
