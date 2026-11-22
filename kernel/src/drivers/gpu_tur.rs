@@ -271,6 +271,12 @@ pub static QUARTERS_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomi
 /// and, in the test build, by `gpu lipit-sim ln-32`. Off by default.
 pub static LN32_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-135 (cyber-gpu note `C-157_P2i_os-346_ln-32.md`, center's proposal 22 Nov 10:30): `lipita-ln-32` alone
+/// (`TokenList::FusedLn32`, no comparison) — the cycle's default from this Release on (it passed on the board twice, 05:06
+/// and 10:06). Set by `ciclu::board_test` unless the list picks another list (`--lipita-ln` = the default until now) and,
+/// in the test build, by `gpu lipit-sim ln-32-singur`. Off by hand.
+pub static LN32_ONLY_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-119 (C-157 point 3, cyber-gpu `367edf4`): the driver's second diet for `kronos --gpu` (two records read on most
 /// positions, the planned wait, the logits' fingerprint after the token's clock, the argmax on bits). Nothing new for
 /// the board. Set only by the cycle when the list asks for it (`test-placa … --dieta2`) and, in the test build, by

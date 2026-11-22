@@ -891,8 +891,14 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::LN32_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu lipit-sim: ln-32 (SIMULARE: textul de doua ori, lipita-ln apoi lipita-ln-32, toate inmultirile pe sferturi)\n");
                 }
+                Some("ln-32-singur") if args.len() == 2 => {
+                    // P6-135 (note C-157_P2i): `lipita-ln-32` alone, as the cycle's default from this Release on.
+                    crate::drivers::gpu_tur::LN32_ONLY_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu lipit-sim: ln-32 singur (SIMULARE: doar lipita-ln-32, toate inmultirile pe sferturi, ca implicit in ciclu)\n");
+                }
                 Some("off") if args.len() == 2 => {
                     crate::drivers::gpu_tur::LN32_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::LN32_ONLY_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::FUSED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::LN_ONLY_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::FUSED_ONLY_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
@@ -900,7 +906,7 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::QUARTERS_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu lipit-sim: oprita\n");
                 }
-                _ => out!("folosire: gpu lipit-sim on|singur|ln|ln-singur|sferturi|ln-32|off\n"),
+                _ => out!("folosire: gpu lipit-sim on|singur|ln|ln-singur|sferturi|ln-32|ln-32-singur|off\n"),
             }
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu lipit-sim: exista doar in build-ul de test (pe stick lista lipita o porneste doar ciclul, test-placa --lipit)\n");

@@ -123,6 +123,7 @@ const KT_WARM_WORDS: &str = "kt incalzirea: cuvinte VRAM scrise (prima lista)";
 /// P6-120: 4 = the glued list with the new LayerNorm alone (the cycle's default from os-336 on).
 pub const KT_LIST: &str = "kt lista (0 simpla, 1 lipita, 2 comparate, 3 ln nou comparat, 4 lipita-ln)";
 // P6-128: `KT_LIST` = 6 for `lipita-ln` then `lipita-ln-32`, compared (the row's name stays: the center reads it).
+// P6-135: `KT_LIST` = 7 for `lipita-ln-32` alone (the cycle's default from this Release on).
 /// P6-124 (C-155 point 4): `KT_LIST` = 5 for the glued list then the glued list on quarters (`Fused32`), compared (the
 /// row's name stays as it is: the command center reads it). Threshold: the same tokens and every logit within 1e-4; then
 /// the kinds of launch: one passes on quarters only if it is faster by at least `QUARTERS_MIN_GAIN` per mille.
@@ -1262,10 +1263,11 @@ fn fused_vs_plain(p: &str, layers: usize, by_list: &[(kd::TokenList, Vec<Vec<f32
 fn quarters_vs_fused(p: &str, layers: usize, by_list: &[(kd::TokenList, Vec<Vec<f32>>)], all: &[Vec<usize>], journal: &mut Journal, q: QuarterRace) -> Vec<String> {
     let pick = |want: kd::TokenList| by_list.iter().find(|(l, _)| *l == want).map(|(_, v)| v);
     let mut out = alloc::vec![format!(
-        "{}: kronos --gpu: kt lista: {} (aceleasi {} lansari pe simbol ca {}, aceleasi cbuf-uri; inmultirile lipite pe q8_fused32, logit-urile pe q8_matvec32)",
+        "{}: kronos --gpu: kt lista: {} (aceleasi {} lansari pe simbol ca {}, cu copierea logit-urilor, aceleasi cbuf-uri; inmultirile lipite pe q8_fused32, logit-urile pe q8_matvec32)",
         p,
         q.name,
-        q.new.launches_per_token(layers),
+        // P6-135 (note C-157_P2i, point 5): counted with the copy of the logits, like every other `kt lista` row (88).
+        q.new.launches_per_token(layers) + 1,
         q.base_name
     )];
     let (Some(old), Some(new)) = (pick(q.base), pick(q.new)) else {
@@ -2160,6 +2162,11 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
         runs[0].name = String::from("kronos --gpu (lista lipita, LayerNorm nou)");
         runs[0].list = kd::TokenList::FusedLn;
         4
+    } else if super::gpu_tur::LN32_ONLY_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+        // P6-135 (note C-157_P2i, point 1): `lipita-ln-32` alone, the cycle's default from this Release on.
+        runs[0].name = String::from("kronos --gpu (lista lipita-ln-32, toate inmultirile pe sferturi)");
+        runs[0].list = kd::TokenList::FusedLn32;
+        7
     } else {
         0
     };
@@ -2187,14 +2194,27 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
         if many { "; mediana cea mai mare dintre rulari, vezi kt rularile" } else { "" }
     ));
     // P6-120 (cyber-gpu note C-157_P2d, point 3): the list run alone, with the copy of the logits in the count (88 at #513).
-    if list_kind == 1 || list_kind == 4 {
+    // P6-135: 7 = `lipita-ln-32` alone (reference print 0x6c8501f0, cycle 22 Nov 10:06).
+    if list_kind == 1 || list_kind == 4 || list_kind == 7 {
         lines.push(format!(
             "{}: kronos --gpu: kt lista: {} singura ({} lansari pe simbol, cu copierea logit-urilor; amprenta de referinta {})",
             p,
-            if list_kind == 4 { "lipita-ln (LayerNorm nou, layernorm256)" } else { "lipita (LayerNorm vechi)" },
+            match list_kind {
+                7 => "lipita-ln-32 (LayerNorm nou + toate inmultirile pe sferturi)",
+                4 => "lipita-ln (LayerNorm nou, layernorm256)",
+                _ => "lipita (LayerNorm vechi)",
+            },
             runs[0].list.launches_per_token(m.layers.len()) + 1,
             // P6-122: the reference prints are #513's (12 layers); a deeper model (#651, 24) has none yet.
-            if m.layers.len() > 12 { "doar la #513; acest model nu are inca una" } else if list_kind == 4 { "0x46a07914" } else { "0xda9ae084" }
+            if m.layers.len() > 12 {
+                "doar la #513; acest model nu are inca una"
+            } else {
+                match list_kind {
+                    7 => "0x6c8501f0",
+                    4 => "0x46a07914",
+                    _ => "0xda9ae084",
+                }
+            }
         ));
     }
     // P6-120 (note C-157_P2d, point 2): with two runs on the same text, which run every row speaks of.
