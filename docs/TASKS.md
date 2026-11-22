@@ -502,6 +502,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
   Gata (2026-11-21 ~16:55 RO): `gpu-tablou` trece (rândul nou „oprirea zonei = nu se trimite …”).
 - [x] **P6-140** C-158 punctul 8: managerul de lucrări lungi (unealta 8) — `lucrare <nume>`: pornește la o oră, raport în hub la N minute, oprire la comandă / la oră / după o durată, reluare după o pană de curent (fără să refacă pașii terminați); pași doar de citire (lista albă a modului automat); nimic pentru placă. Plan: `docs/plans/P6-140.md`. Dep: P6-139.
   Gata (2026-11-22 ~20:50 RO): `kernel/src/shell/lucrare.rs` (`lucrare <nume>`, `stare`, `opreste`; rând în `auto/teste.txt`; reluarea la pornire în `main.rs`), `auto::arm_or_push`/`disarm`, `docs/LUCRARI.md`. Test: `lucrare` (19 verificări + `after-lucrare.sh`), `lucrare-reluare` (10 + `after-lucrare-reluare.sh`), `auto`, `auto-ceas`, `auto-intrerupt`, `auto-placa`, `boot`; build `--usb` și `--gpu-scrie --usb` (22 / 18 avertismente, ca înainte).
+- [~] **P6-141** C-161 punctul 4 mai departe: **proba atenției „pe plăci”** — lanțul `attn_fwd_tile` → `attn_back_tile0` → `attn_back_tile` singur pe placă (PREDARE Cyber-GPU `44a4d16`, nota `C-160_P7e_atentia-pe-placi-proba.md`; după os-351 și os-352) → `test-placa … --atentie-placi`, Release separat. Plan: `docs/plans/P6-141.md`. Dep: P6-137.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
