@@ -490,6 +490,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-128** C-157 punctul 2 (PREDARE Cyber-GPU `feb0819`, nota C-157_P2g): lista aleasă `lipita-ln-32` — `test-placa … --ln-32` = același text cu `lipita-ln`, apoi cu `lipita-ln-32` (LayerNorm nou + toate înmulțirile pe sferturi), comparate (aceleași simboluri, abaterea sub 1e-4) + timpul pe fel; nimic nou pentru placă. Plan: `docs/plans/P6-128.md`. Dep: P6-124, P6-120.
 - [x] **P6-129** C-159 pasul 3, partea 1: `puls.json` la 60 s în sesiunea vie (și la sfârșit, `stare: incheiata`); singurul fișier rescris de OS în hub. Plan: `docs/plans/P6-129.md`. Dep: P6-109.
 - [x] **P6-130** C-159 pasul 3, partea 2: `actualizeaza os-N` prin canalul viu + sesiunea reluată după repornire (același nume, numărul următor din jurnal, `reluare-<k>.json`). Plan: `docs/plans/P6-130.md`. Dep: P6-129, P6-50.
+- [x] **P6-131** CI în patru bucăți (teste-1..3 + stick): run-ul os-345 a atins limita de 60 de minute în teste-1. Plan: `docs/plans/P6-131.md`. Dep: P6-67.
   Gata (2026-11-21 ~16:55 RO): `gpu-tablou` trece (rândul nou „oprirea zonei = nu se trimite …”).
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 

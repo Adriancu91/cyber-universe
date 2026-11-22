@@ -17,6 +17,8 @@ concurrency:
 jobs:
   # P6-67: three parts running at the same time (one run took 54m51s of the 60-minute limit with all scenarios in one job):
   # teste-1 / teste-2 = every other QEMU scenario (tools/test.sh --shard), stick = host tests + stick images + Release files.
+  # P6-131: four parts (teste-1..3 = every third scenario): run 44984928816 (os-345) hit the 60-minute limit in teste-1
+  # (each of the two QEMU parts took ~50 min after 130+ scenarios).
   build-and-test:
     name: ${{ matrix.parte }}
     runs-on: ubuntu-24.04
@@ -26,9 +28,11 @@ jobs:
       matrix:
         include:
           - parte: teste-1
-            shard: 1/2
+            shard: 1/3
           - parte: teste-2
-            shard: 2/2
+            shard: 2/3
+          - parte: teste-3
+            shard: 3/3
           - parte: stick
             shard: ""
     steps:
