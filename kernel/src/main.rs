@@ -2237,7 +2237,7 @@ fn test_ghpush() {
     // the command in the terminal's own shell, a typed board command is refused by that shell (never by keys), `alt+tab`
     // is refused at the gate, `ecran` at the end shows all of it.
     let sum3 = shell::live::test_session(1).expect("test: sesiunea vie a treia");
-    assert!(sum3.ran == 7 && sum3.refused == 1 && sum3.end.starts_with("gata"), "test: live terminal: {:?}", sum3);
+    assert!(sum3.ran == 8 && sum3.refused == 1 && sum3.end.starts_with("gata"), "test: live terminal: {:?}", sum3);
     let take3 = |name: &str| {
         let remote = alloc::format!("live/{}/{}", sum3.session, name);
         let local = alloc::format!("/etc/live3-{}", name);
@@ -2262,6 +2262,18 @@ fn test_ghpush() {
     let e7 = s(&r7, "iesire");
     assert!(e7.contains("cyber> uptime") && e7.contains("pornit de ") && e7.contains("REFUZAT: prin taste") && s(&r7, "ecran") == e7.trim_end_matches('\n'), "test: live terminal: ecranul: {:?}", e7);
     info!("test: live: terminalul viu (ecran, scrie + tasta enter, placa refuzata prin taste, alt+tab refuzat) OK");
+    // P6-127: `captura` = a valid gray PNG of the screen, in the hub next to the answers.
+    let r8 = take3("r-0008.json");
+    let e8 = s(&r8, "iesire");
+    assert!(r8.get("cod").and_then(cyber_json::Value::as_i64) == Some(0) && e8.starts_with("captura: captura-0008.png ("), "test: live captura: {:?}", e8);
+    let id = proc::spawn_path("/bin/gh-ia", &["gh-ia", "--live-ia", &alloc::format!("live/{}/captura-0008.png", sum3.session), "/etc/live3-captura.png"]).expect("test: /bin/gh-ia");
+    assert!(proc::wait_child(id) == 0, "test: live captura: lipseste din hub");
+    let png = fs::read_all("/etc/live3-captura.png").unwrap_or_default();
+    let local = fs::read_all(&alloc::format!("/etc/hub/live/{}/captura-0008.png", sum3.session)).unwrap_or_default();
+    let (w, h) = (u32::from_be_bytes(png[16..20].try_into().unwrap()), u32::from_be_bytes(png[20..24].try_into().unwrap()));
+    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n") && png == local && w > 0 && h > 0 && png[24..26] == [8, 0], "test: live captura: PNG gresit ({} octeti)", png.len());
+    assert!(gfx::png::crc32(&[&png[12..29]]) == u32::from_be_bytes(png[29..33].try_into().unwrap()), "test: live captura: CRC IHDR");
+    info!("test: live: captura ecranului {} x {} ({} octeti, PNG gri) in hub OK", w, h, png.len());
 }
 
 /// HTTPS with real web sites (P6-02): /bin/fetch resolves the name, connects through QEMU's network to the

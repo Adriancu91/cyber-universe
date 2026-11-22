@@ -161,6 +161,30 @@ pub fn clear() {
     });
 }
 
+/// P6-127 (`captura` of the live channel): the screen reduced `scale` times in each direction, in shades of gray — for
+/// each block the brightest of four samples (the console's strokes are 2 pixels wide, so text stays visible). Reads the
+/// RAM copy of the screen when there is one (only four reads per block: video memory is slow to read). `None` = no screen.
+pub fn capture_gray(scale: usize) -> Option<(usize, usize, alloc::vec::Vec<u8>)> {
+    let scale = scale.max(2);
+    with_console(|slot| {
+        let fb = &slot.as_ref()?.fb;
+        let (w, h) = (fb.width / scale, fb.height / scale);
+        let mut out = alloc::vec::Vec::with_capacity(w * h);
+        for y in 0..h {
+            for x in 0..w {
+                let mut best = 0u8;
+                for (dx, dy) in [(0, 0), (scale / 2, 0), (0, scale / 2), (scale / 2, scale / 2)] {
+                    let p = fb.pixel(x * scale + dx, y * scale + dy).unwrap_or(0);
+                    let (r, g, b) = ((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF);
+                    best = best.max(((r * 77 + g * 150 + b * 29) >> 8) as u8);
+                }
+                out.push(best);
+            }
+        }
+        Some((w, h, out))
+    })
+}
+
 /// Turns text output on the screen on or off (the window server turns it off while it draws).
 pub fn set_text_on_screen(on: bool) {
     TEXT_ON_SCREEN.store(on, Ordering::Release);

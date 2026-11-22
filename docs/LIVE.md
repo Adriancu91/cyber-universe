@@ -35,7 +35,7 @@
 - `nr`: întreg pozitiv, exact următorul (prima comandă = 1).
 - `sesiune`: numele dosarului (`s-AAAALLZZ-HHMM`, ales de OS la pornire și scris în `live/<sesiune>/sesiune.json` — P6-109).
 - `fel` (pasul 1): `comanda` (un rând de shell), `stare`, `gata` (încheie sesiunea). Pasul 2, partea 1 (P6-111): `scrie`,
-  `tasta`, `ecran` (terminalul viu, mai jos). `clic`, `muta`, `captura` (partea 2) sunt încă `REFUZAT` cu motivul „pasului 2”.
+  `tasta`, `ecran` (terminalul viu, mai jos); P6-127: `captura`. `clic`, `muta` sunt încă `REFUZAT` cu motivul „pasului 2”.
 - `semnatura` = HMAC-SHA-256 cu cheia `/usb/hub/live.cheie` (cel puțin 32 de octeți, aceeași la centrul de comandă) peste textul:
   ```
   cyber-live-1\n<sesiune>\n<nr>\n<fel>\n<text>
@@ -100,6 +100,14 @@ sau, la refuz: `"stare":"REFUZAT","motiv":"<de ce>"` (fără `cod`/`iesire`). `n
   O întrebare „DA” nu citește tastele cât merge sesiunea (răspuns pe loc, niciodată „DA”).
 - Proba în QEMU (`ghpush`, a treia sesiune): `ecran` (promptul), `scrie uptime` + `tasta enter` (rulează în terminal),
   `scrie "gpu lant\n"` (refuzat de shell), `tasta alt+tab` (refuzat la poartă), `tasta ctrl+c esc sus`, `ecran` (tot textul).
+
+## `captura` (P6-127, prima parte)
+- `fel: captura` (textul nu contează): imaginea ecranului, **micșorată de 4 ori** pe fiecare latură, **în tonuri de gri**
+  (din fiecare pătrat 4×4 punctul cel mai luminos din patru, ca textul să rămână vizibil), PNG fără compresie (1920×1080 →
+  480×270, ~130 KiB; cel mult 900 KiB). Fișierul: `live/<sesiune>/captura-NNNN.png` (NNNN = numărul comenzii), lângă
+  răspunsuri, și copia pe stick. `iesire`: `captura: captura-NNNN.png (L x I pixeli, tonuri de gri, N octeti; …)`.
+- Fără ecran sau dacă nu pleacă în hub: `cod: 1` și motivul în `iesire`.
+- Proba în QEMU (`ghpush`, a treia sesiune): PNG-ul din hub = cel de pe stick, semnătura PNG, IHDR cu CRC corect (320×200).
 
 ## Ce rămâne păzit de nucleu (neschimbat)
 Fișierele secrete nu se arată; scrieri pe disc doar pe partiții `cyber.rw`; placa video doar cu `permite-live-placa`

@@ -31,9 +31,12 @@ pub const FORM: &str = "cyber-live-1";
 /// Largest command file accepted (bytes).
 pub const MAX_COMMAND: usize = 64 * 1024;
 /// The kinds that run: step 1 (`comanda`, `stare`, `gata`) and P6-111 (C-159 step 2, part 1: the live terminal's keys and
-/// its screen text). The rest of step 2 (`clic`, `muta`, `captura`) is refused with a clear reason.
-pub const KINDS: [&str; 6] = ["comanda", "stare", "gata", "scrie", "tasta", "ecran"];
-const LATER: [&str; 3] = ["clic", "muta", "captura"];
+/// its screen text; P6-127: `captura`). The rest of step 2 (`clic`, `muta`) is refused with a clear reason.
+pub const KINDS: [&str; 7] = ["comanda", "stare", "gata", "scrie", "tasta", "ecran", "captura"];
+const LATER: [&str; 2] = ["clic", "muta"];
+/// P6-127: `captura` = the screen reduced this many times in each direction, gray PNG; the largest file sent.
+const CAPTURE_SCALE: usize = 4;
+const CAPTURE_MAX: usize = 900 * 1024;
 /// Longest text of one `scrie` (characters).
 pub const MAX_TYPED: usize = 1024;
 
@@ -223,7 +226,7 @@ impl Gate {
             return refuse(Some(nr), "felul acesta vine in a doua parte a pasului 2 al agentului viu (inca nu exista)");
         }
         if !KINDS.contains(&kind) {
-            return refuse(Some(nr), "fel necunoscut (comanda, stare, gata, scrie, tasta, ecran)");
+            return refuse(Some(nr), "fel necunoscut (comanda, stare, gata, scrie, tasta, ecran, captura)");
         }
         if kind == "scrie" {
             if let Err(why) = typed_keys(text) {
@@ -779,6 +782,7 @@ fn one(key: &[u8], board_key: bool, raw: &str, want: u32, gate: &mut Gate, local
                 "scrie" => terminal.keys(&typed_keys(&cmd.text).unwrap_or_default()),
                 "tasta" => terminal.keys(&parse_keys(&cmd.text).unwrap_or_default()),
                 "ecran" => terminal.look(),
+                "captura" => capture(cmd.nr, local, remote),
                 _ => String::from("sesiunea se incheie (gata)\n"),
             };
             let o = Outcome {
@@ -801,6 +805,29 @@ fn one(key: &[u8], board_key: bool, raw: &str, want: u32, gate: &mut Gate, local
         auto::say(&format!("live: {} nu a plecat in hub; ramane pe stick\n", name));
     }
     end
+}
+
+/// P6-127 (C-159 step 2): `captura` — the screen as a gray PNG reduced `CAPTURE_SCALE` times, on the stick and in the hub
+/// next to the answers (`captura-NNNN.png`); `iesire` names it. Code 1 (and no file) without a screen or when too big.
+fn capture(nr: u32, local: &str, remote: &str) -> String {
+    let fail = |why: &str| {
+        super::LAST_EXIT.store(1, Ordering::Relaxed);
+        format!("captura: {}\n", why)
+    };
+    let Some((w, h, gray)) = crate::gfx::console::capture_gray(CAPTURE_SCALE) else { return fail("fara ecran (nicio imagine de la pornire)") };
+    let png = crate::gfx::png::gray(w, h, &gray);
+    if png.len() > CAPTURE_MAX {
+        return fail(&format!("imaginea are {} octeti (cel mult {})", png.len(), CAPTURE_MAX));
+    }
+    let name = format!("captura-{:04}.png", nr);
+    let path = format!("{}/{}", local, name);
+    if !write_new(&path, &png) {
+        return fail(&format!("nu pot scrie {}", path));
+    }
+    if !send(&path, &format!("{}/{}", remote, name)) {
+        return fail(&format!("{} nu a plecat in hub (ramane pe stick: {})", name, path));
+    }
+    format!("captura: {} ({} x {} pixeli, tonuri de gri, {} octeti; ecranul micsorat de {} ori)\n", name, w, h, png.len(), CAPTURE_SCALE)
 }
 
 /// QEMU test (P6-113, C-159 note of 21 Nov 13:00), with the live key already on the test disk at `<dir>/live.cheie`:
@@ -885,6 +912,7 @@ pub fn self_test() {
     assert!(why(g.check(&key, false, &good(2, "scrie", &"x".repeat(MAX_TYPED + 1)))).starts_with("scrie: textul e prea lung"));
     assert!(matches!(g.check(&key, false, &good(2, "scrie", "gpu lant\n")), Verdict::Run(_)), "live: scrie trece poarta; randul e oprit de shell");
     assert!(typed_line("gpu lant").is_err() && typed_line("test-placa --p8").is_err() && typed_line("live 5").is_err() && typed_line("uptime").is_ok() && typed_line("gpu stare").is_ok());
+    crate::gfx::png::self_test(); // P6-127
     let mut t = Terminal::default();
     t.feed("cyber> hx\x08w\npornit de 3 s\r\ncyber> ");
     assert!(t.screen() == "cyber> hw\npornit de 3 s\ncyber> ", "live: ecranul terminalului: {:?}", t.screen());
