@@ -69,6 +69,21 @@ nota Cyber-GPU `integration/cyber-universe/C-151_reset-flr.md`). **Proba:** în 
 (sau `test-placa --i9 c135 --flr-proba`) = testul obișnuit, apoi lanțul a doua oară în aceeași pornire; rezultatul are
 `PROBA FLR: kf …; al doilea lant: …`. De mână: `gpu lant --flr-proba` (cu DA). Gardul OS pentru FLR lasă scrieri doar în
 antetul configurației (0x04–0x3c), în controlul PCIe (Device/Link Control 1 și 2) și în MSI; ecranul de pe placă se poate pierde.
+**Mai multe teste pe placă într-o pornire (P6-139, C-158 punctul 5):** `auto\teste.txt` poate avea **2–4 rânduri `test-placa …`**
+(fiecare cu opțiunile lui), de exemplu:
+```
+ceas 40
+test-placa
+test-placa --argmax-fara-copie --dieta2
+test-placa --colsum
+```
+Primul test al pornirii începe cu `gpu recupereaza` (ca până acum); al 2-lea … al 4-lea **sar** peste ea și încep lanțul cu
+resetul din interior (FLR, exact calea dovedită pe placă în proba os-323). Fiecare test are raportul lui
+(`raport\ciclu-auto-<data>[-2,-3,-4].txt`, rândul „testul pe placa nr. K in aceasta pornire”) și urcă în hub ca înainte. Al
+5-lea test e refuzat („cel mult 4”). Dacă un test lasă placa blocată (`gpu recupereaza` cere pornire rece sau resetul din
+interior nu coboară WPR2), restul testelor din pornire sunt refuzate, fără altă încercare. Fiecare test împinge ceasul de
+siguranță la cel puțin 20 min de la începutul lui. Rezumatul listei: `teste pe placa pornite: N`. Ciclul din hub și modul viu
+numără în aceeași socoteală (modul viu rămâne la cel mult o comandă de placă pe sesiune până trece proba pe placă).
 **Viteza maximă (P6-106, C-148 completarea 1):** doar în ciclu (`test-placa`, `ciclu-test`), imediat după ce canalul de lucru
 e deschis, placa e rugată să urce la viteza maximă (600 s, forma NVIDIA); la sfârșit cererea e ștearsă. În raport: rândul
 `ks: viteza maxima ceruta …` (înainte, răspunsul, după, verdictul 0–3), `ks: inainte de stergere …` și blocul „viteza fata de

@@ -75,9 +75,18 @@ pub fn run_if_present() {
     let total = plan.commands.len();
     for (i, cmd) in plan.commands.iter().enumerate() {
         out.add(&format!("\n== [{}/{}] {} ==\n", i + 1, total, cmd));
-        // P6-96 (C-143): the board test, with Adrian's keys instead of the allow-list.
-        if let Some(parsed) = super::ciclu::board_command(cmd) {
-            match board_test(parsed) {
+        // P6-96 (C-143): the board test, with Adrian's keys instead of the allow-list. P6-139 (C-158 point 5): up to
+        // `MAX_BOARD_TESTS` of them in one power-on, each with its own report.
+        #[cfg(feature = "test-auto")]
+        let sim = board_test_sim(cmd);
+        #[cfg(not(feature = "test-auto"))]
+        let sim: Option<Result<String, String>> = None;
+        let board = match sim {
+            Some(r) => Some(r),
+            None => super::ciclu::board_command(cmd).map(board_test),
+        };
+        if let Some(outcome) = board {
+            match outcome {
                 Ok(text) => {
                     out.add(&text);
                     ran += 1;
@@ -121,7 +130,7 @@ pub fn run_if_present() {
         ran += 1;
     }
     let secs = crate::time::uptime_ms().unwrap_or(0).saturating_sub(start) / 1000;
-    let summary = format!("REZULTAT: {} rulate, {} refuzate, {} s", ran, refused, secs);
+    let summary = format!("REZULTAT: {} rulate, {} refuzate, {} s; teste pe placa pornite: {}", ran, refused, secs, super::ciclu::board_runs());
     out.add(&format!("\n== {} ==\n", summary));
     out.add(&raport::build("bucla automata (dupa lista)"));
     say(&format!("auto: {}; raport: {}\n", summary, report));
@@ -216,21 +225,35 @@ pub fn allowed(line: &str) -> Result<(), &'static str> {
 pub(super) fn board_test(parsed: Result<String, &'static str>) -> Result<String, String> {
     let i9 = parsed.map_err(String::from)?;
     super::ciclu::keys()?;
-    say(&format!("auto: test-placa (I9 {}): cheile lui Adrian sunt puse; gpu recupereaza, apoi lantul\n", i9));
-    crate::info!("auto: test-placa: cheile sunt puse (fisierul de pe stick + DECIZII.md); testul pe placa porneste (I9 {})", i9);
+    board_run(&i9, "cheile: fisierul de pe stick + DECIZII.md", super::ciclu::board_test, raport::hub_paths().0, true)
+}
+
+/// P6-139 (C-158 point 5): one board test of the power-on, after the keys: its slot (the n-th; refused past the limit or
+/// after a board that did not come back), the safety clock pushed on, the test (`run`), the report copy in `reports`
+/// (and, with `send`, the hub).
+fn board_run(i9: &str, keys: &str, run: fn(&str, usize) -> (String, String), reports: &str, send: bool) -> Result<String, String> {
+    let nth = super::ciclu::board_slot()?;
+    keep_alive(BOARD_TEST_MS);
+    let how = if nth == 1 { "gpu recupereaza, apoi lantul" } else { "fara gpu recupereaza: resetul din interior la inceputul lantului" };
+    say(&format!("auto: test-placa nr. {} in aceasta pornire (I9 {}): cheile lui Adrian sunt puse; {}\n", nth, i9, how));
+    crate::info!("auto: test-placa nr. {}: cheile sunt puse; testul pe placa porneste (I9 {}; {})", nth, i9, how);
     let t0 = crate::time::uptime_ms().unwrap_or(0);
-    let (body, result) = super::ciclu::board_test(&i9);
+    let (body, result) = run(i9, nth);
+    super::ciclu::board_finished(&result);
     let ms = crate::time::uptime_ms().unwrap_or(0).saturating_sub(t0);
     let text = format!(
-        "in lucru: test-placa --i9 {} (de la {}; cheile: fisierul de pe stick + DECIZII.md)\n{}\nREZULTAT TEST PLACA: {}\n-- gata in {} ms\n",
+        "in lucru: test-placa --i9 {} (testul pe placa nr. {} in aceasta pornire, cel mult {}; {}; de la {}; {})\n{}\nREZULTAT TEST PLACA: {}\n-- gata in {} ms\n",
         i9,
+        nth,
+        super::ciclu::MAX_BOARD_TESTS,
+        how,
         now_text(),
+        keys,
         body,
         result,
         ms
     );
-    say(&format!("auto: test-placa: {}\n", result));
-    let (reports, _) = raport::hub_paths();
+    say(&format!("auto: test-placa nr. {}: {}\n", nth, result));
     if fs::kind(reports).is_err() {
         let _ = fs::create(reports, Kind::Dir);
     }
@@ -243,11 +266,56 @@ pub(super) fn board_test(parsed: Result<String, &'static str>) -> Result<String,
         now_text(),
         text
     ));
+    if !send {
+        return Ok(format!("{}(raportul acestui test: {})\n", text, path));
+    }
     super::emit_capture_begin();
     raport::send_to_hub();
     let sent = super::emit_capture_end();
     say(&sent);
     Ok(format!("{}{}", text, sent))
+}
+
+/// P6-139: how far one board test pushes the list's safety clock (a test takes ~4 min on the board; the longest probes
+/// ~6 min more): a hung test still restarts the machine.
+const BOARD_TEST_MS: u64 = 20 * 60_000;
+
+/// P6-139, test builds only: `test-placa-sim […] [--sim-esuat]` = the same slot, clock and report path as `test-placa`,
+/// with a pretend chain (no keys, no board): the first test "recovers", the next ones "reset"; `--sim-esuat` makes this
+/// one fail the way that blocks the rest (a cold start needed / the reset not bringing WPR2 down).
+#[cfg(feature = "test-auto")]
+fn board_test_sim(line: &str) -> Option<Result<String, String>> {
+    let rest = line.strip_prefix("test-placa-sim")?;
+    let (rest, fail) = match rest.trim_end().strip_suffix("--sim-esuat") {
+        Some(r) => (r, true),
+        None => (rest, false),
+    };
+    SIM_FAIL.store(fail, Ordering::SeqCst);
+    let parsed = super::ciclu::board_command(&format!("test-placa{}", rest))?;
+    Some(parsed.map_err(String::from).and_then(|i9| board_run(&i9, "SIMULARE: fara chei, fara placa", sim_chain, DIR, false)))
+}
+
+#[cfg(feature = "test-auto")]
+static SIM_FAIL: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// The pretend test of `test-placa-sim`: says which path the n-th test takes and what the real one would answer.
+#[cfg(feature = "test-auto")]
+fn sim_chain(i9: &str, nth: usize) -> (String, String) {
+    let fail = SIM_FAIL.swap(false, Ordering::SeqCst);
+    let mut text = format!("(SIMULARE: test-placa-sim, I9 {})\n", i9);
+    let result = if nth == 1 {
+        text.push_str("-- gpu recupereaza (SIMULARE)\n");
+        if fail {
+            String::from("CICLU OPRIT: trebuie pornire rece (Adrian) (SIMULARE)")
+        } else {
+            String::from("rezultat lant: toti pasii au trecut (SIMULARE)")
+        }
+    } else {
+        text.push_str(&format!("-- testul pe placa nr. {} in aceasta pornire: gpu recupereaza SARIT; resetul din interior (SIMULARE)\n", nth));
+        let r = if fail { "rezultat lant: oprit la resetul din interior (SIMULARE); fara a doua incercare" } else { "rezultat lant: toti pasii au trecut (SIMULARE)" };
+        format!("testul pe placa nr. {} in aceasta pornire (cu resetul din interior): {}", nth, r)
+    };
+    (text, result)
 }
 
 /// The last run was cut off (safety clock or a hang): note it, rename the list, restart. Never runs the list again.

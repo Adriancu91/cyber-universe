@@ -1,0 +1,8 @@
+# lista de test P6-139 (scenariul auto-placa): mai multe teste pe placa intr-o pornire, cu lantul prefacut
+ceas 5
+test-placa-sim
+test-placa-sim --gresit
+test-placa-sim --colsum
+test-placa-sim --dieta2 --p8
+test-placa-sim --sim-esuat
+test-placa-sim

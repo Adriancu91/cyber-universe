@@ -390,7 +390,15 @@ fn test(s: &mut State) -> String {
         return format!("CICLU OPRIT: starea nu se poate scrie ({}); nimic scris in placa\n", e);
     }
     crate::info!("ciclu-test {}: testul pe placa ({}, I9 {}): gpu recupereaza, apoi lantul (fara DA: cheile ciclului sunt puse)", s.id, s.tag, s.i9);
-    let (text, result) = board_test(&s.i9);
+    let nth = match board_slot() {
+        Ok(n) => n,
+        Err(why) => {
+            clear_state();
+            return format!("CICLU OPRIT: {}; nimic scris in placa\n", why);
+        }
+    };
+    let (text, result) = board_test(&s.i9, nth);
+    board_finished(&result);
     clear_state();
     format!("{}\nCICLU GATA ({}): {}\n", text, s.tag, result)
 }
@@ -665,7 +673,66 @@ pub const PAS_AUR: &str = " --pas-aur";
 /// P6-137 (C-161 point 4): suffix of the I9 text when the `mm_tc` probe is asked (`test-placa … --mm-tc`, always last).
 pub const MM_TC: &str = " --mm-tc";
 
-pub fn board_test(i9: &str) -> (String, String) {
+/// P6-139 (C-158 point 5): at most this many board tests in one power-on (the list, the live mode and the hub cycle
+/// together). The first one starts with `gpu recupereaza`; the next ones with the reset from inside (FLR) at the start of
+/// their chain, the path that passed on the board in os-323 (21 Nov 08:32).
+pub const MAX_BOARD_TESTS: usize = 4;
+/// P6-139: board tests started in this power-on.
+static BOARD_RUNS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+/// P6-139: set when a test left the board where no other test may start (a cold start is needed): why.
+static BOARD_STUCK: crate::sched::Mutex<Option<String>> = crate::sched::Mutex::new(None);
+
+/// P6-139: may another board test start, after `done` in this power-on (`stuck` = why the board cannot go on)? `Ok(n)` =
+/// it is the n-th (1 = `gpu recupereaza` first, 2.. = the reset from inside); `Err` = why not (nothing touched).
+pub fn slot_decision(done: usize, stuck: Option<&str>) -> Result<usize, String> {
+    if let Some(why) = stuck {
+        return Err(format!(
+            "placa nu a revenit dupa un test de mai devreme din aceasta pornire ({}); restul testelor pe placa nu ruleaza, fara alta incercare (trebuie pornire rece)",
+            why
+        ));
+    }
+    if done >= MAX_BOARD_TESTS {
+        return Err(format!("cel mult {} teste pe placa intr-o pornire (C-158 punctul 5); acesta ar fi al {}-lea", MAX_BOARD_TESTS, done + 1));
+    }
+    Ok(done + 1)
+}
+
+/// P6-139: takes the next board-test slot of this power-on (see [`slot_decision`]).
+pub fn board_slot() -> Result<usize, String> {
+    use core::sync::atomic::Ordering;
+    let stuck = BOARD_STUCK.lock().clone();
+    let n = slot_decision(BOARD_RUNS.load(Ordering::SeqCst), stuck.as_deref())?;
+    BOARD_RUNS.store(n, Ordering::SeqCst);
+    Ok(n)
+}
+
+/// P6-139: does this result line leave the board where no other test may start? `Some(why)`.
+pub fn stuck_after(result: &str) -> Option<&'static str> {
+    if result.contains("trebuie pornire rece") {
+        Some("gpu recupereaza nu a adus placa la starea de pornire")
+    } else if result.contains("oprit la resetul din interior") {
+        Some("resetul din interior nu a coborat WPR2")
+    } else {
+        None
+    }
+}
+
+/// P6-139: after a board test: remember when the board cannot go on.
+pub fn board_finished(result: &str) {
+    if let Some(why) = stuck_after(result) {
+        crate::warn!("ciclu: dupa testul pe placa: {}; restul testelor din aceasta pornire se refuza", why);
+        *BOARD_STUCK.lock() = Some(String::from(why));
+    }
+}
+
+/// P6-139: the board tests of this power-on so far.
+pub fn board_runs() -> usize {
+    BOARD_RUNS.load(core::sync::atomic::Ordering::SeqCst)
+}
+
+/// `nth` (P6-139) = which board test of this power-on this is (1 = the first: `gpu recupereaza`; 2.. = the reset from
+/// inside at the start of the chain instead).
+pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     let (i9, mm_tc) = match i9.strip_suffix(MM_TC) {
         Some(x) => (x, true),
         None => (i9, false),
@@ -751,13 +818,25 @@ pub fn board_test(i9: &str) -> (String, String) {
         text.push_str(&format!("\n{}\n", why));
         return (text, why);
     }
-    text.push_str("\n-- gpu recupereaza\n");
-    let rec = crate::drivers::gpu_rec::recover();
+    // P6-139 (C-158 point 5): the first test of the power-on brings the card back with `gpu recupereaza` (as before); the
+    // next ones do not (Booter Unload over a running GSP never ran on the board) but arm the reset from inside for their
+    // chain (os-323: WPR2 down in 0.13 s, the second chain passed whole). WPR2 already down = nothing written for it.
+    let again = nth > 1;
+    let rec = if again {
+        text.push_str(&format!(
+            "\n-- testul pe placa nr. {} in aceasta pornire: gpu recupereaza SARIT; resetul din interior (FLR, ca in proba os-323) la inceputul lantului\n",
+            nth
+        ));
+        Vec::new()
+    } else {
+        text.push_str("\n-- gpu recupereaza\n");
+        crate::drivers::gpu_rec::recover()
+    };
     for l in &rec {
         text.push_str(l);
         text.push('\n');
     }
-    if !recovery_passed(&rec) {
+    if !again && !recovery_passed(&rec) {
         let why = String::from(
             "CICLU OPRIT: trebuie pornire rece (Adrian): gpu recupereaza nu a adus placa la starea de pornire (pregatirea I6 nu trece); lantul nu a pornit, nicio alta incercare",
         );
@@ -863,6 +942,8 @@ pub fn board_test(i9: &str) -> (String, String) {
     } else {
         None
     };
+    // P6-139: the reset from inside, taken by this test's chain (kronos's or the plain one).
+    crate::drivers::gpu_tur::FLR_ARMED.store(again, core::sync::atomic::Ordering::SeqCst);
     let result = if let Some(model) = big.or_else(k513_path) {
         let args651 = big.map(k651_args);
         let args: &[&str] = match &args651 {
@@ -898,6 +979,8 @@ pub fn board_test(i9: &str) -> (String, String) {
         }
         chain.iter().rev().find(|l| l.contains("rezultat lant:")).cloned().unwrap_or_else(|| String::from("(lantul nu a dat un rezultat)"))
     };
+    // P6-139: never left armed when the program stopped before its chain.
+    crate::drivers::gpu_tur::FLR_ARMED.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::BOOST_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::DIET_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::RUSD_ARMED.store(false, core::sync::atomic::Ordering::SeqCst);
@@ -966,6 +1049,8 @@ pub fn board_test(i9: &str) -> (String, String) {
         result
     };
     let result = format!("{}{}", k651_note, result);
+    // P6-139: the n-th test of the power-on says so in its answer.
+    let result = if again { format!("testul pe placa nr. {} in aceasta pornire (cu resetul din interior): {}", nth, result) } else { result };
     // P6-122: the comparisons with os-313 / os-322 are #513's; #651 gets its own block (Cyber-GPU's expected figures).
     if big.is_some() {
         text.push_str(&k651_comparison());
@@ -1079,6 +1164,16 @@ pub fn self_test() {
         assert!(target(bad).is_err(), "ciclu: `{}` trebuia refuzat", bad);
     }
     assert!(board_command("test-placa") == Some(Ok(String::from("c135"))));
+    // P6-139 (C-158 point 5): the n-th board test of a power-on; refused past the limit or after a board that did not
+    // come back; which results block the rest.
+    assert!(slot_decision(0, None) == Ok(1) && slot_decision(1, None) == Ok(2) && slot_decision(3, None) == Ok(4));
+    assert!(slot_decision(4, None).is_err_and(|w| w.contains("cel mult 4 teste") && w.contains("al 5-lea")));
+    assert!(slot_decision(1, Some("x")).is_err_and(|w| w.contains("placa nu a revenit") && w.contains("(x)")));
+    assert!(slot_decision(0, Some("x")).is_err());
+    assert!(stuck_after("CICLU OPRIT: trebuie pornire rece (Adrian): gpu recupereaza nu a adus placa").is_some());
+    assert!(stuck_after("testul pe placa nr. 2 in aceasta pornire (cu resetul din interior): gpu0: rezultat lant: oprit la resetul din interior (x); fara a doua incercare").is_some());
+    assert!(stuck_after("testul pe placa nr. 2 in aceasta pornire (cu resetul din interior): gpu0: rezultat lant: toti pasii au trecut").is_none());
+    assert!(stuck_after("CICLU OPRIT: procesorul e prea cald").is_none() && stuck_after("gpu0: rezultat lant: oprit la I9").is_none());
     assert!(board_command("test-placa --i9 c125") == Some(Ok(String::from("c125"))));
     assert!(board_command("test-placa --i9 x").is_some_and(|r| r.is_err()) && board_command("test-placa DA").is_some_and(|r| r.is_err()));
     assert!(board_command("gpu lant").is_none() && board_command("test-placax").is_none());
