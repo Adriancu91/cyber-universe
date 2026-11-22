@@ -62,11 +62,62 @@ fn tensors(dir: &str, sub: &str) -> Result<Vec<Vec<f32>>, String> {
 /// The losses of a recipe, read from `reteta.json`: the list after `"<recipe>": {` … `"pierderi": [` (the same reading as
 /// Cyber-GPU's T151; the file's SHA-256 is checked first, so its shape is known).
 pub fn losses(reteta: &str, recipe: &str) -> Option<Vec<f64>> {
+    list(reteta, recipe, "pierderi")
+}
+
+/// The list of numbers `"<key>": [ … ]` of a recipe of `reteta.json` (the first after `"<recipe>": {`).
+pub fn list(reteta: &str, recipe: &str, key: &str) -> Option<Vec<f64>> {
     let r = reteta.find(&format!("\"{}\": {{", recipe))?;
-    let key = "\"pierderi\": [";
-    let p = r + reteta[r..].find(key)? + key.len();
+    let key = format!("\"{}\": [", key);
+    let p = r + reteta[r..].find(&key)? + key.len();
     let end = p + reteta[p..].find(']')?;
     reteta[p..end].split(',').map(|x| x.trim().parse::<f64>().ok()).collect()
+}
+
+/// P6-136 (C-161 point 4, cyber-gpu note `C-160_P6b_pasul-de-aur-pe-placa.md`): the golden step's data for the board
+/// (`test-placa … --pas-aur`): the batch, the initial weights and PyTorch's numbers of both recipes.
+pub struct Golden {
+    pub dir: String,
+    pub inputs: Vec<u32>,
+    pub targets: Vec<u32>,
+    pub initial: Vec<Vec<f32>>,
+    pub sgd: nvidia_ga104::train_step::Refs,
+    pub adamw: nvidia_ga104::train_step::Refs,
+}
+
+/// Where the board's golden step looks for its data: the disk and the stick as `antrenare proba`, then the hub's own
+/// folder copied as it is onto the stick (`integrare/kronos/pas_de_aur_mic`).
+pub const BOARD_DIRS: [&str; 3] = [DIRS[0], DIRS[1], "/usb/integrare/kronos/pas_de_aur_mic"];
+
+/// Reads the golden step for the board from the first folder of [`BOARD_DIRS`] with a `reteta.json` (its SHA-256 checked).
+pub fn golden_data() -> Result<Golden, String> {
+    let dir = BOARD_DIRS
+        .iter()
+        .find(|d| crate::fs::read_all(&format!("{}/reteta.json", d)).is_ok())
+        .ok_or_else(|| format!("LIPSESC DATELE: nu gasesc pasul de aur ({}, {} sau {})", BOARD_DIRS[0], BOARD_DIRS[1], BOARD_DIRS[2]))?;
+    let reteta_bytes = read(dir, "reteta.json")?;
+    let sum = sha256_hex(&reteta_bytes);
+    if sum != RETETA_SHA256 {
+        return Err(format!("{}/reteta.json are SHA-256 {}, nu cel al pasului de aur S132", dir, sum));
+    }
+    let reteta = String::from_utf8_lossy(&reteta_bytes).into_owned();
+    let n = 2 * 32;
+    let inputs = read_i32(dir, "intrari.i32", n)?;
+    let targets = read_i32(dir, "tinte.i32", n)?;
+    let initial = tensors(dir, "initiale")?;
+    let refs = |name: &str, norms: bool| -> Result<nvidia_ga104::train_step::Refs, String> {
+        let losses = losses(&reteta, name).filter(|w| w.len() == STEPS).ok_or_else(|| format!("reteta.json: {} nu are cele {} pierderi", name, STEPS))?;
+        let norms = if norms {
+            list(&reteta, name, "norme_gradient").filter(|w| w.len() == STEPS).ok_or_else(|| format!("reteta.json: {} nu are cele {} norme", name, STEPS))?
+        } else {
+            Vec::new()
+        };
+        let load = |sub: &str| tensors(dir, &format!("{}/{}", name, sub));
+        Ok(nvidia_ga104::train_step::Refs { losses, norms, grad1: load("grad_pas1")?, after1: load("dupa_pas1")?, after_last: load("dupa_pas10")? })
+    };
+    let sgd = refs("sgd", false)?;
+    let adamw = refs("adamw_513", true)?;
+    Ok(Golden { dir: String::from(*dir), inputs, targets, initial, sgd, adamw })
 }
 
 /// The worst deviation between two sets of tensors: the largest |a - b| (and in which tensor) and the largest
@@ -232,6 +283,9 @@ pub fn self_test() {
     let r = "{ \"retete\": { \"sgd\": { \"rata\": 0.01, \"pierderi\": [5.5, 5.25, 5.0] } } }";
     assert!(losses(r, "sgd") == Some(alloc::vec![5.5, 5.25, 5.0]), "test: antrenare: pierderile");
     assert!(losses(r, "adamw_513").is_none(), "test: antrenare: reteta lipsa");
+    let r2 = "{ \"adamw_513\": { \"pierderi\": [3.0], \"norme_gradient\": [0.5, 0.25] } }";
+    assert!(list(r2, "adamw_513", "norme_gradient") == Some(alloc::vec![0.5, 0.25]), "test: antrenare: normele");
+    assert!(list(r2, "sgd", "norme_gradient").is_none(), "test: antrenare: normele lipsa");
     let a: Vec<Vec<f32>> = MIC.tensors().iter().map(|t| alloc::vec![1.0f32; t.elements()]).collect();
     let mut b = a.clone();
     assert!(worst(&a, &b).abs == 0.0 && worst(&a, &b).rel_norm == 0.0, "test: antrenare: identice");

@@ -839,6 +839,24 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu colsum-sim: exista doar in build-ul de test (pe stick proba colsum o porneste doar ciclul, test-placa --colsum)\n");
         }
+        Some("pas-aur-sim") => {
+            // P6-136 (C-161 point 4): test build only: the small golden step (10 steps of sgd and of adamw_513) after
+            // the next `kronos --gpu-sim`'s texts (in the stick's system only the cycle turns it on, `test-placa … --pas-aur`).
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::GOLDEN_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu pas-aur-sim: pornit (SIMULARE: dupa texte, pasul de aur mic de 10 ori pe sgd si pe adamw_513)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::GOLDEN_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu pas-aur-sim: oprit\n");
+                }
+                _ => out!("folosire: gpu pas-aur-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu pas-aur-sim: exista doar in build-ul de test (pe stick pasul de aur il porneste doar ciclul, test-placa --pas-aur)\n");
+        }
         Some("p8-sim") => {
             // P6-117 (C-161 point 2): test build only: P8 (`mma16_f16`, 6 sets) after the next `kronos --gpu-sim`'s texts
             // (in the stick's system only the cycle turns it on, with `test-placa … --p8`).

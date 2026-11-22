@@ -495,7 +495,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-133** C-159 pasul 4 (leagă C-158 punctul 6): ceasul de pază armat cât merge o sesiune vie, hrănit doar cât bucla sesiunii se mișcă (OS înghețat sau comandă blocată = repornire); pe calculatoare reale tot oprit până la o comandă nouă. Plan: `docs/plans/P6-133.md`. Dep: P6-103, P6-130.
 - [x] **P6-134** C-161 punctul 4, primul program „înapoi” pe placă: proba `colsum` (PREDARE Cyber-GPU `3b4ca77`, nota `C-160_P6_primul-program-inapoi.md`) → `test-placa … --colsum`, Release separat. Plan: `docs/plans/P6-134.md`. Dep: P6-117.
 - [x] **P6-135** Nota Cyber-GPU C-157_P2i (`0fd77c7`) + propunerea centrului 22 nov 10:30: `lipita-ln-32` implicită în `test-placa` (`--lipita-ln` = lista de până acum), referința listei care a rulat, `--argmax-fara-copie` cu implicitul, 88 de lansări. Nimic nou pentru placă. Plan: `docs/plans/P6-135.md`. Dep: P6-128.
-- [~] **P6-136** C-161 punctul 4 mai departe: **pasul de aur mic întreg pe placă** (PREDARE Cyber-GPU `dd67483`, nota `C-160_P6b_pasul-de-aur-pe-placa.md`; după ce `colsum` a trecut pe placă în os-349) → `test-placa … --pas-aur`, Release separat. Plan: `docs/plans/P6-136.md`. Dep: P6-134.
+- [x] **P6-136** C-161 punctul 4 mai departe: **pasul de aur mic întreg pe placă** (PREDARE Cyber-GPU `dd67483`, nota `C-160_P6b_pasul-de-aur-pe-placa.md`; după ce `colsum` a trecut pe placă în os-349) → `test-placa … --pas-aur`, Release separat. Plan: `docs/plans/P6-136.md`. Dep: P6-134.
   Gata (2026-11-21 ~16:55 RO): `gpu-tablou` trece (rândul nou „oprirea zonei = nu se trimite …”).
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 

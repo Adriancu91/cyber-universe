@@ -398,6 +398,28 @@ impl SimGpu {
             cp.register_program_with_needs(nvidia_ga104::argmax::ARGMAX, c::argmax_on_cpu, c::ARGMAX_NEEDS);
             // P6-134 (C-161 point 4): the first backward program of the training (`colsum`, column sums).
             cp.register_program(nvidia_ga104::colsum::COLSUM, c::colsum_on_cpu);
+            // P6-136 (C-161 point 4): the 11 new programs of the small golden step (`train_step`; `colsum` and `vadd`
+            // are registered above).
+            {
+                use nvidia_ga104::train_step::Prog as T;
+                for prog in nvidia_ga104::train_step::PROGRAMS {
+                    let code = prog.code();
+                    let _ = match prog {
+                        T::MmTrain => cp.register_program_with_needs(code, c::mm_train_on_cpu, c::MM_TRAIN_NEEDS),
+                        T::Xent => cp.register_program_with_needs(code, c::xent_on_cpu, c::XENT_NEEDS),
+                        T::LnFwd => cp.register_program_with_needs(code, c::ln_fwd_on_cpu, c::LN_FWD_NEEDS),
+                        T::LnBack => cp.register_program_with_needs(code, c::ln_back_on_cpu, c::LN_BACK_NEEDS),
+                        T::GeluTr => cp.register_program(code, c::gelu_tr_on_cpu),
+                        T::AttnFwd => cp.register_program(code, c::attn_fwd_on_cpu),
+                        T::AttnBack => cp.register_program(code, c::attn_back_on_cpu),
+                        T::EmbFwd => cp.register_program(code, c::emb_fwd_on_cpu),
+                        T::EmbBack => cp.register_program(code, c::emb_back_on_cpu),
+                        T::Gnorm => cp.register_program_with_needs(code, c::gnorm_on_cpu, c::GNORM_NEEDS),
+                        T::OptStep => cp.register_program(code, c::opt_step_on_cpu),
+                        T::Colsum | T::Vadd => 0,
+                    };
+                }
+            }
         }
         cp.sim_launch_ns = 4000;
         if SIM_STALE_READS.load(core::sync::atomic::Ordering::Relaxed) {

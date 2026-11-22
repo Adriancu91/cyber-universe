@@ -2410,6 +2410,13 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 lines.push(format!("{}: kronos --gpu: colsum (primul program inapoi): oprita: {}", p, e));
             }
         }
+        // P6-136 (C-161 point 4, cyber-gpu `dd67483`): the small golden step, whole, on the board, only when the
+        // cycle's list asks for it (`test-placa … --pas-aur`), after everything else; its failure is a line.
+        if super::gpu_tur::GOLDEN_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+            if let Err(e) = golden_probe(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, &ctx) {
+                lines.push(format!("{}: kronos --gpu: pasul de aur mic pe placa: oprit: {}", p, e));
+            }
+        }
     }
     Ok(all.pop().unwrap_or_default())
 }
@@ -2732,6 +2739,161 @@ fn colsum_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         probe.elements(),
         probe.worst_permille(),
         probe.median_ns().map_or(String::from("?"), |n| format!("{}", n))
+    ));
+    match stopped {
+        Some(_) => Err(GpuError::Timeout { waited_us: WAIT_US }),
+        None => Ok(()),
+    }
+}
+
+/// P6-136 (C-161 point 4, C-160 point 6 second part; cyber-gpu note `C-160_P6b_pasul-de-aur-pe-placa.md`, commit
+/// `dd67483`): the small golden step, whole, on the board — Kronos's model of the golden step (2 layers, C 64, batch
+/// 2 × 32), 10 steps of `sgd` (73 launches per step) and of `adamw_513` (75), each step ONE submission of the library's
+/// list (`train_step::Plan::step` → `pack` → `encode_sequence_fresh`), every tensor in the arena. The CPU writes the
+/// uploads once per recipe, then only reads back the losses (and the norm at `adamw_513`) after every step, the gradient
+/// and the weights after step 1, the weights after step 10. The arena, the control zone: host RAM (the arena's upload
+/// pages, no longer used once the texts are done). Verdict: `train_step::judge` against PyTorch's files (the hub's
+/// tolerances). New for the board: 11 programs that never ran (their SHA-256 checked first). A step the board does not
+/// finish, or a non-finite norm, stops the probe (no retry).
+#[allow(clippy::too_many_arguments)]
+fn golden_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    doorbell: &mut Bell<'_, V>,
+    subs: &mut u32,
+    ctx: &CopyCtx,
+) -> GpuResult<()> {
+    use gpu_compute::train::{self, AdamW, Recipe};
+    use nvidia_ga104::train_step::{self as ts, Outcome, Plan};
+    const STEPS: u32 = 10;
+    let label = if permit.is_some() { "placa" } else { "SIMULARE" };
+    // The data first: without it nothing is sent.
+    let data = match crate::shell::antrenare::golden_data() {
+        Ok(d) => d,
+        Err(e) => {
+            lines.push(format!("{}: kronos --gpu: pasul de aur mic pe placa: NU A RULAT: {}; nimic trimis", p, e));
+            return Err(bad("pas-aur: datele lipsesc"));
+        }
+    };
+    if ts::check_programs().is_err() {
+        lines.push(format!("{}: kronos --gpu: pasul de aur mic pe placa: SHA-256 al unui program nu e cel din nota: nimic trimis", p));
+        return Err(bad("pas-aur: SHA-256 gresit"));
+    }
+    // Plan at a provisional base only to know the size; the real one at the arena's address.
+    let probe_plan = Plan::new(train::MIC, 2, 32, &data.inputs, nvidia_ga104::mmu::VA_BASE)?;
+    let arena_bytes = probe_plan.bytes().next_multiple_of(PAGE);
+    let max_launches = probe_plan.launches_per_step(Recipe::AdamW513).max(probe_plan.launches_per_step(Recipe::Sgd));
+    let zone_bytes = (max_launches as u64 * ts::SLOT).next_multiple_of(PAGE);
+    if 16 * (max_launches as u64 + 1) > ctx.rec.size || max_launches as u32 + 1 > STRIDE {
+        return Err(bad("pas-aur: prea putine inregistrari"));
+    }
+    if (arena_bytes + zone_bytes) / PAGE > I11_BOARD_BYTES / PAGE {
+        return Err(bad("pas-aur: arena nu incape in paginile de urcare"));
+    }
+    lines.push(format!(
+        "{}: kronos --gpu: pasul de aur mic pe placa ({}): datele din {}; {} programe (SHA-256 verificate), arena {} KiB + zona de control {} KiB in RAM; {} pasi x sgd ({} lansari) si adamw_513 ({} lansari), cate o trimitere pe pas",
+        p,
+        label,
+        data.dir,
+        ts::PROGRAMS.len(),
+        arena_bytes >> 10,
+        zone_bytes >> 10,
+        STEPS,
+        probe_plan.launches_per_step(Recipe::Sgd),
+        probe_plan.launches_per_step(Recipe::AdamW513)
+    ));
+    // The 13 programs in VRAM (each mapping page-aligned, so 256-byte aligned).
+    let mut progs: Vec<(ts::Prog, Mapping)> = Vec::with_capacity(ts::PROGRAMS.len());
+    for prog in ts::PROGRAMS {
+        let pm = map_vram(st, prog.code().len() as u64)?;
+        put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
+        progs.push((prog, pm));
+    }
+    let arena = st.mem.alloc_sys_mapped(&arena_pages(0, arena_bytes / PAGE)?)?;
+    let zone = st.mem.alloc_sys_mapped(&arena_pages(arena_bytes / PAGE, zone_bytes / PAGE)?)?;
+    if !arena.va.is_multiple_of(PAGE) || !zone.va.is_multiple_of(PAGE) {
+        return Err(bad("pas-aur: arena nu e aliniata la 4 KiB"));
+    }
+    let mut maps = ctx.maps.clone();
+    maps.extend(progs.iter().map(|(_, pm)| *pm));
+    let sys = [ctx.sys.clone(), arena.clone(), zone.clone()];
+    let prog_va = |want: ts::Prog| progs.iter().find(|(q, _)| *q == want).map_or(0, |(_, pm)| pm.va);
+    let read_f32s = |va: u64, n: usize| ts::f32s(&ram_read_at(&arena, va - arena.va, 4 * n as u64));
+    let mut stopped: Option<String> = None;
+    let mut all_pass = true;
+    for (recipe, name, refs) in [(Recipe::Sgd, "sgd", &data.sgd), (Recipe::AdamW513, "adamw_513", &data.adamw)] {
+        let plan = Plan::new(train::MIC, 2, 32, &data.inputs, arena.va)?;
+        // The uploads, once, from zero: one image of the whole arena (zeros between the pieces).
+        let mut image = alloc::vec![0u8; arena_bytes as usize];
+        for (va, bytes) in plan.uploads(&data.initial, &data.inputs, &data.targets)? {
+            let at = (va - arena.va) as usize;
+            image[at..at + bytes.len()].copy_from_slice(&bytes);
+        }
+        ram_write(&arena, &image);
+        drop(image);
+        let opt = AdamW::recipe_513(&data.initial);
+        let n = plan.launches_per_step(recipe);
+        let mut out = Outcome::default();
+        for step in 1..=STEPS {
+            let list = plan.step(recipe, &opt, step)?;
+            let (zb, qmds) = ts::pack(&list, prog_va, zone.va)?;
+            ram_write(&zone, &zb);
+            put_bytes(st.mem.writer_mut(), ctx.rec.pa, &alloc::vec![0u8; 16 * (list.len() + 1)])?;
+            let first = TOKEN_FIRST + STRIDE * *subs;
+            let mut words = alloc::vec![0u32; transfer::sequence_words_fresh(list.len())];
+            let mut pb = PushBuf::new(&mut words);
+            transfer::encode_sequence_fresh(&mut pb, &qmds, ctx.rec.va, first)?;
+            let nw = pb.len();
+            let last = first + list.len() as u32;
+            let b = match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, list.len() as u64 + 1, last, &maps, &sys, doorbell)? {
+                Ok(b) => b,
+                Err(got) => {
+                    stopped = Some(format!("{}: placa nu a terminat la pasul {} (ultima inregistrare {:#x}, asteptat {:#x})", name, step, got, last));
+                    break;
+                }
+            };
+            *subs += 1;
+            out.step_ns.push(transfer::analyze_sequence(&b, list.len(), first)?.iter().sum());
+            out.losses.push(Outcome::mean_loss(&read_f32s(plan.loss_rows, 2 * 32)));
+            if recipe == Recipe::AdamW513 {
+                let norm = read_f32s(plan.res, 1)[0];
+                if !norm.is_finite() {
+                    stopped = Some(format!("{}: norma gradientului nu e finita la pasul {} ({:?})", name, step, norm));
+                    out.norms.push(norm);
+                    break;
+                }
+                out.norms.push(norm);
+            }
+            if step == 1 {
+                out.grad1 = plan.unflat(&read_f32s(plan.g, plan.n_params))?;
+                out.after1 = plan.unflat(&read_f32s(plan.w, plan.n_params))?;
+            }
+        }
+        if stopped.is_some() {
+            lines.push(format!("{}: kronos --gpu: pasul de aur mic pe placa: {}; proba oprita, fara reincercare", p, stopped.as_deref().unwrap_or("")));
+            all_pass = false;
+            break;
+        }
+        out.after_last = plan.unflat(&read_f32s(plan.w, plan.n_params))?;
+        let v = ts::judge(recipe, n, &out, refs);
+        v.journal(journal);
+        lines.extend(v.lines(label).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
+        all_pass &= v.passes();
+    }
+    lines.push(format!(
+        "{}: kronos --gpu: pasul de aur mic pe placa: {}",
+        p,
+        match &stopped {
+            Some(_) => "NU A TERMINAT (vezi randul de mai sus)",
+            None if all_pass => "TRECE (sgd si adamw_513: aceleasi numere ca PyTorch)",
+            None => "NU TRECE (vezi randurile pas de aur mic)",
+        }
     ));
     match stopped {
         Some(_) => Err(GpuError::Timeout { waited_us: WAIT_US }),

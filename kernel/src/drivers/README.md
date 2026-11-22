@@ -227,6 +227,17 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     în RAM, pe paginile de urcare ale arenei (nefolosite după texte). Ieșirile citite înapoi (`out_range`) sunt judecate pe procesor
     (`judge_set`: marginea scrisă în T155 + bit cu bit față de model) → rândurile `kt colsum …` în jurnal și `colsum …` +
     `colsum (primul program inapoi): TRECE / NU TRECE / NU A TERMINAT` în ieșire și în răspunsul ciclului. Test: `kronos-gpu-colsum`.
+    **P6-136 (C-161 punctul 4, C-160 punctul 6 partea a doua, cyber-gpu `dd67483`): pasul de aur mic întreg pe placă.** Doar în ciclu
+    cu `test-placa … --pas-aur` (ultima opțiune, după `--colsum`; `gpu_tur::GOLDEN_IN_CYCLE`; în build-ul de test `gpu pas-aur-sim on|off`):
+    după textele lui #513 (și după P8 / `colsum`, dacă sunt cerute), `gpu_i14::golden_probe` citește datele pasului de aur
+    (`shell::antrenare::golden_data`: `/disk/antrenare/…`, `/usb/antrenare/…` sau `/usb/integrare/kronos/pas_de_aur_mic`, SHA-256 al
+    `reteta.json` verificat), verifică cele 13 programe (`train_step::check_programs`), le urcă în VRAM, pune arena (`Plan::bytes`, ~2,8 MiB)
+    și zona de control (75 × 512 B) în RAM pe paginile de urcare ale arenei și rulează, pentru `sgd` și apoi `adamw_513`, de la zero:
+    `Plan::uploads` o dată, apoi 10 pași, fiecare o trimitere (`Plan::step` → `pack` → `encode_sequence_fresh` cu înregistrările lui
+    `kronos --gpu`); după fiecare pas citește pierderile (și norma la `adamw_513`; nefinită = oprire), după pasul 1 gradientul și
+    greutățile, după pasul 10 greutățile → `train_step::judge` față de fișierele PyTorch → rândurile `kt pas-aur …` în jurnal,
+    `pas de aur mic …` și `pasul de aur mic pe placa: TRECE / NU TRECE / NU A TERMINAT / NU A RULAT` în ieșire și în răspunsul
+    ciclului. Programele de simulare: `SimGpu` cunoaște cele 11 programe noi. Test: `kronos-gpu-pas-aur` (cifrele T165: 239 ‰ / 128 ‰).
     **P6-123 (C-155 punctul 3, cyber-gpu `3683ef4`): argmax pe placă, proba.** Doar în ciclu cu `test-placa … --argmax-placa` (după
     `--k651`, înainte de `--dieta2`; `gpu_tur::ARGMAX_IN_CYCLE`; în build-ul de test `gpu argmax-sim on|off`): fiecare simbol al lui
     `kronos --gpu` se termină cu copia logit-urilor și programul `argmax` (`nvidia_ga104::argmax::launch`; 16 octeți imediat după

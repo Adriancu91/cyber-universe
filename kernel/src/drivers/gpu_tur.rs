@@ -307,6 +307,12 @@ pub static P8_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::Ato
 /// asks for it (`test-placa … --colsum`) and, in the test build, by `gpu colsum-sim on`. Off by default.
 pub static COLSUM_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-136 (C-161 point 4, cyber-gpu `dd67483`): the small golden step, whole, on the board (13 programs, 10 steps of
+/// `sgd` and of `adamw_513`, judged against PyTorch), after `kronos --gpu`'s texts (and after P8 / `colsum` when asked).
+/// Set only by the cycle when the list asks for it (`test-placa … --pas-aur`) and, in the test build, by
+/// `gpu pas-aur-sim on`. Off by default.
+pub static GOLDEN_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-101: set only for the FLR trial's second chain (`test-placa --flr-proba`, `gpu lant --flr-proba`); taken by
 /// `chain`. Without it no chain reads WPR2 for the reset nor writes anything for it.
 pub static FLR_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
