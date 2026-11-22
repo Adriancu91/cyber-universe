@@ -74,7 +74,7 @@ sau, la refuz: `"stare":"REFUZAT","motiv":"<de ce>"` (fără `cod`/`iesire`). `n
 
 ## Comanda de placă a modului viu (P6-118, C-161 punctul 1)
 - **`test-placa […]`** cu `fel: comanda`, exact formele din `auto\teste.txt` (`--i9 …`, `--flr-proba`, `--tablou`, `--lipit` /
-  `--simplu` / `--ln-nou`, `--p8`, `--colsum`, `--pas-aur`, `--mm-tc`). Merge la același test ca lista automată, fără „DA” de la tastatură; cere **trei chei**:
+  `--simplu` / `--ln-nou`, `--p8`, `--colsum`, `--pas-aur`, `--mm-tc`, `--atentie-placi`). Merge la același test ca lista automată, fără „DA” de la tastatură; cere **trei chei**:
   `permite-live-placa` (poarta), `permite-test-placa` pe stick și rândul din `DECIZII.md` (ca lista).
 - `iesire` = raportul întreg al testului (ca în raportul listei), care pleacă și în hub (`trimite`), ca de la listă.
 - Formă greșită sau o cheie lipsă: `stare: ok`, `cod: 1`, `iesire` = `REFUZAT: <motivul> (nimic nu s-a scris in placa)`.

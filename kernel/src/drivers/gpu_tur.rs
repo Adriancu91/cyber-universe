@@ -319,6 +319,12 @@ pub static GOLDEN_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic:
 /// and, in the test build, by `gpu mm-tc-sim on`. Off by default.
 pub static MM_TC_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-141 (C-161 point 4, cyber-gpu `44a4d16`): the tiled training attention probe (`attn_fwd_tile` → `attn_back_tile0`
+/// → `attn_back_tile` on 5 small sets + `atentie-513-b4` for the time), after `kronos --gpu`'s texts (and after the other
+/// probes when asked). Set only by the cycle when the list asks for it (`test-placa … --atentie-placi`) and, in the test
+/// build, by `gpu atentie-placi-sim on`. Off by default.
+pub static ATTN_TILE_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-101: set only for the FLR trial's second chain (`test-placa --flr-proba`, `gpu lant --flr-proba`); taken by
 /// `chain`. Without it no chain reads WPR2 for the reset nor writes anything for it.
 pub static FLR_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);

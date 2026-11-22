@@ -400,6 +400,10 @@ impl SimGpu {
             cp.register_program(nvidia_ga104::colsum::COLSUM, c::colsum_on_cpu);
             // P6-137 (C-161 point 4): the training matmul on the tensor cores (`mm_tc`, 24 KiB shared, one barrier).
             cp.register_program_with_needs(nvidia_ga104::mm_tc::MM_TC, c::mm_tc_on_cpu, c::MM_TC_NEEDS);
+            // P6-141 (C-161 point 4): the three tiled training attention programs (blocks of 256, 32–37 KiB shared).
+            cp.register_program(nvidia_ga104::attn_fwd_tile::ATTN_FWD_TILE, c::attn_fwd_tile_on_cpu);
+            cp.register_program(nvidia_ga104::attn_back_tile0::ATTN_BACK_TILE0, c::attn_back_tile0_on_cpu);
+            cp.register_program(nvidia_ga104::attn_back_tile::ATTN_BACK_TILE, c::attn_back_tile_on_cpu);
             // P6-136 (C-161 point 4): the 11 new programs of the small golden step (`train_step`; `colsum` and `vadd`
             // are registered above).
             {

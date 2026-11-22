@@ -861,6 +861,25 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu mm-tc-sim: exista doar in build-ul de test (pe stick proba mm_tc o porneste doar ciclul, test-placa --mm-tc)\n");
         }
+        Some("atentie-placi-sim") => {
+            // P6-141 (C-161 point 4): test build only: the tiled attention probe (5 small sets; atentie-513-b4 uploaded
+            // and read back, its launches skipped in SIMULARE) after the next `kronos --gpu-sim`'s texts (in the stick's
+            // system only the cycle turns it on, `test-placa … --atentie-placi`).
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::ATTN_TILE_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu atentie-placi-sim: pornita (SIMULARE: dupa texte, atentia pe placi pe 5 seturi, judecata pe procesor; atentie-513-b4 doar urcat si recitit)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::ATTN_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu atentie-placi-sim: oprita\n");
+                }
+                _ => out!("folosire: gpu atentie-placi-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu atentie-placi-sim: exista doar in build-ul de test (pe stick proba o porneste doar ciclul, test-placa --atentie-placi)\n");
+        }
         Some("pas-aur-sim") => {
             // P6-136 (C-161 point 4): test build only: the small golden step (10 steps of sgd and of adamw_513) after
             // the next `kronos --gpu-sim`'s texts (in the stick's system only the cycle turns it on, `test-placa … --pas-aur`).

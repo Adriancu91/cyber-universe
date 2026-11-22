@@ -247,6 +247,17 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     fiecăreia (doar pe placă; în SIMULARE sărite), benzile citite înapoi prin arenă → `judge_set` → rândurile `kt mm_tc …` în jurnal,
     `mm_tc …` și `proba mm_tc: TRECE / NU TRECE / NU A TERMINAT` în ieșire și în răspunsul ciclului. `SimGpu` cunoaște `mm_tc` (cu
     memoria partajată). Test: `kronos-gpu-mm-tc` (cifrele T171: 5/5 în margine, 69 ‰).
+    **P6-141 (C-161 punctul 4, C-160 punctul 7 partea a cincea, cyber-gpu `44a4d16`): proba atenției „pe plăci”.** Doar în ciclu cu
+    `test-placa … --atentie-placi` (ultima opțiune, după `--mm-tc`; `gpu_tur::ATTN_TILE_IN_CYCLE`; în build-ul de test
+    `gpu atentie-placi-sim on|off`): după textele lui #513 (și după celelalte probe cerute), `gpu_i14::attn_tile_probe` verifică
+    SHA-256 ale celor trei programe (`attn_fwd_tile`, `attn_back_tile0`, `attn_back_tile`), le urcă în VRAM (câte o pagină pentru cbuf
+    +0 și QMD +0x800), rulează seturile 0–4 din `attn_tile_probe::SETS` (bufferul ≤ 2,2 MB în RAM, paginile de urcare ale arenei; câte
+    trei trimiteri, în ordine, fiecare cu timpul ei; `judge_set`), apoi `attn_tile_big`: bufferul `atentie-513-b4` (~151 MB) în VRAM
+    (dacă nu se poate: omis), intrările (~25 MB) urcate prin arenă și recitite octet cu octet înainte de orice lansare, intervalele
+    citite + gărzile umplute cu NaN (bucăți ≤ 8 MiB, ~10 copii), 5 × fiecare program cu timpul fiecărei lansări (doar pe placă; în SIMULARE
+    sărite), intervalele citite înapoi → `judge_set` → rândurile `kt atentie …` în jurnal, `atentie …` și `proba atentiei pe placi:
+    TRECE / NU TRECE / NU A TERMINAT` în ieșire și în răspunsul ciclului. `SimGpu` cunoaște cele trei programe. Test:
+    `kronos-gpu-atentie-placi` (ca T176: 5/5 în margine, toate elementele exacte).
     **P6-138 (C-157 punctul 2, nota Cyber-GPU `C-157_P2j`, `0c46879`): dieta 2 și cu argmax fără copie.** `test-placa …
     --argmax-fara-copie --dieta2` e acceptat acum: merg doar bucățile A (două înregistrări pe pozițiile care nu hrănesc profilul
     `kp`) și B (așteptarea planificată), care sunt în `submit`; C și D (amprenta, argmax pe biți) rămân în `run_token`. În `run_top`:
