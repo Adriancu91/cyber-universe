@@ -225,20 +225,33 @@ pub fn allowed(line: &str) -> Result<(), &'static str> {
 pub(super) fn board_test(parsed: Result<String, &'static str>) -> Result<String, String> {
     let i9 = parsed.map_err(String::from)?;
     super::ciclu::keys()?;
-    board_run(&i9, "cheile: fisierul de pe stick + DECIZII.md", super::ciclu::board_test, raport::hub_paths().0, true)
+    let start = board_start(&i9)?;
+    let (body, result) = super::ciclu::board_test(&i9, start.nth);
+    board_end(&i9, &start, "cheile: fisierul de pe stick + DECIZII.md", body, result, raport::hub_paths().0, true)
 }
 
-/// P6-139 (C-158 point 5): one board test of the power-on, after the keys: its slot (the n-th; refused past the limit or
-/// after a board that did not come back), the safety clock pushed on, the test (`run`), the report copy in `reports`
-/// (and, with `send`, the hub).
-fn board_run(i9: &str, keys: &str, run: fn(&str, usize) -> (String, String), reports: &str, send: bool) -> Result<String, String> {
+/// P6-139: a board test that got its slot.
+struct BoardStart {
+    nth: usize,
+    how: &'static str,
+    t0: u64,
+}
+
+/// P6-139 (C-158 point 5): after the keys, the slot of this board test in the power-on (the n-th; refused past the limit
+/// or after a board that did not come back) and the safety clock pushed on.
+fn board_start(i9: &str) -> Result<BoardStart, String> {
     let nth = super::ciclu::board_slot()?;
     keep_alive(BOARD_TEST_MS);
     let how = if nth == 1 { "gpu recupereaza, apoi lantul" } else { "fara gpu recupereaza: resetul din interior la inceputul lantului" };
     say(&format!("auto: test-placa nr. {} in aceasta pornire (I9 {}): cheile lui Adrian sunt puse; {}\n", nth, i9, how));
     crate::info!("auto: test-placa nr. {}: cheile sunt puse; testul pe placa porneste (I9 {}; {})", nth, i9, how);
-    let t0 = crate::time::uptime_ms().unwrap_or(0);
-    let (body, result) = run(i9, nth);
+    Ok(BoardStart { nth, how, t0: crate::time::uptime_ms().unwrap_or(0) })
+}
+
+/// P6-139: after the test: the board remembered as stuck when it is, the text for the list, the report copy in `reports`
+/// (and, with `send`, the hub).
+fn board_end(i9: &str, start: &BoardStart, keys: &str, body: String, result: String, reports: &str, send: bool) -> Result<String, String> {
+    let (nth, how, t0) = (start.nth, start.how, start.t0);
     super::ciclu::board_finished(&result);
     let ms = crate::time::uptime_ms().unwrap_or(0).saturating_sub(t0);
     let text = format!(
@@ -292,7 +305,11 @@ fn board_test_sim(line: &str) -> Option<Result<String, String>> {
     };
     SIM_FAIL.store(fail, Ordering::SeqCst);
     let parsed = super::ciclu::board_command(&format!("test-placa{}", rest))?;
-    Some(parsed.map_err(String::from).and_then(|i9| board_run(&i9, "SIMULARE: fara chei, fara placa", sim_chain, DIR, false)))
+    Some(parsed.map_err(String::from).and_then(|i9| {
+        let start = board_start(&i9)?;
+        let (body, result) = sim_chain(&i9, start.nth);
+        board_end(&i9, &start, "SIMULARE: fara chei, fara placa", body, result, DIR, false)
+    }))
 }
 
 #[cfg(feature = "test-auto")]
