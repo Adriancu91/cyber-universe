@@ -23,9 +23,64 @@ pub struct Console {
     cols: usize,
     rows: usize,
     pub color: u32,
-    /// P6-111/P6-127 (`ecran` of the live channel): the text now on the screen, one string per screen row (the last one
+    /// P6-111/P6-127 (`ecran` of the live channel): the text now on the screen, one row per screen row (the last one
     /// is the row of the cursor). Kept from `enable_shadow` on (it needs the heap).
-    text: Option<alloc::collections::VecDeque<alloc::string::String>>,
+    text: Option<ScreenText>,
+}
+
+/// The console's text, row by row, in memory allocated once (`enable_shadow`): a ring of `rows` buffers of `cols`
+/// characters each, reused when the screen scrolls. Writing text never allocates afterwards, so the heap stays the
+/// same however much is written (the `stress-smp` test checks the heap is identical at the end).
+struct ScreenText {
+    ring: alloc::collections::VecDeque<alloc::vec::Vec<char>>,
+    /// How many of the last rows of `ring` are on the screen (from 1 up to `ring.len()`).
+    used: usize,
+    cols: usize,
+}
+
+impl ScreenText {
+    fn new(rows: usize, cols: usize, used: usize) -> Self {
+        let rows = rows.max(1);
+        let cols = cols.max(1);
+        let mut ring = alloc::collections::VecDeque::with_capacity(rows);
+        for _ in 0..rows {
+            ring.push_back(alloc::vec::Vec::with_capacity(cols));
+        }
+        Self { ring, used: used.clamp(1, rows), cols }
+    }
+
+    fn newline(&mut self) {
+        if let Some(mut first) = self.ring.pop_front() {
+            first.clear();
+            self.ring.push_back(first);
+        }
+        self.used = (self.used + 1).min(self.ring.len());
+    }
+
+    fn push(&mut self, c: char) {
+        if let Some(l) = self.ring.back_mut() {
+            if l.len() < self.cols {
+                l.push(c);
+            }
+        }
+    }
+
+    fn pop(&mut self) {
+        if let Some(l) = self.ring.back_mut() {
+            l.pop();
+        }
+    }
+
+    fn clear(&mut self) {
+        for l in self.ring.iter_mut() {
+            l.clear();
+        }
+        self.used = 1;
+    }
+
+    fn rows(&self) -> impl Iterator<Item = &alloc::vec::Vec<char>> {
+        self.ring.iter().skip(self.ring.len() - self.used)
+    }
 }
 
 impl Console {
@@ -52,10 +107,7 @@ impl Console {
 
     fn newline(&mut self) {
         if let Some(t) = &mut self.text {
-            t.push_back(alloc::string::String::new());
-            while t.len() > self.rows.max(1) {
-                t.pop_front();
-            }
+            t.newline();
         }
         self.col = 0;
         if self.row + 1 < self.rows {
@@ -80,8 +132,8 @@ impl Console {
                 if self.col > 0 {
                     self.col -= 1;
                     self.draw_char(' ');
-                    if let Some(l) = self.text.as_mut().and_then(|t| t.back_mut()) {
-                        l.pop();
+                    if let Some(t) = self.text.as_mut() {
+                        t.pop();
                     }
                 }
             }
@@ -91,8 +143,8 @@ impl Console {
                 }
                 self.draw_char(c);
                 self.col += 1;
-                if let Some(l) = self.text.as_mut().and_then(|t| t.back_mut()) {
-                    l.push(c);
+                if let Some(t) = self.text.as_mut() {
+                    t.push(c);
                 }
             }
         }
@@ -140,9 +192,7 @@ pub fn enable_shadow() -> bool {
         Some(c) => {
             let used = MARGIN + (c.row + 1) * CELL_H;
             // The rows written before this moment are not known as text: they stay empty in `screen_text`.
-            let mut t = alloc::collections::VecDeque::new();
-            t.resize(c.row + 1, alloc::string::String::new());
-            c.text = Some(t);
+            c.text = Some(ScreenText::new(c.rows, c.cols, c.row + 1));
             c.fb.enable_shadow(used, BACKGROUND)
         }
         None => false,
@@ -178,7 +228,6 @@ pub fn clear() {
             c.row = 0;
             if let Some(t) = &mut c.text {
                 t.clear();
-                t.push_back(alloc::string::String::new());
             }
         }
     });
@@ -190,11 +239,12 @@ pub fn screen_text() -> Option<alloc::string::String> {
     with_console(|slot| {
         let t = slot.as_ref()?.text.as_ref()?;
         let mut out = alloc::string::String::new();
-        for (i, l) in t.iter().enumerate() {
+        for (i, l) in t.rows().enumerate() {
             if i > 0 {
                 out.push('\n');
             }
-            out.push_str(l.trim_end());
+            let end = l.iter().rposition(|c| !c.is_whitespace()).map_or(0, |k| k + 1);
+            out.extend(l[..end].iter());
         }
         Some(out)
     })
