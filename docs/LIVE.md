@@ -11,7 +11,7 @@
   listei e împins cât timp sesiunea lucrează. După sesiune lista continuă; la sfârșitul listei repornire în Windows, ca azi.
 - OS-ul alege sesiunea `s-AAAALLZZ-HHMM` (ora OS-ului; `-2`, `-3` dacă există deja pe stick), face ramura `os/live` din `main`
   dacă lipsește și scrie **`live/<sesiune>/sesiune.json`**:
-  `{"forma":"cyber-live-1","sesiune":"s-…","pornit":"AAAA-LL-ZZ HH:MM:SS","minute":10,"intrebare_ms":2500,"placa":false,"sistem":"…"}`.
+  `{"forma":"cyber-live-1","sesiune":"s-…","pornit":"AAAA-LL-ZZ HH:MM:SS","minute":10,"intrebare_ms":2500,"puls_ms":60000,"placa":false,"sistem":"…"}`.
   Centrul de comandă găsește sesiunea nouă listând `live/` pe ramura `os/live` (dosarul cel mai nou cu `sesiune.json`).
 - Apoi OS-ul întreabă dosarul `live/<sesiune>/` la fiecare **2,5 s**, cu cerere condiționată (ETag; un 304 nu se numără la
   limita GitHub). Când apare `c-<următorul>.json`, îl ia, îl trece prin poartă, scrie rândul în jurnalul de pe stick
@@ -26,7 +26,8 @@
 - Hub-ul `Adriancu91/Cyber-hub`, ramura **`os/live`**, dosarul `live/<sesiune>/`.
 - Centrul de comandă scrie `c-0001.json`, `c-0002.json`, … (numere de 4 cifre, fără goluri).
 - OS-ul scrie `r-0001.json`, … (răspunsul la comanda cu același număr) și `puls.json` (pasul 3).
-- Nimeni nu rescrie un fișier existent; fiecare parte doar adaugă.
+- Nimeni nu rescrie un fișier existent; fiecare parte doar adaugă. **Singura excepție: `puls.json`**, pe care OS-ul îl
+  rescrie la fiecare minut (P6-129).
 
 ## Comanda `c-NNNN.json`
 ```json
@@ -124,6 +125,21 @@ sau, la refuz: `"stare":"REFUZAT","motiv":"<de ce>"` (fără `cod`/`iesire`). `n
 - Placa video nu are buton în desktop azi; orice program de placă rămâne doar `comanda`, cu cheile ei.
 - Proba în QEMU (`ghpush`, a patra sesiune): desktop pornit, `muta 100 80`, `clic`, `clic 200 150 dreapta`, `tasta esc`
   (desktopul se închide), `muta 5 5` fără desktop (cod 1).
+
+## Pulsul: `puls.json` (P6-129, C-159 pasul 3, prima parte)
+- Cât merge sesiunea, OS-ul rescrie **`live/<sesiune>/puls.json`** la fiecare **60 s** (`puls_ms` din `sesiune.json`) și încă o
+  dată la sfârșit:
+  ```json
+  {"forma":"cyber-live-1","sesiune":"s-…","puls":3,"ora":"AAAA-LL-ZZ HH:MM:SS","stare":"merge","astept_nr":12,
+   "rulate":9,"refuzate":2,"sistem":"<ca în răspunsuri>"}
+  ```
+  `puls` crește cu 1 la fiecare bătaie; `astept_nr` = numărul comenzii pe care o așteaptă OS-ul; `stare` = `merge`, iar la
+  sfârșit `incheiata: <motiv>` (`gata (cerut de centrul de comanda)`, `<minute> minute fara comenzi`, `oprita cu Esc`).
+- **Cum îl folosește centrul de comandă:** dacă `ora` din `puls.json` e mai veche de ~3 minute și `stare` = `merge`, OS-ul s-a
+  oprit sau a pierdut rețeaua (pasul 4: ceasul de pază îl repornește). O bătaie care nu pleacă nu se repetă (vine alta peste
+  un minut); copia de pe stick e mereu ultima.
+- Proba în QEMU (`ghpush`, prima sesiune, puls la 5 s): `puls.json` creat, apoi rescris; ultimul din hub = cel de pe stick,
+  `stare: incheiata: gata`, `astept_nr` 10, 4 rulate, 5 refuzate.
 
 ## Ce rămâne păzit de nucleu (neschimbat)
 Fișierele secrete nu se arată; scrieri pe disc doar pe partiții `cyber.rw`; placa video doar cu `permite-live-placa`

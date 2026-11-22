@@ -2203,6 +2203,16 @@ fn test_ghpush() {
     let lines: alloc::vec::Vec<&str> = jr.lines().filter(|l| !l.starts_with('#')).collect();
     assert!(lines.len() == 13 && lines[0].starts_with("1 incepe ") && lines[1].starts_with("1 gata ") && lines[2].starts_with("2 refuz "), "test: live: jurnalul: {}", jr);
     info!("test: live: sesiunea {} prin hub: 4 rulate, 5 refuzate, ecoul exact, jurnalul pe stick OK", sum.session);
+    // P6-129 (C-159 step 3, part 1): the heartbeat — the last `puls.json` in the hub = the one on the stick, and it says
+    // the session ended (`gata`), the number awaited next and what ran.
+    let pl = live_take("puls.json");
+    let pv = cyber_json::parse(&pl).unwrap_or_else(|_| panic!("test: live: puls.json nu e JSON: {}", pl));
+    let pf = |k: &str| -> alloc::string::String { pv.get(k).and_then(cyber_json::Value::as_str).unwrap_or("").into() };
+    let pi = |k: &str| pv.get(k).and_then(cyber_json::Value::as_i64).unwrap_or(-1);
+    let on_stick = alloc::string::String::from_utf8(fs::read_all(&alloc::format!("/etc/hub/live/{}/puls.json", sum.session)).unwrap_or_default()).unwrap_or_default();
+    assert!(pl == on_stick, "test: live: puls.json din hub difera de cel de pe stick");
+    assert!(pf("stare").starts_with("incheiata: gata") && pf("sesiune") == sum.session && pi("astept_nr") == 10 && pi("rulate") == 4 && pi("refuzate") == 5 && pi("puls") >= 1, "test: live: puls: {}", pl);
+    info!("test: live: puls.json in hub (pulsul {}, {}) OK", pi("puls"), pf("stare"));
     // P6-118 (C-161 point 1): a second session with `permite-live-placa` (and without `permite-test-placa`): `gpu lant`
     // gets its DA question answered at once (never DA), `test-placa` with a wrong form and without Adrian's key is
     // `REFUZAT` in `iesire` (code 1, nothing on the board), a second correct `test-placa` is refused by the gate.

@@ -345,6 +345,8 @@ pub const POLL_MS: u64 = 2_500;
 pub const MAX_MINUTES: u64 = 120;
 /// Tries for sending one answer before it stays only on the stick.
 const SEND_TRIES: u32 = 3;
+/// P6-129 (C-159 step 3, part 1): how often the session writes `live/<sesiune>/puls.json` (the only file the OS rewrites).
+pub const PULS_MS: u64 = 60_000;
 
 /// One live session at a time.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -394,7 +396,7 @@ pub fn command(args: &[&str]) {
         super::emit(&format!("folosire: live <minute>   (1-{}; canalul viu prin hub: comenzile din live/<sesiune>/ pe ramura os/live, docs/LIVE.md)\n", MAX_MINUTES));
         return;
     };
-    match run(minutes, POLL_MS, true) {
+    match run(minutes, POLL_MS, PULS_MS, true) {
         Ok(s) => super::emit(&s.line()),
         Err(why) => super::emit(&format!("live: {}\n", why)),
     }
@@ -413,7 +415,7 @@ pub fn auto_line(line: &str) -> String {
     let Some(minutes) = parse_minutes(&words) else {
         return format!("REFUZAT: forma corecta: `live <minute>` (1-{})\n", MAX_MINUTES);
     };
-    match run(minutes, POLL_MS, false) {
+    match run(minutes, POLL_MS, PULS_MS, false) {
         Ok(s) => s.line(),
         Err(why) => format!("live: {}\n", why),
     }
@@ -422,7 +424,7 @@ pub fn auto_line(line: &str) -> String {
 /// QEMU (`ghpush`): a whole session against the test server, asking every second.
 #[cfg(feature = "test-ghpush")]
 pub fn test_session(minutes: u64) -> Result<Summary, String> {
-    run(minutes, 1_000, false)
+    run(minutes, 1_000, 5_000, false)
 }
 
 fn dir() -> &'static str {
@@ -681,18 +683,18 @@ fn session_name(base: &str) -> String {
 }
 
 /// A whole session. `by_hand` = Esc stops it.
-fn run(minutes: u64, poll_ms: u64, by_hand: bool) -> Result<Summary, String> {
+fn run(minutes: u64, poll_ms: u64, puls_ms: u64, by_hand: bool) -> Result<Summary, String> {
     if ACTIVE.swap(true, Ordering::Acquire) {
         return Err(String::from("o sesiune vie ruleaza deja"));
     }
     BOARD_TAKEN.store(false, Ordering::SeqCst);
     BY_HAND.store(by_hand, Ordering::Release);
-    let r = session(minutes, poll_ms, by_hand);
+    let r = session(minutes, poll_ms, puls_ms, by_hand);
     ACTIVE.store(false, Ordering::Release);
     r
 }
 
-fn session(minutes: u64, poll_ms: u64, by_hand: bool) -> Result<Summary, String> {
+fn session(minutes: u64, poll_ms: u64, puls_ms: u64, by_hand: bool) -> Result<Summary, String> {
     let d = dir();
     let key = fs::read_all(&format!("{}/live.cheie", d)).unwrap_or_default();
     if key.len() < 32 {
@@ -726,6 +728,7 @@ fn session(minutes: u64, poll_ms: u64, by_hand: bool) -> Result<Summary, String>
         ("pornit", cyber_json::Value::str(&auto::now_text())),
         ("minute", cyber_json::Value::int(minutes as i64)),
         ("intrebare_ms", cyber_json::Value::int(poll_ms as i64)),
+        ("puls_ms", cyber_json::Value::int(puls_ms as i64)),
         ("placa", cyber_json::Value::Bool(board_key)),
         ("sistem", cyber_json::Value::str(&system_text())),
     ])
@@ -753,6 +756,8 @@ fn session(minutes: u64, poll_ms: u64, by_hand: bool) -> Result<Summary, String>
     let list_path = format!("{}/lista.txt", local);
     let mut errors = 0u32;
     let mut terminal = Terminal::default();
+    let mut puls = Puls { local: format!("{}/puls.json", local), remote: format!("{}/puls.json", remote), every_ms: puls_ms, ..Puls::default() };
+    puls.at = last;
     'outer: loop {
         if by_hand && crate::drivers::keyboard::take_escape() {
             sum.end = String::from("oprita cu Esc");
@@ -764,6 +769,7 @@ fn session(minutes: u64, poll_ms: u64, by_hand: bool) -> Result<Summary, String>
             break;
         }
         auto::keep_alive(idle_ms.saturating_sub(now - last) + 5 * 60_000);
+        puls.maybe(&s, &gate, &sum, now);
         match spawn("/bin/gh-ia", &["gh-ia", "--live-dosar", &remote, &list_path]) {
             0 => {
                 errors = 0;
@@ -807,9 +813,67 @@ fn session(minutes: u64, poll_ms: u64, by_hand: bool) -> Result<Summary, String>
         }
     }
     terminal.close();
+    puls.send(&s, &gate, &sum, Some(&sum.end));
     journal(&journal_path, &format!("# sfarsit {}: {}", auto::now_text(), sum.end));
     auto::say(&sum.line());
     Ok(sum)
+}
+
+/// P6-129 (C-159 step 3, part 1): the heartbeat of a session — `live/<sesiune>/puls.json`, rewritten every `PULS_MS`
+/// (60 s) while the session lives and once more at its end (`stare: incheiata: …`). It is the only file the OS rewrites
+/// (`gh-trimite --live` replaces only `…/puls.json`). One try per beat: a beat that does not leave is not repeated (the
+/// next one comes in a minute); the copy on the stick is always the latest.
+#[derive(Default)]
+struct Puls {
+    local: String,
+    remote: String,
+    every_ms: u64,
+    at: u64,
+    count: u32,
+    unsent: u32,
+}
+
+impl Puls {
+    fn maybe(&mut self, s: &str, gate: &Gate, sum: &Summary, now: u64) {
+        if self.every_ms > 0 && now.saturating_sub(self.at) >= self.every_ms {
+            self.send(s, gate, sum, None);
+        }
+    }
+
+    fn send(&mut self, s: &str, gate: &Gate, sum: &Summary, end: Option<&str>) {
+        self.count += 1;
+        let text = puls_text(s, self.count, gate.next, sum, end);
+        let ok = write_new(&self.local, text.as_bytes()) && spawn("/bin/gh-trimite", &["gh-trimite", "--live", &self.local, &self.remote]) == 0;
+        if !ok {
+            self.unsent += 1;
+            if self.unsent == 1 || self.unsent % 10 == 0 {
+                auto::say(&format!("live: pulsul {} nu a plecat ({} netrimise); mai incerc la urmatorul\n", self.count, self.unsent));
+            }
+        }
+        self.at = crate::time::uptime_ms().unwrap_or(0);
+    }
+}
+
+/// The text of `puls.json` (P6-129): which beat, the time, the number the OS waits for, what ran, and the system line.
+pub fn puls_text(s: &str, count: u32, next: u32, sum: &Summary, end: Option<&str>) -> String {
+    let state = match end {
+        Some(why) => format!("incheiata: {}", why),
+        None => String::from("merge"),
+    };
+    let mut out = String::new();
+    cyber_json::Value::object([
+        ("forma", cyber_json::Value::str(FORM)),
+        ("sesiune", cyber_json::Value::str(s)),
+        ("puls", cyber_json::Value::int(count as i64)),
+        ("ora", cyber_json::Value::str(&auto::now_text())),
+        ("stare", cyber_json::Value::str(&state)),
+        ("astept_nr", cyber_json::Value::int(next as i64)),
+        ("rulate", cyber_json::Value::int(sum.ran as i64)),
+        ("refuzate", cyber_json::Value::int(sum.refused as i64)),
+        ("sistem", cyber_json::Value::str(&system_text())),
+    ])
+    .write_to(&mut out);
+    out
 }
 
 /// One command file (number `want`): the gate, the journal BEFORE it runs, the run, the answer. `true` = `gata`.
