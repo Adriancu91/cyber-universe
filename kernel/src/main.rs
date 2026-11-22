@@ -2260,7 +2260,10 @@ fn test_ghpush() {
     assert!(s(&r6, "stare") == "ok", "test: live terminal: taste: {:?}", r6);
     let r7 = take3("r-0007.json");
     let e7 = s(&r7, "iesire");
-    assert!(e7.contains("cyber> uptime") && e7.contains("pornit de ") && e7.contains("REFUZAT: prin taste") && s(&r7, "ecran") == e7.trim_end_matches('\n'), "test: live terminal: ecranul: {:?}", e7);
+    let (term7, real7) = e7.split_once(shell::live::SCREEN_HEAD).unwrap_or(("", ""));
+    assert!(term7.starts_with(shell::live::TERMINAL_HEAD) && term7.contains("cyber> uptime") && term7.contains("pornit de ") && term7.contains("REFUZAT: prin taste"), "test: live terminal: ecranul: {:?}", e7);
+    // The real screen (the console, where the session was started): the lines the live loop printed, not the terminal's.
+    assert!(real7.contains("live: c-0006 tasta: ctrl+c esc sus") && !real7.contains("cyber> uptime") && s(&r7, "ecran").contains("live: c-0007 ecran"), "test: live terminal: ecranul adevarat: {:?} / {:?}", real7, s(&r7, "ecran"));
     info!("test: live: terminalul viu (ecran, scrie + tasta enter, placa refuzata prin taste, alt+tab refuzat) OK");
     // P6-127: `captura` = a valid gray PNG of the screen, in the hub next to the answers.
     let r8 = take3("r-0008.json");

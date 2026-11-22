@@ -484,10 +484,19 @@ pub fn system_text() -> String {
     )
 }
 
-/// The text of the screen after a command, before the live terminal is open: the last lines of the system log.
-fn log_text() -> String {
-    let lines = crate::log::recent();
-    lines[lines.len().saturating_sub(25)..].join("\n")
+/// The field `ecran` of every answer: the text on the real screen (the console, row by row); while the desktop owns the
+/// screen, a note that only `captura` shows it; without a screen, the last lines of the system log.
+fn real_screen() -> String {
+    if crate::ui::running() || !crate::gfx::console::text_on_screen() {
+        return String::from("(desktopul are ecranul: imaginea lui = fel captura)");
+    }
+    match crate::gfx::console::screen_text() {
+        Some(t) => t,
+        None => {
+            let lines = crate::log::recent();
+            lines[lines.len().saturating_sub(25)..].join("\n")
+        }
+    }
 }
 
 /// How long the live terminal is watched after keys are sent: until it has been quiet for `QUIET_MS`, at most `WAIT_MS`.
@@ -496,6 +505,9 @@ const WAIT_MS: u64 = 10_000;
 /// Lines of the live terminal kept for `ecran` (and their longest length).
 const SCREEN_LINES: usize = 40;
 const SCREEN_COLS: usize = 200;
+/// The two parts of the answer to `ecran`.
+pub const TERMINAL_HEAD: &str = "== terminalul viu (scrie / tasta) ==";
+pub const SCREEN_HEAD: &str = "== ecranul adevarat ==";
 
 /// P6-111 (C-159 step 2, part 1): the live session's own terminal — a whole shell on its own thread (`term::open_live`),
 /// fed by `scrie` / `tasta`, whose text `ecran` shows. Opened at the first of them; closed with the session.
@@ -610,11 +622,11 @@ impl Terminal {
         self.settle(id)
     }
 
-    /// `ecran`: the screen text now (what arrived meanwhile included).
+    /// `ecran`: the live terminal's text now (what arrived meanwhile included), then the real screen's text.
     fn look(&mut self) -> String {
         let id = self.ensure();
         self.settle(id);
-        format!("{}\n", self.screen())
+        format!("{}\n{}\n{}\n{}\n", TERMINAL_HEAD, self.screen(), SCREEN_HEAD, real_screen())
     }
 
     /// The session ended: the terminal closes, so its shell ends too.
@@ -842,7 +854,7 @@ fn one(key: &[u8], board_key: bool, raw: &str, want: u32, gate: &mut Gate, local
                 code: super::LAST_EXIT.load(Ordering::Relaxed),
                 ms: crate::time::uptime_ms().unwrap_or(0).saturating_sub(t0),
                 output,
-                screen: if terminal.id.is_some() { terminal.screen() } else { log_text() },
+                screen: real_screen(),
                 system: system_text(),
             };
             journal(journal_path, &format!("{} gata {} ms cod {}", want, o.ms, o.code));

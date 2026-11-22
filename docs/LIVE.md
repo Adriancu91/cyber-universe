@@ -51,8 +51,9 @@
 ```
 sau, la refuz: `"stare":"REFUZAT","motiv":"<de ce>"` (fără `cod`/`iesire`). `nr` e `null` dacă fișierul nu se putea citi.
 - `cod`: 0, sau codul de ieșire al programului pornit cu `run` (126 = programul nu pornește, 127 = comandă necunoscută).
-- `iesire`: tot ce a scris comanda (shell + programe). `ecran`: textul terminalului viu (ultimele 40 de rânduri), după ce
-  sesiunea l-a deschis (primul `scrie` / `tasta` / `ecran`); înainte, ultimele 25 de rânduri din jurnalul sistemului. `sistem`: versiunea, `/usb/VERSIUNE`, de cât timp merge, ora, memoria liberă, temperatura procesorului.
+- `iesire`: tot ce a scris comanda (shell + programe). `ecran` (P6-111, cerut la 16:15): **textul ecranului adevărat**, rând
+  cu rând (consola de text, cum o vede cine stă la monitor); cât desktopul are ecranul: `(desktopul are ecranul: imaginea lui =
+  fel captura)`; fără ecran: ultimele 25 de rânduri din jurnalul sistemului. `sistem`: versiunea, `/usb/VERSIUNE`, de cât timp merge, ora, memoria liberă, temperatura procesorului.
 - `fel: stare` → `iesire` = rândul `sistem`. `fel: gata` → `iesire` = „sesiunea se incheie (gata)”.
 **`ecou` e mereu fișierul primit, octet cu octet** — centrul de comandă îl compară cu ce a trimis.
 
@@ -93,7 +94,8 @@ sau, la refuz: `"stare":"REFUZAT","motiv":"<de ce>"` (fără `cod`/`iesire`). `n
   la poartă, cu motivul.
 - După taste, OS-ul citește ce a scris terminalul până tace 0,5 s (cel mult 10 s): asta e `iesire`. Ce vine mai târziu (o
   comandă lungă) apare la următorul `ecran`.
-- **`ecran`**: `iesire` = textul terminalului acum (ultimele 40 de rânduri, cel mult 200 de caractere pe rând).
+- **`ecran`**: `iesire` = două părți: `== terminalul viu (scrie / tasta) ==` + textul terminalului acum (ultimele 40 de rânduri,
+  cel mult 200 de caractere pe rând), apoi `== ecranul adevarat ==` + textul ecranului (ca în câmpul `ecran`).
 - **Placa video nu se atinge prin taste, niciodată:** shell-ul terminalului viu refuză orice rând care ar scrie în placă
   (aceeași listă ca la poartă: `gpu lant`, `test-placa`, `--gpu` …), cu sau fără `permite-live-placa`:
   `REFUZAT: prin taste nu ruleaza nimic ce scrie in placa video (doar ca `comanda`, cu cheile ei)`. La fel `live …`.

@@ -23,6 +23,9 @@ pub struct Console {
     cols: usize,
     rows: usize,
     pub color: u32,
+    /// P6-111/P6-127 (`ecran` of the live channel): the text now on the screen, one string per screen row (the last one
+    /// is the row of the cursor). Kept from `enable_shadow` on (it needs the heap).
+    text: Option<alloc::collections::VecDeque<alloc::string::String>>,
 }
 
 impl Console {
@@ -30,7 +33,7 @@ impl Console {
         fb.clear(BACKGROUND);
         let cols = (fb.width.saturating_sub(2 * MARGIN)) / CELL_W;
         let rows = (fb.height.saturating_sub(2 * MARGIN)) / CELL_H;
-        Self { fb, col: 0, row: 0, cols, rows, color: FOREGROUND }
+        Self { fb, col: 0, row: 0, cols, rows, color: FOREGROUND, text: None }
     }
 
     fn draw_char(&mut self, c: char) {
@@ -48,6 +51,12 @@ impl Console {
     }
 
     fn newline(&mut self) {
+        if let Some(t) = &mut self.text {
+            t.push_back(alloc::string::String::new());
+            while t.len() > self.rows.max(1) {
+                t.pop_front();
+            }
+        }
         self.col = 0;
         if self.row + 1 < self.rows {
             self.row += 1;
@@ -71,6 +80,9 @@ impl Console {
                 if self.col > 0 {
                     self.col -= 1;
                     self.draw_char(' ');
+                    if let Some(l) = self.text.as_mut().and_then(|t| t.back_mut()) {
+                        l.pop();
+                    }
                 }
             }
             _ => {
@@ -79,6 +91,9 @@ impl Console {
                 }
                 self.draw_char(c);
                 self.col += 1;
+                if let Some(l) = self.text.as_mut().and_then(|t| t.back_mut()) {
+                    l.push(c);
+                }
             }
         }
     }
@@ -124,6 +139,10 @@ pub fn enable_shadow() -> bool {
     with_console(|slot| match slot.as_mut() {
         Some(c) => {
             let used = MARGIN + (c.row + 1) * CELL_H;
+            // The rows written before this moment are not known as text: they stay empty in `screen_text`.
+            let mut t = alloc::collections::VecDeque::new();
+            t.resize(c.row + 1, alloc::string::String::new());
+            c.text = Some(t);
             c.fb.enable_shadow(used, BACKGROUND)
         }
         None => false,
@@ -157,8 +176,28 @@ pub fn clear() {
             c.fb.clear(BACKGROUND);
             c.col = 0;
             c.row = 0;
+            if let Some(t) = &mut c.text {
+                t.clear();
+                t.push_back(alloc::string::String::new());
+            }
         }
     });
+}
+
+/// The text now on the screen console, row by row (`None` before the heap or without a screen). While the window server
+/// owns the screen the console writes nothing (`text_on_screen`), so this is the text from before it started.
+pub fn screen_text() -> Option<alloc::string::String> {
+    with_console(|slot| {
+        let t = slot.as_ref()?.text.as_ref()?;
+        let mut out = alloc::string::String::new();
+        for (i, l) in t.iter().enumerate() {
+            if i > 0 {
+                out.push('\n');
+            }
+            out.push_str(l.trim_end());
+        }
+        Some(out)
+    })
 }
 
 /// P6-127 (`captura` of the live channel): the screen reduced `scale` times in each direction, in shades of gray — for
@@ -183,6 +222,11 @@ pub fn capture_gray(scale: usize) -> Option<(usize, usize, alloc::vec::Vec<u8>)>
         }
         Some((w, h, out))
     })
+}
+
+/// Whether the console's text is on the screen now (`false` while the window server owns it).
+pub fn text_on_screen() -> bool {
+    TEXT_ON_SCREEN.load(Ordering::Acquire)
 }
 
 /// Turns text output on the screen on or off (the window server turns it off while it draws).
