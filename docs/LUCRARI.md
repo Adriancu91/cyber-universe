@@ -29,7 +29,11 @@ raport 30
 repeta 0
 pas run kronos-calcul --cauta
 pas run kronos --profil --n 64 Buna ziua
+pas telefon
 ```
+
+`pas telefon` (P6-144, de la os-359) urcă la fiecare trecere prin listă starea pe telefon în hub (`live/telefon/stare.md` +
+`ecran.png`, ramura `os/live`; vezi `docs/LIVE.md`, „Starea pe telefon”).
 
 O fișă cu un pas nepermis (de exemplu `gpu lant`, `test-placa`, altă `lucrare`, `live`) e refuzată întreagă: nimic nu rulează.
 

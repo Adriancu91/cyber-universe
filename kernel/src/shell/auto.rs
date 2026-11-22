@@ -199,6 +199,7 @@ pub fn allowed(line: &str) -> Result<(), &'static str> {
     match words.as_slice() {
         [] => Err("rand gol"),
         ["hw" | "lspci" | "lsusb" | "net" | "mem" | "uptime" | "raport" | "analiza", ..] => Ok(()),
+        ["telefon"] => Ok(()), // P6-144 (C-158 point 9): the state + the screen sent to the hub (reads only)
         ["log" | "ls" | "cat" | "compara", ..] => Ok(()),
         ["timp", "timp" | "exit", ..] => Err("timp masoara o singura comanda obisnuita"),
         ["timp", rest @ ..] if !rest.is_empty() => allowed(&rest.join(" ")),

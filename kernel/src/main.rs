@@ -2223,6 +2223,26 @@ fn test_ghpush() {
     assert!(pl == on_stick, "test: live: puls.json din hub difera de cel de pe stick");
     assert!(pf("stare").starts_with("incheiata: gata") && pf("sesiune") == sum.session && pi("astept_nr") == 10 && pi("rulate") == 4 && pi("refuzate") == 5 && pi("puls") >= 1, "test: live: puls: {}", pl);
     info!("test: live: puls.json in hub (pulsul {}, {}) OK", pi("puls"), pf("stare"));
+    // P6-144 (C-158 point 9): the phone state — `telefon` twice (the second rewrites both files in the hub), then both
+    // read back from `live/telefon/`: the summary = the one on the stick, the screen a PNG.
+    let t0p = crate::time::uptime_ms().unwrap_or(0);
+    let o1 = shell::live::phone();
+    let o2 = shell::live::phone();
+    assert!(o1.contains("stare.md") && o1.contains("trimis in hub") && o2.contains("trimis in hub") && !o2.contains("nu a plecat"), "test: telefon: {} / {}", o1, o2);
+    let get = |name: &str| -> alloc::vec::Vec<u8> {
+        let remote = alloc::format!("{}/{}", shell::live::PHONE_REMOTE, name);
+        let local = alloc::format!("/etc/telefon-{}", name);
+        let id = proc::spawn_path("/bin/gh-ia", &["gh-ia", "--live-ia", &remote, &local]).expect("test: /bin/gh-ia");
+        assert!(proc::wait_child(id) == 0, "test: telefon: {} lipseste din hub", remote);
+        fs::read_all(&local).unwrap_or_default()
+    };
+    let md = get("stare.md");
+    let md_stick = fs::read_all("/etc/hub/telefon/stare.md").unwrap_or_default();
+    let md_text = alloc::string::String::from_utf8_lossy(&md).into_owned();
+    assert!(md == md_stick && md_text.contains("starea pe telefon") && md_text.contains("teste pe placa in aceasta pornire"), "test: telefon: stare.md: {}", md_text);
+    let png = get("ecran.png");
+    assert!(png.starts_with(b"\x89PNG") || md_text.contains("fara ecran"), "test: telefon: ecran.png nu e PNG ({} octeti)", png.len());
+    info!("test: telefon: stare.md ({} octeti) si ecran.png ({} octeti) in hub, rescrise a doua oara OK in {} ms", md.len(), png.len(), crate::time::uptime_ms().unwrap_or(0).saturating_sub(t0p));
     // P6-118 (C-161 point 1): a second session with `permite-live-placa` (and without `permite-test-placa`): `gpu lant`
     // gets its DA question answered at once (never DA), `test-placa` with a wrong form and without Adrian's key is
     // `REFUZAT` in `iesire` (code 1, nothing on the board), a second correct `test-placa` is refused by the gate.

@@ -209,6 +209,19 @@ sau, la refuz: `"stare":"REFUZAT","motiv":"<de ce>"` (fără `cod`/`iesire`). `n
 - Proba în QEMU: scenariul `tco-viu` (q35, reset așteptat): armat + bucla merge 12 s = nicio repornire; sfârșitul sesiunii =
   ceasul oprit, 10 s fără repornire; armat din nou și bucla oprită (comandă blocată) = repornire.
 
+## Starea pe telefon (P6-144, C-158 punctul 9, de la os-359)
+
+Comanda `telefon` (doar citiri; pe lista albă: merge în `auto\teste.txt`, ca `pas telefon` într-o lucrare lungă și prin canalul
+viu) scrie pe stick `hub\telefon\stare.md` + `hub\telefon\ecran.png` și le urcă în hub, ramura **`os/live`**, mereu în aceleași
+două fișiere (rescrise de fiecare dată, ca `puls.json`):
+
+- `live/telefon/stare.md` — ora, sistemul (versiunea, cyber-gpu, memoria, temperatura procesorului), câte teste pe placă au fost în
+  pornire, dacă e pornită o sesiune vie, ultimul tablou de bord al plăcii, ultimele 15 rânduri din jurnalul sistemului;
+- `live/telefon/ecran.png` — ecranul în tonuri de gri, micșorat de 4 ori (ca `captura`).
+
+Pe telefon: GitHub → `Adriancu91/Cyber-hub` → ramura `os/live` → `live/telefon/stare.md`. Dacă hub-ul nu răspunde, fișierele rămân
+pe stick și ieșirea spune „nu a plecat în hub” (cod 1).
+
 ## Ce rămâne păzit de nucleu (neschimbat)
 Fișierele secrete nu se arată; scrieri pe disc doar pe partiții `cyber.rw`; placa video doar cu `permite-live-placa`
 (o pune doar centrul de comandă, după „da”-ul lui Adrian).

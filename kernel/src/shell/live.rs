@@ -1589,6 +1589,82 @@ fn capture(nr: u32, local: &str, remote: &str) -> String {
     format!("captura: {} ({} x {} pixeli, tonuri de gri, {} octeti; ecranul micsorat de {} ori)\n", name, w, h, png.len(), CAPTURE_SCALE)
 }
 
+/// P6-144 (C-158 point 9, tool 9): the hub folder of the phone state (on the branch `os/live`, rewritten every time).
+pub const PHONE_REMOTE: &str = "live/telefon";
+/// Lines of the system log in the phone state.
+const PHONE_LOG_LINES: usize = 15;
+
+/// P6-144: the phone state's text (Markdown, short enough to read on a phone).
+pub fn phone_text(shot: &str) -> String {
+    let mut t = String::from("# Cyber Universe OS — starea pe telefon\n\n");
+    t.push_str(&format!("- **ora:** {}\n", auto::now_text()));
+    t.push_str(&format!("- **sistemul:** {}\n", system_text()));
+    t.push_str(&format!(
+        "- **teste pe placa in aceasta pornire:** {} (cel mult 4)\n",
+        super::ciclu::board_runs()
+    ));
+    t.push_str(&format!("- **sesiunea vie:** {}\n", if in_session() { "pornita" } else { "nu" }));
+    t.push_str(&format!("- **ecranul:** {}\n", shot));
+    t.push_str("\n## Tabloul de bord al placii (ultima citire din aceasta pornire)\n\n");
+    for l in crate::drivers::gpu_tur::dashboard_status() {
+        t.push_str(&format!("    {}\n", l));
+    }
+    t.push_str(&format!("\n## Ultimele {} randuri din jurnalul sistemului\n\n", PHONE_LOG_LINES));
+    let lines = crate::log::recent();
+    for l in &lines[lines.len().saturating_sub(PHONE_LOG_LINES)..] {
+        t.push_str(&format!("    {}\n", l));
+    }
+    t
+}
+
+/// P6-144 (C-158 point 9): `telefon` — the summary (`stare.md`) and the screen (`ecran.png`, gray, 4 times smaller) written
+/// on the stick (`<hub>/telefon/`) and sent to the hub under `live/telefon/` (the same two files rewritten each time).
+/// Reads only. In the automatic list and in a long job's steps (`pas telefon`), so the state reaches the phone by itself.
+pub fn phone() -> String {
+    let local = format!("{}/telefon", dir());
+    if fs::kind(&local).is_err() && fs::create(&local, Kind::Dir).is_err() {
+        super::LAST_EXIT.store(1, Ordering::Relaxed);
+        return format!("telefon: nu pot face dosarul {}\n", local);
+    }
+    let mut out = String::new();
+    let mut bad = false;
+    let shot = match crate::gfx::console::capture_gray(CAPTURE_SCALE) {
+        None => String::from("fara ecran (nicio imagine de la pornire)"),
+        Some((w, h, gray)) => {
+            let png = crate::gfx::png::gray(w, h, &gray);
+            let path = format!("{}/ecran.png", local);
+            if png.len() > CAPTURE_MAX {
+                format!("imaginea are {} octeti (cel mult {}): netrimisa", png.len(), CAPTURE_MAX)
+            } else if !write_new(&path, &png) {
+                bad = true;
+                format!("nu pot scrie {}", path)
+            } else if !send(&path, &format!("{}/ecran.png", PHONE_REMOTE)) {
+                bad = true;
+                format!("ecran.png nu a plecat in hub (ramane pe stick: {})", path)
+            } else {
+                out.push_str(&format!("telefon: ecran.png ({} x {} pixeli, {} octeti) trimis in hub: {}/ecran.png\n", w, h, png.len(), PHONE_REMOTE));
+                format!("ecran.png ({} x {} pixeli, tonuri de gri, de la {})", w, h, auto::now_text())
+            }
+        }
+    };
+    let text = phone_text(&shot);
+    let path = format!("{}/stare.md", local);
+    if !write_new(&path, text.as_bytes()) {
+        super::LAST_EXIT.store(1, Ordering::Relaxed);
+        return format!("{}telefon: nu pot scrie {}\n", out, path);
+    }
+    if send(&path, &format!("{}/stare.md", PHONE_REMOTE)) {
+        out.push_str(&format!("telefon: stare.md ({} octeti) trimis in hub: {}/stare.md (ramura os/live)\n", text.len(), PHONE_REMOTE));
+    } else {
+        bad = true;
+        out.push_str(&format!("telefon: stare.md nu a plecat in hub (ramane pe stick: {})\n", path));
+    }
+    if bad {
+        super::LAST_EXIT.store(1, Ordering::Relaxed);
+    }
+    out
+}
+
 /// QEMU test (P6-113, C-159 note of 21 Nov 13:00), with the live key already on the test disk at `<dir>/live.cheie`:
 /// `cat` refuses it, a program cannot see it, and an answer whose text carries the key (raw or as hex) leaves without it.
 #[cfg(feature = "test-ghpush")]

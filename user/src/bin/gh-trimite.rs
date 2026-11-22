@@ -70,8 +70,9 @@ fn main() -> i64 {
         let r = load(file).and_then(|data| {
             let token = read_token(&c).ok_or_else(|| format!("lipseste tokenul GitHub (un rand in {})", c.token))?;
             ensure_branch(&c, &token, &c.hub, "os/live")?;
-            // P6-129 (C-159 step 3): the heartbeat `live/<sesiune>/puls.json` is the only file the OS rewrites.
-            let only_new = !dest.ends_with("/puls.json");
+            // P6-129 (C-159 step 3): the heartbeat `live/<sesiune>/puls.json` is rewritten; P6-144 (C-158 point 9): so are
+            // the two files of the phone state, `live/telefon/stare.md` and `live/telefon/ecran.png`.
+            let only_new = !(dest.ends_with("/puls.json") || dest == "live/telefon/stare.md" || dest == "live/telefon/ecran.png");
             put_on(&c, &token, &c.hub, dest, &data, &message, Some("os/live"), only_new)
         });
         return match r {

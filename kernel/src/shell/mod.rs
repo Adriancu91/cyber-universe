@@ -231,6 +231,7 @@ fn dispatch(line: &str) -> bool {
         "uptime" => uptime(),
         "remote" => remote(args),
         "live" => live::command(args), // C-159 step 1 (P6-108, P6-109)
+        "telefon" => out!("{}", live::phone()), // C-158 point 9 (P6-144): the state on the phone
         "lucrare" => lucrare::command(args), // C-158 point 8 (P6-140): long jobs
         "reboot" => reboot(args),
         "porneste" => porneste(args),
@@ -333,6 +334,7 @@ fn help() {
     out!("  hub opreste      opreste bucla `hub asculta` pornita la pornire (/usb/hub/asculta)\n");
     out!("  live <minute>    canalul viu (C-159): comenzi semnate din hub, live/<sesiune>/ pe ramura os/live; cere /usb/hub/live.cheie\n");
     out!("  lucrare <nume>   lucrare lunga din /usb/lucrari/<nume>.txt (ora, rapoarte, oprire, reluare); lucrare stare | opreste <nume>\n");
+    out!("  telefon          starea pe telefon (C-158 p.9): rezumat + ecranul urcate in hub, live/telefon/ (ramura os/live)\n");
     out!("  trimite          rapoartele noi din /usb/raport -> hub (rezultate/os-automat/<data>/), doar cu /usb/github.token\n");
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
     out!("  log --avertismente [n]  doar avertismentele si erorile; log --sumar = cate randuri pe nivel si pe modul\n");
