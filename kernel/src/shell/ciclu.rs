@@ -157,7 +157,7 @@ pub fn target(command: &str) -> Result<(String, String), &'static str> {
 
 /// P6-96: `test-placa [--i9 …]` of the automatic list -> the I9.
 pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
-    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou`, `--lipit`, `--simplu`, `--ln-nou` sau `--ln-vechi`, apoi `--k651`, apoi `--argmax-placa`, apoi `--dieta2`, apoi `--p8` la sfarsit (in aceasta ordine; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`; `--k651` nu merge cu `--lipit` sau `--simplu`)";
+    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi` sau `--sferturi`, apoi `--k651`, apoi `--argmax-placa`, apoi `--dieta2`, apoi `--p8` la sfarsit (in aceasta ordine; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--sferturi`; `--k651` nu merge cu `--lipit` sau `--simplu`)";
     let words: Vec<&str> = command.split_whitespace().collect();
     let Some(("test-placa", rest)) = words.split_first().map(|(a, b)| (*a, b)) else { return None };
     let (i9, flags) = match rest {
@@ -172,6 +172,7 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
     // P6-114 (C-155 point 2): `--ln-nou` = the glued list with the old LayerNorm, then with the new one, compared.
     // P6-120 (center's proposal 21 Nov 19:25): without any of them, the new LayerNorm alone (`FusedLn`); `--ln-vechi` =
     // the glued list with the old LayerNorm alone (as in os-329 … os-335).
+    // P6-124 (C-155 point 4): `--sferturi` = the glued list, then the glued list on quarters (`Fused32`), compared.
     // P6-122 (C-158 point 3): `--k651` = Kronos #651 instead of #513, with the glued lists only (the plain one does not
     // fit #651's pushbuffer area and records' stride: 388 launches).
     // P6-123 (C-155 point 3): `--argmax-placa` = the argmax program after the copy of the logits, checked (the trial).
@@ -180,18 +181,19 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
     // Each at most once, in this order (the I9 text carries them as suffixes, read back in the same order).
     let mut out = String::from(i9);
     let mut next = 0;
-    let all = [FLR_PROBA, TABLOU, LIPIT, SIMPLU, LN_NOU, LN_VECHI, K651_OPT, ARGMAX_PLACA, DIETA2, P8];
+    let all = [FLR_PROBA, TABLOU, LIPIT, SIMPLU, LN_NOU, LN_VECHI, SFERTURI, K651_OPT, ARGMAX_PLACA, DIETA2, P8];
     for f in flags {
         let Some(at) = all.iter().position(|x| x.trim() == *f) else { return Some(Err(FORM)) };
         if at < next {
             return Some(Err(FORM));
         }
-        if at == 6 && (out.ends_with(LIPIT) || out.ends_with(SIMPLU)) {
+        if at == 7 && (out.ends_with(LIPIT) || out.ends_with(SIMPLU)) {
             return Some(Err(FORM));
         }
         out.push_str(all[at]);
-        // `--lipit`, `--simplu`, `--ln-nou` and `--ln-vechi` exclude each other (each picks the lists #513 runs with).
-        next = if (2..6).contains(&at) { 6 } else { at + 1 };
+        // `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi` and `--sferturi` exclude each other (each picks the lists #513
+        // runs with).
+        next = if (2..7).contains(&at) { 7 } else { at + 1 };
     }
     Some(Ok(out))
 }
@@ -504,6 +506,11 @@ fn diet_block(path: &str, journal: &str, text: &str) -> String {
     // P6-120 (cyber-gpu note C-157_P2d, point 1): the print against the reference of the same kind of LayerNorm (the
     // last run's list: 3 = the old one then the new one, 4 = the new one alone).
     let reference = match v(crate::drivers::gpu_i14::KT_LIST) {
+        // P6-124: 5 = the glued list then quarters; quarters have no reference print yet (this is the first).
+        Some(5) => {
+            let last = if text.contains("kt rularile:") { "ultima rulare = " } else { "" };
+            format!("amprenta fata de referinta: {}lista lipita pe sferturi (lipita-32): fara referinta inca (aceasta e prima; abaterea fata de lista lipita e in randul kt sferturi)\n", last)
+        }
         Some(k) => {
             let (what, want) = if k == 3 || k == 4 { ("LayerNorm nou", REF_PRINT_LN_NEW) } else { ("LayerNorm vechi", REF_PRINT_LN_OLD) };
             let last = if text.contains("kt rularile:") { "ultima rulare = " } else { "" };
@@ -560,6 +567,10 @@ pub const LN_NOU: &str = " --ln-nou";
 /// P6-120: suffix of the I9 text when the old LayerNorm alone is asked (`test-placa … --ln-vechi`, as in os-329 … os-335).
 pub const LN_VECHI: &str = " --ln-vechi";
 
+/// P6-124 (C-155 point 4): suffix of the I9 text when the race on quarters is asked (`test-placa … --sferturi`, in the
+/// place of the other list choices).
+pub const SFERTURI: &str = " --sferturi";
+
 /// P6-119 (C-157 point 3): suffix of the I9 text when the second diet is asked (`test-placa … --dieta2`, before `--p8`).
 pub const DIETA2: &str = " --dieta2";
 
@@ -587,6 +598,10 @@ pub fn board_test(i9: &str) -> (String, String) {
         None => (i9, false),
     };
     let (i9, k651) = match i9.strip_suffix(K651_OPT) {
+        Some(x) => (x, true),
+        None => (i9, false),
+    };
+    let (i9, quarters) = match i9.strip_suffix(SFERTURI) {
         Some(x) => (x, true),
         None => (i9, false),
     };
@@ -660,7 +675,9 @@ pub fn board_test(i9: &str) -> (String, String) {
     // P6-120 (center's proposal 21 Nov 19:25): the glued list with the old LayerNorm alone only with `--ln-vechi`;
     // without any list option, the new LayerNorm alone (it passed on the board in os-331 and os-332).
     crate::drivers::gpu_tur::FUSED_ONLY_IN_CYCLE.store(ln_old, core::sync::atomic::Ordering::SeqCst);
-    crate::drivers::gpu_tur::LN_ONLY_IN_CYCLE.store(!fused && !plain && !ln_new && !ln_old, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::LN_ONLY_IN_CYCLE.store(!fused && !plain && !ln_new && !ln_old && !quarters, core::sync::atomic::Ordering::SeqCst);
+    // P6-124 (C-155 point 4): the race on quarters only when the list asked for it, only for this chain's model.
+    crate::drivers::gpu_tur::QUARTERS_IN_CYCLE.store(quarters, core::sync::atomic::Ordering::SeqCst);
     // P6-114 (C-155 point 2): the new LayerNorm only when the list asked for it, only for this chain's #513.
     crate::drivers::gpu_tur::LN_NEW_IN_CYCLE.store(ln_new, core::sync::atomic::Ordering::SeqCst);
     // P6-117 (C-161 point 2): P8 only when the list asked for it, only after this chain's #513 texts.
@@ -678,7 +695,9 @@ pub fn board_test(i9: &str) -> (String, String) {
     if p8 {
         text.push_str("\n(P8, primul calcul cu circuitele speciale: cerut de lista (--p8); dupa textele lui #513, programul mma16_f16 de 6 ori cu 6 seturi fixe, judecat pe procesor cu toleranta scrisa; trece = 6 seturi in toleranta si identitate 256/256 exacte)\n");
     }
-    if ln_new {
+    if quarters {
+        text.push_str("\n(cursa inmultirilor pe sferturi: ceruta de lista (--sferturi); #513 ruleaza de doua ori pe acelasi text: intai lista lipita (LayerNorm vechi, ca in os-329), apoi lista lipita pe sferturi (programe noi q8_fused32 si q8_matvec32, aceleasi 88 de lansari si cbuf-uri); corect = aceleasi simboluri si abaterea sub 1e-4; un fel de lansare trece pe sferturi doar daca e mai rapid cu cel putin 50 la mie)\n");
+    } else if ln_new {
         text.push_str("\n(LayerNorm nou: cerut de lista (--ln-nou); #513 ruleaza de doua ori pe acelasi text cu lista lipita: intai cu LayerNorm vechi, apoi cu layernorm256, comparate: aceleasi simboluri si abaterea sub 1e-4)\n");
     } else if fused {
         text.push_str("\n(P3, lista lipita: cerut de lista; #513 ruleaza de doua ori pe acelasi text: intai lista simpla, apoi cea lipita, comparate bit cu bit)\n");
@@ -749,6 +768,7 @@ pub fn board_test(i9: &str) -> (String, String) {
     crate::drivers::gpu_tur::FUSED_ONLY_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::LN_NEW_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::LN_ONLY_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::QUARTERS_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::P8_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::DIET2_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::ARGMAX_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
@@ -966,6 +986,15 @@ pub fn self_test() {
     assert!(board_command("test-placa --argmax-placa --k651").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --dieta2 --argmax-placa").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --argmax-placa --argmax-placa").is_some_and(|r| r.is_err()));
+    // P6-124: `--sferturi` in the place of the list choices, alone among them; before `--k651`.
+    assert!(board_command("test-placa --sferturi") == Some(Ok(String::from("c135 --sferturi"))));
+    assert!(board_command("test-placa --tablou --sferturi --k651 --argmax-placa --dieta2 --p8") == Some(Ok(String::from("c135 --tablou --sferturi --k651 --argmax-placa --dieta2 --p8"))));
+    assert!(board_command("test-placa --ln-nou --sferturi").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --sferturi --ln-vechi").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --sferturi --lipit").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --k651 --sferturi").is_some_and(|r| r.is_err()));
+    let d = diet_block("/x", &jl(5, 0x1234_5678), "kronos --gpu: kt rularile: 2 rulari\n");
+    assert!(d.contains("ultima rulare = lista lipita pe sferturi (lipita-32): fara referinta inca"), "test: amprenta sferturi: {}", d);
     // P6-119: `--dieta2` after the list choice, before `--p8`.
     assert!(board_command("test-placa --dieta2") == Some(Ok(String::from("c135 --dieta2"))));
     assert!(board_command("test-placa --ln-nou --dieta2 --p8") == Some(Ok(String::from("c135 --ln-nou --dieta2 --p8"))));

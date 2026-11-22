@@ -389,6 +389,9 @@ impl SimGpu {
             cp.register_program_with_needs(nvidia_ga104::q8_fused::Q8_FUSED, c::q8_fused_on_cpu, c::Q8_FUSED_NEEDS);
             // P6-114 (C-155 point 2): the new LayerNorm (256 threads, shfl + barrier).
             cp.register_program_with_needs(nvidia_ga104::layernorm256::LAYERNORM256, c::layernorm256_on_cpu, c::LAYERNORM256_NEEDS);
+            // P6-124 (C-155 point 4): the products on quarters (`q8_fused32`, `q8_matvec32`; 32 threads, 128 B shared).
+            cp.register_program_with_needs(nvidia_ga104::q8_fused32::Q8_FUSED32, c::q8_fused32_on_cpu, c::Q8_FUSED32_NEEDS);
+            cp.register_program_with_needs(nvidia_ga104::q8_matvec32::Q8_MATVEC32, c::q8_matvec32_on_cpu, c::Q8_MATVEC32_NEEDS);
             // P6-117 (C-161 point 2): P8's tensor-core program (`mma16_f16`).
             cp.register_program_with_needs(nvidia_ga104::mma16::MMA16_F16, c::mma16_f16_on_cpu, c::MMA16_F16_NEEDS);
             // P6-123 (C-155 point 3): the argmax on the board (256 threads, shfl + barrier, 16 bytes written).

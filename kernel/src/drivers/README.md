@@ -225,6 +225,12 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     logit-uri, umpluți cu `0xEE`); la fiecare poziție cele 4 cuvinte = `argmax_result` al logit-urilor copiate (prag 0), altfel
     prima poziție diferită e scrisă. Simbolul se alege tot pe procesor; timpul lansării argmax e ținut separat de profilul `kp`.
     Rânduri `kt argmax placa = procesor: X/Y`, `kt median argmax placa (us)`, verdictul și în răspunsul ciclului. Test: `kronos-gpu-argmax`.
+    **P6-124 (C-155 punctul 4, cyber-gpu `9d256ca`): cursa înmulțirilor pe sferturi.** Doar în ciclu cu `test-placa … --sferturi` (în
+    locul celorlalte alegeri de listă, înainte de `--k651`; `gpu_tur::QUARTERS_IN_CYCLE`; în build-ul de test `gpu lipit-sim sferturi`):
+    același text de două ori, lista lipită (`Fused`), apoi lista lipită pe sferturi (`Fused32`: `q8_fused32`, `q8_matvec32`, aceleași
+    88 de lansări și cbuf-uri). Corect = aceleași simboluri și abaterea sub 1e-4 (`kt sferturi fata de lipit …`); viteza = mediana pe
+    simbol a fiecărui fel de lansare în ambele rulări, un fel de înmulțire trece pe sferturi doar cu câștig ≥ 50 ‰ (`kt sferturi: …`).
+    Test: `kronos-gpu-sferturi`.
     **P6-119 (C-157 punctul 3, cyber-gpu `367edf4`): dieta 2 a driverului.** Doar în ciclu cu `test-placa … --dieta2` (după alegerea
     listei, înainte de `--p8`; `gpu_tur::DIET2_IN_CYCLE`; în build-ul de test `gpu dieta-sim 2`). Nimic nou pentru placă: (A) pe
     pozițiile care nu hrănesc profilul `kp` (toate în afară de 0, 1 și din 8 în 8) se citesc doar prima și ultima înregistrare

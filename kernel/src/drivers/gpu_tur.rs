@@ -255,6 +255,14 @@ pub static LN_NEW_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic:
 /// and, in the test build, by `gpu lipit-sim ln-singur`. Off by hand.
 pub static LN_ONLY_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-124 (C-155 point 4, cyber-gpu `9d256ca`, note `C-155_cursa-pe-sferturi.md`): the race of the products in the token
+/// list: the same text twice, the glued list (`TokenList::Fused`, old LayerNorm, as in os-329) then the glued list on
+/// quarters (`TokenList::Fused32`: the 4 glued products per layer on `q8_fused32`, the logits on `q8_matvec32`; the same
+/// 88 launches and cbufs). Compared: the same tokens and every logit within 1e-4 (not bit for bit), then the time per kind
+/// of launch of both runs (a kind passes on quarters only if faster by at least 50 per mille). Set only by the cycle when
+/// the list asks for it (`test-placa … --sferturi`) and, in the test build, by `gpu lipit-sim sferturi`. Off by default.
+pub static QUARTERS_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-119 (C-157 point 3, cyber-gpu `367edf4`): the driver's second diet for `kronos --gpu` (two records read on most
 /// positions, the planned wait, the logits' fingerprint after the token's clock, the argmax on bits). Nothing new for
 /// the board. Set only by the cycle when the list asks for it (`test-placa … --dieta2`) and, in the test build, by

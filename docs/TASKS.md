@@ -483,6 +483,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-121** C-161 punctul 3, prima bucată: `antrenare proba` — pasul de aur al lui Kronos (S132) refăcut în OS cu oracolul Cyber-GPU (`gpu_compute::train`, cyber-gpu `b157c7f`), verdictul „aceleași numere”; nimic pentru placă. Plan: `docs/plans/P6-121.md`. Dep: P6-120.
 - [x] **P6-122** C-158 punctul 3: Kronos #651 pe placă la cerere (`test-placa … --k651`), limitele din listele care rulează (nota Cyber-GPU C-157_P4); #513 rămâne implicit. Plan: `docs/plans/P6-122.md`. Dep: P6-120.
 - [x] **P6-123** C-155 punctul 3 (PREDARE Cyber-GPU `3683ef4`): argmax pe placă, proba — `test-placa … --argmax-placa` = copia logit-urilor + programul `argmax` în același simbol, verificat la fiecare poziție (prag 0); simbolul tot pe procesor. Plan: `docs/plans/P6-123.md`. Dep: P6-122.
+- [x] **P6-124** C-155 punctul 4 (PREDARE Cyber-GPU `9d256ca`): cursa înmulțirilor pe sferturi în lista de simbol — `test-placa … --sferturi` = lista lipită, apoi lista lipită pe sferturi (`Fused32`: `q8_fused32`, `q8_matvec32`), comparate (aceleași simboluri, abaterea sub 1e-4) + timpul pe fel de lansare (un fel trece doar cu ≥ 50 ‰). Plan: `docs/plans/P6-124.md`. Dep: P6-123.
   Gata (2026-11-21 ~16:55 RO): `gpu-tablou` trece (rândul nou „oprirea zonei = nu se trimite …”).
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 

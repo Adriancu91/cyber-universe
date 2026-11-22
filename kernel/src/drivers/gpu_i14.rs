@@ -122,6 +122,16 @@ const KT_WARM_US: &str = "kt incalzirea: durata totala (us, in afara ceasului)";
 const KT_WARM_WORDS: &str = "kt incalzirea: cuvinte VRAM scrise (prima lista)";
 /// P6-120: 4 = the glued list with the new LayerNorm alone (the cycle's default from os-336 on).
 pub const KT_LIST: &str = "kt lista (0 simpla, 1 lipita, 2 comparate, 3 ln nou comparat, 4 lipita-ln)";
+/// P6-124 (C-155 point 4): `KT_LIST` = 5 for the glued list then the glued list on quarters (`Fused32`), compared (the
+/// row's name stays as it is: the command center reads it). Threshold: the same tokens and every logit within 1e-4; then
+/// the kinds of launch: one passes on quarters only if it is faster by at least `QUARTERS_MIN_GAIN` per mille.
+const KT_Q_WORST_BITS: &str = "kt sferturi fata de lipit: max |d| (f32, biti)";
+const KT_Q_SAME_TOKENS: &str = "kt sferturi fata de lipit: simboluri identice (1/0)";
+const KT_Q_PASS: &str = "kt sferturi fata de lipit: trece pragul 1e-4 si aceleasi simboluri (1/0)";
+const KT_Q_KINDS_WON: &str = "kt sferturi: feluri mai rapide cu cel putin 50 la mie";
+const KT_Q_GAIN: &str = "kt sferturi: castigul pe simbol (la mie, toate felurile)";
+const QUARTERS_MAX_DIFF: f32 = 1e-4;
+const QUARTERS_MIN_GAIN: i64 = 50;
 /// P6-114 (C-155 point 2): the new LayerNorm against the old one on the glued list (threshold: same tokens, max |d| < 1e-4).
 const KT_LN_WORST_BITS: &str = "kt ln nou fata de vechi: max |d| (f32, biti)";
 const KT_LN_SAME_TOKENS: &str = "kt ln nou fata de vechi: simboluri identice (1/0)";
@@ -476,6 +486,8 @@ struct RunOut {
     /// P6-98 (C-147 stage 0 (a), `kronos --gpu` only): the launch times split by kind, and why a token was left out.
     prof: kp::KindProfile,
     prof_err: Option<String>,
+    /// P6-124: with two lists compared, the first run's kinds of launch (the race on quarters compares them).
+    prof_first: Option<kp::KindProfile>,
     /// P6-98 (C-147 stage 0 (d), `kronos --gpu` only): what the VRAM → VRAM copy needs after the texts.
     copy: Option<CopyCtx>,
     /// P6-107 (C-154): the diet's rows (`kronos --gpu` only).
@@ -813,11 +825,16 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     };
     // P6-116: the warm-ups (lists warmed, total us outside the clock, VRAM words of the first one).
     let mut warm: (u32, u64, u64) = (0, 0, 0);
+    let mut first_prof: Option<kp::KindProfile> = None;
     for (ri, run) in runs.iter().enumerate() {
         runner.name = run.name.clone();
         runner.list = run.list;
         if compare && ri > 0 {
             // The launch kinds (`kp`) of the last run only: the glued list has other kinds than the plain one.
+            // P6-124: the first run's profile is kept for the race on quarters (the same kinds, other programs).
+            if ri == 1 {
+                first_prof = Some(core::mem::take(&mut runner.prof));
+            }
             runner.prof = kp::KindProfile::new();
             runner.prof_err = None;
         }
@@ -1024,7 +1041,9 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         ));
     }
     if compare {
-        let rows = if lists.contains(&kd::TokenList::FusedLn) {
+        let rows = if lists.contains(&kd::TokenList::Fused32) {
+            quarters_vs_fused(p, m.layers.len(), &by_list, &all, &mut *runner.journal)
+        } else if lists.contains(&kd::TokenList::FusedLn) {
             ln_new_vs_old(p, m.layers.len(), &by_list, &all, &mut *runner.journal)
         } else {
             fused_vs_plain(p, m.layers.len(), &by_list, &all, &mut *runner.journal)
@@ -1057,7 +1076,7 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     src.truncate(blob.scratch as usize);
     let copy = fast.then(|| CopyCtx { src_va: vblob.va, src, launches, rec, maps: tmaps, sys: host_logits, copy_va });
     let os_check = runs.iter().any(|r| r.os_check);
-    Ok(RunOut { all, worst, median, run_medians, from_vram, speed, cpu_us, os_check, split: split_all, shadow_changed, prof, prof_err, copy, diet: diet_out })
+    Ok(RunOut { all, worst, median, run_medians, from_vram, speed, cpu_us, os_check, split: split_all, shadow_changed, prof, prof_err, prof_first: first_prof, copy, diet: diet_out })
 }
 
 /// P6-110 (C-155 point 1): P3's proof — the glued list's logits against the plain list's on the same text, bit for bit
@@ -1105,6 +1124,105 @@ fn fused_vs_plain(p: &str, layers: usize, by_list: &[(kd::TokenList, Vec<Vec<f32
         if same { String::from("identice") } else { format!("DIFERITE: simplu {:?}, lipit {:?}", all.get(all.len().wrapping_sub(2)), all.last()) }
     ));
     out
+}
+
+/// P6-124 (C-155 point 4, note `C-155_cursa-pe-sferturi.md`): the race on quarters, correctness half — the glued list
+/// on quarters (`Fused32`) against the glued list on the same text. Not bit for bit (the sums run in another order): the
+/// note's threshold is the same greedy tokens and every logit within 1e-4. Both texts were already judged against the
+/// processor. The speed half (kinds of launch, 50 per mille) is `quarters_kinds`.
+fn quarters_vs_fused(p: &str, layers: usize, by_list: &[(kd::TokenList, Vec<Vec<f32>>)], all: &[Vec<usize>], journal: &mut Journal) -> Vec<String> {
+    let pick = |want: kd::TokenList| by_list.iter().find(|(l, _)| *l == want).map(|(_, v)| v);
+    let mut out = alloc::vec![format!(
+        "{}: kronos --gpu: kt lista: lipita-32 (aceleasi {} lansari pe simbol ca lista lipita, aceleasi cbuf-uri; inmultirile lipite pe q8_fused32, logit-urile pe q8_matvec32)",
+        p,
+        kd::TokenList::Fused32.launches_per_token(layers)
+    )];
+    let (Some(old), Some(new)) = (pick(kd::TokenList::Fused), pick(kd::TokenList::Fused32)) else {
+        out.push(format!("{}: kronos --gpu: kt sferturi fata de lipit: necomparat (o lista nu a terminat textul)", p));
+        journal.push(Event::Value { what: KT_Q_PASS, value: 0 });
+        return out;
+    };
+    let (mut differ, mut total, mut worst, mut finite) = (0usize, 0usize, 0.0f32, true);
+    for (a, b) in old.iter().zip(new) {
+        total += a.len().max(b.len());
+        differ += a.len().abs_diff(b.len());
+        for (x, y) in a.iter().zip(b) {
+            if x.to_bits() != y.to_bits() {
+                differ += 1;
+                let d = (x - y).abs();
+                if d.is_finite() {
+                    worst = worst.max(d);
+                } else {
+                    finite = false;
+                }
+            }
+        }
+    }
+    let same_len = old.len() == new.len();
+    let same = all.len() >= 2 && all[all.len() - 2] == all[all.len() - 1];
+    let pass = same && same_len && finite && worst < QUARTERS_MAX_DIFF;
+    out.push(format!(
+        "{}: kronos --gpu: kt sferturi fata de lipit: max |d| = {:e} ({} diferite din {} logit-uri, {} / {} pozitii), simboluri identice: {}",
+        p,
+        worst,
+        differ,
+        total,
+        old.len(),
+        new.len(),
+        if same { "da" } else { "nu" }
+    ));
+    out.push(format!(
+        "{}: kronos --gpu: kt sferturi fata de lipit: {}",
+        p,
+        if pass {
+            String::from("CORECT (aceleasi simboluri, abaterea sub 1e-4)")
+        } else if !same {
+            format!("NU TRECE: simbolurile DIFERITE: lipit {:?}, sferturi {:?}", all.get(all.len().wrapping_sub(2)), all.last())
+        } else {
+            String::from("NU TRECE: abaterea peste 1e-4 (sau logit-uri nefinite / pozitii lipsa)")
+        }
+    ));
+    journal.push(Event::Value { what: KT_Q_WORST_BITS, value: if finite { worst.to_bits() } else { u32::MAX } });
+    journal.push(Event::Value { what: KT_Q_SAME_TOKENS, value: u32::from(same) });
+    journal.push(Event::Value { what: KT_Q_PASS, value: u32::from(pass) });
+    out
+}
+
+/// P6-124 (C-155 point 4): the race on quarters, speed half — the median per token of every kind of launch, glued list
+/// (`first`) against quarters (`last`), and the rule written before the run: a kind passes on quarters only if the
+/// texts were correct (`correct`) and it is faster by at least 50 per mille; otherwise it keeps today's program. Only the
+/// products change program (fc, proj, qkv, out, logit); the other kinds are shown for reference.
+fn quarters_kinds(first: &kp::KindProfile, last: &kp::KindProfile, correct: bool) -> (Vec<String>, u32, i64) {
+    let a = first.summary();
+    let b = last.summary();
+    let (mut rows, mut won) = (Vec::new(), 0u32);
+    let (mut sum_a, mut sum_b) = (0u64, 0u64);
+    let mut kinds: Vec<(kp::Kind, u64, u64)> = Vec::new();
+    for ka in a.iter() {
+        let Some(kind) = ka.kind else { continue };
+        let Some(kb) = b.iter().find(|x| x.kind == Some(kind)) else { continue };
+        sum_a += ka.token_median_ns;
+        sum_b += kb.token_median_ns;
+        kinds.push((kind, ka.token_median_ns, kb.token_median_ns));
+    }
+    kinds.sort_by(|x, y| y.1.cmp(&x.1));
+    let per_mille = |old: u64, new: u64| if old == 0 { 0 } else { (old as i64 - new as i64) * 1000 / old as i64 };
+    for (kind, ta, tb) in kinds {
+        let g = per_mille(ta, tb);
+        let product = matches!(kind, kp::Kind::Qkv | kp::Kind::Out | kp::Kind::Fc | kp::Kind::Proj | kp::Kind::Logits);
+        let verdict = if !product {
+            "acelasi program"
+        } else if correct && g >= QUARTERS_MIN_GAIN {
+            won += 1;
+            "TRECE pe sferturi"
+        } else if !correct {
+            "ramane (textele nu au fost corecte)"
+        } else {
+            "ramane programul de azi"
+        };
+        rows.push(format!("  {:<12} lipit {:>6} us, sferturi {:>6} us pe simbol: {:+} la mie -> {}", kind.name(), ta / 1000, tb / 1000, g, verdict));
+    }
+    (rows, won, per_mille(sum_a, sum_b))
 }
 
 /// P6-114 (C-155 point 2): the new LayerNorm's proof — the glued list with `layernorm256` against the glued list with the
@@ -1808,7 +1926,13 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // P6-114 (C-155 point 2): `test-placa … --ln-nou` = the glued list with the old LayerNorm (as in os-329), then the
     // same text with the new one (`layernorm256`), compared against the note's threshold.
     // P6-120 (center's proposal 21 Nov 19:25): the cycle's default is now the new LayerNorm alone (`--ln-vechi` = the old).
-    let list_kind = if super::gpu_tur::LN_NEW_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+    // P6-124 (C-155 point 4): `test-placa … --sferturi` = the glued list (old LayerNorm), then the same text on quarters.
+    let list_kind = if super::gpu_tur::QUARTERS_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+        runs[0].name = String::from("kronos --gpu (lista lipita)");
+        runs[0].list = kd::TokenList::Fused;
+        runs.push(Run { name: String::from("kronos --gpu (lista lipita pe sferturi)"), list: kd::TokenList::Fused32, ..runs[0].clone() });
+        5
+    } else if super::gpu_tur::LN_NEW_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
         runs[0].name = String::from("kronos --gpu (lista lipita)");
         runs[0].list = kd::TokenList::Fused;
         runs.push(Run { name: String::from("kronos --gpu (lista lipita, LayerNorm nou)"), list: kd::TokenList::FusedLn, ..runs[0].clone() });
@@ -1988,6 +2112,30 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // P6-98 (C-147 stage 0 (a)): the time per kind of launch (`kp …` rows + the table in the output / cycle report).
     out.prof.journal(journal);
     lines.extend(kind_lines(&out.prof, label).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
+    // P6-124 (C-155 point 4): the race on quarters — every kind of launch, the glued list against quarters (50 per mille).
+    if list_kind == 5 {
+        match out.prof_first.as_ref().filter(|f| f.tokens() > 0 && out.prof.tokens() > 0) {
+            Some(first) => {
+                let correct = lines.iter().any(|l| l.contains("kt sferturi fata de lipit: CORECT"));
+                let (rows, won, gain) = quarters_kinds(first, &out.prof, correct);
+                lines.push(format!(
+                    "{}: kronos --gpu: kt sferturi: cursa inmultirilor ({}; regula scrisa inainte: un fel trece pe sferturi doar daca e corect si mai rapid cu cel putin 50 la mie):",
+                    p, label
+                ));
+                lines.extend(rows.into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
+                lines.push(format!(
+                    "{}: kronos --gpu: kt sferturi: {} feluri trec pe sferturi; toate felurile: {:+} la mie pe simbol ({})",
+                    p,
+                    won,
+                    gain,
+                    if !correct { "textele nu au fost corecte: nimic nu trece" } else if won == 0 { "niciun castig de 50 la mie: frana e altundeva, vezi nota Cyber-GPU" } else { "Cyber-GPU alege lista (mixta sau toata pe sferturi)" }
+                ));
+                journal.push(Event::Value { what: KT_Q_KINDS_WON, value: won });
+                journal.push(Event::Value { what: KT_Q_GAIN, value: gain as i32 as u32 });
+            }
+            None => lines.push(format!("{}: kronos --gpu: kt sferturi: cursa nemasurata (timpul pe fel lipseste la o rulare)", p)),
+        }
+    }
     if let Some(why) = &out.prof_err {
         lines.push(format!("{}: kronos --gpu: timpul pe fel de lansare: un simbol lasat deoparte: {}", p, why));
     }
