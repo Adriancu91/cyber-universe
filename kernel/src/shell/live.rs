@@ -31,8 +31,8 @@ pub const FORM: &str = "cyber-live-1";
 /// Largest command file accepted (bytes).
 pub const MAX_COMMAND: usize = 64 * 1024;
 /// The kinds that run: step 1 (`comanda`, `stare`, `gata`) and P6-111 (C-159 step 2, part 1: the live terminal's keys and
-/// its screen text; P6-127: `captura`, `muta`, `clic`).
-pub const KINDS: [&str; 9] = ["comanda", "stare", "gata", "scrie", "tasta", "ecran", "captura", "muta", "clic"];
+/// its screen text; P6-127: `captura`, `muta`, `clic`; P6-130: `actualizeaza`).
+pub const KINDS: [&str; 10] = ["comanda", "stare", "gata", "scrie", "tasta", "ecran", "captura", "muta", "clic", "actualizeaza"];
 /// P6-127: `captura` = the screen reduced this many times in each direction, gray PNG; the largest file sent.
 const CAPTURE_SCALE: usize = 4;
 const CAPTURE_MAX: usize = 900 * 1024;
@@ -204,7 +204,6 @@ impl Gate {
     }
 
     /// From the journal lines `<nr> <incepe|gata|refuz> …` (the first word of a line is the number).
-    #[cfg_attr(not(feature = "test-ghpush"), allow(dead_code))] // step 3 (a session that survives a restart)
     pub fn from_journal(session: &str, text: &str) -> Self {
         let mut g = Gate::new(session);
         for nr in text.lines().filter_map(|l| l.split_whitespace().next()?.parse::<u32>().ok()) {
@@ -257,7 +256,12 @@ impl Gate {
             return Verdict::Refused { nr: Some(nr), why: format!("numar gresit: astept nr {}", self.next) };
         }
         if !KINDS.contains(&kind) {
-            return refuse(Some(nr), "fel necunoscut (comanda, stare, gata, scrie, tasta, ecran, captura, muta, clic)");
+            return refuse(Some(nr), "fel necunoscut (comanda, stare, gata, scrie, tasta, ecran, captura, muta, clic, actualizeaza)");
+        }
+        if kind == "actualizeaza" {
+            if let Err(why) = update_tag(text) {
+                return Verdict::Refused { nr: Some(nr), why };
+            }
         }
         if kind == "scrie" {
             if let Err(why) = typed_keys(text) {
@@ -295,6 +299,20 @@ pub struct Outcome {
     pub output: String,
     pub screen: String,
     pub system: String,
+}
+
+/// P6-130 (C-159 step 3): the release a live `actualizeaza` asks for — `os-<N>` (or `--versiune os-<N>`), that exact
+/// GitHub Release (every file checked against SHA256SUMS by `/bin/actualizeaza`).
+pub fn update_tag(text: &str) -> Result<String, String> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let tag = match words.as_slice() {
+        [t] | ["--versiune", t] => *t,
+        _ => "",
+    };
+    match tag.strip_prefix("os-") {
+        Some(n) if !n.is_empty() && n.len() <= 6 && n.bytes().all(|b| b.is_ascii_digit()) => Ok(String::from(tag)),
+        _ => Err(String::from("actualizeaza: forma e `os-<numar>` (Release-ul exact de pe GitHub)")),
+    }
 }
 
 /// The answer file `r-NNNN.json`: always the exact echo of the command file that came in (`ecou`, as text, so the
@@ -375,6 +393,8 @@ pub struct Summary {
     pub refused: u32,
     pub unsent: u32,
     pub end: String,
+    /// P6-130: `actualizeaza` put this release on the stick: the machine restarts into it and the session resumes.
+    pub restart: Option<String>,
 }
 
 impl Summary {
@@ -397,7 +417,15 @@ pub fn command(args: &[&str]) {
         return;
     };
     match run(minutes, POLL_MS, PULS_MS, true) {
-        Ok(s) => super::emit(&s.line()),
+        Ok(s) => {
+            super::emit(&s.line());
+            if let Some(tag) = &s.restart {
+                // P6-130: by hand the restart comes right away (the list restarts at its own end).
+                auto::say(&format!("live: repornesc in {}; sesiunea {} se reia dupa pornire\n", tag, s.session));
+                crate::sched::sleep_ms(1_000);
+                crate::power::reboot(None);
+            }
+        }
         Err(why) => super::emit(&format!("live: {}\n", why)),
     }
 }
@@ -416,6 +444,7 @@ pub fn auto_line(line: &str) -> String {
         return format!("REFUZAT: forma corecta: `live <minute>` (1-{})\n", MAX_MINUTES);
     };
     match run(minutes, POLL_MS, PULS_MS, false) {
+        Ok(s) if s.restart.is_some() => format!("{}live: repornirea vine la sfarsitul listei; sesiunea se reia dupa pornire\n", s.line()),
         Ok(s) => s.line(),
         Err(why) => format!("live: {}\n", why),
     }
@@ -694,7 +723,22 @@ fn run(minutes: u64, poll_ms: u64, puls_ms: u64, by_hand: bool) -> Result<Summar
     r
 }
 
-fn session(minutes: u64, poll_ms: u64, puls_ms: u64, by_hand: bool) -> Result<Summary, String> {
+/// What a running session needs (P6-130: the same for a new session and for one resumed after a restart).
+struct Ctx {
+    s: String,
+    local: String,
+    remote: String,
+    key: Vec<u8>,
+    board_key: bool,
+    minutes: u64,
+    poll_ms: u64,
+    puls_ms: u64,
+    by_hand: bool,
+    journal_path: String,
+}
+
+/// The checks before any session (new or resumed): the key, the token, the network. Returns the key and the board key.
+fn preflight() -> Result<(Vec<u8>, bool), String> {
     let d = dir();
     let key = fs::read_all(&format!("{}/live.cheie", d)).unwrap_or_default();
     if key.len() < 32 {
@@ -707,7 +751,12 @@ fn session(minutes: u64, poll_ms: u64, puls_ms: u64, by_hand: bool) -> Result<Su
     if crate::net::config().is_none() || !crate::net::wait_ready(15_000) {
         return Err(String::from("reteaua nu are adresa: modul viu nu porneste"));
     }
-    let board_key = fs::kind(&format!("{}/permite-live-placa", d)).is_ok();
+    Ok((key, fs::kind(&format!("{}/permite-live-placa", d)).is_ok()))
+}
+
+fn session(minutes: u64, poll_ms: u64, puls_ms: u64, by_hand: bool) -> Result<Summary, String> {
+    let d = dir();
+    let (key, board_key) = preflight()?;
     let base = format!("{}/live", d);
     if fs::kind(d).is_err() {
         let _ = fs::create(d, Kind::Dir);
@@ -748,29 +797,41 @@ fn session(minutes: u64, poll_ms: u64, puls_ms: u64, by_hand: bool) -> Result<Su
         if by_hand { "; Esc opreste" } else { "" },
         if board_key { "PERMISA (permite-live-placa)" } else { "oprita" }
     ));
+    let ctx = Ctx { s: s.clone(), local, remote, key, board_key, minutes, poll_ms, puls_ms, by_hand, journal_path };
+    let sum = Summary { session: s.clone(), ..Summary::default() };
+    Ok(serve(&ctx, Gate::new(&s), sum, 0))
+}
 
-    let idle_ms = minutes * 60_000;
-    let mut sum = Summary { session: s.clone(), ..Summary::default() };
-    let mut gate = Gate::new(&s);
+/// The loop of a session, until `gata`, `<minute>` without commands, Esc (by hand) or a restart asked by `actualizeaza`.
+/// `puls_count` = the beats already sent (a resumed session goes on from there).
+fn serve(ctx: &Ctx, mut gate: Gate, mut sum: Summary, puls_count: u32) -> Summary {
+    let s = &ctx.s;
+    let idle_ms = ctx.minutes * 60_000;
     let mut last = crate::time::uptime_ms().unwrap_or(0);
-    let list_path = format!("{}/lista.txt", local);
+    let list_path = format!("{}/lista.txt", ctx.local);
     let mut errors = 0u32;
     let mut terminal = Terminal::default();
-    let mut puls = Puls { local: format!("{}/puls.json", local), remote: format!("{}/puls.json", remote), every_ms: puls_ms, ..Puls::default() };
+    let mut puls = Puls {
+        local: format!("{}/puls.json", ctx.local),
+        remote: format!("{}/puls.json", ctx.remote),
+        every_ms: ctx.puls_ms,
+        count: puls_count,
+        ..Puls::default()
+    };
     puls.at = last;
     'outer: loop {
-        if by_hand && crate::drivers::keyboard::take_escape() {
+        if ctx.by_hand && crate::drivers::keyboard::take_escape() {
             sum.end = String::from("oprita cu Esc");
             break;
         }
         let now = crate::time::uptime_ms().unwrap_or(0);
         if now.saturating_sub(last) >= idle_ms {
-            sum.end = format!("{} minute fara comenzi", minutes);
+            sum.end = format!("{} minute fara comenzi", ctx.minutes);
             break;
         }
         auto::keep_alive(idle_ms.saturating_sub(now - last) + 5 * 60_000);
-        puls.maybe(&s, &gate, &sum, now);
-        match spawn("/bin/gh-ia", &["gh-ia", "--live-dosar", &remote, &list_path]) {
+        puls.maybe(s, &gate, &sum, now);
+        match spawn("/bin/gh-ia", &["gh-ia", "--live-dosar", &ctx.remote, &list_path]) {
             0 => {
                 errors = 0;
                 let names = String::from_utf8_lossy(&fs::read_all(&list_path).unwrap_or_default()).into_owned();
@@ -780,15 +841,18 @@ fn session(minutes: u64, poll_ms: u64, puls_ms: u64, by_hand: bool) -> Result<Su
                     if !names.lines().any(|l| l.trim() == name) {
                         break;
                     }
-                    let copy = format!("{}/{}", local, name);
-                    if spawn("/bin/gh-ia", &["gh-ia", "--live-ia", &format!("{}/{}", remote, name), &copy]) != 0 {
+                    let copy = format!("{}/{}", ctx.local, name);
+                    if spawn("/bin/gh-ia", &["gh-ia", "--live-ia", &format!("{}/{}", ctx.remote, name), &copy]) != 0 {
                         break; // not readable yet: at the next look
                     }
                     let raw = String::from_utf8_lossy(&fs::read_all(&copy).unwrap_or_default()).into_owned();
-                    let end = one(&key, board_key, &raw, want, &mut gate, &local, &remote, &journal_path, &mut sum, &mut terminal);
+                    let end = one(ctx, &raw, want, &mut gate, &mut sum, &mut terminal);
                     last = crate::time::uptime_ms().unwrap_or(0);
                     if end {
-                        sum.end = String::from("gata (cerut de centrul de comanda)");
+                        sum.end = match &sum.restart {
+                            Some(tag) => format!("repornire in {} (actualizeaza); sesiunea se reia dupa pornire", tag),
+                            None => String::from("gata (cerut de centrul de comanda)"),
+                        };
                         break 'outer;
                     }
                 }
@@ -802,21 +866,200 @@ fn session(minutes: u64, poll_ms: u64, puls_ms: u64, by_hand: bool) -> Result<Su
             }
         }
         let mut waited = 0;
-        while waited < poll_ms {
-            if by_hand && crate::drivers::keyboard::take_escape() {
+        while waited < ctx.poll_ms {
+            if ctx.by_hand && crate::drivers::keyboard::take_escape() {
                 sum.end = String::from("oprita cu Esc");
                 break 'outer;
             }
-            let step = (poll_ms - waited).min(200);
+            let step = (ctx.poll_ms - waited).min(200);
             crate::sched::sleep_ms(step);
             waited += step;
         }
     }
     terminal.close();
-    puls.send(&s, &gate, &sum, Some(&sum.end));
-    journal(&journal_path, &format!("# sfarsit {}: {}", auto::now_text(), sum.end));
+    puls.send(s, &gate, &sum, Some(&sum.end));
+    journal(&ctx.journal_path, &format!("# sfarsit {}: {}", auto::now_text(), sum.end));
     auto::say(&sum.line());
-    Ok(sum)
+    sum
+}
+
+/// P6-130 (C-159 step 3): the marker of a session that waits for the restart after `actualizeaza` —
+/// `<hub>/live/reluare.txt`, one `name value` per line. Written right after the new version is on the stick (before the
+/// answer leaves), removed at the first boot that reads it (a crash during the resumed session never loops).
+const RESUME: &str = "reluare.txt";
+
+/// What the marker says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Resume {
+    pub session: String,
+    pub minutes: u64,
+    /// The session was started from the automatic list (`true`: the machine restarts when the resumed session ends).
+    pub from_list: bool,
+    pub tag: String,
+    pub nr: u32,
+}
+
+impl Resume {
+    pub fn text(&self) -> String {
+        format!(
+            "sesiune {}\nminute {}\norigine {}\nversiune {}\nnr {}\n",
+            self.session,
+            self.minutes,
+            if self.from_list { "lista" } else { "mana" },
+            self.tag,
+            self.nr
+        )
+    }
+
+    /// The marker read back; `None` when a line is missing or wrong (the session name must be one of ours).
+    #[cfg_attr(all(feature = "qemu-test", not(feature = "test-ghpush")), allow(dead_code))]
+    pub fn parse(text: &str) -> Option<Resume> {
+        let get = |k: &str| text.lines().find_map(|l| l.trim().strip_prefix(k)?.strip_prefix(' ').map(str::trim));
+        let session = get("sesiune")?;
+        if !session.starts_with("s-") || session.len() > 40 || !session.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+            return None;
+        }
+        let minutes = get("minute")?.parse::<u64>().ok().filter(|m| (1..=MAX_MINUTES).contains(m))?;
+        let from_list = match get("origine")? {
+            "lista" => true,
+            "mana" => false,
+            _ => return None,
+        };
+        let tag = update_tag(get("versiune")?).ok()?;
+        let nr = get("nr")?.parse::<u32>().ok().filter(|&n| n > 0)?;
+        Some(Resume { session: String::from(session), minutes, from_list, tag, nr })
+    }
+}
+
+/// What the stick journal of a session says about it: (ran, refused, resumes so far, a board command already taken).
+#[cfg_attr(all(feature = "qemu-test", not(feature = "test-ghpush")), allow(dead_code))]
+pub fn journal_counts(text: &str) -> (u32, u32, u32, bool) {
+    let (mut ran, mut refused, mut resumes, mut board) = (0, 0, 0, false);
+    for l in text.lines() {
+        let mut w = l.split_whitespace();
+        let (Some(first), Some(second)) = (w.next(), w.next()) else { continue };
+        if first == "#" && second == "reluata" {
+            resumes += 1;
+        } else if first.parse::<u32>().is_ok() {
+            match second {
+                "gata" => ran += 1,
+                "refuz" => refused += 1,
+                "incepe" if l.contains(" comanda test-placa") => board = true,
+                _ => {}
+            }
+        }
+    }
+    (ran, refused, resumes, board)
+}
+
+/// P6-130: at boot, before the automatic list — a session that asked for the restart (`actualizeaza`) is resumed: the
+/// same name, the same folder in the hub, the next number from the stick journal, `reluare-<k>.json` sent with the
+/// version that now runs. Returns `true` when the machine should restart after it (the session came from the list).
+#[cfg(not(feature = "qemu-test"))]
+pub fn resume_if_asked() -> bool {
+    let path = format!("{}/live/{}", dir(), RESUME);
+    if fs::kind(&path).is_err() {
+        return false;
+    }
+    // The new version on trial is confirmed while the session runs (it reached the hub): it is ready.
+    crate::revenire::system_ready();
+    match resume(POLL_MS, PULS_MS) {
+        Ok((sum, from_list)) => {
+            auto::say(&sum.line());
+            if let Some(tag) = &sum.restart {
+                auto::say(&format!("live: repornesc in {}; sesiunea {} se reia dupa pornire\n", tag, sum.session));
+                crate::sched::sleep_ms(1_000);
+                crate::power::reboot(None);
+            }
+            from_list
+        }
+        Err(why) => {
+            auto::say(&format!("live: sesiunea nu s-a reluat: {}\n", why));
+            false
+        }
+    }
+}
+
+/// QEMU (`ghpush`): the resume, right after a session that asked for the restart (no real restart in the test).
+#[cfg(feature = "test-ghpush")]
+pub fn test_resume() -> Result<(Summary, bool), String> {
+    resume(1_000, 5_000)
+}
+
+#[cfg_attr(all(feature = "qemu-test", not(feature = "test-ghpush")), allow(dead_code))]
+fn resume(poll_ms: u64, puls_ms: u64) -> Result<(Summary, bool), String> {
+    let path = format!("{}/live/{}", dir(), RESUME);
+    let text = String::from_utf8_lossy(&fs::read_all(&path).unwrap_or_default()).into_owned();
+    // Read once: removed before anything else, so a crash below never resumes again.
+    let _ = fs::remove(&path);
+    let _ = fs::flush(&format!("{}/live", dir()));
+    let r = Resume::parse(&text).ok_or_else(|| format!("{} nu se poate citi (sters, nimic reluat)", path))?;
+    if ACTIVE.swap(true, Ordering::Acquire) {
+        return Err(String::from("o sesiune vie ruleaza deja"));
+    }
+    BY_HAND.store(false, Ordering::Release);
+    let out = resumed(&r, poll_ms, puls_ms);
+    ACTIVE.store(false, Ordering::Release);
+    out.map(|sum| (sum, r.from_list))
+}
+
+#[cfg_attr(all(feature = "qemu-test", not(feature = "test-ghpush")), allow(dead_code))]
+fn resumed(r: &Resume, poll_ms: u64, puls_ms: u64) -> Result<Summary, String> {
+    let (key, board_key) = preflight()?;
+    let s = r.session.clone();
+    let local = format!("{}/live/{}", dir(), s);
+    let journal_path = format!("{}/jurnal.txt", local);
+    let jtext = String::from_utf8_lossy(&fs::read_all(&journal_path).map_err(|_| format!("{} lipseste: nimic reluat", journal_path))?).into_owned();
+    let gate = Gate::from_journal(&s, &jtext);
+    if !gate.taken.contains(&r.nr) {
+        return Err(format!("jurnalul sesiunii {} nu are comanda nr {} (actualizeaza): nimic reluat", s, r.nr));
+    }
+    let (ran, refused, resumes, board) = journal_counts(&jtext);
+    BOARD_TAKEN.store(board, Ordering::SeqCst);
+    let k = resumes + 1;
+    let version = fs::read_all("/usb/VERSIUNE")
+        .ok()
+        .and_then(|v| String::from_utf8_lossy(&v).lines().next().map(|l| String::from(l.trim())))
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| String::from("necunoscuta (/usb/VERSIUNE lipseste)"));
+    journal(&journal_path, &format!("# reluata {} {} in versiunea {} (dupa actualizeaza {}, nr {}); astept nr {}", k, auto::now_text(), version, r.tag, r.nr, gate.next));
+    let remote = format!("live/{}", s);
+    let mut note = String::new();
+    cyber_json::Value::object([
+        ("forma", cyber_json::Value::str(FORM)),
+        ("sesiune", cyber_json::Value::str(&s)),
+        ("reluare", cyber_json::Value::int(k as i64)),
+        ("ora", cyber_json::Value::str(&auto::now_text())),
+        ("ceruta", cyber_json::Value::str(&r.tag)),
+        ("versiune", cyber_json::Value::str(&version)),
+        ("dupa_nr", cyber_json::Value::int(r.nr as i64)),
+        ("astept_nr", cyber_json::Value::int(gate.next as i64)),
+        ("placa", cyber_json::Value::Bool(board_key)),
+        ("sistem", cyber_json::Value::str(&system_text())),
+    ])
+    .write_to(&mut note);
+    let name = format!("reluare-{}.json", k);
+    let note_path = format!("{}/{}", local, name);
+    if !write_new(&note_path, note.as_bytes()) || !send(&note_path, &format!("{}/{}", remote, name)) {
+        return Err(format!("sesiunea {} nu s-a putut relua in hub ({} nu a plecat)", s, name));
+    }
+    auto::say(&format!(
+        "live: sesiunea {} RELUATA dupa repornire (a {}-a oara) in versiunea {}; astept nr {} la {} s\n",
+        s,
+        k,
+        version,
+        gate.next,
+        poll_ms / 1000
+    ));
+    let puls_count = fs::read_all(&format!("{}/puls.json", local))
+        .ok()
+        .and_then(|b| cyber_json::parse(&String::from_utf8_lossy(&b)).ok())
+        .and_then(|v| v.get("puls").and_then(Value::as_i64))
+        .and_then(|n| u32::try_from(n).ok())
+        .unwrap_or(0);
+    let ctx = Ctx { s: s.clone(), local, remote, key, board_key, minutes: r.minutes, poll_ms, puls_ms, by_hand: false, journal_path };
+    let sum = Summary { session: s, ran, refused, ..Summary::default() };
+    Ok(serve(&ctx, gate, sum, puls_count))
 }
 
 /// P6-129 (C-159 step 3, part 1): the heartbeat of a session — `live/<sesiune>/puls.json`, rewritten every `PULS_MS`
@@ -857,6 +1100,7 @@ impl Puls {
 /// The text of `puls.json` (P6-129): which beat, the time, the number the OS waits for, what ran, and the system line.
 pub fn puls_text(s: &str, count: u32, next: u32, sum: &Summary, end: Option<&str>) -> String {
     let state = match end {
+        Some(why) if why.starts_with("repornire") => String::from(why),
         Some(why) => format!("incheiata: {}", why),
         None => String::from("merge"),
     };
@@ -876,10 +1120,11 @@ pub fn puls_text(s: &str, count: u32, next: u32, sum: &Summary, end: Option<&str
     out
 }
 
-/// One command file (number `want`): the gate, the journal BEFORE it runs, the run, the answer. `true` = `gata`.
-#[allow(clippy::too_many_arguments)]
-fn one(key: &[u8], board_key: bool, raw: &str, want: u32, gate: &mut Gate, local: &str, remote: &str, journal_path: &str, sum: &mut Summary, terminal: &mut Terminal) -> bool {
-    let mut verdict = gate.check(key, board_key, raw);
+/// One command file (number `want`): the gate, the journal BEFORE it runs, the run, the answer. `true` = the session
+/// ends (`gata`, or P6-130: `actualizeaza` put a new version on the stick — `sum.restart`).
+fn one(ctx: &Ctx, raw: &str, want: u32, gate: &mut Gate, sum: &mut Summary, terminal: &mut Terminal) -> bool {
+    let (local, remote, journal_path) = (ctx.local.as_str(), ctx.remote.as_str(), ctx.journal_path.as_str());
+    let mut verdict = gate.check(&ctx.key, ctx.board_key, raw);
     // P6-118 (C-161 point 1): one board command per session (a correct `test-placa` form counts, whatever its keys say).
     if let Verdict::Run(cmd) = &verdict {
         if cmd.kind == "comanda" && matches!(super::ciclu::board_command(&cmd.text), Some(Ok(_))) && BOARD_TAKEN.swap(true, Ordering::SeqCst) {
@@ -912,6 +1157,7 @@ fn one(key: &[u8], board_key: bool, raw: &str, want: u32, gate: &mut Gate, local
                 "ecran" => terminal.look(),
                 "captura" => capture(cmd.nr, local, remote),
                 "muta" | "clic" => mouse(parse_mouse(&cmd.kind, &cmd.text).unwrap_or(MouseOrder { to: None, button: 0 })),
+                "actualizeaza" => update(ctx, cmd.nr, &update_tag(&cmd.text).unwrap_or_default(), sum),
                 _ => String::from("sesiunea se incheie (gata)\n"),
             };
             let o = Outcome {
@@ -923,7 +1169,7 @@ fn one(key: &[u8], board_key: bool, raw: &str, want: u32, gate: &mut Gate, local
             };
             journal(journal_path, &format!("{} gata {} ms cod {}", want, o.ms, o.code));
             sum.ran += 1;
-            (answer(&gate.session, Some(cmd.nr), raw, Ok(&o)), cmd.kind == "gata")
+            (answer(&gate.session, Some(cmd.nr), raw, Ok(&o)), cmd.kind == "gata" || sum.restart.is_some())
         }
     };
     let name = file_name('r', want);
@@ -934,6 +1180,66 @@ fn one(key: &[u8], board_key: bool, raw: &str, want: u32, gate: &mut Gate, local
         auto::say(&format!("live: {} nu a plecat in hub; ramane pe stick\n", name));
     }
     end
+}
+
+/// P6-130 (C-159 step 3): `actualizeaza os-<N>` — `/bin/actualizeaza --versiune os-<N>` (that exact Release, every file
+/// checked against SHA256SUMS, the running version kept in `boot/vechi/` for the automatic return). When the new version
+/// is on the stick (on trial), the resume marker is written BEFORE the answer leaves and the session ends asking for the
+/// restart; the stick already having that version (or a failed update) = only the answer, the session goes on.
+fn update(ctx: &Ctx, nr: u32, tag: &str, sum: &mut Summary) -> String {
+    let (code, printed, placed) = run_update(tag);
+    let mut text = format!("-- actualizeaza --versiune {} (codul {})\n{}", tag, code, printed);
+    super::LAST_EXIT.store(code, Ordering::Relaxed);
+    if code != 0 {
+        text.push_str("actualizarea nu s-a facut: versiunea de pe stick a ramas cea veche; sesiunea merge mai departe\n");
+        return text;
+    }
+    if !placed {
+        text.push_str(&format!("stick-ul are deja {}: nicio repornire; sesiunea merge mai departe\n", tag));
+        return text;
+    }
+    let r = Resume { session: ctx.s.clone(), minutes: ctx.minutes, from_list: !ctx.by_hand, tag: String::from(tag), nr };
+    let path = format!("{}/live/{}", dir(), RESUME);
+    if !write_new(&path, r.text().as_bytes()) {
+        super::LAST_EXIT.store(1, Ordering::Relaxed);
+        text.push_str(&format!("{} nu s-a putut scrie: NU repornesc (versiunea noua porneste la urmatoarea pornire, fara reluarea sesiunii)\n", path));
+        return text;
+    }
+    journal(&ctx.journal_path, &format!("# repornire ceruta {}: {} pus pe stick; reluarea in {}", auto::now_text(), tag, path));
+    sum.restart = Some(String::from(tag));
+    text.push_str(&format!(
+        "versiunea {} e pe stick (in incercare: daca nu se confirma, revine singura cea veche); repornesc{}; sesiunea {} se reia dupa pornire cu nr {} (reluare-<k>.json in hub)\n",
+        tag,
+        if ctx.by_hand { " acum" } else { " la sfarsitul listei automate" },
+        ctx.s,
+        nr + 1
+    ));
+    text
+}
+
+/// QEMU (`ghpush`): `actualizeaza` played without a release server (the real program is tested in the `update` build).
+#[cfg(feature = "test-ghpush")]
+pub static FAKE_UPDATE: AtomicBool = AtomicBool::new(false);
+
+/// (exit code, what it printed, a new version was put in place).
+fn run_update(tag: &str) -> (i64, String, bool) {
+    #[cfg(feature = "test-ghpush")]
+    if FAKE_UPDATE.load(Ordering::Acquire) {
+        return (0, format!("(proba QEMU) actualizeaza: {} pus pe stick, in incercare\n", tag), true);
+    }
+    let outer_programs = super::PROGRAM_CAPTURE.lock().take();
+    super::program_capture_begin();
+    let code = match crate::proc::spawn_path("/bin/actualizeaza", &["actualizeaza", "--versiune", tag]) {
+        Ok(id) => crate::proc::wait(id),
+        Err(e) => {
+            let _ = super::program_capture_end();
+            *super::PROGRAM_CAPTURE.lock() = outer_programs;
+            return (-1, format!("/bin/actualizeaza nu porneste: {}\n", e.message()), false);
+        }
+    };
+    let printed = super::program_capture_end();
+    *super::PROGRAM_CAPTURE.lock() = outer_programs;
+    (code, printed, code == 0 && fs::kind("/usb/boot/incercare.txt").is_ok())
 }
 
 /// P6-127: `muta` / `clic` — mouse events in the same queue as the real mouse, read by the window server; only while the

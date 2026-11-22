@@ -37,6 +37,7 @@
 - `sesiune`: numele dosarului (`s-AAAALLZZ-HHMM`, ales de OS la pornire și scris în `live/<sesiune>/sesiune.json` — P6-109).
 - `fel` (pasul 1): `comanda` (un rând de shell), `stare`, `gata` (încheie sesiunea). Pasul 2, partea 1 (P6-111): `scrie`,
   `tasta`, `ecran` (terminalul viu, mai jos); P6-127: `captura`, `muta`, `clic` (desktopul, mai jos). Pasul 2 e complet.
+  Pasul 3 (P6-130): `actualizeaza` (versiunea nouă + repornire cu reluarea sesiunii, mai jos).
 - `semnatura` = HMAC-SHA-256 cu cheia `/usb/hub/live.cheie` (cel puțin 32 de octeți, aceeași la centrul de comandă) peste textul:
   ```
   cyber-live-1\n<sesiune>\n<nr>\n<fel>\n<text>
@@ -140,6 +141,35 @@ sau, la refuz: `"stare":"REFUZAT","motiv":"<de ce>"` (fără `cod`/`iesire`). `n
   un minut); copia de pe stick e mereu ultima.
 - Proba în QEMU (`ghpush`, prima sesiune, puls la 5 s): `puls.json` creat, apoi rescris; ultimul din hub = cel de pe stick,
   `stare: incheiata: gata`, `astept_nr` 10, 4 rulate, 5 refuzate.
+
+## `actualizeaza` și reluarea după repornire (P6-130, C-159 pasul 3, partea 2)
+- Comanda: `{"fel": "actualizeaza", "text": "os-346", …}` (sau `"text": "--versiune os-346"`). Altă formă = `REFUZAT`
+  (`actualizeaza: forma e os-<numar> …`). Nu atinge placa video, deci nu cere `permite-live-placa`.
+- OS-ul rulează `/bin/actualizeaza --versiune os-N` (exact acel Release, fiecare fișier verificat cu SHA256SUMS, versiunea de azi
+  păstrată în `boot/vechi/`). `iesire` = tot ce a scris programul + ce urmează:
+  - a picat (`cod` ≠ 0): stick-ul rămâne pe versiunea veche, sesiunea merge mai departe;
+  - stick-ul avea deja os-N: nicio repornire, sesiunea merge mai departe;
+  - versiunea nouă e pe stick (în încercare: dacă nu se confirmă în 5 minute, revine singură cea veche): OS-ul scrie pe stick
+    `hub/live/reluare.txt` **înainte** să plece răspunsul, apoi sesiunea se încheie cu motivul
+    `repornire in os-N (actualizeaza); sesiunea se reia dupa pornire` (același text în `puls.json`, câmpul `stare`).
+- Repornirea: pornită de mână (`live <minute>` tastat) → imediat; din lista automată → la sfârșitul listei, ca întotdeauna.
+  **Atenție:** dacă stick-ul a fost pornit o singură dată (din Windows), repornirea duce în Windows; sesiunea se reia la
+  **următoarea** pornire a OS-ului de pe stick (centrul de comandă îl pornește din nou, ca la un test). `reluare.txt` rămâne
+  până atunci.
+- La pornire, înaintea listei automate, OS-ul găsește `reluare.txt`, îl **șterge întâi** (o cădere în sesiunea reluată nu
+  produce o buclă) și reia **aceeași sesiune**: același dosar, numărul următor din jurnalul de pe stick (aceleași reguli: o
+  comandă deja rulată nu mai rulează), cel mult o comandă de placă pe sesiune ținută peste repornire. Trimite un fișier nou:
+  ```json
+  {"forma":"cyber-live-1","sesiune":"s-…","reluare":1,"ora":"…","ceruta":"os-346","versiune":"<rândul 1 din /usb/VERSIUNE>",
+   "dupa_nr":2,"astept_nr":3,"placa":true,"sistem":"…"}
+  ```
+  `live/<sesiune>/reluare-<k>.json` (k = a câta reluare). **Cum verifici:** `versiune` = ce ai cerut în `ceruta`; altfel noua
+  versiune nu s-a confirmat și a revenit cea veche (detalii în `rezultate/os-actualizari/`). Apoi trimiți `c-<astept_nr>.json`
+  ca de obicei; `puls` continuă numărătoarea de dinainte; `<minute>` fără comenzi se numără din nou de la reluare.
+- Sesiunea reluată dintr-o listă automată: la sfârșitul ei calculatorul repornește (înapoi în Windows), ca la sfârșitul listei.
+- Proba în QEMU (`ghpush`, sesiunea a cincea; `actualizeaza` jucat fără server de Release-uri, programul adevărat are proba lui
+  în `update`): forma greșită refuzată, `reluare.txt` cu nr 2, `puls.json` = `repornire in os-999…`; reluarea: același nume,
+  `reluare-1.json` (astept_nr 3), `stare` și `gata` rulate, `reluare.txt` șters, a doua reluare refuzată.
 
 ## Ce rămâne păzit de nucleu (neschimbat)
 Fișierele secrete nu se arată; scrieri pe disc doar pe partiții `cyber.rw`; placa video doar cu `permite-live-placa`

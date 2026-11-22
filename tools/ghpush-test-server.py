@@ -43,6 +43,13 @@ LIVE_SESSIONS = []  # the sessions opened, in order
 def live_open(files, session):
     d = f"live/{session}/"
     LIVE_SESSIONS.append(session)
+    if len(LIVE_SESSIONS) == 5:
+        # P6-130 (C-159 step 3): `actualizeaza` with a wrong form (refused at the gate), then a right one (played without a
+        # release server): the session ends asking for the restart; the OS resumes it (same name, nr 3) and runs the rest.
+        for nr, kind, text in [(1, "actualizeaza", "os-x1"), (2, "actualizeaza", "os-999"), (3, "stare", ""), (4, "gata", "")]:
+            files[d + "c-%04d.json" % nr] = live_file(session, nr, kind, text)
+        print(f"ghpush-test-server: live: sesiunea a cincea {session}: c-0001..c-0004 puse (actualizeaza + reluare)", flush=True)
+        return
     if len(LIVE_SESSIONS) == 4:
         # P6-127 (C-159 step 2, part 2): the desktop started from the live terminal, the mouse moved and pressed (left,
         # then right at another place), Esc sent to the desktop (it closes), a move without the desktop (code 1), `gata`.

@@ -170,7 +170,12 @@ extern "C" fn kernel_main() -> ! {
         if revenire::auto_update("/usb") {
             power::reboot(None); // `/usb/actualizare-automata`: a new version was put in place
         }
+        // P6-130 (C-159 step 3): a live session that asked for the restart (`actualizeaza`) goes on here.
+        let resumed_from_list = shell::live::resume_if_asked();
         shell::auto::run_if_present(); // P6-41: `/usb/auto/teste.txt` = the automatic test loop (restarts at the end)
+        if resumed_from_list {
+            power::reboot(None); // the session came from the list: back to Windows, as at the list's end
+        }
         revenire::system_ready();
         pornire::system_ready();
         net::remote::start_if_asked(); // P6-49: `remote.porneste` next to the key = the remote console at boot
@@ -2309,6 +2314,40 @@ fn test_ghpush() {
     let r6 = take4("r-0006.json");
     assert!(code(&r6) == Some(1) && s(&r6, "iesire").starts_with("mouse: desktopul nu ruleaza"), "test: live mouse: fara desktop: {:?}", s(&r6, "iesire"));
     info!("test: live: mouse-ul prin canal (desktop pornit din terminalul viu, muta, clic stanga/dreapta, Esc il inchide) OK");
+    // P6-130 (C-159 step 3): `actualizeaza` through the channel (played: no release server here), the session ends asking
+    // for the restart with the marker on the stick; the resume (as at boot) takes the same session from nr 3 to `gata`.
+    shell::live::FAKE_UPDATE.store(true, core::sync::atomic::Ordering::Release);
+    let sum5 = shell::live::test_session(1).expect("test: sesiunea vie a cincea");
+    shell::live::FAKE_UPDATE.store(false, core::sync::atomic::Ordering::Release);
+    assert!(sum5.ran == 1 && sum5.refused == 1 && sum5.restart.as_deref() == Some("os-999") && sum5.end.starts_with("repornire in os-999"), "test: live actualizeaza: {:?}", sum5);
+    let marker = fs::read_all("/etc/hub/live/reluare.txt").expect("test: live actualizeaza: reluare.txt lipseste");
+    let want = shell::live::Resume { session: sum5.session.clone(), minutes: 1, from_list: true, tag: alloc::string::String::from("os-999"), nr: 2 };
+    assert!(shell::live::Resume::parse(&alloc::string::String::from_utf8_lossy(&marker)) == Some(want), "test: live actualizeaza: reluare.txt: {:?}", marker);
+    let take5 = |name: &str| {
+        let remote = alloc::format!("live/{}/{}", sum5.session, name);
+        let local = alloc::format!("/etc/live5-{}", name);
+        let id = proc::spawn_path("/bin/gh-ia", &["gh-ia", "--live-ia", &remote, &local]).expect("test: /bin/gh-ia");
+        assert!(proc::wait_child(id) == 0, "test: live reluare: {} lipseste din hub", remote);
+        let r = alloc::string::String::from_utf8(fs::read_all(&local).unwrap_or_default()).unwrap_or_default();
+        cyber_json::parse(&r).unwrap_or_else(|_| panic!("test: live reluare: {} nu e JSON: {}", name, r))
+    };
+    let r1 = take5("r-0001.json");
+    assert!(s(&r1, "stare") == "REFUZAT" && s(&r1, "motiv").starts_with("actualizeaza: forma"), "test: live actualizeaza: forma: {:?}", s(&r1, "motiv"));
+    let r2 = take5("r-0002.json");
+    assert!(code(&r2) == Some(0) && s(&r2, "iesire").contains("(proba QEMU)") && s(&r2, "iesire").contains("se reia dupa pornire cu nr 3"), "test: live actualizeaza: {:?}", s(&r2, "iesire"));
+    assert!(s(&take5("puls.json"), "stare").starts_with("repornire in os-999"), "test: live actualizeaza: pulsul nu spune repornirea");
+    let (sum6, from_list) = shell::live::test_resume().expect("test: live reluare");
+    assert!(from_list && sum6.session == sum5.session && sum6.ran == 3 && sum6.refused == 1 && sum6.restart.is_none() && sum6.end.starts_with("gata"), "test: live reluare: {:?}", sum6);
+    assert!(fs::kind("/etc/hub/live/reluare.txt").is_err(), "test: live reluare: reluare.txt a ramas (s-ar relua la fiecare pornire)");
+    let note = take5("reluare-1.json");
+    let num = |v: &cyber_json::Value, k: &str| v.get(k).and_then(cyber_json::Value::as_i64);
+    assert!(num(&note, "reluare") == Some(1) && num(&note, "astept_nr") == Some(3) && num(&note, "dupa_nr") == Some(2) && s(&note, "ceruta") == "os-999", "test: live reluare: reluare-1.json: {:?}", note);
+    let r3 = take5("r-0003.json");
+    assert!(code(&r3) == Some(0) && s(&r3, "iesire").contains("cyber-universe"), "test: live reluare: stare dupa reluare: {:?}", s(&r3, "iesire"));
+    let p = take5("puls.json");
+    assert!(s(&p, "stare").starts_with("incheiata: gata") && num(&p, "astept_nr") == Some(5) && num(&p, "rulate") == Some(3) && num(&p, "puls").unwrap_or(0) >= 2, "test: live reluare: pulsul de sfarsit: {:?}", p);
+    assert!(shell::live::test_resume().is_err(), "test: live reluare: a doua reluare fara reluare.txt");
+    info!("test: live: actualizeaza prin canal + sesiunea reluata dupa repornire (acelasi nume, nr 3, reluare-1.json, pulsul) OK");
 }
 
 /// HTTPS with real web sites (P6-02): /bin/fetch resolves the name, connects through QEMU's network to the
