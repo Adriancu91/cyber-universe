@@ -238,6 +238,15 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     greutățile, după pasul 10 greutățile → `train_step::judge` față de fișierele PyTorch → rândurile `kt pas-aur …` în jurnal,
     `pas de aur mic …` și `pasul de aur mic pe placa: TRECE / NU TRECE / NU A TERMINAT / NU A RULAT` în ieșire și în răspunsul
     ciclului. Programele de simulare: `SimGpu` cunoaște cele 11 programe noi. Test: `kronos-gpu-pas-aur` (cifrele T165: 239 ‰ / 128 ‰).
+    **P6-137 (C-161 punctul 4, C-160 punctul 7 partea a patra, cyber-gpu `54563a5`): proba `mm_tc`.** Doar în ciclu cu
+    `test-placa … --mm-tc` (ultima opțiune, după `--pas-aur`; `gpu_tur::MM_TC_IN_CYCLE`; în build-ul de test `gpu mm-tc-sim on|off`):
+    după textele lui #513 (și după celelalte probe cerute), `gpu_i14::mm_tc_probe` verifică SHA-256 al lui `mm_tc`, îl urcă în VRAM,
+    rulează seturile 0–4 din `mm_tc_probe::SETS` (bufferul ≤ 256 KiB în RAM, paginile de urcare ale arenei; câte o trimitere;
+    `judge_set`), apoi `mm_tc_qkv`: bufferul `qkv-513` (~82,6 MB) în VRAM (dacă nu se poate: omis), intrările urcate prin arenă cu
+    programul de copiere și recitite octet cu octet înainte de orice lansare, benzile + garda umplute cu NaN, 5 trimiteri cu timpul
+    fiecăreia (doar pe placă; în SIMULARE sărite), benzile citite înapoi prin arenă → `judge_set` → rândurile `kt mm_tc …` în jurnal,
+    `mm_tc …` și `proba mm_tc: TRECE / NU TRECE / NU A TERMINAT` în ieșire și în răspunsul ciclului. `SimGpu` cunoaște `mm_tc` (cu
+    memoria partajată). Test: `kronos-gpu-mm-tc` (cifrele T171: 5/5 în margine, 69 ‰).
     **P6-123 (C-155 punctul 3, cyber-gpu `3683ef4`): argmax pe placă, proba.** Doar în ciclu cu `test-placa … --argmax-placa` (după
     `--k651`, înainte de `--dieta2`; `gpu_tur::ARGMAX_IN_CYCLE`; în build-ul de test `gpu argmax-sim on|off`): fiecare simbol al lui
     `kronos --gpu` se termină cu copia logit-urilor și programul `argmax` (`nvidia_ga104::argmax::launch`; 16 octeți imediat după

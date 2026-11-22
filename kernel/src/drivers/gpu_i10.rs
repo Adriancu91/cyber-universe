@@ -398,6 +398,8 @@ impl SimGpu {
             cp.register_program_with_needs(nvidia_ga104::argmax::ARGMAX, c::argmax_on_cpu, c::ARGMAX_NEEDS);
             // P6-134 (C-161 point 4): the first backward program of the training (`colsum`, column sums).
             cp.register_program(nvidia_ga104::colsum::COLSUM, c::colsum_on_cpu);
+            // P6-137 (C-161 point 4): the training matmul on the tensor cores (`mm_tc`, 24 KiB shared, one barrier).
+            cp.register_program_with_needs(nvidia_ga104::mm_tc::MM_TC, c::mm_tc_on_cpu, c::MM_TC_NEEDS);
             // P6-136 (C-161 point 4): the 11 new programs of the small golden step (`train_step`; `colsum` and `vadd`
             // are registered above).
             {

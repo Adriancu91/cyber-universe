@@ -313,6 +313,12 @@ pub static COLSUM_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic:
 /// `gpu pas-aur-sim on`. Off by default.
 pub static GOLDEN_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-137 (C-161 point 4, cyber-gpu `54563a5`): the `mm_tc` probe (the training matmul on the tensor cores: 5 fixed sets
+/// for correctness + `qkv-513` for the first time of a fast training matmul), after `kronos --gpu`'s texts (and after
+/// P8 / `colsum` / the golden step when asked). Set only by the cycle when the list asks for it (`test-placa … --mm-tc`)
+/// and, in the test build, by `gpu mm-tc-sim on`. Off by default.
+pub static MM_TC_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-101: set only for the FLR trial's second chain (`test-placa --flr-proba`, `gpu lant --flr-proba`); taken by
 /// `chain`. Without it no chain reads WPR2 for the reset nor writes anything for it.
 pub static FLR_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);

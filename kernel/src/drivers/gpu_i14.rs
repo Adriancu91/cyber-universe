@@ -2417,6 +2417,13 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 lines.push(format!("{}: kronos --gpu: pasul de aur mic pe placa: oprit: {}", p, e));
             }
         }
+        // P6-137 (C-161 point 4, cyber-gpu `54563a5`): the `mm_tc` probe (the training matmul on the tensor cores), only
+        // when the cycle's list asks for it (`test-placa … --mm-tc`), after everything else; its failure is a line.
+        if super::gpu_tur::MM_TC_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+            if let Err(e) = mm_tc_probe(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, &ctx) {
+                lines.push(format!("{}: kronos --gpu: proba mm_tc: oprita: {}", p, e));
+            }
+        }
     }
     Ok(all.pop().unwrap_or_default())
 }
@@ -2744,6 +2751,323 @@ fn colsum_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         Some(_) => Err(GpuError::Timeout { waited_us: WAIT_US }),
         None => Ok(()),
     }
+}
+
+/// P6-137 (C-161 point 4, C-160 point 7 fourth part; cyber-gpu note `C-160_P7d_mm_tc-proba.md`, commit `54563a5`): the
+/// `mm_tc` probe — the training matmul on the tensor cores (`C = op(A)·op(B) (+ bias)`, inputs rounded to f16, sums in
+/// f32), alone on the board, outside the generation path. The 5 small fixed sets of `mm_tc_probe::SETS` judge the
+/// correctness (one submission each; each buffer ≤ 256 KiB in host RAM, the arena's upload pages); the sixth, `qkv-513`
+/// (6 144 × 2 304 × 768, ~82,6 MB), gives the first time of a fast training matmul: its buffer in VRAM (skipped if it does
+/// not fit), the inputs uploaded through the arena with the copy program and read back byte for byte before any launch,
+/// the three bands + the guard filled with NaN, then 5 submissions, the bands read back and judged on the CPU (after the
+/// clock). In SIMULARE the 5 launches of `qkv-513` are skipped (21,7 GFLOP each on the emulated CPU); everything before
+/// them runs. New for the board: this program (its SHA-256 checked first), 64 registers, blocks of 128, 24 KiB of shared
+/// memory + one barrier, a grid with y > 1; cbuf 0x800 (arguments at 0x700) as P8. A set the board does not finish stops
+/// the probe (no retry).
+#[allow(clippy::too_many_arguments)]
+fn mm_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    doorbell: &mut Bell<'_, V>,
+    subs: &mut u32,
+    ctx: &CopyCtx,
+) -> GpuResult<()> {
+    use nvidia_ga104::{mm_tc as tc, mm_tc_probe as tp};
+    let label = if permit.is_some() { "placa" } else { "SIMULARE" };
+    let sha = sha256_hex(tc::MM_TC);
+    if sha != tc::MM_TC_SHA256 {
+        lines.push(format!("{}: kronos --gpu: proba mm_tc: SHA-256 al programului {} nu e cel din nota ({}): nimic trimis", p, sha, tc::MM_TC_SHA256));
+        return Err(bad("mm_tc: SHA-256 gresit"));
+    }
+    lines.push(format!(
+        "{}: kronos --gpu: proba mm_tc ({}): programul mm_tc ({} octeti, SHA-256 {}..., {} registre, blocuri de {}, {} KiB partajati), {} seturi mici cate o trimitere, apoi qkv-513",
+        p,
+        label,
+        tc::MM_TC.len(),
+        &sha[..16],
+        tc::REGISTERS,
+        tc::BLOCK[0],
+        tc::SHARED.bytes >> 10,
+        tp::QKV_SET
+    ));
+    // The program, then one VRAM page: the cbuf at +0 (0x800 bytes), the QMD at +0x800 (as P8).
+    let prog = map_vram(st, tc::MM_TC.len() as u64)?;
+    let zone = map_vram(st, PAGE)?;
+    put_bytes(st.mem.writer_mut(), prog.pa, tc::MM_TC)?;
+    let small = tp::SETS[..tp::QKV_SET].iter().map(|s| s.layout().bytes as u64).max().unwrap_or(PAGE);
+    let buf = st.mem.alloc_sys_mapped(&arena_pages(0, small.div_ceil(PAGE))?)?;
+    if !buf.va.is_multiple_of(PAGE) {
+        return Err(bad("mm_tc: bufferul nu e aliniat la 4 KiB"));
+    }
+    let mut maps = ctx.maps.clone();
+    maps.push(prog);
+    maps.push(zone);
+    let qmd_va = zone.va + tc::CBUF_BYTES as u64;
+    let mut probe = tp::Probe::default();
+    let mut stopped: Option<usize> = None;
+    for (i, set) in tp::SETS[..tp::QKV_SET].iter().enumerate() {
+        let sys = [ctx.sys.clone(), buf.clone()];
+        ram_write(&buf, &set.buffer()); // C and the guard start as NaN
+        let (cb, q) = tp::launch_bytes(i, prog.va, zone.va, buf.va)?;
+        {
+            let w = st.mem.writer_mut();
+            put_bytes(w, zone.pa, &cb)?;
+            put_bytes(w, zone.pa + tc::CBUF_BYTES as u64, &q)?;
+        }
+        match mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, &maps, &sys, qmd_va)? {
+            Ok(ns) => {
+                let mut out = Vec::with_capacity(set.read_len());
+                for (o, n) in set.read_ranges() {
+                    out.extend_from_slice(&ram_read_at(&buf, o as u64, n as u64));
+                }
+                probe.add(tp::judge_set(i, &out, &[ns])?);
+            }
+            Err(got) => {
+                lines.push(format!(
+                    "{}: kronos --gpu: proba mm_tc: placa nu a terminat la setul {} ({}): ultima inregistrare = {:#x}; proba oprita, fara reincercare",
+                    p, i, set.name, got
+                ));
+                stopped = Some(i);
+                break;
+            }
+        }
+    }
+    if stopped.is_none() {
+        match mm_tc_qkv(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, &maps, prog.va, zone)? {
+            QkvOutcome::Judged(r) => probe.add(r),
+            QkvOutcome::Skipped => {}
+            QkvOutcome::Stopped => stopped = Some(tp::QKV_SET),
+        }
+    }
+    probe.journal(journal);
+    lines.extend(probe.lines(label).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
+    let verdict = match stopped {
+        Some(i) => format!("NU A TERMINAT (la setul {})", i),
+        None if probe.passes() => String::from("TRECE"),
+        None => String::from("NU TRECE"),
+    };
+    let qkv = probe
+        .sets
+        .iter()
+        .find(|r| r.set == tp::QKV_SET)
+        .and_then(|r| r.gflops().zip(r.median_ns()))
+        .map_or(String::from("qkv-513 omis"), |(g, ns)| format!("qkv-513 {} ns = {}.{:02} TFLOP/s", ns, g / 1000, (g % 1000) / 10));
+    lines.push(format!(
+        "{}: kronos --gpu: proba mm_tc: {}: {} / {} seturi in margine, {} / {} elemente exacte fata de model, abaterea maxima {} promile din margine, {}",
+        p,
+        verdict,
+        probe.in_margin(),
+        probe.sets.len(),
+        probe.exact_model(),
+        probe.elements(),
+        probe.worst_permille(),
+        qkv
+    ));
+    match stopped {
+        Some(_) => Err(GpuError::Timeout { waited_us: WAIT_US }),
+        None => Ok(()),
+    }
+}
+
+/// P6-137: what happened to `qkv-513`.
+enum QkvOutcome {
+    Judged(nvidia_ga104::mm_tc_probe::SetResult),
+    /// Not run (no VRAM, or SIMULARE): the `kt mm_tc qkv omis` row says so.
+    Skipped,
+    /// A copy or a launch the board did not finish (the line is written).
+    Stopped,
+}
+
+/// P6-137: one submission of the QMD at `qmd_va` (records in `ctx.rec`); `Ok(ns)` = its time, `Err(last)` = the
+/// record never came.
+#[allow(clippy::too_many_arguments)]
+fn mm_tc_launch<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    doorbell: &mut Bell<'_, V>,
+    subs: &mut u32,
+    ctx: &CopyCtx,
+    maps: &[Mapping],
+    sys: &[SysMapping],
+    qmd_va: u64,
+) -> GpuResult<Result<u64, u32>> {
+    put_bytes(st.mem.writer_mut(), ctx.rec.pa, &[0; 32])?;
+    let first = TOKEN_FIRST + STRIDE * *subs;
+    let mut words = alloc::vec![0u32; transfer::sequence_words(1)];
+    let mut pb = PushBuf::new(&mut words);
+    transfer::encode_sequence(&mut pb, &[qmd_va], ctx.rec.va, first)?;
+    let nw = pb.len();
+    match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, 2, first + 1, maps, sys, doorbell)? {
+        Ok(b) => {
+            *subs += 1;
+            Ok(Ok(transfer::analyze_sequence(&b, 1, first)?[0]))
+        }
+        Err(got) => Ok(Err(got)),
+    }
+}
+
+/// P6-137: `qkv-513` (note C-160_P7d, step 4). Its ~82,6 MB buffer in VRAM (if the allocation fails: skipped). The inputs
+/// (`[0, c)`, ~26 MB, zeros between A, B and the bias) go up through the arena's upload pages (8 MiB at a time) with the
+/// copy program, then come back the same way and are compared byte for byte (nothing is launched on a wrong upload). The
+/// read-back ranges (3 bands + the guard) are filled with NaN the same way. Then, on the board, 5 submissions of the same
+/// cbuf + QMD, each with its time; the ranges come back through the arena and are judged on the CPU (~0,6 s, after the
+/// clock). In SIMULARE the launches are skipped and the NaN ranges are read back and checked instead.
+#[allow(clippy::too_many_arguments)]
+fn mm_tc_qkv<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    doorbell: &mut Bell<'_, V>,
+    subs: &mut u32,
+    ctx: &CopyCtx,
+    maps: &[Mapping],
+    prog_va: u64,
+    zone: Mapping,
+) -> GpuResult<QkvOutcome> {
+    use nvidia_ga104::{mm_tc as tc, mm_tc_probe as tp};
+    let set = &tp::SETS[tp::QKV_SET];
+    let lay = set.layout();
+    let big = match map_vram(st, lay.bytes as u64) {
+        Ok(m) if m.va.is_multiple_of(PAGE) => m,
+        Ok(_) => {
+            lines.push(format!("{}: kronos --gpu: proba mm_tc: qkv-513 omis: bufferul din VRAM nu e aliniat la 4 KiB", p));
+            return Ok(QkvOutcome::Skipped);
+        }
+        Err(e) => {
+            lines.push(format!("{}: kronos --gpu: proba mm_tc: qkv-513 omis: {} MB de VRAM nu s-au putut lua ({:?})", p, lay.bytes / 1_000_000, e));
+            return Ok(QkvOutcome::Skipped);
+        }
+    };
+    // The window: the arena's upload pages (8 MiB), and one VRAM page for the copy's cbuf (+0) and QMD (+0x800).
+    let win = I11_BOARD_BYTES;
+    let host = st.mem.alloc_sys_mapped(&arena_pages(0, win / PAGE)?)?;
+    let cz = map_vram(st, PAGE)?;
+    let mut maps = maps.to_vec();
+    maps.push(big);
+    maps.push(cz);
+    let sys = [ctx.sys.clone(), host.clone()];
+    // One copy of `len` bytes (a multiple of 16) from `src` to `dst`; `false` = the board did not finish it.
+    let copy = |vbar: &mut V, clock: &mut K, journal: &mut Journal, st: &mut GpuState, l: &mut Launched, doorbell: &mut Bell<'_, V>, subs: &mut u32, src: u64, dst: u64, len: u64| -> GpuResult<bool> {
+        {
+            let w = st.mem.writer_mut();
+            put_bytes(w, cz.pa, &transfer::copy_cbuf(src, dst, len)?)?;
+            put_bytes(w, cz.pa + 0x800, &transfer::copy_qmd(ctx.copy_va, cz.va, len)?.to_bytes()?)?;
+        }
+        Ok(mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, &maps, &sys, cz.va + 0x800)?.is_ok())
+    };
+    // 1. The inputs, up and back.
+    let t0 = crate::time::since_boot_us();
+    let mut inputs = alloc::vec![0u8; lay.c];
+    set.write_inputs(|at, b| inputs[at..at + b.len()].copy_from_slice(b));
+    let mut same = true;
+    for (k, piece) in inputs.chunks(win as usize).enumerate() {
+        let at = k as u64 * win;
+        let len = (piece.len() as u64).next_multiple_of(16);
+        ram_write(&host, piece);
+        if !copy(vbar, clock, journal, st, l, doorbell, subs, host.va, big.va + at, len)? {
+            lines.push(format!("{}: kronos --gpu: proba mm_tc: qkv-513: urcarea bucatii {} nu s-a terminat; proba oprita, fara reincercare", p, k));
+            return Ok(QkvOutcome::Stopped);
+        }
+    }
+    for (k, piece) in inputs.chunks(win as usize).enumerate() {
+        let at = k as u64 * win;
+        let len = (piece.len() as u64).next_multiple_of(16);
+        ram_write(&host, &[]);
+        if !copy(vbar, clock, journal, st, l, doorbell, subs, big.va + at, host.va, len)? {
+            lines.push(format!("{}: kronos --gpu: proba mm_tc: qkv-513: recitirea bucatii {} nu s-a terminat; proba oprita, fara reincercare", p, k));
+            return Ok(QkvOutcome::Stopped);
+        }
+        same &= ram_read(&host, piece.len() as u64) == piece;
+    }
+    let up_ms = t0.zip(crate::time::since_boot_us()).map_or(0, |(a, b)| b.saturating_sub(a) / 1000);
+    let fnv = fnv1a_bytes(&inputs);
+    drop(inputs);
+    journal.push(Event::Value { what: "kt mm_tc qkv intrari recitite identic", value: u32::from(same) });
+    if !same {
+        lines.push(format!(
+            "{}: kronos --gpu: proba mm_tc: qkv-513: intrarile recitite din VRAM NU sunt cele urcate ({} octeti); nimic lansat",
+            p, lay.c
+        ));
+        return Ok(QkvOutcome::Skipped);
+    }
+    lines.push(format!(
+        "{}: kronos --gpu: proba mm_tc: qkv-513: {} octeti de intrari urcati si recititi identic din VRAM (fnv {:#010x}, asteptat {:#010x}) in {} ms; bufferul {} octeti",
+        p, lay.c, fnv, set.inputs_fnv(), up_ms, lay.bytes
+    ));
+    // 2. The read-back ranges filled with NaN (from the window's start, each range its own copy).
+    let fill = set.fill_ranges();
+    for &(o, n) in &fill {
+        let bytes: Vec<u8> = core::iter::repeat_n(tp::FILL.to_le_bytes(), n / 4).flatten().collect();
+        ram_write(&host, &bytes);
+        if !copy(vbar, clock, journal, st, l, doorbell, subs, host.va, big.va + o as u64, (n as u64).next_multiple_of(16))? {
+            lines.push(format!("{}: kronos --gpu: proba mm_tc: qkv-513: umplerea cu NaN nu s-a terminat; proba oprita, fara reincercare", p));
+            return Ok(QkvOutcome::Stopped);
+        }
+    }
+    // 3. The launches (board only), each its own submission and time.
+    let mut times = Vec::new();
+    if permit.is_some() {
+        let (cb, q) = tp::launch_bytes(tp::QKV_SET, prog_va, zone.va, big.va)?;
+        {
+            let w = st.mem.writer_mut();
+            put_bytes(w, zone.pa, &cb)?;
+            put_bytes(w, zone.pa + tc::CBUF_BYTES as u64, &q)?;
+        }
+        for r in 0..tp::QKV_REPEATS {
+            match mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, &maps, &sys, zone.va + tc::CBUF_BYTES as u64)? {
+                Ok(ns) => times.push(ns),
+                Err(got) => {
+                    lines.push(format!(
+                        "{}: kronos --gpu: proba mm_tc: placa nu a terminat la setul {} (qkv-513), lansarea {}: ultima inregistrare = {:#x}; proba oprita, fara reincercare",
+                        p, tp::QKV_SET, r, got
+                    ));
+                    return Ok(QkvOutcome::Stopped);
+                }
+            }
+        }
+    }
+    // 4. The ranges back, in order, glued (all of them fit the window together: ~0,15 MB).
+    let mut out = Vec::with_capacity(set.read_len());
+    for &(o, n) in &set.read_ranges() {
+        let len = (n as u64).next_multiple_of(16);
+        if !copy(vbar, clock, journal, st, l, doorbell, subs, big.va + o as u64, host.va, len)? {
+            lines.push(format!("{}: kronos --gpu: proba mm_tc: qkv-513: citirea benzilor nu s-a terminat; proba oprita, fara reincercare", p));
+            return Ok(QkvOutcome::Stopped);
+        }
+        out.extend_from_slice(&ram_read(&host, n as u64));
+    }
+    if permit.is_none() {
+        let nan = out.chunks(4).all(|w| w == tp::FILL.to_le_bytes());
+        lines.push(format!(
+            "{}: kronos --gpu: proba mm_tc qkv-513 (SIMULARE): benzile si garda umplute cu NaN si recitite ({} octeti, {}); cele {} lansari sarite in simulare (21,7 GFLOP fiecare pe procesorul emulat)",
+            p,
+            out.len(),
+            if nan { "neatinse" } else { "ATINSE" },
+            tp::QKV_REPEATS
+        ));
+        return Ok(QkvOutcome::Skipped);
+    }
+    Ok(QkvOutcome::Judged(tp::judge_set(tp::QKV_SET, &out, &times)?))
+}
+
+/// P6-137: FNV-1a (32 bit) of bytes (the same as `mm_tc_probe::fnv`).
+fn fnv1a_bytes(b: &[u8]) -> u32 {
+    nvidia_ga104::mm_tc_probe::fnv(b)
 }
 
 /// P6-136 (C-161 point 4, C-160 point 6 second part; cyber-gpu note `C-160_P6b_pasul-de-aur-pe-placa.md`, commit
