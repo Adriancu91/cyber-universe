@@ -1,0 +1,5 @@
+unitate secunde
+repeta 2
+pas uptime
+pas test-asteapta 1
+pas ls /disk/lucrari

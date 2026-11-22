@@ -1,0 +1,4 @@
+unitate secunde
+durata 3
+repeta 0
+pas test-asteapta 1

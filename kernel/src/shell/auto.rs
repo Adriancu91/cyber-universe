@@ -108,6 +108,16 @@ pub fn run_if_present() {
             ran += 1;
             continue;
         }
+        // P6-140 (C-158 point 8): `lucrare <nume>` = a long job (shell/lucrare.rs); the safety clock follows its steps.
+        if cmd.split_whitespace().next() == Some("lucrare") {
+            say(&format!("auto: [{}/{}] {}\n", i + 1, total, cmd));
+            out.add(&format!("in lucru: {} (de la {})\n", cmd, now_text()));
+            let text = super::lucrare::auto_line(cmd);
+            say(&text);
+            out.add(&text);
+            ran += 1;
+            continue;
+        }
         if let Err(why) = allowed(cmd) {
             refused += 1;
             say(&format!("auto: [{}/{}] REFUZAT: {} ({})\n", i + 1, total, cmd, why));
@@ -377,11 +387,29 @@ pub(super) fn keep_alive(ms: u64) {
     }
 }
 
-/// Starts the safety clock thread.
+/// Starts the safety clock thread (once; later calls only set the deadline).
 fn arm(ms: u64) {
     let now = crate::time::uptime_ms().unwrap_or(0);
     DEADLINE_MS.store(now + ms, Ordering::Relaxed);
-    crate::sched::spawn_system(watchdog);
+    if !WATCHDOG_STARTED.swap(true, Ordering::SeqCst) {
+        crate::sched::spawn_system(watchdog);
+    }
+}
+
+static WATCHDOG_STARTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// P6-140: a long job taken up at boot (no list around it): the safety clock armed, or pushed to `ms` from now.
+pub(super) fn arm_or_push(ms: u64) {
+    if DEADLINE_MS.load(Ordering::Relaxed) == 0 {
+        arm(ms);
+    } else {
+        keep_alive(ms);
+    }
+}
+
+/// P6-140: the jobs taken up at boot are done: the safety clock off again (the list, if any, arms its own).
+pub(super) fn disarm() {
+    DEADLINE_MS.store(0, Ordering::Relaxed);
 }
 
 fn watchdog() {
@@ -412,7 +440,7 @@ impl Report {
         Report { path: String::from(path), offset: 0, ok }
     }
 
-    fn open(path: &str) -> Report {
+    pub(super) fn open(path: &str) -> Report {
         match fs::size(path) {
             Ok(n) => Report { path: String::from(path), offset: n, ok: true },
             Err(_) => Report::create(path),

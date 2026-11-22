@@ -12,6 +12,7 @@ pub mod ciclu;
 pub mod compara;
 pub mod hubcmd;
 pub mod live;
+pub mod lucrare;
 pub mod raport;
 mod testtot;
 #[cfg(feature = "qemu-test")]
@@ -230,6 +231,7 @@ fn dispatch(line: &str) -> bool {
         "uptime" => uptime(),
         "remote" => remote(args),
         "live" => live::command(args), // C-159 step 1 (P6-108, P6-109)
+        "lucrare" => lucrare::command(args), // C-158 point 8 (P6-140): long jobs
         "reboot" => reboot(args),
         "porneste" => porneste(args),
         "exit" => match crate::term::of_shell(crate::sched::current_id()) {
@@ -330,6 +332,7 @@ fn help() {
     out!("  hub asculta [--la N]   la fiecare N minute (implicit 2) ia si ruleaza comenzile noi din hub; Esc opreste\n");
     out!("  hub opreste      opreste bucla `hub asculta` pornita la pornire (/usb/hub/asculta)\n");
     out!("  live <minute>    canalul viu (C-159): comenzi semnate din hub, live/<sesiune>/ pe ramura os/live; cere /usb/hub/live.cheie\n");
+    out!("  lucrare <nume>   lucrare lunga din /usb/lucrari/<nume>.txt (ora, rapoarte, oprire, reluare); lucrare stare | opreste <nume>\n");
     out!("  trimite          rapoartele noi din /usb/raport -> hub (rezultate/os-automat/<data>/), doar cu /usb/github.token\n");
     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
     out!("  log --avertismente [n]  doar avertismentele si erorile; log --sumar = cate randuri pe nivel si pe modul\n");

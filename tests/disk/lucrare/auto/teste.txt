@@ -1,0 +1,7 @@
+# lista de test P6-140 (scenariul lucrare): lucrarile lungi pornite din lista automata
+ceas 5
+lucrare proba
+lucrare oprita
+lucrare scurta
+lucrare stricata
+lucrare stare

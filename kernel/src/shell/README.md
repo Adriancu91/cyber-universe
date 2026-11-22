@@ -62,6 +62,11 @@
   **P6-139 (C-158 p.5):** până la 4 teste pe placă într-o pornire (`ciclu::board_slot`): primul cu `gpu recupereaza`, următoarele
   cu resetul din interior (`FLR_ARMED`) la începutul lanțului; placa blocată = restul refuzat. Test: `auto-placa` (`test-placa-sim`,
   doar în build-ul `test-auto`: aceeași numărătoare, lanț prefăcut).
+- **`lucrare <nume>` (P6-140, C-158 p.8, unealta 8):** `lucrare.rs` — lucrări lungi din `/usb/lucrari/<nume>.txt` (pornire la o
+  oră sau după N minute, raport în hub la N minute, oprire la comandă / la oră / după o durată, pași doar din lista albă a
+  modului automat); starea `<nume>.stare` scrisă după fiecare pas, reluată la pornire de la pasul următor (un pas tăiat de 2 ori
+  la rând oprește lucrarea). `lucrare stare [nume]`, `lucrare opreste <nume>`; rând în `auto/teste.txt`. Detalii: `docs/LUCRARI.md`.
+  Test: `lucrare` (lista automată), `lucrare-reluare` (după o pană de curent prefăcută), `lucrare::self_test`.
 - **`test tot` (P6-61, F9):** `testtot.rs` — autotestul pe calculatorul real (procesor, ceas, temporizator, stick, rețea, placa
   video doar prin ID-urile PCI); `PASS`/`FAIL`/`LIPSA`, raport `raport/test-tot-*.txt`, apoi `trimite`. Test: scenariul `testtot`.
 - **`ora [server [port]]` (P6-61):** SNTP (`net/sntp.rs`, RFC 4330): ora din rețea în UTC și ora României (regula UE pentru

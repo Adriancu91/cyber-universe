@@ -1,0 +1,2 @@
+repeta 5
+pas uptime

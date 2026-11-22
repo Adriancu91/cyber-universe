@@ -172,6 +172,7 @@ extern "C" fn kernel_main() -> ! {
         }
         // P6-130 (C-159 step 3): a live session that asked for the restart (`actualizeaza`) goes on here.
         let resumed_from_list = shell::live::resume_if_asked();
+        shell::lucrare::resume_if_present(); // P6-140: a long job cut off (power, hang) goes on from its next step
         shell::auto::run_if_present(); // P6-41: `/usb/auto/teste.txt` = the automatic test loop (restarts at the end)
         if resumed_from_list {
             power::reboot(None); // the session came from the list: back to Windows, as at the list's end
@@ -400,6 +401,8 @@ fn run_tests() -> ! {
         {
             shell::auto::self_test();
             shell::hubcmd::self_test();
+            shell::lucrare::self_test();
+            shell::lucrare::resume_if_present();
             shell::auto::run_if_present();
         }
         serial_println!("TASTATURA: astept taste");

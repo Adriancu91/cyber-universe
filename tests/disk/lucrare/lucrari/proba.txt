@@ -1,0 +1,8 @@
+# lucrarea de proba P6-140: porneste dupa 2 s, 2 tururi de 3 pasi, raport la 3 s
+unitate secunde
+porneste +2
+raport 3
+repeta 2
+pas uptime
+pas test-asteapta 2
+pas ls /disk/lucrari
