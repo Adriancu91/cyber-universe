@@ -500,6 +500,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-138** C-157 punctul 2: **dieta 2 (A+B) și cu argmax fără copie** (nota Cyber-GPU `C-157_P2j_argmax-fara-copie.md`, `0c46879`, fără cod nou la ei; nimic nou pentru placă) → `test-placa --argmax-fara-copie --dieta2`; plus CI în patru părți QEMU. Plan: `docs/plans/P6-138.md`. Dep: P6-137.
 - [x] **P6-139** C-158 punctul 5: **mai multe teste pe placă într-o singură pornire** — 2–4 rânduri `test-placa …` în `auto\teste.txt`, primul cu `gpu recupereaza`, următoarele cu resetul din interior (dovedit în os-323), un raport pe fiecare; placa blocată = restul refuzat. Plan: `docs/plans/P6-139.md`. Dep: P6-101, P6-138.
   Gata (2026-11-21 ~16:55 RO): `gpu-tablou` trece (rândul nou „oprirea zonei = nu se trimite …”).
+- [~] **P6-140** C-158 punctul 8: managerul de lucrări lungi (unealta 8) — `lucrare <nume>`: pornește la o oră, raport în hub la N minute, oprire la comandă / la oră / după o durată, reluare după o pană de curent (fără să refacă pașii terminați); pași doar de citire (lista albă a modului automat); nimic pentru placă. Plan: `docs/plans/P6-140.md`. Dep: P6-139.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
