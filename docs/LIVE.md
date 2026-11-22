@@ -34,8 +34,8 @@
 ```
 - `nr`: întreg pozitiv, exact următorul (prima comandă = 1).
 - `sesiune`: numele dosarului (`s-AAAALLZZ-HHMM`, ales de OS la pornire și scris în `live/<sesiune>/sesiune.json` — P6-109).
-- `fel` (pasul 1): `comanda` (un rând de shell), `stare`, `gata` (încheie sesiunea). Pasul 2 adaugă `scrie`, `tasta`, `clic`,
-  `muta`, `ecran`, `captura` — până atunci sunt `REFUZAT` cu motivul „pasul 2”.
+- `fel` (pasul 1): `comanda` (un rând de shell), `stare`, `gata` (încheie sesiunea). Pasul 2, partea 1 (P6-111): `scrie`,
+  `tasta`, `ecran` (terminalul viu, mai jos). `clic`, `muta`, `captura` (partea 2) sunt încă `REFUZAT` cu motivul „pasului 2”.
 - `semnatura` = HMAC-SHA-256 cu cheia `/usb/hub/live.cheie` (cel puțin 32 de octeți, aceeași la centrul de comandă) peste textul:
   ```
   cyber-live-1\n<sesiune>\n<nr>\n<fel>\n<text>
@@ -51,8 +51,8 @@
 ```
 sau, la refuz: `"stare":"REFUZAT","motiv":"<de ce>"` (fără `cod`/`iesire`). `nr` e `null` dacă fișierul nu se putea citi.
 - `cod`: 0, sau codul de ieșire al programului pornit cu `run` (126 = programul nu pornește, 127 = comandă necunoscută).
-- `iesire`: tot ce a scris comanda (shell + programe). `ecran` (pasul 1): ultimele 25 de rânduri din jurnalul sistemului;
-  textul ecranului adevărat vine la pasul 2. `sistem`: versiunea, `/usb/VERSIUNE`, de cât timp merge, ora, memoria liberă, temperatura procesorului.
+- `iesire`: tot ce a scris comanda (shell + programe). `ecran`: textul terminalului viu (ultimele 40 de rânduri), după ce
+  sesiunea l-a deschis (primul `scrie` / `tasta` / `ecran`); înainte, ultimele 25 de rânduri din jurnalul sistemului. `sistem`: versiunea, `/usb/VERSIUNE`, de cât timp merge, ora, memoria liberă, temperatura procesorului.
 - `fel: stare` → `iesire` = rândul `sistem`. `fel: gata` → `iesire` = „sesiunea se incheie (gata)”.
 **`ecou` e mereu fișierul primit, octet cu octet** — centrul de comandă îl compară cu ce a trimis.
 
@@ -82,6 +82,24 @@ sau, la refuz: `"stare":"REFUZAT","motiv":"<de ce>"` (fără `cod`/`iesire`). `n
   „DA”: cât merge o sesiune vie, întrebarea nici nu citește tastatura.
 - Proba în QEMU (`ghpush`, a doua sesiune): `gpu lant` → DA refuzat pe loc; `test-placa --p8 --tablou` → formă greșită;
   `test-placa --p8` fără `permite-test-placa` → refuzat pentru cheie; al doilea `test-placa` → refuzat de poartă.
+
+## Terminalul viu: `scrie`, `tasta`, `ecran` (P6-111, C-159 pasul 2, partea 1)
+- Sesiunea vie are **terminalul ei**: un shell întreg, pe firul lui (ca terminalul din desktop), deschis la primul `scrie` /
+  `tasta` / `ecran` și închis odată cu sesiunea (după `exit` se deschide altul la următoarea tastă). Tastele merg doar în el,
+  nu în tastatura adevărată (Esc-ul trimis nu oprește sesiunea; ce tastează Adrian la calculator nu se amestecă).
+- **`scrie`**: textul tastat literă cu literă (`\n` = Enter, tab = Tab; alte caractere de control → `REFUZAT`), cel mult 1024.
+- **`tasta`**: nume de taste despărțite prin spații: `enter`, `esc`, `tab`, `backspace`, `spatiu`, `sus`, `jos`, `stanga`,
+  `dreapta`, `home`, `end`, `delete`, `ctrl+<litera>` (cel mult 64). `alt+…` (de ex. `alt+tab`) și numele necunoscute → `REFUZAT`
+  la poartă, cu motivul.
+- După taste, OS-ul citește ce a scris terminalul până tace 0,5 s (cel mult 10 s): asta e `iesire`. Ce vine mai târziu (o
+  comandă lungă) apare la următorul `ecran`.
+- **`ecran`**: `iesire` = textul terminalului acum (ultimele 40 de rânduri, cel mult 200 de caractere pe rând).
+- **Placa video nu se atinge prin taste, niciodată:** shell-ul terminalului viu refuză orice rând care ar scrie în placă
+  (aceeași listă ca la poartă: `gpu lant`, `test-placa`, `--gpu` …), cu sau fără `permite-live-placa`:
+  `REFUZAT: prin taste nu ruleaza nimic ce scrie in placa video (doar ca `comanda`, cu cheile ei)`. La fel `live …`.
+  O întrebare „DA” nu citește tastele cât merge sesiunea (răspuns pe loc, niciodată „DA”).
+- Proba în QEMU (`ghpush`, a treia sesiune): `ecran` (promptul), `scrie uptime` + `tasta enter` (rulează în terminal),
+  `scrie "gpu lant\n"` (refuzat de shell), `tasta alt+tab` (refuzat la poartă), `tasta ctrl+c esc sus`, `ecran` (tot textul).
 
 ## Ce rămâne păzit de nucleu (neschimbat)
 Fișierele secrete nu se arată; scrieri pe disc doar pe partiții `cyber.rw`; placa video doar cu `permite-live-placa`

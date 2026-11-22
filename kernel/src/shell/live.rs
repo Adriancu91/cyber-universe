@@ -24,14 +24,84 @@ use alloc::{format, string::String, vec::Vec};
 use core::sync::atomic::{AtomicBool, Ordering};
 use cyber_crypto::sha2::Sha256;
 use cyber_json::Value;
+use crate::drivers::keyboard::Key;
 
 /// The version tag at the start of the signed text (a change of form changes it).
 pub const FORM: &str = "cyber-live-1";
 /// Largest command file accepted (bytes).
 pub const MAX_COMMAND: usize = 64 * 1024;
-/// The kinds of step 1. The others (step 2: `scrie`, `tasta`, `clic`, `muta`, `ecran`, `captura`) are refused with a clear reason.
-pub const KINDS: [&str; 3] = ["comanda", "stare", "gata"];
-const LATER: [&str; 6] = ["scrie", "tasta", "clic", "muta", "ecran", "captura"];
+/// The kinds that run: step 1 (`comanda`, `stare`, `gata`) and P6-111 (C-159 step 2, part 1: the live terminal's keys and
+/// its screen text). The rest of step 2 (`clic`, `muta`, `captura`) is refused with a clear reason.
+pub const KINDS: [&str; 6] = ["comanda", "stare", "gata", "scrie", "tasta", "ecran"];
+const LATER: [&str; 3] = ["clic", "muta", "captura"];
+/// Longest text of one `scrie` (characters).
+pub const MAX_TYPED: usize = 1024;
+
+/// P6-111: the key names of `tasta`, separated by spaces (`ctrl+c enter`, `sus sus enter`). `alt+…` does not exist
+/// yet (no window to switch to in the live terminal) and is refused with that reason, like any unknown name.
+pub fn parse_keys(text: &str) -> Result<Vec<Key>, String> {
+    let mut keys = Vec::new();
+    for name in text.split_whitespace() {
+        let low = name.to_ascii_lowercase();
+        let key = match low.as_str() {
+            "enter" => Key::Enter,
+            "esc" | "escape" => Key::Escape,
+            "tab" => Key::Tab,
+            "backspace" | "bksp" => Key::Backspace,
+            "spatiu" | "space" => Key::Char(' '),
+            "sus" | "up" => Key::Up,
+            "jos" | "down" => Key::Down,
+            "stanga" | "left" => Key::Left,
+            "dreapta" | "right" => Key::Right,
+            "home" => Key::Home,
+            "end" => Key::End,
+            "delete" | "del" => Key::Delete,
+            other => match other.strip_prefix("ctrl+") {
+                Some(l) if l.len() == 1 && l.as_bytes()[0].is_ascii_lowercase() => Key::Ctrl(l.as_bytes()[0] as char),
+                _ if other.starts_with("alt+") => return Err(format!("tasta {}: alt+… nu exista inca in terminalul viu (nicio fereastra de schimbat)", name)),
+                _ => return Err(format!("tasta necunoscuta: {} (enter, esc, tab, backspace, spatiu, sus, jos, stanga, dreapta, home, end, delete, ctrl+<litera>)", name)),
+            },
+        };
+        keys.push(key);
+    }
+    if keys.is_empty() {
+        return Err(String::from("nicio tasta"));
+    }
+    if keys.len() > 64 {
+        return Err(String::from("prea multe taste intr-o comanda (cel mult 64)"));
+    }
+    Ok(keys)
+}
+
+/// P6-111: the keys of a `scrie` text (a line end = Enter, a tab = Tab); other control characters are refused.
+pub fn typed_keys(text: &str) -> Result<Vec<Key>, String> {
+    if text.is_empty() {
+        return Err(String::from("text gol"));
+    }
+    if text.chars().count() > MAX_TYPED {
+        return Err(format!("textul e prea lung (cel mult {} de caractere)", MAX_TYPED));
+    }
+    text.chars()
+        .map(|c| match c {
+            '\n' => Ok(Key::Enter),
+            '\t' => Ok(Key::Tab),
+            c if c.is_control() => Err(String::from("textul are caractere de control (doar rand nou si tab)")),
+            c => Ok(Key::Char(c)),
+        })
+        .collect()
+}
+
+/// P6-111: a line typed in the live terminal, checked by its shell before it runs. Nothing that writes to the video card
+/// goes by keys (only as `comanda`, through the gate, its keys and the one-per-session rule), and no nested `live`.
+pub fn typed_line(line: &str) -> Result<(), &'static str> {
+    if line.split_whitespace().next() == Some("live") {
+        return Err("o sesiune vie nu porneste alta sesiune vie");
+    }
+    if writes_to_board(line) {
+        return Err("prin taste nu ruleaza nimic ce scrie in placa video (doar ca `comanda`, cu cheile ei)");
+    }
+    Ok(())
+}
 
 /// A command that passed the gate.
 #[derive(Debug, Clone, PartialEq)]
@@ -150,10 +220,20 @@ impl Gate {
             return Verdict::Refused { nr: Some(nr), why: format!("numar gresit: astept nr {}", self.next) };
         }
         if LATER.contains(&kind) {
-            return refuse(Some(nr), "felul acesta vine la pasul 2 al agentului viu (inca nu exista)");
+            return refuse(Some(nr), "felul acesta vine in a doua parte a pasului 2 al agentului viu (inca nu exista)");
         }
         if !KINDS.contains(&kind) {
-            return refuse(Some(nr), "fel necunoscut (comanda, stare, gata)");
+            return refuse(Some(nr), "fel necunoscut (comanda, stare, gata, scrie, tasta, ecran)");
+        }
+        if kind == "scrie" {
+            if let Err(why) = typed_keys(text) {
+                return Verdict::Refused { nr: Some(nr), why: format!("scrie: {}", why) };
+            }
+        }
+        if kind == "tasta" {
+            if let Err(why) = parse_keys(text) {
+                return Verdict::Refused { nr: Some(nr), why };
+            }
         }
         if kind == "comanda" && text.trim().is_empty() {
             return refuse(Some(nr), "comanda goala");
@@ -363,10 +443,132 @@ pub fn system_text() -> String {
     )
 }
 
-/// The text of the screen after a command: in step 1, the last lines of the system log (step 2 brings the screen).
-fn screen_text() -> String {
+/// The text of the screen after a command, before the live terminal is open: the last lines of the system log.
+fn log_text() -> String {
     let lines = crate::log::recent();
     lines[lines.len().saturating_sub(25)..].join("\n")
+}
+
+/// How long the live terminal is watched after keys are sent: until it has been quiet for `QUIET_MS`, at most `WAIT_MS`.
+const QUIET_MS: u64 = 500;
+const WAIT_MS: u64 = 10_000;
+/// Lines of the live terminal kept for `ecran` (and their longest length).
+const SCREEN_LINES: usize = 40;
+const SCREEN_COLS: usize = 200;
+
+/// P6-111 (C-159 step 2, part 1): the live session's own terminal — a whole shell on its own thread (`term::open_live`),
+/// fed by `scrie` / `tasta`, whose text `ecran` shows. Opened at the first of them; closed with the session.
+#[derive(Default)]
+pub struct Terminal {
+    id: Option<u64>,
+    lines: Vec<String>,
+}
+
+impl Terminal {
+    /// Adds text the terminal printed: a line end starts a new line, Backspace erases the last character of the line.
+    pub fn feed(&mut self, text: &str) {
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+        for c in text.chars() {
+            match c {
+                '\n' => {
+                    self.lines.push(String::new());
+                    if self.lines.len() > SCREEN_LINES {
+                        self.lines.remove(0);
+                    }
+                }
+                '\x08' => {
+                    if let Some(l) = self.lines.last_mut() {
+                        l.pop();
+                    }
+                }
+                '\r' => {}
+                c => {
+                    if let Some(l) = self.lines.last_mut()
+                        && l.chars().count() < SCREEN_COLS
+                    {
+                        l.push(c);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The text on the terminal's screen now (the last `SCREEN_LINES` lines).
+    pub fn screen(&self) -> String {
+        self.lines.join("\n")
+    }
+
+    /// Opens the terminal if it is not open (again after `exit`). `None` = it could not be opened.
+    fn ensure(&mut self) -> u64 {
+        let me = crate::sched::current_id();
+        match self.id {
+            Some(id) if crate::term::is_open(me, id) => id,
+            _ => {
+                if self.id.is_some() {
+                    self.feed("\n[terminalul viu s-a inchis (exit); am deschis altul]\n");
+                }
+                let id = crate::term::open_live(me);
+                self.id = Some(id);
+                id
+            }
+        }
+    }
+
+    /// Reads what the terminal printed until it has been quiet for `QUIET_MS` (at most `WAIT_MS`); returns that text.
+    fn settle(&mut self, id: u64) -> String {
+        let me = crate::sched::current_id();
+        let start = crate::time::uptime_ms().unwrap_or(0);
+        let mut quiet_since = start;
+        let mut got = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let now = crate::time::uptime_ms().unwrap_or(0);
+            match crate::term::read_output(me, id, &mut buf) {
+                Some(n) if n > 0 => {
+                    got.extend_from_slice(&buf[..n]);
+                    quiet_since = now;
+                    continue;
+                }
+                Some(_) => {}
+                None => break, // closed and everything read
+            }
+            if now.saturating_sub(quiet_since) >= QUIET_MS || now.saturating_sub(start) >= WAIT_MS {
+                break;
+            }
+            crate::sched::sleep_ms(50);
+        }
+        let text = String::from_utf8_lossy(&got).into_owned();
+        self.feed(&text);
+        text
+    }
+
+    /// `scrie` / `tasta`: sends the keys and returns what the terminal printed after them.
+    fn keys(&mut self, keys: &[Key]) -> String {
+        let id = self.ensure();
+        let mut before = self.settle(id); // the welcome text and prompt of a new terminal stay on the screen
+        before.clear();
+        if !crate::term::send_key_list(crate::sched::current_id(), id, keys) {
+            super::LAST_EXIT.store(1, Ordering::Relaxed);
+            return String::from("terminalul viu nu primeste taste (inchis)\n");
+        }
+        self.settle(id)
+    }
+
+    /// `ecran`: the screen text now (what arrived meanwhile included).
+    fn look(&mut self) -> String {
+        let id = self.ensure();
+        self.settle(id);
+        format!("{}\n", self.screen())
+    }
+
+    /// The session ended: the terminal closes, so its shell ends too.
+    fn close(&mut self) {
+        if self.id.take().is_some() {
+            crate::term::close_owned(crate::sched::current_id());
+        }
+    }
 }
 
 /// Runs one shell line with everything it prints captured (inside the automatic mode's own capture, which is kept).
@@ -483,6 +685,7 @@ fn session(minutes: u64, poll_ms: u64, by_hand: bool) -> Result<Summary, String>
     let mut last = crate::time::uptime_ms().unwrap_or(0);
     let list_path = format!("{}/lista.txt", local);
     let mut errors = 0u32;
+    let mut terminal = Terminal::default();
     'outer: loop {
         if by_hand && crate::drivers::keyboard::take_escape() {
             sum.end = String::from("oprita cu Esc");
@@ -509,7 +712,7 @@ fn session(minutes: u64, poll_ms: u64, by_hand: bool) -> Result<Summary, String>
                         break; // not readable yet: at the next look
                     }
                     let raw = String::from_utf8_lossy(&fs::read_all(&copy).unwrap_or_default()).into_owned();
-                    let end = one(&key, board_key, &raw, want, &mut gate, &local, &remote, &journal_path, &mut sum);
+                    let end = one(&key, board_key, &raw, want, &mut gate, &local, &remote, &journal_path, &mut sum, &mut terminal);
                     last = crate::time::uptime_ms().unwrap_or(0);
                     if end {
                         sum.end = String::from("gata (cerut de centrul de comanda)");
@@ -536,6 +739,7 @@ fn session(minutes: u64, poll_ms: u64, by_hand: bool) -> Result<Summary, String>
             waited += step;
         }
     }
+    terminal.close();
     journal(&journal_path, &format!("# sfarsit {}: {}", auto::now_text(), sum.end));
     auto::say(&sum.line());
     Ok(sum)
@@ -543,7 +747,7 @@ fn session(minutes: u64, poll_ms: u64, by_hand: bool) -> Result<Summary, String>
 
 /// One command file (number `want`): the gate, the journal BEFORE it runs, the run, the answer. `true` = `gata`.
 #[allow(clippy::too_many_arguments)]
-fn one(key: &[u8], board_key: bool, raw: &str, want: u32, gate: &mut Gate, local: &str, remote: &str, journal_path: &str, sum: &mut Summary) -> bool {
+fn one(key: &[u8], board_key: bool, raw: &str, want: u32, gate: &mut Gate, local: &str, remote: &str, journal_path: &str, sum: &mut Summary, terminal: &mut Terminal) -> bool {
     let mut verdict = gate.check(key, board_key, raw);
     // P6-118 (C-161 point 1): one board command per session (a correct `test-placa` form counts, whatever its keys say).
     if let Verdict::Run(cmd) = &verdict {
@@ -571,13 +775,17 @@ fn one(key: &[u8], board_key: bool, raw: &str, want: u32, gate: &mut Gate, local
                     None => run_captured(&cmd.text),
                 },
                 "stare" => format!("{}\n", system_text()),
+                // P6-111: the gate has already checked the text and the key names.
+                "scrie" => terminal.keys(&typed_keys(&cmd.text).unwrap_or_default()),
+                "tasta" => terminal.keys(&parse_keys(&cmd.text).unwrap_or_default()),
+                "ecran" => terminal.look(),
                 _ => String::from("sesiunea se incheie (gata)\n"),
             };
             let o = Outcome {
                 code: super::LAST_EXIT.load(Ordering::Relaxed),
                 ms: crate::time::uptime_ms().unwrap_or(0).saturating_sub(t0),
                 output,
-                screen: screen_text(),
+                screen: if terminal.id.is_some() { terminal.screen() } else { log_text() },
                 system: system_text(),
             };
             journal(journal_path, &format!("{} gata {} ms cod {}", want, o.ms, o.code));
@@ -664,7 +872,26 @@ pub fn self_test() {
     assert!(why(g.check(&key, false, &good(2, "comanda", "hw").replace(s, "s-alta"))) == "alta sesiune");
     assert!(why(g.check(&key[..16], false, &good(2, "comanda", "hw"))).starts_with("cheia live.cheie"));
     assert!(why(g.check(&key, false, "{nr: 2")) == "fisierul comenzii nu e JSON valid");
-    assert!(why(g.check(&key, false, &good(2, "tasta", "ctrl+c"))).contains("pasul 2"));
+    assert!(why(g.check(&key, false, &good(2, "clic", "10 10"))).contains("pasului 2"));
+    // P6-111: the keys of `tasta` and `scrie`, checked at the gate; typed lines never write to the board.
+    assert!(matches!(g.check(&key, false, &good(2, "tasta", "ctrl+c")), Verdict::Run(_)));
+    assert!(parse_keys("ctrl+c Enter sus esc spatiu") == Ok(alloc::vec![Key::Ctrl('c'), Key::Enter, Key::Up, Key::Escape, Key::Char(' ')]));
+    assert!(why(g.check(&key, false, &good(2, "tasta", "alt+tab"))).contains("alt+"));
+    assert!(why(g.check(&key, false, &good(2, "tasta", "f13"))).starts_with("tasta necunoscuta: f13"));
+    assert!(why(g.check(&key, false, &good(2, "tasta", " "))) == "nicio tasta");
+    assert!(typed_keys("hw\n") == Ok(alloc::vec![Key::Char('h'), Key::Char('w'), Key::Enter]));
+    assert!(why(g.check(&key, false, &good(2, "scrie", "a\u{1b}b"))).starts_with("scrie: textul are caractere de control"));
+    assert!(why(g.check(&key, false, &good(2, "scrie", ""))) == "scrie: text gol");
+    assert!(why(g.check(&key, false, &good(2, "scrie", &"x".repeat(MAX_TYPED + 1)))).starts_with("scrie: textul e prea lung"));
+    assert!(matches!(g.check(&key, false, &good(2, "scrie", "gpu lant\n")), Verdict::Run(_)), "live: scrie trece poarta; randul e oprit de shell");
+    assert!(typed_line("gpu lant").is_err() && typed_line("test-placa --p8").is_err() && typed_line("live 5").is_err() && typed_line("uptime").is_ok() && typed_line("gpu stare").is_ok());
+    let mut t = Terminal::default();
+    t.feed("cyber> hx\x08w\npornit de 3 s\r\ncyber> ");
+    assert!(t.screen() == "cyber> hw\npornit de 3 s\ncyber> ", "live: ecranul terminalului: {:?}", t.screen());
+    for i in 0..60 {
+        t.feed(&format!("rand {}\n", i));
+    }
+    assert!(t.lines.len() == SCREEN_LINES && t.screen().starts_with("rand 21\n"), "live: ecranul pastreaza ultimele randuri");
     assert!(why(g.check(&key, false, &good(2, "sterge", "x"))).starts_with("fel necunoscut"));
     assert!(why(g.check(&key, false, &good(2, "comanda", "live 5"))).starts_with("o sesiune vie nu porneste"));
     assert!(matches!(g.check(&key, false, &good(2, "gata", "")), Verdict::Run(_)));

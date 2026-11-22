@@ -111,6 +111,16 @@ pub fn run() {
             }
             crate::info!("remote: comanda: {}", line.trim());
         }
+        // P6-111 (C-159 step 2): a line typed through the live channel (`scrie` / `tasta`) never writes to the video card
+        // and never starts another live session; board commands go only as `comanda`, through the gate and its keys.
+        if !line.trim().is_empty() && crate::term::is_live(crate::sched::current_id()) {
+            if let Err(why) = live::typed_line(&line) {
+                crate::info!("live: rand tastat REFUZAT: {} ({})", line.trim(), why);
+                out!("REFUZAT: {}\n", why);
+                continue;
+            }
+            crate::info!("live: rand tastat: {}", line.trim());
+        }
         if !dispatch(&line) {
             return;
         }

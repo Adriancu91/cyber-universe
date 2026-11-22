@@ -2233,6 +2233,35 @@ fn test_ghpush() {
     assert!(s(&r4, "stare") == "REFUZAT" && s(&r4, "motiv") == shell::live::BOARD_ONCE, "test: live placa: a doua: {:?}", s(&r4, "motiv"));
     let ms = crate::time::uptime_ms().unwrap_or(0).saturating_sub(t0);
     info!("test: live: comanda de placa a modului viu (DA raspuns pe loc, forma, cheia, una pe sesiune) OK in {} ms", ms);
+    // P6-111 (C-159 step 2, part 1): the live terminal — `ecran` shows its prompt, `scrie uptime` + `tasta enter` runs
+    // the command in the terminal's own shell, a typed board command is refused by that shell (never by keys), `alt+tab`
+    // is refused at the gate, `ecran` at the end shows all of it.
+    let sum3 = shell::live::test_session(1).expect("test: sesiunea vie a treia");
+    assert!(sum3.ran == 7 && sum3.refused == 1 && sum3.end.starts_with("gata"), "test: live terminal: {:?}", sum3);
+    let take3 = |name: &str| {
+        let remote = alloc::format!("live/{}/{}", sum3.session, name);
+        let local = alloc::format!("/etc/live3-{}", name);
+        let id = proc::spawn_path("/bin/gh-ia", &["gh-ia", "--live-ia", &remote, &local]).expect("test: /bin/gh-ia");
+        assert!(proc::wait_child(id) == 0, "test: live terminal: {} lipseste din hub", remote);
+        let r = alloc::string::String::from_utf8(fs::read_all(&local).unwrap_or_default()).unwrap_or_default();
+        cyber_json::parse(&r).unwrap_or_else(|_| panic!("test: live terminal: {} nu e JSON: {}", name, r))
+    };
+    let r1 = take3("r-0001.json");
+    assert!(s(&r1, "stare") == "ok" && s(&r1, "iesire").contains("cyber> "), "test: live terminal: ecran: {:?}", s(&r1, "iesire"));
+    let r2 = take3("r-0002.json");
+    assert!(s(&r2, "iesire").contains("uptime"), "test: live terminal: scrie: {:?}", s(&r2, "iesire"));
+    let r3 = take3("r-0003.json");
+    assert!(s(&r3, "iesire").contains("pornit de "), "test: live terminal: enter: {:?}", s(&r3, "iesire"));
+    let r4 = take3("r-0004.json");
+    assert!(s(&r4, "iesire").contains("REFUZAT: prin taste nu ruleaza nimic ce scrie in placa video"), "test: live terminal: placa: {:?}", s(&r4, "iesire"));
+    let r5 = take3("r-0005.json");
+    assert!(s(&r5, "stare") == "REFUZAT" && s(&r5, "motiv").contains("alt+"), "test: live terminal: alt+tab: {:?}", s(&r5, "motiv"));
+    let r6 = take3("r-0006.json");
+    assert!(s(&r6, "stare") == "ok", "test: live terminal: taste: {:?}", r6);
+    let r7 = take3("r-0007.json");
+    let e7 = s(&r7, "iesire");
+    assert!(e7.contains("cyber> uptime") && e7.contains("pornit de ") && e7.contains("REFUZAT: prin taste") && s(&r7, "ecran") == e7.trim_end_matches('\n'), "test: live terminal: ecranul: {:?}", e7);
+    info!("test: live: terminalul viu (ecran, scrie + tasta enter, placa refuzata prin taste, alt+tab refuzat) OK");
 }
 
 /// HTTPS with real web sites (P6-02): /bin/fetch resolves the name, connects through QEMU's network to the

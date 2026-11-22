@@ -43,6 +43,14 @@ LIVE_SESSIONS = []  # the sessions opened, in order
 def live_open(files, session):
     d = f"live/{session}/"
     LIVE_SESSIONS.append(session)
+    if len(LIVE_SESSIONS) == 3:
+        # P6-111 (C-159 step 2, part 1): the live terminal — its screen, a typed `uptime` + Enter, a typed board command
+        # (refused by the terminal's shell), `alt+tab` (refused at the gate), other keys, the screen again, `gata`.
+        for nr, kind, text in [(1, "ecran", ""), (2, "scrie", "uptime"), (3, "tasta", "enter"), (4, "scrie", "gpu lant\n"),
+                               (5, "tasta", "alt+tab"), (6, "tasta", "ctrl+c esc sus"), (7, "ecran", ""), (8, "gata", "")]:
+            files[d + "c-%04d.json" % nr] = live_file(session, nr, kind, text)
+        print(f"ghpush-test-server: live: sesiunea a treia {session}: c-0001..c-0008 puse (terminalul viu)", flush=True)
+        return
     if len(LIVE_SESSIONS) == 2:
         # P6-118 (C-161 point 1): the second session, with /etc/hub/permite-live-placa on the test disk but without
         # permite-test-placa: a `DA` question answered at once, a wrong `test-placa` form, a correct one refused for the

@@ -18,6 +18,9 @@ struct Term {
     closed: bool,
     /// The remote console (P6-49): its shell runs only the commands on the allow-list.
     restricted: bool,
+    /// P6-111 (C-159 step 2): the live channel's terminal (keys sent through the hub): lines that write to the video
+    /// card are refused, as is a nested `live` (`shell::live::typed_line`).
+    live: bool,
 }
 
 static TERMS: Mutex<Vec<Term>> = Mutex::new(Vec::new());
@@ -28,20 +31,25 @@ const OUTPUT_MAX: usize = 64 * 1024;
 
 /// Opens a terminal for the program on thread `owner` and starts its shell. Returns its id.
 pub fn open(owner: u64) -> u64 {
-    open_with(owner, false)
+    open_with(owner, false, false)
 }
 
 /// Opens a terminal whose shell runs only the allow-listed commands (the remote console, P6-49).
 pub fn open_restricted(owner: u64) -> u64 {
-    open_with(owner, true)
+    open_with(owner, true, false)
 }
 
-fn open_with(owner: u64, restricted: bool) -> u64 {
+/// P6-111: opens the live channel's terminal for the live session on thread `owner` (keys from `scrie` / `tasta`).
+pub fn open_live(owner: u64) -> u64 {
+    open_with(owner, false, true)
+}
+
+fn open_with(owner: u64, restricted: bool, live: bool) -> u64 {
     let id = NEXT_ID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     let mut terms = TERMS.lock();
     // The shell thread looks itself up in TERMS, which stays locked until its entry exists.
     let shell = sched::spawn(shell_thread);
-    terms.push(Term { id, owner, shell, input: VecDeque::new(), output: VecDeque::new(), closed: false, restricted });
+    terms.push(Term { id, owner, shell, input: VecDeque::new(), output: VecDeque::new(), closed: false, restricted, live });
     id
 }
 
@@ -59,6 +67,16 @@ fn shell_thread() {
         t.shell = 0;
     }
     terms.retain(|t| !(t.closed && t.shell == 0 && t.owner == 0));
+}
+
+/// P6-111: does the shell on thread `thread` run for the live channel's terminal?
+pub fn is_live(thread: u64) -> bool {
+    TERMS.lock().iter().any(|t| t.shell == thread && thread != 0 && t.live)
+}
+
+/// P6-111: whether terminal `id` (opened by `owner`) is still open.
+pub fn is_open(owner: u64, id: u64) -> bool {
+    TERMS.lock().iter().any(|t| t.id == id && t.owner == owner && !t.closed)
 }
 
 /// The terminal whose shell runs on thread `thread`.
@@ -128,6 +146,16 @@ pub fn send_keys(owner: u64, id: u64, text: &str) -> bool {
             c => Key::Char(c),
         });
     }
+    drop(terms);
+    INPUT.wake_all();
+    true
+}
+
+/// P6-111: keys of any kind (arrows, Ctrl+letter …) for the terminal `id` opened by `owner`.
+pub fn send_key_list(owner: u64, id: u64, keys: &[Key]) -> bool {
+    let mut terms = TERMS.lock();
+    let Some(t) = terms.iter_mut().find(|t| t.id == id && t.owner == owner && !t.closed) else { return false };
+    t.input.extend(keys.iter().copied());
     drop(terms);
     INPUT.wake_all();
     true
