@@ -239,6 +239,10 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     88 de lansări și cbuf-uri). Corect = aceleași simboluri și abaterea sub 1e-4 (`kt sferturi fata de lipit …`); viteza = mediana pe
     simbol a fiecărui fel de lansare în ambele rulări, un fel de înmulțire trece pe sferturi doar cu câștig ≥ 50 ‰ (`kt sferturi: …`).
     Test: `kronos-gpu-sferturi`.
+    **P6-128 (C-157 punctul 2, cyber-gpu `feb0819`): lista aleasă `lipita-ln-32`.** Doar în ciclu cu `test-placa … --ln-32` (în locul
+    celorlalte alegeri de listă; `gpu_tur::LN32_IN_CYCLE`; în build-ul de test `gpu lipit-sim ln-32`): același text cu `lipita-ln`
+    (implicitul), apoi cu `lipita-ln-32` (LayerNorm nou + toate înmulțirile pe sferturi; nimic nou pentru placă), comparate ca la
+    P6-124 (`kt ln-32 fata de lipita-ln …`, tabelul pe feluri). `kt lista` = 6. Test: `kronos-gpu-ln32`.
     **P6-119 (C-157 punctul 3, cyber-gpu `367edf4`): dieta 2 a driverului.** Doar în ciclu cu `test-placa … --dieta2` (după alegerea
     listei, înainte de `--p8`; `gpu_tur::DIET2_IN_CYCLE`; în build-ul de test `gpu dieta-sim 2`). Nimic nou pentru placă: (A) pe
     pozițiile care nu hrănesc profilul `kp` (toate în afară de 0, 1 și din 8 în 8) se citesc doar prima și ultima înregistrare

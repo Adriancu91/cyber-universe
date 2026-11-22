@@ -868,7 +868,13 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::QUARTERS_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu lipit-sim: sferturi (SIMULARE: textul de doua ori, lista lipita apoi lista lipita pe sferturi, q8_fused32)\n");
                 }
+                Some("ln-32") if args.len() == 2 => {
+                    // P6-128 (C-157 point 2): `lipita-ln`, then `lipita-ln-32` (every product on quarters), compared.
+                    crate::drivers::gpu_tur::LN32_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu lipit-sim: ln-32 (SIMULARE: textul de doua ori, lipita-ln apoi lipita-ln-32, toate inmultirile pe sferturi)\n");
+                }
                 Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::LN32_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::FUSED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::LN_ONLY_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::FUSED_ONLY_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
@@ -876,7 +882,7 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::QUARTERS_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu lipit-sim: oprita\n");
                 }
-                _ => out!("folosire: gpu lipit-sim on|singur|ln|ln-singur|sferturi|off\n"),
+                _ => out!("folosire: gpu lipit-sim on|singur|ln|ln-singur|sferturi|ln-32|off\n"),
             }
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu lipit-sim: exista doar in build-ul de test (pe stick lista lipita o porneste doar ciclul, test-placa --lipit)\n");

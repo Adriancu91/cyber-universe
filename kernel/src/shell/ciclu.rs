@@ -157,7 +157,7 @@ pub fn target(command: &str) -> Result<(String, String), &'static str> {
 
 /// P6-96: `test-placa [--i9 …]` of the automatic list -> the I9.
 pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
-    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi` sau `--sferturi`, apoi `--k651`, apoi `--argmax-placa` sau `--argmax-fara-copie`, apoi `--dieta2`, apoi `--p8` la sfarsit (in aceasta ordine; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--sferturi`; `--k651` nu merge cu `--lipit` sau `--simplu`; `--argmax-fara-copie` nu merge cu `--lipit`, `--ln-nou`, `--sferturi` sau `--dieta2`)";
+    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--sferturi` sau `--ln-32`, apoi `--k651`, apoi `--argmax-placa` sau `--argmax-fara-copie`, apoi `--dieta2`, apoi `--p8` la sfarsit (in aceasta ordine; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--sferturi`, `--ln-32`; `--k651` nu merge cu `--lipit` sau `--simplu`; `--argmax-fara-copie` nu merge cu `--lipit`, `--ln-nou`, `--sferturi`, `--ln-32` sau `--dieta2`)";
     let words: Vec<&str> = command.split_whitespace().collect();
     let Some(("test-placa", rest)) = words.split_first().map(|(a, b)| (*a, b)) else { return None };
     let (i9, flags) = match rest {
@@ -183,25 +183,26 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
     // Each at most once, in this order (the I9 text carries them as suffixes, read back in the same order).
     let mut out = String::from(i9);
     let mut next = 0;
-    let all = [FLR_PROBA, TABLOU, LIPIT, SIMPLU, LN_NOU, LN_VECHI, SFERTURI, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, P8];
+    // P6-128: `--ln-32` = `lipita-ln`, then `lipita-ln-32` (every product on quarters), compared; one more list choice.
+    let all = [FLR_PROBA, TABLOU, LIPIT, SIMPLU, LN_NOU, LN_VECHI, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, P8];
     for f in flags {
         let Some(at) = all.iter().position(|x| x.trim() == *f) else { return Some(Err(FORM)) };
         if at < next {
             return Some(Err(FORM));
         }
-        if at == 7 && (out.ends_with(LIPIT) || out.ends_with(SIMPLU)) {
+        if at == 8 && (out.ends_with(LIPIT) || out.ends_with(SIMPLU)) {
             return Some(Err(FORM));
         }
-        if at == 9 && [LIPIT, LN_NOU, SFERTURI].iter().any(|x| out.contains(x)) {
+        if at == 10 && [LIPIT, LN_NOU, SFERTURI, LN_32].iter().any(|x| out.contains(x)) {
             return Some(Err(FORM));
         }
-        if at == 10 && out.ends_with(ARGMAX_TOP) {
+        if at == 11 && out.ends_with(ARGMAX_TOP) {
             return Some(Err(FORM));
         }
         out.push_str(all[at]);
-        // `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi` and `--sferturi` exclude each other (each picks the lists #513
+        // `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--sferturi` and `--ln-32` exclude each other (each picks the lists #513
         // runs with); likewise `--argmax-placa` and `--argmax-fara-copie`.
-        next = if (2..7).contains(&at) { 7 } else if at == 8 { 10 } else { at + 1 };
+        next = if (2..8).contains(&at) { 8 } else if at == 9 { 11 } else { at + 1 };
     }
     Some(Ok(out))
 }
@@ -522,6 +523,11 @@ fn diet_block(path: &str, journal: &str, text: &str) -> String {
             let last = if text.contains("kt rularile:") { "ultima rulare = " } else { "" };
             format!("amprenta fata de referinta: {}lista lipita pe sferturi (lipita-32): fara referinta inca (aceasta e prima; abaterea fata de lista lipita e in randul kt sferturi)\n", last)
         }
+        // P6-128: 6 = `lipita-ln` then `lipita-ln-32`; the new list has no reference print yet (this is the first).
+        Some(6) => {
+            let last = if text.contains("kt rularile:") { "ultima rulare = " } else { "" };
+            format!("amprenta fata de referinta: {}lipita-ln-32 (toate inmultirile pe sferturi): fara referinta inca (aceasta e prima; abaterea fata de lipita-ln e in randul kt ln-32)\n", last)
+        }
         Some(_) if top => String::from("amprenta fata de referinta: fara amprenta in aceasta rulare (argmax fara copie: logit-urile raman pe placa)\n"),
         Some(k) => {
             let (what, want) = if k == 3 || k == 4 { ("LayerNorm nou", REF_PRINT_LN_NEW) } else { ("LayerNorm vechi", REF_PRINT_LN_OLD) };
@@ -583,6 +589,10 @@ pub const LN_VECHI: &str = " --ln-vechi";
 /// place of the other list choices).
 pub const SFERTURI: &str = " --sferturi";
 
+/// P6-128 (C-157 point 2, note C-157_P2g): suffix of the I9 text when the chosen list `lipita-ln-32` is asked against
+/// `lipita-ln` (`test-placa … --ln-32`, in the place of the other list choices).
+pub const LN_32: &str = " --ln-32";
+
 /// P6-119 (C-157 point 3): suffix of the I9 text when the second diet is asked (`test-placa … --dieta2`, before `--p8`).
 pub const DIETA2: &str = " --dieta2";
 
@@ -618,6 +628,10 @@ pub fn board_test(i9: &str) -> (String, String) {
         None => (i9, false),
     };
     let (i9, k651) = match i9.strip_suffix(K651_OPT) {
+        Some(x) => (x, true),
+        None => (i9, false),
+    };
+    let (i9, ln32) = match i9.strip_suffix(LN_32) {
         Some(x) => (x, true),
         None => (i9, false),
     };
@@ -695,9 +709,11 @@ pub fn board_test(i9: &str) -> (String, String) {
     // P6-120 (center's proposal 21 Nov 19:25): the glued list with the old LayerNorm alone only with `--ln-vechi`;
     // without any list option, the new LayerNorm alone (it passed on the board in os-331 and os-332).
     crate::drivers::gpu_tur::FUSED_ONLY_IN_CYCLE.store(ln_old, core::sync::atomic::Ordering::SeqCst);
-    crate::drivers::gpu_tur::LN_ONLY_IN_CYCLE.store(!fused && !plain && !ln_new && !ln_old && !quarters, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::LN_ONLY_IN_CYCLE.store(!fused && !plain && !ln_new && !ln_old && !quarters && !ln32, core::sync::atomic::Ordering::SeqCst);
     // P6-124 (C-155 point 4): the race on quarters only when the list asked for it, only for this chain's model.
     crate::drivers::gpu_tur::QUARTERS_IN_CYCLE.store(quarters, core::sync::atomic::Ordering::SeqCst);
+    // P6-128 (C-157 point 2): `lipita-ln` then `lipita-ln-32` only when the list asked for it.
+    crate::drivers::gpu_tur::LN32_IN_CYCLE.store(ln32, core::sync::atomic::Ordering::SeqCst);
     // P6-114 (C-155 point 2): the new LayerNorm only when the list asked for it, only for this chain's #513.
     crate::drivers::gpu_tur::LN_NEW_IN_CYCLE.store(ln_new, core::sync::atomic::Ordering::SeqCst);
     // P6-117 (C-161 point 2): P8 only when the list asked for it, only after this chain's #513 texts.
@@ -720,7 +736,9 @@ pub fn board_test(i9: &str) -> (String, String) {
     if p8 {
         text.push_str("\n(P8, primul calcul cu circuitele speciale: cerut de lista (--p8); dupa textele lui #513, programul mma16_f16 de 6 ori cu 6 seturi fixe, judecat pe procesor cu toleranta scrisa; trece = 6 seturi in toleranta si identitate 256/256 exacte)\n");
     }
-    if quarters {
+    if ln32 {
+        text.push_str("\n(lista aleasa de Cyber-GPU: ceruta de lista (--ln-32); #513 ruleaza de doua ori pe acelasi text: intai lipita-ln (implicitul, amprenta de referinta 0x46a07914), apoi lipita-ln-32 (LayerNorm nou + toate inmultirile pe sferturi; nimic nou pentru placa, aceleasi 88 de lansari si cbuf-uri); corect = aceleasi simboluri si abaterea sub 1e-4; timpul pe fel de lansare in ambele, un fel trece doar cu cel putin 50 la mie)\n");
+    } else if quarters {
         text.push_str("\n(cursa inmultirilor pe sferturi: ceruta de lista (--sferturi); #513 ruleaza de doua ori pe acelasi text: intai lista lipita (LayerNorm vechi, ca in os-329), apoi lista lipita pe sferturi (programe noi q8_fused32 si q8_matvec32, aceleasi 88 de lansari si cbuf-uri); corect = aceleasi simboluri si abaterea sub 1e-4; un fel de lansare trece pe sferturi doar daca e mai rapid cu cel putin 50 la mie)\n");
     } else if ln_new {
         text.push_str("\n(LayerNorm nou: cerut de lista (--ln-nou); #513 ruleaza de doua ori pe acelasi text cu lista lipita: intai cu LayerNorm vechi, apoi cu layernorm256, comparate: aceleasi simboluri si abaterea sub 1e-4)\n");
@@ -794,6 +812,7 @@ pub fn board_test(i9: &str) -> (String, String) {
     crate::drivers::gpu_tur::LN_NEW_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::LN_ONLY_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::QUARTERS_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::LN32_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::P8_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::DIET2_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::ARGMAX_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
@@ -1023,6 +1042,15 @@ pub fn self_test() {
     assert!(board_command("test-placa --argmax-placa --k651").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --dieta2 --argmax-placa").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --argmax-placa --argmax-placa").is_some_and(|r| r.is_err()));
+    // P6-128: `--ln-32` in the place of the list choices, alone among them; before `--k651`; not with `--argmax-fara-copie`.
+    assert!(board_command("test-placa --ln-32") == Some(Ok(String::from("c135 --ln-32"))));
+    assert!(board_command("test-placa --tablou --ln-32 --k651 --argmax-placa --dieta2 --p8") == Some(Ok(String::from("c135 --tablou --ln-32 --k651 --argmax-placa --dieta2 --p8"))));
+    assert!(board_command("test-placa --sferturi --ln-32").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --ln-32 --ln-vechi").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --k651 --ln-32").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --ln-32 --argmax-fara-copie").is_some_and(|r| r.is_err()));
+    let d = diet_block("/x", &jl(6, 0x1234_5678), "kronos --gpu: kt rularile: 2 rulari\n");
+    assert!(d.contains("ultima rulare = lipita-ln-32 (toate inmultirile pe sferturi): fara referinta inca"), "test: amprenta ln-32: {}", d);
     // P6-126: `--argmax-fara-copie` in the place of `--argmax-placa`, not with the two-run lists nor `--dieta2`.
     assert!(board_command("test-placa --argmax-fara-copie") == Some(Ok(String::from("c135 --argmax-fara-copie"))));
     assert!(board_command("test-placa --tablou --k651 --argmax-fara-copie --p8") == Some(Ok(String::from("c135 --tablou --k651 --argmax-fara-copie --p8"))));
