@@ -107,6 +107,22 @@ pub(super) fn ram_read(m: &SysMapping, len: u64) -> Vec<u8> {
     v
 }
 
+/// P6-138 (cyber-gpu note C-157_P2j, point 4): `data` written from byte `off` of a host-RAM mapping (only the pages it
+/// spans are touched; nothing else is cleared; bytes past the mapping are dropped).
+pub(super) fn ram_write_at(m: &SysMapping, off: u64, data: &[u8]) {
+    let off = off as usize;
+    let mut rest = data;
+    for (i, page) in ram(m).enumerate().skip(off / PAGE as usize) {
+        let start = if i == off / PAGE as usize { off % PAGE as usize } else { 0 };
+        let n = rest.len().min(page.len() - start);
+        page[start..start + n].copy_from_slice(&rest[..n]);
+        rest = &rest[n..];
+        if rest.is_empty() {
+            break;
+        }
+    }
+}
+
 /// P6-126 (cyber-gpu note C-157_P2f, proposal 1): `len` bytes of a host-RAM mapping from byte `off` (only the pages
 /// they span are touched; bytes past the mapping are not returned).
 pub(super) fn ram_read_at(m: &SysMapping, off: u64, len: u64) -> Vec<u8> {

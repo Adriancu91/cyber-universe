@@ -43,7 +43,7 @@ use nvidia_ga104::transfer;
 
 use super::gpu_golden::GpuState;
 use super::gpu_i10::{put_bytes, Launched, WAIT_US};
-use super::gpu_i11::{arena_pages, f32_bytes, map_vram, ram_read, ram_read_at, ram_write, run_records, Bell, I11_BOARD_BYTES, PAGE};
+use super::gpu_i11::{arena_pages, f32_bytes, map_vram, ram_read, ram_read_at, ram_write, ram_write_at, run_records, Bell, I11_BOARD_BYTES, PAGE};
 
 /// Where I14 looks for the control model on the board's stick, and on the test disk in SIMULATION.
 pub(super) const MIC_BOARD: &str = "/usb/kronos/mic_q8_0.kgr";
@@ -763,8 +763,10 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let diet = fast && super::gpu_tur::DIET_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     let push_shadow = if diet { Some(kf::WriteShadow::new(l.push.pa, l.push.size)?) } else { None };
     // P6-119 (C-157 point 3): the second diet only when the cycle's list asks for it, only for `kronos --gpu`.
-    // P6-126: not with the argmax without the copy (the second diet's argmax and print are on the logits).
-    let diet2 = fast && !argmax_top && super::gpu_tur::DIET2_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    // P6-126 kept it off with the argmax without the copy; P6-138 (cyber-gpu note C-157_P2j, point 2): only parts C
+    // (print after the clock) and D (argmax on bits) touch the logits and live in `run_token`; parts A (two records) and
+    // B (the planned wait) are in `submit` and work in `run_top` too.
+    let diet2 = fast && super::gpu_tur::DIET2_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     let mut runner = BoardRunner {
         p,
         vbar: &mut *vbar,
@@ -1879,13 +1881,20 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TopRunner for BoardRunner<'_, '_, V, K
         self.launch_ns.clear();
         let am = nvidia_ga104::argmax::RESULT_BYTES;
         // The result's 16 bytes filled with 0xEE first: a launch that did not write is seen (`ArgmaxResult::token`).
-        let mut fill = alloc::vec![0u8; (self.logits_bytes + am) as usize];
-        fill[self.logits_bytes as usize..].fill(0xee);
-        ram_write(&self.host_logits, &fill);
+        // P6-138 (note C-157_P2j, point 4): only those 16 bytes (the logits are never copied here).
+        ram_write_at(&self.host_logits, self.logits_bytes, &[0xee; nvidia_ga104::argmax::RESULT_BYTES as usize]);
         let extra = alloc::vec![nvidia_ga104::argmax::launch(vas.logits, self.host_logits.va + self.logits_bytes, m.vocab)?];
         let host_t0 = crate::time::since_boot_us();
         let journal_t0 = super::gpu_i6::JOURNAL_US.load(core::sync::atomic::Ordering::Relaxed);
         let words0 = self.st.vram_words;
+        // P6-138 (note C-157_P2j, point 2): the second diet's counters of this position (else `submit` adds them to
+        // the token before).
+        if self.diet2 {
+            self.d2_words.truncate(pos);
+            self.d2_words.push(0);
+            self.d2_polls.truncate(pos);
+            self.d2_polls.push(0);
+        }
         kd::send_token_list(self, self.list, &weights, vas, tok, pos, way, &extra)?;
         *self.tokens_done += 1;
         let words = self.st.vram_words.saturating_sub(words0);
@@ -1910,10 +1919,14 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TopRunner for BoardRunner<'_, '_, V, K
             kd::TokenList::Plain => kp::token_kinds(m.layers.len(), way.embed == kd::EmbedBy::Program, false),
             _ => kp::token_kinds_fused(m.layers.len(), way.embed == kd::EmbedBy::Program, false),
         };
+        // P6-138 (note C-157_P2j, point 3): a second-diet position that read only the two ends has no launch times:
+        // left out of the profile and of the argmax median (fewer samples, none guessed).
+        let skip = self.diet2 && self.launch_ns.is_empty();
         if let Some(t) = self.launch_ns.pop() {
             self.am_ns.push(t);
         }
-        if let Err(e) = self.prof.add_token(&kinds, &self.launch_ns) {
+        let added = if skip { Ok(()) } else { self.prof.add_token(&kinds, &self.launch_ns) };
+        if let Err(e) = added {
             self.prof_err.get_or_insert_with(|| format!("pozitia {}: {} ({} lansari, {} timpi)", pos, e, kinds.len(), self.launch_ns.len()));
         }
         let host = host_t0.zip(crate::time::since_boot_us()).map(|(a, b)| b.saturating_sub(a));
@@ -2197,7 +2210,7 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // P6-135: 7 = `lipita-ln-32` alone (reference print 0x6c8501f0, cycle 22 Nov 10:06).
     if list_kind == 1 || list_kind == 4 || list_kind == 7 {
         lines.push(format!(
-            "{}: kronos --gpu: kt lista: {} singura ({} lansari pe simbol, cu copierea logit-urilor; amprenta de referinta {})",
+            "{}: kronos --gpu: kt lista: {} singura ({} lansari pe simbol, {}; amprenta de referinta {})",
             p,
             match list_kind {
                 7 => "lipita-ln-32 (LayerNorm nou + toate inmultirile pe sferturi)",
@@ -2205,6 +2218,12 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 _ => "lipita (LayerNorm vechi)",
             },
             runs[0].list.launches_per_token(m.layers.len()) + 1,
+            // P6-138 (note C-157_P2j, point 4): without the copy the last launch is the argmax program.
+            if out.diet.as_ref().is_some_and(|d| d.top) {
+                "ultima e programul argmax, fara copierea logit-urilor"
+            } else {
+                "cu copierea logit-urilor"
+            },
             // P6-122: the reference prints are #513's (12 layers); a deeper model (#651, 24) has none yet.
             if m.layers.len() > 12 {
                 "doar la #513; acest model nu are inca una"
@@ -2343,11 +2362,14 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
     if let Some(d2) = out.diet.as_ref().and_then(|d| d.diet2.as_ref()) {
         d2.journal(true, journal);
         let rows = d2.rows(true);
+        // P6-138 (note C-157_P2j, point 4): with the argmax without the copy only parts A+B run.
+        let top = out.diet.as_ref().is_some_and(|d| d.top);
         lines.push(format!(
-            "{}: kronos --gpu: dieta 2: PORNITA (doua inregistrari citite pe {} din {} pozitii, asteptarea planificata, amprenta dupa ceas, argmax pe biti); cuvinte de inregistrari citite pe simbol (median) {}; citiri ale asteptarii pe simbol (median) {}",
+            "{}: kronos --gpu: dieta 2: PORNITA (doua inregistrari citite pe {} din {} pozitii, asteptarea planificata, {}); cuvinte de inregistrari citite pe simbol (median) {}; citiri ale asteptarii pe simbol (median) {}",
             p,
             d2.record_words.iter().filter(|&&w| w == 8).count(),
             d2.record_words.len(),
+            if top { "doar A+B: argmax pe placa, fara amprenta" } else { "amprenta dupa ceas, argmax pe biti" },
             rows[1].1,
             rows[2].1
         ));

@@ -247,6 +247,11 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     fiecăreia (doar pe placă; în SIMULARE sărite), benzile citite înapoi prin arenă → `judge_set` → rândurile `kt mm_tc …` în jurnal,
     `mm_tc …` și `proba mm_tc: TRECE / NU TRECE / NU A TERMINAT` în ieșire și în răspunsul ciclului. `SimGpu` cunoaște `mm_tc` (cu
     memoria partajată). Test: `kronos-gpu-mm-tc` (cifrele T171: 5/5 în margine, 69 ‰).
+    **P6-138 (C-157 punctul 2, nota Cyber-GPU `C-157_P2j`, `0c46879`): dieta 2 și cu argmax fără copie.** `test-placa …
+    --argmax-fara-copie --dieta2` e acceptat acum: merg doar bucățile A (două înregistrări pe pozițiile care nu hrănesc profilul
+    `kp`) și B (așteptarea planificată), care sunt în `submit`; C și D (amprenta, argmax pe biți) rămân în `run_token`. În `run_top`:
+    contoarele dietei 2 pe poziție, profilul și mediana argmax doar pe pozițiile complete, umplerea cu 0xEE doar a celor 16 octeți
+    (`gpu_i11::ram_write_at`). Nimic nou pentru placă. Test: `kronos-gpu-argmax-top-d2`.
     **P6-123 (C-155 punctul 3, cyber-gpu `3683ef4`): argmax pe placă, proba.** Doar în ciclu cu `test-placa … --argmax-placa` (după
     `--k651`, înainte de `--dieta2`; `gpu_tur::ARGMAX_IN_CYCLE`; în build-ul de test `gpu argmax-sim on|off`): fiecare simbol al lui
     `kronos --gpu` se termină cu copia logit-urilor și programul `argmax` (`nvidia_ga104::argmax::launch`; 16 octeți imediat după
@@ -254,7 +259,7 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     prima poziție diferită e scrisă. Simbolul se alege tot pe procesor; timpul lansării argmax e ținut separat de profilul `kp`.
     Rânduri `kt argmax placa = procesor: X/Y`, `kt median argmax placa (us)`, verdictul și în răspunsul ciclului. Test: `kronos-gpu-argmax`.
     **P6-126 (C-155 punctul 4, nota Cyber-GPU `C-157_P2f`, `dc4edf0`): argmax fără copie — simbolul ales pe placă.** Doar în ciclu cu
-    `test-placa … --argmax-fara-copie` (în locul lui `--argmax-placa`; nu cu `--lipit`/`--ln-nou`/`--sferturi`/`--dieta2`;
+    `test-placa … --argmax-fara-copie` (în locul lui `--argmax-placa`; nu cu `--lipit`/`--ln-nou`/`--sferturi`/`--ln-32`; cu `--dieta2` din P6-138;
     `gpu_tur::ARGMAX_TOP_IN_CYCLE`; în build-ul de test `gpu argmax-sim fara-copie`): fiecare simbol se termină doar cu programul `argmax`
     (în locul copiei), OS-ul citește cei 16 octeți (`gpu_i11::ram_read_at`) și ia simbolul de acolo (`TopRunner for BoardRunner`,
     `Generation::run_top`). După placă, procesorul (aceeași verificare ca la `kronos --gpu`) calculează simbolul fiecărei poziții:

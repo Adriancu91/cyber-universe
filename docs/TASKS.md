@@ -497,6 +497,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-135** Nota Cyber-GPU C-157_P2i (`0fd77c7`) + propunerea centrului 22 nov 10:30: `lipita-ln-32` implicită în `test-placa` (`--lipita-ln` = lista de până acum), referința listei care a rulat, `--argmax-fara-copie` cu implicitul, 88 de lansări. Nimic nou pentru placă. Plan: `docs/plans/P6-135.md`. Dep: P6-128.
 - [x] **P6-136** C-161 punctul 4 mai departe: **pasul de aur mic întreg pe placă** (PREDARE Cyber-GPU `dd67483`, nota `C-160_P6b_pasul-de-aur-pe-placa.md`; după ce `colsum` a trecut pe placă în os-349) → `test-placa … --pas-aur`, Release separat. Plan: `docs/plans/P6-136.md`. Dep: P6-134.
 - [x] **P6-137** C-161 punctul 4 mai departe: **proba `mm_tc`** — înmulțirea antrenării pe circuitele speciale, singură pe placă (PREDARE Cyber-GPU `54563a5`, nota `C-160_P7d_mm_tc-proba.md`; după pasul de aur mic, os-351) → `test-placa … --mm-tc`, Release separat. Plan: `docs/plans/P6-137.md`. Dep: P6-136.
+- [x] **P6-138** C-157 punctul 2: **dieta 2 (A+B) și cu argmax fără copie** (nota Cyber-GPU `C-157_P2j_argmax-fara-copie.md`, `0c46879`, fără cod nou la ei; nimic nou pentru placă) → `test-placa --argmax-fara-copie --dieta2`; plus CI în patru părți QEMU. Plan: `docs/plans/P6-138.md`. Dep: P6-137.
   Gata (2026-11-21 ~16:55 RO): `gpu-tablou` trece (rândul nou „oprirea zonei = nu se trimite …”).
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
