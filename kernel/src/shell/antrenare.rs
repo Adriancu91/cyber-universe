@@ -20,7 +20,7 @@ pub const RETETA_SHA256: &str = "5e3c5824e61b9974aca527ee3c04237868f28cc28a2c0d0
 
 const STEPS: usize = 10;
 
-fn sha256_hex(b: &[u8]) -> String {
+pub(super) fn sha256_hex(b: &[u8]) -> String {
     use cyber_crypto::{sha2::Sha256, Digest};
     let mut h = Sha256::new();
     h.update(b);

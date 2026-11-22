@@ -43,6 +43,18 @@ LIVE_SESSIONS = []  # the sessions opened, in order
 def live_open(files, session):
     d = f"live/{session}/"
     LIVE_SESSIONS.append(session)
+    if len(LIVE_SESSIONS) == 6:
+        # P6-132 (C-159 step 3, part 3): files through the channel — a text saved in /etc/schimb (the stick's schimb/ in
+        # the tests), read back (in the hub as fisier-0002.bin), the folder listed; the live key, a save outside schimb/
+        # and one with `..` refused at the gate; `gata`.
+        b64 = base64.b64encode("salut din hub\nrandul 2 ăîșț\n".encode()).decode()
+        for nr, kind, text in [(1, "salveaza", f"/etc/schimb/nota.txt\n{b64}"), (2, "citeste", "/etc/schimb/nota.txt"),
+                               (3, "citeste", "/etc/schimb"), (4, "citeste", "/etc/hub/live.cheie"),
+                               (5, "salveaza", f"/etc/hub/x.txt\n{b64}"), (6, "salveaza", f"/etc/schimb/../auto/x\n{b64}"),
+                               (7, "gata", "")]:
+            files[d + "c-%04d.json" % nr] = live_file(session, nr, kind, text)
+        print(f"ghpush-test-server: live: sesiunea a sasea {session}: c-0001..c-0007 puse (fisiere)", flush=True)
+        return
     if len(LIVE_SESSIONS) == 5:
         # P6-130 (C-159 step 3): `actualizeaza` with a wrong form (refused at the gate), then a right one (played without a
         # release server): the session ends asking for the restart; the OS resumes it (same name, nr 3) and runs the rest.

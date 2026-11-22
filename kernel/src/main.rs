@@ -2348,6 +2348,38 @@ fn test_ghpush() {
     assert!(s(&p, "stare").starts_with("incheiata: gata") && num(&p, "astept_nr") == Some(5) && num(&p, "rulate") == Some(3) && num(&p, "puls").unwrap_or(0) >= 2, "test: live reluare: pulsul de sfarsit: {:?}", p);
     assert!(shell::live::test_resume().is_err(), "test: live reluare: a doua reluare fara reluare.txt");
     info!("test: live: actualizeaza prin canal + sesiunea reluata dupa repornire (acelasi nume, nr 3, reluare-1.json, pulsul) OK");
+    // P6-132 (C-159 step 3, part 3): files through the channel — `salveaza` in schimb/ (/etc/schimb here), `citeste` of
+    // the same file (shown in `iesire`, the same bytes in the hub as fisier-0002.bin), the folder listed; the live key,
+    // a save outside schimb/ and one with `..` refused at the gate.
+    let sum7 = shell::live::test_session(1).expect("test: sesiunea vie a sasea");
+    assert!(sum7.ran == 4 && sum7.refused == 3 && sum7.unsent == 0 && sum7.end.starts_with("gata"), "test: live fisiere: {:?}", sum7);
+    let take7 = |name: &str| {
+        let remote = alloc::format!("live/{}/{}", sum7.session, name);
+        let local = alloc::format!("/etc/live7-{}", name);
+        let id = proc::spawn_path("/bin/gh-ia", &["gh-ia", "--live-ia", &remote, &local]).expect("test: /bin/gh-ia");
+        assert!(proc::wait_child(id) == 0, "test: live fisiere: {} lipseste din hub", remote);
+        fs::read_all(&local).unwrap_or_default()
+    };
+    let json7 = |name: &str| {
+        let r = alloc::string::String::from_utf8(take7(name)).unwrap_or_default();
+        cyber_json::parse(&r).unwrap_or_else(|_| panic!("test: live fisiere: {} nu e JSON: {}", name, r))
+    };
+    let want_text = "salut din hub\nrandul 2 ăîșț\n";
+    assert!(fs::read_all("/etc/schimb/nota.txt").ok().as_deref() == Some(want_text.as_bytes()), "test: live fisiere: nota.txt pe stick");
+    let r1 = json7("r-0001.json");
+    assert!(code(&r1) == Some(0) && s(&r1, "iesire").starts_with("salveaza: /etc/schimb/nota.txt (") && s(&r1, "iesire").contains("fisier nou"), "test: live salveaza: {:?}", s(&r1, "iesire"));
+    let r2 = json7("r-0002.json");
+    let e2 = s(&r2, "iesire");
+    assert!(code(&r2) == Some(0) && e2.starts_with("citeste: /etc/schimb/nota.txt -> fisier-0002.bin (") && e2.ends_with(&alloc::format!("== continut ==\n{}", want_text)), "test: live citeste: {:?}", e2);
+    assert!(take7("fisier-0002.bin") == want_text.as_bytes(), "test: live citeste: fisier-0002.bin difera");
+    let r3 = json7("r-0003.json");
+    assert!(code(&r3) == Some(0) && s(&r3, "iesire").starts_with("citeste: dosarul /etc/schimb (1 intrari)") && s(&r3, "iesire").contains("nota.txt  "), "test: live citeste dosar: {:?}", s(&r3, "iesire"));
+    for (nr, want) in [(4, "citeste: fisier secret"), (5, "salveaza: doar direct in"), (6, "salveaza: calea trebuie")] {
+        let r = json7(&alloc::format!("r-{:04}.json", nr));
+        assert!(s(&r, "stare") == "REFUZAT" && s(&r, "motiv").starts_with(want), "test: live fisiere: r-{:04}: {:?}", nr, s(&r, "motiv"));
+    }
+    assert!(fs::kind("/etc/hub/x.txt").is_err() && fs::kind("/etc/auto/x").is_err(), "test: live fisiere: s-a scris in afara schimb/");
+    info!("test: live: fisiere prin canal (salveaza in schimb/, citeste fisier + dosar, cheia si alte dosare refuzate) OK");
 }
 
 /// HTTPS with real web sites (P6-02): /bin/fetch resolves the name, connects through QEMU's network to the

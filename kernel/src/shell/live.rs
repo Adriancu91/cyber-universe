@@ -32,7 +32,8 @@ pub const FORM: &str = "cyber-live-1";
 pub const MAX_COMMAND: usize = 64 * 1024;
 /// The kinds that run: step 1 (`comanda`, `stare`, `gata`) and P6-111 (C-159 step 2, part 1: the live terminal's keys and
 /// its screen text; P6-127: `captura`, `muta`, `clic`; P6-130: `actualizeaza`).
-pub const KINDS: [&str; 10] = ["comanda", "stare", "gata", "scrie", "tasta", "ecran", "captura", "muta", "clic", "actualizeaza"];
+pub const KINDS: [&str; 12] =
+    ["comanda", "stare", "gata", "scrie", "tasta", "ecran", "captura", "muta", "clic", "actualizeaza", "citeste", "salveaza"];
 /// P6-127: `captura` = the screen reduced this many times in each direction, gray PNG; the largest file sent.
 const CAPTURE_SCALE: usize = 4;
 const CAPTURE_MAX: usize = 900 * 1024;
@@ -256,10 +257,21 @@ impl Gate {
             return Verdict::Refused { nr: Some(nr), why: format!("numar gresit: astept nr {}", self.next) };
         }
         if !KINDS.contains(&kind) {
-            return refuse(Some(nr), "fel necunoscut (comanda, stare, gata, scrie, tasta, ecran, captura, muta, clic, actualizeaza)");
+            return refuse(Some(nr), "fel necunoscut (comanda, stare, gata, scrie, tasta, ecran, captura, muta, clic, actualizeaza, citeste, salveaza)");
         }
         if kind == "actualizeaza" {
             if let Err(why) = update_tag(text) {
+                return Verdict::Refused { nr: Some(nr), why };
+            }
+        }
+        // P6-132: the paths of `citeste` / `salveaza` (and the content of `salveaza`) are checked before anything runs.
+        if kind == "citeste" {
+            if let Err(why) = read_path(text, stick_root()) {
+                return Verdict::Refused { nr: Some(nr), why };
+            }
+        }
+        if kind == "salveaza" {
+            if let Err(why) = save_order(text, stick_root()) {
                 return Verdict::Refused { nr: Some(nr), why };
             }
         }
@@ -289,6 +301,95 @@ impl Gate {
         }
         Verdict::Run(Command { nr, session: String::from(session), kind: String::from(kind), text: String::from(text) })
     }
+}
+
+/// P6-132: the largest file `citeste` sends to the hub (as `captura`), the largest content `salveaza` takes (the command
+/// file is at most 64 KiB, base64 included) and the largest text shown whole in `iesire`.
+pub const READ_MAX: usize = 900 * 1024;
+pub const SAVE_MAX: usize = 48 * 1024;
+const SHOW_MAX: usize = 32 * 1024;
+/// The only folder of the stick `salveaza` writes to (`/usb/schimb/`).
+pub const SAVE_DIR: &str = "schimb";
+
+/// The root of the stick (`/usb`; `/etc` in the QEMU tests) = the folder that holds the hub folder.
+pub fn stick_root() -> &'static str {
+    dir().rsplit_once('/').map_or("/usb", |(root, _)| root)
+}
+
+/// `path` without empty or `.` parts, in its own letter case; `None` if it is relative or has a `..` part.
+fn plain_path(path: &str) -> Option<String> {
+    if !path.starts_with('/') {
+        return None;
+    }
+    let mut out = String::new();
+    for p in path.split('/') {
+        match p {
+            "" | "." => {}
+            ".." => return None,
+            p => {
+                out.push('/');
+                out.push_str(p);
+            }
+        }
+    }
+    Some(if out.is_empty() { String::from("/") } else { out })
+}
+
+/// Whether `path` is `root` or below it (letter case ignored, as on the FAT stick).
+fn below(path: &str, root: &str) -> bool {
+    let (p, r) = (path.to_ascii_lowercase(), root.to_ascii_lowercase());
+    p == r || (p.starts_with(&r) && p.as_bytes().get(r.len()) == Some(&b'/'))
+}
+
+/// P6-132: the path `citeste` may read — on the stick, without `..`, never a secret file (the list of `cat`).
+pub fn read_path(text: &str, root: &str) -> Result<String, String> {
+    let Some(path) = plain_path(text.trim()) else { return Err(String::from("citeste: calea trebuie sa fie intreaga (incepe cu /, fara ..)")) };
+    if !below(&path, root) {
+        return Err(format!("citeste: doar de pe stick (sub {})", root));
+    }
+    if crate::proc::rights::canonical(&path).is_some_and(|c| crate::proc::rights::is_secret(&c)) {
+        return Err(String::from("citeste: fisier secret (nu pleaca niciodata in hub)"));
+    }
+    Ok(path)
+}
+
+/// P6-132: `salveaza` = `<path>\n<content in base64>`; the path directly in `<stick>/schimb/`, a plain name.
+pub fn save_order(text: &str, root: &str) -> Result<(String, Vec<u8>), String> {
+    let Some((first, b64)) = text.split_once('\n') else { return Err(String::from("salveaza: forma: <cale>, un rand nou, apoi continutul in base64")) };
+    let Some(path) = plain_path(first.trim()) else { return Err(String::from("salveaza: calea trebuie sa fie intreaga (incepe cu /, fara ..)")) };
+    let allowed = format!("{}/{}", root, SAVE_DIR);
+    let Some((parent, name)) = path.rsplit_once('/') else { return Err(String::from("salveaza: calea")) };
+    if !parent.eq_ignore_ascii_case(&allowed) {
+        return Err(format!("salveaza: doar direct in {}/ (nimic in alt dosar al stick-ului)", allowed));
+    }
+    let good = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_');
+    if name.is_empty() || name.len() > 64 || name.starts_with('.') || !name.chars().all(good) {
+        return Err(String::from("salveaza: numele: litere, cifre, . - _ (cel mult 64, nu incepe cu .)"));
+    }
+    if crate::proc::rights::canonical(&path).is_some_and(|c| crate::proc::rights::is_secret(&c)) {
+        return Err(String::from("salveaza: nume de fisier secret"));
+    }
+    let clean: String = b64.chars().filter(|c| !c.is_whitespace()).collect();
+    let Some(data) = cyber_json::base64::decode(&clean) else { return Err(String::from("salveaza: continutul nu e base64 valid")) };
+    if data.len() > SAVE_MAX {
+        return Err(format!("salveaza: {} octeti (cel mult {})", data.len(), SAVE_MAX));
+    }
+    Ok((path, data))
+}
+
+/// What the journal and the screen show of a command (`salveaza`: the path and the size, not the base64).
+fn shown_text(kind: &str, text: &str) -> String {
+    if kind == "salveaza" {
+        let (path, rest) = text.split_once('\n').unwrap_or((text, ""));
+        return format!("{} ({} caractere base64)", path.trim(), rest.len());
+    }
+    text.replace('\n', " ")
+}
+
+/// Whether `data` carries the bytes of a key or of the token (the values of the secret files, also as hex).
+fn carries_secret(data: &[u8], secrets: &[String]) -> bool {
+    secrets.iter().any(|s| !s.is_empty() && data.windows(s.len()).any(|w| w == s.as_bytes()))
+        || core::str::from_utf8(data).is_ok_and(|t| super::raport::hide_secrets(t, secrets) != t)
 }
 
 /// What a command did (for the answer).
@@ -1140,9 +1241,9 @@ fn one(ctx: &Ctx, raw: &str, want: u32, gate: &mut Gate, sum: &mut Summary, term
             (answer(&gate.session, nr, raw, Err(&why)), false)
         }
         Verdict::Run(cmd) => {
-            journal(journal_path, &format!("{} incepe {} {} {}", want, auto::now_text(), cmd.kind, cmd.text.replace('\n', " ")));
+            journal(journal_path, &format!("{} incepe {} {} {}", want, auto::now_text(), cmd.kind, shown_text(&cmd.kind, &cmd.text)));
             gate.take(want);
-            auto::say(&format!("live: c-{:04} {}: {}\n", want, cmd.kind, cmd.text));
+            auto::say(&format!("live: c-{:04} {}: {}\n", want, cmd.kind, shown_text(&cmd.kind, &cmd.text)));
             let t0 = crate::time::uptime_ms().unwrap_or(0);
             super::LAST_EXIT.store(0, Ordering::Relaxed);
             let output = match cmd.kind.as_str() {
@@ -1158,6 +1259,11 @@ fn one(ctx: &Ctx, raw: &str, want: u32, gate: &mut Gate, sum: &mut Summary, term
                 "captura" => capture(cmd.nr, local, remote),
                 "muta" | "clic" => mouse(parse_mouse(&cmd.kind, &cmd.text).unwrap_or(MouseOrder { to: None, button: 0 })),
                 "actualizeaza" => update(ctx, cmd.nr, &update_tag(&cmd.text).unwrap_or_default(), sum),
+                "citeste" => read_file(cmd.nr, &read_path(&cmd.text, stick_root()).unwrap_or_default(), local, remote),
+                "salveaza" => match save_order(&cmd.text, stick_root()) {
+                    Ok((path, data)) => save_file(&path, &data),
+                    Err(why) => why,
+                },
                 _ => String::from("sesiunea se incheie (gata)\n"),
             };
             let o = Outcome {
@@ -1287,6 +1393,81 @@ fn mouse(order: MouseOrder) -> String {
 
 /// P6-127 (C-159 step 2): `captura` — the screen as a gray PNG reduced `CAPTURE_SCALE` times, on the stick and in the hub
 /// next to the answers (`captura-NNNN.png`); `iesire` names it. Code 1 (and no file) without a screen or when too big.
+/// P6-132: `citeste` — a folder = its list; a file = sent to the hub as `fisier-NNNN.bin` (a small text also shown whole).
+fn read_file(nr: u32, path: &str, local: &str, remote: &str) -> String {
+    let fail = |why: String| {
+        super::LAST_EXIT.store(1, Ordering::Relaxed);
+        format!("citeste: {}: {}\n", path, why)
+    };
+    match fs::kind(path) {
+        Err(e) => return fail(String::from(e.message())),
+        Ok(Kind::Dir) => {
+            let mut entries = match fs::list(path) {
+                Ok(v) => v,
+                Err(e) => return fail(String::from(e.message())),
+            };
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut out = format!("citeste: dosarul {} ({} intrari)\n", path, entries.len());
+            for (name, kind) in entries {
+                let full = if path.ends_with('/') { format!("{}{}", path, name) } else { format!("{}/{}", path, name) };
+                match kind {
+                    Kind::Dir => out.push_str(&format!("  {}/\n", name)),
+                    Kind::File => out.push_str(&format!("  {}  {} octeti\n", name, fs::size(&full).unwrap_or(0))),
+                }
+            }
+            return out;
+        }
+        Ok(Kind::File) => {}
+    }
+    let size = fs::size(path).unwrap_or(0) as usize;
+    if size > READ_MAX {
+        return fail(format!("{} octeti (cel mult {} prin canal)", size, READ_MAX));
+    }
+    let Ok(data) = fs::read_all(path) else { return fail(String::from("nu se poate citi")) };
+    if carries_secret(&data, &super::raport::secrets()) {
+        return fail(String::from("poarta octetii unei chei sau ai token-ului; nu pleaca in hub"));
+    }
+    let name = format!("fisier-{:04}.bin", nr);
+    let copy = format!("{}/{}", local, name);
+    if !write_new(&copy, &data) {
+        return fail(format!("nu pot scrie copia {}", copy));
+    }
+    if !send(&copy, &format!("{}/{}", remote, name)) {
+        return fail(format!("{} nu a plecat in hub (ramane pe stick: {})", name, copy));
+    }
+    let mut out = format!("citeste: {} -> {} ({} octeti, sha256 {})\n", path, name, data.len(), super::antrenare::sha256_hex(&data));
+    match core::str::from_utf8(&data) {
+        Ok(text) if data.len() <= SHOW_MAX => {
+            out.push_str("== continut ==\n");
+            out.push_str(text);
+        }
+        _ => out.push_str("(continutul doar in fisier: binar sau mai mare de 32 KiB)\n"),
+    }
+    out
+}
+
+/// P6-132: `salveaza` — the file written in `<stick>/schimb/` (the folder made if missing) and read back.
+fn save_file(path: &str, data: &[u8]) -> String {
+    let fail = |why: &str| {
+        super::LAST_EXIT.store(1, Ordering::Relaxed);
+        format!("salveaza: {}: {}\n", path, why)
+    };
+    let folder = path.rsplit_once('/').map_or("", |(d, _)| d);
+    if fs::kind(folder).is_err() && fs::create(folder, Kind::Dir).is_err() {
+        return fail("nu pot face dosarul");
+    }
+    let old = match fs::kind(path) {
+        Ok(Kind::Dir) => return fail("e un dosar"),
+        Ok(Kind::File) => Some(fs::size(path).unwrap_or(0)),
+        Err(_) => None,
+    };
+    if !write_new(path, data) || fs::read_all(path).ok().as_deref() != Some(data) {
+        return fail("scrierea nu s-a putut verifica");
+    }
+    let before = old.map_or(String::from("fisier nou"), |n| format!("inlocuit, avea {} octeti", n));
+    format!("salveaza: {} ({} octeti, sha256 {}; {})\n", path, data.len(), super::antrenare::sha256_hex(data), before)
+}
+
 fn capture(nr: u32, local: &str, remote: &str) -> String {
     let fail = |why: &str| {
         super::LAST_EXIT.store(1, Ordering::Relaxed);
@@ -1405,6 +1586,27 @@ pub fn self_test() {
     }
     assert!(t.lines.len() == SCREEN_LINES && t.screen().starts_with("rand 21\n"), "live: ecranul pastreaza ultimele randuri");
     assert!(why(g.check(&key, false, &good(2, "sterge", "x"))).starts_with("fel necunoscut"));
+    // P6-132: the paths of `citeste` / `salveaza` (and the content of `salveaza`), checked at the gate.
+    let root = stick_root();
+    assert!(read_path(&format!("{}/auto/teste.txt", root), root) == Ok(format!("{}/auto/teste.txt", root)), "live: citeste");
+    assert!(read_path(&format!("{}/hub/live.cheie", root), root).unwrap_err().contains("secret"), "live: citeste cheia");
+    assert!(read_path(&format!("{}/HUB/LIVE.CHEIE", root), root).unwrap_err().contains("secret"), "live: citeste cheia (litere mari)");
+    assert!(read_path(&format!("{}/hub/../hub/x", root), root).is_err() && read_path("auto/teste.txt", "/usb").is_err());
+    assert!(read_path("/boot/x", "/usb").unwrap_err().contains("doar de pe stick") && read_path("/usbx/a", "/usb").is_err());
+    let b64 = cyber_json::base64::encode(b"salut\n");
+    assert!(save_order(&format!("/usb/schimb/nota.txt\n{}", b64), "/usb") == Ok((String::from("/usb/schimb/nota.txt"), b"salut\n".to_vec())));
+    assert!(save_order(&format!("/USB/Schimb/n_1-a.txt\n{}\n", b64), "/usb").is_ok() && save_order("/usb/schimb/gol.txt\n", "/usb").is_ok());
+    for bad in ["/usb/auto/teste.txt", "/usb/schimb/a/b.txt", "/usb/schimb/../auto/teste.txt", "/usb/schimb/.x", "/usb/schimb/a b", "/usb/schimb", "/usb/hub/schimb/x"] {
+        assert!(save_order(&format!("{}\n{}", bad, b64), "/usb").is_err(), "live: salveaza {}", bad);
+    }
+    assert!(save_order("/usb/schimb/x.txt", "/usb").unwrap_err().starts_with("salveaza: forma"));
+    assert!(save_order("/usb/schimb/x.txt\n@@@=", "/usb").unwrap_err().contains("base64"));
+    assert!(save_order(&format!("/usb/schimb/x.txt\n{}", cyber_json::base64::encode(&[0u8; SAVE_MAX + 1])), "/usb").unwrap_err().contains("cel mult"));
+    assert!(matches!(g.check(&key, false, &good(2, "salveaza", &format!("{}/schimb/n.txt\n{}", root, b64))), Verdict::Run(_)));
+    assert!(why(g.check(&key, false, &good(2, "citeste", &format!("{}/hub/live.cheie", root)))).contains("secret"));
+    assert!(why(g.check(&key, false, &good(2, "salveaza", &format!("{}/auto/teste.txt\n{}", root, b64)))).contains("doar direct in"));
+    assert!(shown_text("salveaza", &format!("/usb/schimb/n.txt\n{}", b64)) == "/usb/schimb/n.txt (8 caractere base64)");
+    assert!(carries_secret(b"x ghp_abc y", &[]) && carries_secret(b"aa-cheie-12345678-bb", &[String::from("cheie-12345678")]) && !carries_secret(b"salut", &[]));
     assert!(why(g.check(&key, false, &good(2, "comanda", "live 5"))).starts_with("o sesiune vie nu porneste"));
     assert!(matches!(g.check(&key, false, &good(2, "gata", "")), Verdict::Run(_)));
     // The journal: numbers taken before a crash are never run again.

@@ -38,6 +38,7 @@
 - `fel` (pasul 1): `comanda` (un rând de shell), `stare`, `gata` (încheie sesiunea). Pasul 2, partea 1 (P6-111): `scrie`,
   `tasta`, `ecran` (terminalul viu, mai jos); P6-127: `captura`, `muta`, `clic` (desktopul, mai jos). Pasul 2 e complet.
   Pasul 3 (P6-130): `actualizeaza` (versiunea nouă + repornire cu reluarea sesiunii, mai jos).
+  P6-132: `citeste` și `salveaza` (fișiere de pe stick, mai jos). Pasul 3 e complet.
 - `semnatura` = HMAC-SHA-256 cu cheia `/usb/hub/live.cheie` (cel puțin 32 de octeți, aceeași la centrul de comandă) peste textul:
   ```
   cyber-live-1\n<sesiune>\n<nr>\n<fel>\n<text>
@@ -170,6 +171,28 @@ sau, la refuz: `"stare":"REFUZAT","motiv":"<de ce>"` (fără `cod`/`iesire`). `n
 - Proba în QEMU (`ghpush`, sesiunea a cincea; `actualizeaza` jucat fără server de Release-uri, programul adevărat are proba lui
   în `update`): forma greșită refuzată, `reluare.txt` cu nr 2, `puls.json` = `repornire in os-999…`; reluarea: același nume,
   `reluare-1.json` (astept_nr 3), `stare` și `gata` rulate, `reluare.txt` șters, a doua reluare refuzată.
+
+## Fișiere: `citeste` și `salveaza` (P6-132, C-159 pasul 3, partea 3)
+- **`citeste`**, `text` = calea întreagă de pe stick, de ex. `/usb/auto/teste.txt` sau `/usb/hub/live/s-…/jurnal.txt`.
+  - Doar sub `/usb` (stick-ul), fără `..`; **niciodată un fișier secret** (token, `live.cheie`, `permite-live-placa`, aceeași listă
+    ca `cat`; literele mari nu contează) → `REFUZAT` la poartă (`citeste: fisier secret …`, `citeste: doar de pe stick …`).
+  - **Un dosar** → `iesire` = lista lui: `citeste: dosarul <cale> (N intrari)`, apoi câte un rând `  nume  M octeti` (sau `  nume/`).
+  - **Un fișier** (cel mult 900 KiB) → urcat lângă răspuns ca **`live/<sesiune>/fisier-NNNN.bin`** (NNNN = numărul comenzii;
+    octeții exacți, orice fel de fișier); `iesire` = `citeste: <cale> -> fisier-NNNN.bin (M octeti, sha256 <64 hex>)` și, pentru
+    text UTF-8 de cel mult 32 KiB, `== continut ==` urmat de tot textul.
+  - Un fișier care poartă octeții unei chei sau ai token-ului (oriunde ar fi copiat) **nu pleacă**: cod 1, `iesire` spune de ce.
+  - Lipsă / prea mare / nu pleacă în hub → cod 1 și motivul în `iesire`.
+- **`salveaza`**, `text` = `<cale>` + **un rând nou** + conținutul în **base64** (rândurile noi și spațiile din base64 se ignoră).
+  - Doar **direct în `/usb/schimb/`** (dosarul se face dacă lipsește): numele din litere, cifre, `.`, `-`, `_`, cel mult 64, nu
+    începe cu `.`; cel mult **48 KiB** (fișierul comenzii are cel mult 64 KiB). Altă cale, subdosar, `..`, base64 greșit, prea
+    mare → `REFUZAT` la poartă (`salveaza: doar direct in /usb/schimb/ …`, `salveaza: forma …`, `salveaza: continutul nu e base64 valid`).
+  - Fișierul e scris, citit înapoi și comparat; `iesire` = `salveaza: <cale> (M octeti, sha256 <hex>; fisier nou)` sau
+    `(…; inlocuit, avea K octeti)`. **Nu scrie nicăieri altundeva** (nici `auto/`, nici `boot/`, nici `hub/`).
+  - În jurnalul de pe stick și pe ecran apare doar calea și lungimea base64-ului, nu conținutul.
+  - Exemplu Python: `text = "/usb/schimb/nota.txt\n" + base64.b64encode(date).decode()`.
+- Proba în QEMU (`ghpush`, sesiunea a șasea; stick-ul e `/etc` acolo): `salveaza` un text cu diacritice, `citeste` același fișier
+  (textul în `iesire`, `fisier-0002.bin` din hub = octeții salvați), `citeste` dosarul, cheia `live.cheie`, o salvare în `hub/` și
+  una cu `..` — refuzate; nimic scris în afara `schimb/`.
 
 ## Ce rămâne păzit de nucleu (neschimbat)
 Fișierele secrete nu se arată; scrieri pe disc doar pe partiții `cyber.rw`; placa video doar cu `permite-live-placa`
