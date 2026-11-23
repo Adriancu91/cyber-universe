@@ -438,6 +438,9 @@ impl SimGpu {
                     };
                 }
                 let _ = cp.register_program(T::AttnP.code(), c::attn_p_on_cpu);
+                // P6-155 (cyber-gpu note C-160_P7_placi-in-pas, 1b9f79d): `Plan::new_p_only_tiles` rebuilds P with
+                // `attn_p_tile`; the three `attn_*_2` programs of `Plan::new_tiles` are registered with the tile probe.
+                let _ = cp.register_program(T::AttnPTile.code(), c::attn_p_tile_on_cpu);
             }
         }
         cp.sim_launch_ns = 4000;
