@@ -920,6 +920,25 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu atentie-placi-sim: exista doar in build-ul de test (pe stick proba o porneste doar ciclul, test-placa --atentie-placi)\n");
         }
+        Some("atentie2-sim") => {
+            // P6-149 (cyber-gpu note C-157_P2m): test build only: with `gpu atentie-placi-sim on`, the new programs
+            // (`attn_*_2`) beside the old ones on the same buffers (in the stick's system only the cycle turns it on,
+            // `test-placa … --atentie-placi --atentie2`).
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::ATTN_TILE2_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu atentie2-sim: pornita (SIMULARE: in proba atentiei pe placi, dupa lantul vechi, lantul nou attn_*_2 pe acelasi buffer, comparat cuvant cu cuvant)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::ATTN_TILE2_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu atentie2-sim: oprita\n");
+                }
+                _ => out!("folosire: gpu atentie2-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu atentie2-sim: exista doar in build-ul de test (pe stick o porneste doar ciclul, test-placa --atentie-placi --atentie2)\n");
+        }
         Some("pas-aur-sim") => {
             // P6-136 (C-161 point 4): test build only: the small golden step (10 steps of sgd and of adamw_513) after
             // the next `kronos --gpu-sim`'s texts (in the stick's system only the cycle turns it on, `test-placa … --pas-aur`).

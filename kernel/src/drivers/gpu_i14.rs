@@ -3414,6 +3414,35 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
             return Err(bad("atentie pe placi: SHA-256 gresit"));
         }
     }
+    // P6-149 (note C-157_P2m): the second generation beside the first, only when the list asked for it.
+    let tile2 = super::gpu_tur::ATTN_TILE2_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    if tile2 {
+        for prog in ap::PROGS2 {
+            let sha = sha256_hex(prog.binary());
+            if sha != prog.sha256() {
+                lines.push(format!(
+                    "{}: kronos --gpu: proba atentiei pe placi: SHA-256 al programului nou {} = {} nu e cel din nota ({}): nimic trimis",
+                    p,
+                    prog.name(),
+                    sha,
+                    prog.sha256()
+                ));
+                return Err(bad("atentie2: SHA-256 gresit"));
+            }
+        }
+        lines.push(format!(
+            "{}: kronos --gpu: atentie2 ceruta ({}): programele noi {} ({} / {} / {} registre, {} / {} / {} octeti partajati, SHA-256 verificate), dupa lantul vechi pe fiecare set, pe acelasi buffer",
+            p,
+            label,
+            ap::PROGS2.map(|x| x.name()).join(" -> "),
+            ap::PROGS2[0].registers(),
+            ap::PROGS2[1].registers(),
+            ap::PROGS2[2].registers(),
+            ap::PROGS2[0].shared().bytes,
+            ap::PROGS2[1].shared().bytes,
+            ap::PROGS2[2].shared().bytes
+        ));
+    }
     lines.push(format!(
         "{}: kronos --gpu: proba atentiei pe placi ({}): programele {} ({} / {} / {} registre, {} / {} / {} octeti partajati, blocuri de 256, SHA-256 verificate), {} seturi mici cate trei trimiteri, apoi {}",
         p,
@@ -3442,13 +3471,29 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         maps.push(z);
         zones.push(z);
     }
+    // P6-149: the new programs and their pages likewise (only when asked).
+    let mut prog2_va = [0u64; 3];
+    let mut zones2: Vec<Mapping> = Vec::with_capacity(3);
+    if tile2 {
+        for (k, prog) in ap::PROGS2.iter().enumerate() {
+            let m = map_vram(st, prog.binary().len() as u64)?;
+            put_bytes(st.mem.writer_mut(), m.pa, prog.binary())?;
+            prog2_va[k] = m.va;
+            maps.push(m);
+            let z = map_vram(st, PAGE)?;
+            maps.push(z);
+            zones2.push(z);
+        }
+    }
     let small = ap::SETS[..ap::TIMING_SET].iter().map(|s| s.layout().bytes as u64).max().unwrap_or(PAGE);
     let buf = st.mem.alloc_sys_mapped(&arena_pages(0, small.div_ceil(PAGE))?)?;
     if !buf.va.is_multiple_of(PAGE) {
         return Err(bad("atentie pe placi: bufferul nu e aliniat la 4 KiB"));
     }
     let mut probe = ap::Probe::default();
+    let mut probe2 = ap::Probe2::default();
     let mut stopped: Option<usize> = None;
+    let mut stopped2: Option<usize> = None;
     'sets: for (i, set) in ap::SETS[..ap::TIMING_SET].iter().enumerate() {
         let sys = [ctx.sys.clone(), buf.clone()];
         ram_write(&buf, &set.buffer()); // the outputs and the guards start as NaN
@@ -3490,20 +3535,63 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
             "{}: kronos --gpu: kt atentie set {} ({}): timp fwd {} ns, back0 {} ns, back1 {} ns",
             p, i, set.name, ns[0], ns[1], ns[2]
         ));
+        if !tile2 {
+            continue;
+        }
+        // P6-149: the same set again, the buffer rewritten, with the second generation.
+        ram_write(&buf, &set.buffer());
+        let mut ns2 = [0u64; 3];
+        for (k, prog) in ap::PROGS2.iter().enumerate() {
+            let (cb, q) = ap::launch_bytes2(set, *prog, prog2_va[k], zones2[k].va, buf.va)?;
+            {
+                let w = st.mem.writer_mut();
+                put_bytes(w, zones2[k].pa, &cb)?;
+                put_bytes(w, zones2[k].pa + 0x800, &q)?;
+            }
+            match mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, &maps, &sys, zones2[k].va + 0x800)? {
+                Ok(t) => ns2[k] = t,
+                Err(got) => {
+                    lines.push(format!(
+                        "{}: kronos --gpu: atentie2: placa nu a terminat la setul {} ({}), programul nou {}: ultima inregistrare = {:#x}; proba oprita, fara reincercare",
+                        p,
+                        i,
+                        set.name,
+                        prog.name(),
+                        got
+                    ));
+                    stopped2 = Some(i);
+                    break 'sets;
+                }
+            }
+        }
+        let mut out2 = Vec::with_capacity(set.read_len());
+        for (o, n) in set.read_ranges() {
+            out2.extend_from_slice(&ram_read_at(&buf, o as u64, n as u64));
+        }
+        probe2.add(ap::judge_pair_set(i, &out, &out2, [&ns2[..1], &ns2[1..2], &ns2[2..]])?);
     }
-    if stopped.is_none() {
-        match attn_tile_big(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, &maps, prog_va, &zones)? {
-            AttnBig::Judged(r) => probe.add(*r),
+    if stopped.is_none() && stopped2.is_none() {
+        let second = if tile2 { Some((prog2_va, &zones2[..])) } else { None };
+        match attn_tile_big(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, &maps, prog_va, &zones, second)? {
+            AttnBig::Judged(r, r2) => {
+                probe.add(*r);
+                match r2 {
+                    Ok(Some(r2)) => probe2.add(*r2),
+                    Ok(None) => {}
+                    Err(()) => stopped2 = Some(ap::TIMING_SET),
+                }
+            }
             AttnBig::Skipped => {}
             AttnBig::Stopped => stopped = Some(ap::TIMING_SET),
         }
     }
     probe.journal(journal);
     lines.extend(probe.lines(label).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
-    let verdict = match stopped {
-        Some(i) => format!("NU A TERMINAT (la setul {})", i),
-        None if probe.passes() => String::from("TRECE"),
-        None => String::from("NU TRECE"),
+    let verdict = match (stopped, stopped2) {
+        (Some(i), _) => format!("NU A TERMINAT (la setul {})", i),
+        (None, Some(i)) if i < ap::TIMING_SET => format!("OPRITA DE LANTUL NOU (la setul {})", i),
+        _ if probe.passes() => String::from("TRECE"),
+        _ => String::from("NU TRECE"),
     };
     let pp = probe.per_prog();
     let worst = |w: u32| if w == u32::MAX { String::from("-") } else { format!("{}", w) };
@@ -3522,15 +3610,51 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         pp[2].1,
         if probe.timing_skipped() { "atentie-513-b4 omis" } else { "atentie-513-b4 cronometrat" }
     ));
-    match stopped {
-        Some(_) => Err(GpuError::Timeout { waited_us: WAIT_US }),
-        None => Ok(()),
+    // P6-149: the second generation's rows (journal `kt atentie2 …`, its time beside the old one's) and its verdict.
+    if tile2 {
+        probe2.journal(journal);
+        lines.extend(probe2.lines(label, Some(&probe)).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
+        let verdict2 = match (stopped, stopped2) {
+            (_, Some(i)) => format!("NU A TERMINAT (la setul {})", i),
+            (Some(i), None) => format!("NERULAT DUPA SETUL {} (lantul vechi s-a oprit)", i),
+            (None, None) if probe2.passes() => String::from("TRECE"),
+            (None, None) => String::from("NU TRECE"),
+        };
+        let pp2 = probe2.per_prog();
+        lines.push(format!(
+            "{}: kronos --gpu: atentie2 (vechi langa nou): {}: {} / {} seturi in margine; identice cu vechii: {} ({} / {} seturi); exacte fata de model: fwd2 {} / {} (cel mai rau {} promile), back0_2 {} / {}, back1_2 {} / {}; {}",
+            p,
+            verdict2,
+            probe2.in_margin(),
+            probe2.sets.len(),
+            if probe2.identical() { "DA" } else { "NU" },
+            probe2.identical_sets(),
+            probe2.sets.len(),
+            pp2[0].0,
+            pp2[0].1,
+            worst(pp2[0].2),
+            pp2[1].0,
+            pp2[1].1,
+            pp2[2].0,
+            pp2[2].1,
+            if probe2.timing_skipped() { "atentie-513-b4 omis" } else { "atentie-513-b4 cronometrat" }
+        ));
+    }
+    match (stopped, stopped2) {
+        (None, None) => Ok(()),
+        _ => Err(GpuError::Timeout { waited_us: WAIT_US }),
     }
 }
 
 /// P6-141: what happened to `atentie-513-b4`.
 enum AttnBig {
-    Judged(alloc::boxed::Box<nvidia_ga104::attn_tile_probe::SetResult>),
+    /// The old chain judged; P6-149: the new chain's pair (`Ok(None)` = not asked, `Err(())` = a launch or a copy of the
+    /// new chain the board did not finish — the line is written).
+    #[allow(clippy::type_complexity)]
+    Judged(
+        alloc::boxed::Box<nvidia_ga104::attn_tile_probe::SetResult>,
+        Result<Option<alloc::boxed::Box<nvidia_ga104::attn_tile_probe::PairResult>>, ()>,
+    ),
     /// Not run (no VRAM, a wrong upload, or SIMULARE): the `kt atentie timp omis` row says so.
     Skipped,
     /// A copy or a launch the board did not finish (the line is written).
@@ -3579,6 +3703,7 @@ fn attn_tile_big<V: Mmio + ?Sized, K: Clock + ?Sized>(
     maps: &[Mapping],
     prog_va: [u64; 3],
     zones: &[Mapping],
+    second: Option<([u64; 3], &[Mapping])>,
 ) -> GpuResult<AttnBig> {
     use nvidia_ga104::attn_tile_probe as ap;
     let set = &ap::SETS[ap::TIMING_SET];
@@ -3730,7 +3855,52 @@ fn attn_tile_big<V: Mmio + ?Sized, K: Clock + ?Sized>(
         return Ok(AttnBig::Skipped);
     }
     let r = ap::judge_set(ap::TIMING_SET, &out, [&times[0], &times[1], &times[2]])?;
-    Ok(AttnBig::Judged(alloc::boxed::Box::new(r)))
+    let Some((prog2_va, zones2)) = second else {
+        return Ok(AttnBig::Judged(alloc::boxed::Box::new(r), Ok(None)));
+    };
+    // P6-149 (note C-157_P2m, step 3): the inputs stay in VRAM; the read-back ranges filled with NaN again, then 5 ×
+    // each new program, the ranges back, judged beside the old read-back.
+    let stop2 = |lines: &mut Vec<String>, what: &str| {
+        lines.push(format!("{}: kronos --gpu: atentie2: {}: {}; proba oprita, fara reincercare", p, set.name, what));
+        Ok(AttnBig::Judged(alloc::boxed::Box::new(r.clone()), Err(())))
+    };
+    for &(start, len, _, _) in &groups {
+        let bytes: Vec<u8> = core::iter::repeat_n(ap::FILL.to_le_bytes(), len as usize / 4).flatten().collect();
+        ram_write(&host, &bytes);
+        if !copy(vbar, clock, journal, st, l, doorbell, subs, host.va, big.va + start, len)? {
+            return stop2(lines, "umplerea din nou cu NaN nu s-a terminat");
+        }
+    }
+    let mut times2: [Vec<u64>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    for (k, prog) in ap::PROGS2.iter().enumerate() {
+        let (cb, q) = ap::launch_bytes2(set, *prog, prog2_va[k], zones2[k].va, big.va)?;
+        {
+            let w = st.mem.writer_mut();
+            put_bytes(w, zones2[k].pa, &cb)?;
+            put_bytes(w, zones2[k].pa + 0x800, &q)?;
+        }
+        for rep in 0..set.repeats {
+            match mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, &maps, &sys, zones2[k].va + 0x800)? {
+                Ok(ns) => times2[k].push(ns),
+                Err(got) => {
+                    let what = format!("placa nu a terminat programul nou {}, lansarea {}: ultima inregistrare = {:#x}", prog.name(), rep, got);
+                    return stop2(lines, &what);
+                }
+            }
+        }
+    }
+    let mut out2 = Vec::with_capacity(set.read_len());
+    for &(start, len, first, count) in &groups {
+        ram_write(&host, &[]);
+        if !copy(vbar, clock, journal, st, l, doorbell, subs, big.va + start, host.va, len)? {
+            return stop2(lines, "citirea benzilor lantului nou nu s-a terminat");
+        }
+        for &(o, n) in &ranges[first..first + count] {
+            out2.extend_from_slice(&ram_read_at(&host, o as u64 - start, n as u64));
+        }
+    }
+    let r2 = ap::judge_pair_set(ap::TIMING_SET, &out, &out2, [&times2[0], &times2[1], &times2[2]])?;
+    Ok(AttnBig::Judged(alloc::boxed::Box::new(r), Ok(Some(alloc::boxed::Box::new(r2)))))
 }
 
 /// P6-137: FNV-1a (32 bit) of bytes (the same as `mm_tc_probe::fnv`).

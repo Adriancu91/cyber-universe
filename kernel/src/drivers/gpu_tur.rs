@@ -331,6 +331,12 @@ pub static MM_TC_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::
 /// build, by `gpu atentie-placi-sim on`. Off by default.
 pub static ATTN_TILE_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-149 (cyber-gpu note C-157_P2m): with the tiled attention probe, after the old chain on every set, the second
+/// generation (`attn_fwd_tile2` → `attn_back_tile0_2` → `attn_back_tile_2`) on the same buffer, judged with the same
+/// margins and compared word for word with the old. Set only by the cycle (`test-placa … --atentie-placi --atentie2`)
+/// and, in the test build, by `gpu atentie2-sim on`. Off by default.
+pub static ATTN_TILE2_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-101: set only for the FLR trial's second chain (`test-placa --flr-proba`, `gpu lant --flr-proba`); taken by
 /// `chain`. Without it no chain reads WPR2 for the reset nor writes anything for it.
 pub static FLR_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);

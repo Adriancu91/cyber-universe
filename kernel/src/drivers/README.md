@@ -258,6 +258,13 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     sărite), intervalele citite înapoi → `judge_set` → rândurile `kt atentie …` în jurnal, `atentie …` și `proba atentiei pe placi:
     TRECE / NU TRECE / NU A TERMINAT` în ieșire și în răspunsul ciclului. `SimGpu` cunoaște cele trei programe. Test:
     `kronos-gpu-atentie-placi` (ca T176: 5/5 în margine, toate elementele exacte).
+    **P6-149 (nota Cyber-GPU `C-157_P2m`, cyber-gpu `31cfa2a`): „vechi lângă nou” la atenția pe plăci.** Cu `test-placa …
+    --atentie-placi --atentie2` (`gpu_tur::ATTN_TILE2_IN_CYCLE`; în build-ul de test `gpu atentie2-sim on|off`): în aceeași probă,
+    după lanțul vechi pe fiecare set, bufferul rescris și lanțul nou `attn_fwd_tile2` → `attn_back_tile0_2` → `attn_back_tile_2`
+    (`launch_bytes2`, SHA-256 verificate, câte o pagină cbuf/QMD), citit → `judge_pair_set` (aceleași margini + comparația cuvânt cu
+    cuvânt cu vechiul); la `atentie-513-b4` intrările rămân în VRAM, benzile umplute din nou cu NaN, 5 × fiecare program nou. Rânduri
+    `kt atentie2 …` în jurnal, `atentie2 vechi langa nou …` și `atentie2 (vechi langa nou): TRECE / NU TRECE / NU A TERMINAT;
+    identice cu vechii: DA / NU` în ieșire și în răspuns. Test: `kronos-gpu-atentie2` (5/5 în margine, 5/5 identice).
     **P6-142 (C-157 punctul 5 = C-151 punctul 2, cyber-gpu `0d22357`, nota `C-157_P5_ceas-termic.md`): ceasul termic în testul pe
     placă.** Doar în ciclu cu `test-placa … --tablou-viteza` (în locul lui `--tablou`; `gpu_tur::RUSD_EARLY`; în build-ul de test
     `gpu lant --sim --ciclu-viteza --tablou-viteza`): tabloul de bord e pornit imediat după canalul de lucru, ÎNAINTE de cererea de

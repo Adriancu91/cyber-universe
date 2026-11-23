@@ -406,6 +406,11 @@ impl SimGpu {
             cp.register_program(nvidia_ga104::attn_fwd_tile::ATTN_FWD_TILE, c::attn_fwd_tile_on_cpu);
             cp.register_program(nvidia_ga104::attn_back_tile0::ATTN_BACK_TILE0, c::attn_back_tile0_on_cpu);
             cp.register_program(nvidia_ga104::attn_back_tile::ATTN_BACK_TILE, c::attn_back_tile_on_cpu);
+            // P6-149 (cyber-gpu note C-157_P2m): the second generation, the same operations in the same order — the same
+            // CPU models as the first.
+            cp.register_program(nvidia_ga104::attn_fwd_tile2::ATTN_FWD_TILE2, c::attn_fwd_tile_on_cpu);
+            cp.register_program(nvidia_ga104::attn_back_tile0_2::ATTN_BACK_TILE0_2, c::attn_back_tile0_on_cpu);
+            cp.register_program(nvidia_ga104::attn_back_tile_2::ATTN_BACK_TILE_2, c::attn_back_tile_on_cpu);
             // P6-136 (C-161 point 4): the 11 new programs of the small golden step (`train_step`; `colsum` and `vadd`
             // are registered above).
             {
