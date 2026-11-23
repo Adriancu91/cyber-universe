@@ -22,6 +22,7 @@ jobs:
   # P6-138: five parts (teste-1..4 = every fourth scenario): os-352's QEMU parts took 50 / 50 / 54 min of the 60.
   # P6-156: six parts (teste-1..5), split by the measured duration of each scenario (tools/shard.py, tests/durate-ci.txt):
   # run 45114337749 (os-366 + P6-153/154) took 50 / 41 / 37 / 41 min with every fourth scenario; balanced: ~34 min each.
+  # P6-167: seven parts (teste-1..6): with the mixed step the five QEMU parts reached ~51 of the 60 minutes.
   build-and-test:
     name: ${{ matrix.parte }}
     runs-on: ubuntu-24.04
@@ -31,15 +32,17 @@ jobs:
       matrix:
         include:
           - parte: teste-1
-            shard: 1/5
+            shard: 1/6
           - parte: teste-2
-            shard: 2/5
+            shard: 2/6
           - parte: teste-3
-            shard: 3/5
+            shard: 3/6
           - parte: teste-4
-            shard: 4/5
+            shard: 4/6
           - parte: teste-5
-            shard: 5/5
+            shard: 5/6
+          - parte: teste-6
+            shard: 6/6
           - parte: stick
             shard: ""
     steps:
@@ -61,7 +64,11 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           APT_OPTS="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          # P6-167: run 45268598614 (stick) — the install was cut by the 300 s limit during the triggers ("dpkg was
+          # interrupted"), and every retry then failed at once: skip man-db's slow trigger, finish dpkg before a retry.
+          sudo rm -f /var/lib/man-db/auto-update || true
           for i in 1 2 3; do
+            sudo dpkg --configure -a || true
             timeout 150 sudo -E apt-get update $APT_OPTS && \
             timeout 300 sudo -E apt-get install -y -qq $APT_OPTS \
               qemu-system-x86 ovmf xorriso dosfstools mtools fdisk && exit 0

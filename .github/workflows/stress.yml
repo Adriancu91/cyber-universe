@@ -23,7 +23,11 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           APT_OPTS="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          # P6-167: run 45268598614 (stick) — the install was cut by the 300 s limit during the triggers ("dpkg was
+          # interrupted"), and every retry then failed at once: skip man-db's slow trigger, finish dpkg before a retry.
+          sudo rm -f /var/lib/man-db/auto-update || true
           for i in 1 2 3; do
+            sudo dpkg --configure -a || true
             timeout 150 sudo -E apt-get update $APT_OPTS && \
             timeout 300 sudo -E apt-get install -y -qq $APT_OPTS \
               qemu-system-x86 ovmf xorriso dosfstools mtools fdisk && exit 0
