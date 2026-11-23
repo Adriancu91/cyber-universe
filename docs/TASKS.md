@@ -509,11 +509,11 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-145** C-157 punctul 7 (etapa 5 / P9): **simbolul ales rămâne pe placă — mai multe poziții pe o singură sonerie** (PREDARE Cyber-GPU `0d22357`, nota `C-157_P7_simbol-pe-placa.md`; programul `embed_dev`) → `test-placa … --lot`, Release separat. Plan: `docs/plans/P6-145.md`. Dep: P6-142.
   Gata (2026-11-22 ~22:50 RO): cyber-gpu `44a4d16`; `test-placa … --atentie-placi` (ultima opțiune) → `gpu_i14::attn_tile_probe` + `attn_tile_big`; `gpu atentie-placi-sim on|off`; scenariul `kronos-gpu-atentie-placi` (5/5 în margine, 154 018 / 86 690 / 201 984 elemente exacte; setul mare urcat și recitit identic, fnv `0x1dc7a5ab`).
 - [x] **P6-146** C-158 punctul 7 mai departe: **discul propriu — fișiere în bucăți de cel mult 4 GiB și golirea sigură** (`fs::bucati`, `write_safe` / `recover`, `flush_all` înainte de repornire, comanda `disc`); doar pregătire, nimic scris pe discurile workstation-ului fără `cyber.rw`; nimic pentru placă. Plan: `docs/plans/P6-146.md`. Dep: P6-100.
-  Gata (2026-11-23 ~03:40 RO): `fs::bucati` + `flush_all` + comanda `disc`; `disc-propriu` (21 verificări), `boot`, `shell`, `fatwrite`, `ahci`, `nvme`, `auto` trec; build `--usb` fără avertismente noi.
+  Gata (2026-11-23 ~03:25 RO): `fs::bucati` + `flush_all` + comanda `disc`; `disc-propriu` (21 verificări), `boot`, `shell`, `fatwrite`, `ahci`, `nvme`, `auto` trec; build `--usb` fără avertismente noi.
 - [x] **P6-147** Nota Cyber-GPU C-157_P2l (după os-358, opțional): **timpul fiecărei lansări și la seturile mici ale probei atenției** (`kt atentie set: timp fwd|back0|back1 (ns)` + un rând pe set în raport); doar citiri de ceas, nimic nou pentru placă. Plan: `docs/plans/P6-147.md`. Dep: P6-141.
-  Gata (2026-11-23 ~03:55 RO): `kronos-gpu-atentie-placi` trece.
+  Gata (2026-11-23 ~03:30 RO): `kronos-gpu-atentie-placi` trece.
 - [x] **P6-148** C-158 punctul 10 / C-161 punctul 5: **examenul lui Kronos în OS (unealta 7), pe procesor** — `kronos --examen <fisier> [--caractere N] [--examen-verifica]`: bpb ca examenul Kronos (aceeași tăietură a textului, ferestre de `context`, log2(vocabular) pentru primul simbol), bucăți corecte, octeți ghiciți; nimic pentru placă. Plan: `docs/plans/P6-148.md`. Dep: P6-27b.
-  Gata (2026-11-23 ~04:05 RO): `kronos-kgr`, `kronos-kgr-1`, `kronos-reglaj`, `kronos-calcul*` trec; tăietura = codul Kronos pe același fișier; verificarea cu cache: abaterea 0.
+  Gata (2026-11-23 ~03:45 RO): `kronos-kgr`, `kronos-kgr-1`, `kronos-reglaj`, `kronos-calcul*` trec; tăietura = codul Kronos pe același fișier; verificarea cu cache: abaterea 0.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
