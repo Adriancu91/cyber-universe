@@ -7,6 +7,7 @@ use alloc::{format, string::String, vec::Vec};
 
 mod analiza;
 pub mod antrenare;
+pub mod antrenare_mini;
 pub mod auto;
 pub mod ciclu;
 pub mod compara;
@@ -180,7 +181,9 @@ fn dispatch(line: &str) -> bool {
             },
             // P6-150 (C-161 point 5): Kronos's training data (chunks + index.json), checked as Kronos does at start-up.
             ["date", rest @ ..] => date_bucati::command(rest).iter().for_each(|r| out!("{}\n", r)),
-            _ => out!("folosire: antrenare proba [dosar] [--salveaza <cale>] (pasul de aur al lui Kronos, pe procesor; implicit {} sau {}) | antrenare control <cale> | antrenare date [dosar] [--tokenizer <cale>] [--felie <inceput> <numar>] (datele lui Kronos pe bucati)\n", antrenare::DIRS[0], antrenare::DIRS[1]),
+            // P6-157 (C-161 points 3 + 5): a whole small training run on Kronos's data, on the processor, with checkpoint.
+            ["mini", rest @ ..] => antrenare_mini::command(rest).iter().for_each(|r| out!("{}\n", r)),
+            _ => out!("folosire: antrenare proba [dosar] [--salveaza <cale>] (pasul de aur al lui Kronos, pe procesor; implicit {} sau {}) | antrenare control <cale> | antrenare date [dosar] [--tokenizer <cale>] [--felie <inceput> <numar>] (datele lui Kronos pe bucati) | antrenare mini [dosar] [--pasi N] [--lot B T] [--samanta s] [--lr x] [--salveaza <cale>] [--din <cale>] (o antrenare mica pe datele lui Kronos, pe procesor)\n", antrenare::DIRS[0], antrenare::DIRS[1]),
         },
         "discuri" => {
             // P6-100 (C-148 point 5): the computer's own disks as seen at start-up (reads only).

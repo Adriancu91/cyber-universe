@@ -1,0 +1,34 @@
+{
+  "versiune": 1,
+  "tip": "int16",
+  "ordine_octeti": "little",
+  "marime_bucata": 1000,
+  "simboluri_total": 2700,
+  "sha256_tot": "0c4f0c333cb45e8eab25b4bb4ef5333313a734be682f7bd8d6966925ecb38a49",
+  "partial": false,
+  "tokenizer": {
+    "fisier": "tokenizer.json",
+    "sha256": "742e20992832feb90947645fbee7f9ff8136dbe3f8b6a695e2a0f0de4b1fa33e"
+  },
+  "sursa": "P6-157 proba",
+  "bucati": [
+    {
+      "fisier": "bucata_00000.bin",
+      "inceput": 0,
+      "simboluri": 1000,
+      "sha256": "a0909eb7bd49e219e5809317cab6f36401bec3baca9b4e1d39b6db6ab6d0d8ff"
+    },
+    {
+      "fisier": "bucata_00001.bin",
+      "inceput": 1000,
+      "simboluri": 1000,
+      "sha256": "c3c444d258af8068f11d1a8f2d6abe168759647c89fb103b991bf6e8a94346e5"
+    },
+    {
+      "fisier": "bucata_00002.bin",
+      "inceput": 2000,
+      "simboluri": 700,
+      "sha256": "c8c3802189d9a9f76b70f52b180513782726e1c8098f218a31d6392728279d89"
+    }
+  ]
+}
