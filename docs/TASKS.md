@@ -516,6 +516,10 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
   Gata (2026-11-23 ~03:45 RO): `kronos-kgr`, `kronos-kgr-1`, `kronos-reglaj`, `kronos-calcul*` trec; tăietura = codul Kronos pe același fișier; verificarea cu cache: abaterea 0.
 - [x] **P6-149** PREDARE Cyber-GPU C-157_P2m: **proba „vechi lângă nou” pentru atenția pe plăci** (`attn_fwd_tile2` / `attn_back_tile0_2` / `attn_back_tile_2`, cyber-gpu `31cfa2a`) → `test-placa … --atentie-placi --atentie2`, Release separat. Plan: `docs/plans/P6-149.md`. Dep: P6-141, P6-147.
   Gata (2026-11-23 ~05:15 RO): cyber-gpu `31cfa2a`; `test-placa … --atentie-placi --atentie2` → în `attn_tile_probe` / `attn_tile_big` lanțul nou după cel vechi; `gpu atentie2-sim on|off`; scenariul nou `kronos-gpu-atentie2` (5/5 în margine, 5/5 identice cu vechii, toate elementele exacte), `kronos-gpu-atentie-placi`, `ghpush`, `gpu`, `gpu-sim`, `boot` trec; build `gpu-scrie --usb` 18 avertismente (ca înainte).
+- [x] **P6-150** C-161 punctul 5 / C-158 punctul 10: **datele de antrenare ale lui Kronos în OS** — `antrenare date [dosar] [--tokenizer] [--felie]`: bucățile int16 + `index.json` verificate ca Kronos la pornire (SHA pe bucăți, pe tot șirul, tokenizerul), amprenta lui Kronos, felia peste granițe; nimic pentru placă. Plan: `docs/plans/P6-150.md`. Dep: P6-148.
+  Gata (2026-11-23 ~05:30 RO): scenariul `antrenare-date` trece; aceeași amprentă / felie / refuz ca `module/date_bucati.py` pe aceleași fișiere.
+- [x] **P6-151** C-161 punctul 5, a doua bucată: **punctul de control al motorului de antrenare** — formatul `CYBKCK01` (note + tensori F32 + SHA-256), scris cu golirea sigură și recitit bit cu bit; `antrenare proba … --salveaza <cale>`, `antrenare control <cale>`; nimic pentru placă. Plan: `docs/plans/P6-151.md`. Dep: P6-146, P6-150.
+  Gata (2026-11-23 ~06:00 RO): `antrenare-control` (cu verificarea discului după test), `antrenare`, `ghpush` trec.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
