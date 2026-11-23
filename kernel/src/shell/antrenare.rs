@@ -157,7 +157,8 @@ fn libm_sqrt(x: f64) -> f64 {
 }
 
 /// One recipe: run, compare, rows. Returns whether it is within every tolerance.
-fn recipe(dir: &str, reteta: &str, batch: &Batch, initial: &[Vec<f32>], r: Recipe, name: &str, w_tol: f32, rows: &mut Vec<String>) -> bool {
+#[allow(clippy::too_many_arguments)]
+fn recipe(dir: &str, reteta: &str, batch: &Batch, initial: &[Vec<f32>], r: Recipe, name: &str, w_tol: f32, rows: &mut Vec<String>, last: &mut Option<Vec<Vec<f32>>>) -> bool {
     let Some(want) = losses(reteta, name).filter(|w| w.len() == STEPS) else {
         rows.push(format!("antrenare: {}: reteta.json nu are cele {} pierderi", name, STEPS));
         return false;
@@ -223,11 +224,13 @@ fn recipe(dir: &str, reteta: &str, batch: &Batch, initial: &[Vec<f32>], r: Recip
         w_tol,
         if ok { "ACELEASI NUMERE" } else { "DIFERITE" }
     ));
+    *last = Some(run.after_last);
     ok
 }
 
 /// `antrenare proba [dosar]`: the rows for the screen; the last one is the verdict.
-pub fn proba(dir: Option<&str>) -> Vec<String> {
+/// P6-151: with `save`, the sgd weights after the last step go to that checkpoint (safe rewrite), read back bit for bit.
+pub fn proba(dir: Option<&str>, save: Option<&str>) -> Vec<String> {
     let mut rows = Vec::new();
     let dir = match dir {
         Some(d) => String::from(d.trim_end_matches('/')),
@@ -266,8 +269,30 @@ pub fn proba(dir: Option<&str>) -> Vec<String> {
         }
     };
     let batch = Batch { inputs: &inputs, targets: &targets, batch: 2, len: 32 };
-    let sgd = recipe(&dir, &reteta, &batch, &initial, Recipe::Sgd, "sgd", train::TOL_SGD_W_ABS, &mut rows);
-    let adamw = recipe(&dir, &reteta, &batch, &initial, Recipe::AdamW513, "adamw_513", train::TOL_ADAMW_W_ABS, &mut rows);
+    let mut last = None;
+    let sgd = recipe(&dir, &reteta, &batch, &initial, Recipe::Sgd, "sgd", train::TOL_SGD_W_ABS, &mut rows, &mut last);
+    if let (Some(path), Some(w)) = (save, last.take()) {
+        let c = super::punct_control::Checkpoint {
+            meta: alloc::vec![
+                (String::from("model"), String::from("pasul de aur mic (S132)")),
+                (String::from("reteta"), String::from("sgd")),
+                (String::from("pasi"), format!("{}", STEPS)),
+                (String::from("reteta_sha256"), String::from(RETETA_SHA256)),
+            ],
+            tensors: MIC.tensors().iter().map(|t| t.name.clone()).zip(w).collect(),
+        };
+        match super::punct_control::save(path, &c) {
+            Ok((n, h)) => rows.push(format!(
+                "antrenare: punctul de control: {} scris cu golirea sigura ({} tensori, {} octeti, SHA-256 {}), recitit identic bit cu bit",
+                path,
+                c.tensors.len(),
+                n,
+                h
+            )),
+            Err(e) => rows.push(format!("antrenare: punctul de control: NU S-A SALVAT: {}", e)),
+        }
+    }
+    let adamw = recipe(&dir, &reteta, &batch, &initial, Recipe::AdamW513, "adamw_513", train::TOL_ADAMW_W_ABS, &mut rows, &mut last);
     rows.push(format!(
         "antrenare proba: {} (sgd: {}, adamw_513: {}; {} pasi fiecare, fata de PyTorch)",
         if sgd && adamw { "ACELEASI NUMERE" } else { "DIFERITE" },

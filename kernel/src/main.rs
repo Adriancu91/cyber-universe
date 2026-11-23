@@ -2146,6 +2146,8 @@ fn test_ghpush() {
     // DECIZII.md) and for a bad form; with both keys, an update that fails stops the cycle with nothing changed.
     shell::ciclu::self_test();
     shell::antrenare::self_test();
+    // P6-151: the checkpoint format (round trip, a flipped bit, a cut file).
+    shell::punct_control::self_test();
     // P6-108 (C-159 step 1): the live channel's gate (signature, number, once only, board without the key) and echo.
     shell::live::self_test();
     let mut cmds = alloc::format!("{}- [ ] K-6: mem\n- [ ] K-7: ciclu-test os-42\n", base);

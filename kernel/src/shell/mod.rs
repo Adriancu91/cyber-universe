@@ -11,6 +11,7 @@ pub mod auto;
 pub mod ciclu;
 pub mod compara;
 pub mod date_bucati;
+pub mod punct_control;
 pub mod hubcmd;
 pub mod live;
 pub mod lucrare;
@@ -162,11 +163,24 @@ fn dispatch(line: &str) -> bool {
         "lspci" => lspci(),
         "antrenare" => match args {
             // P6-121 (C-161 point 3): Kronos's golden step checked in the OS (Cyber-GPU's CPU oracle; the board untouched).
-            ["proba"] => antrenare::proba(None).iter().for_each(|r| out!("{}\n", r)),
-            ["proba", dir] => antrenare::proba(Some(dir)).iter().for_each(|r| out!("{}\n", r)),
+            ["proba"] => antrenare::proba(None, None).iter().for_each(|r| out!("{}\n", r)),
+            ["proba", dir] => antrenare::proba(Some(dir), None).iter().for_each(|r| out!("{}\n", r)),
+            // P6-151 (C-161 point 5): the sgd weights after 10 steps saved as a checkpoint (safe rewrite), read back.
+            ["proba", "--salveaza", path] => antrenare::proba(None, Some(path)).iter().for_each(|r| out!("{}\n", r)),
+            ["proba", dir, "--salveaza", path] => antrenare::proba(Some(dir), Some(path)).iter().for_each(|r| out!("{}\n", r)),
+            ["control", path] => match punct_control::load(path) {
+                Ok(c) => {
+                    let elems: usize = c.tensors.iter().map(|(_, t)| t.len()).sum();
+                    out!("antrenare control: {}: CYBKCK01, SHA-256 verificat; {} tensori, {} valori F32\n", path, c.tensors.len(), elems);
+                    for (k, v) in &c.meta {
+                        out!("antrenare control:   {} = {}\n", k, v);
+                    }
+                }
+                Err(e) => out!("antrenare control: REFUZAT: {}\n", e),
+            },
             // P6-150 (C-161 point 5): Kronos's training data (chunks + index.json), checked as Kronos does at start-up.
             ["date", rest @ ..] => date_bucati::command(rest).iter().for_each(|r| out!("{}\n", r)),
-            _ => out!("folosire: antrenare proba [dosar] (pasul de aur al lui Kronos, pe procesor; implicit {} sau {}) | antrenare date [dosar] [--tokenizer <cale>] [--felie <inceput> <numar>] (datele lui Kronos pe bucati)\n", antrenare::DIRS[0], antrenare::DIRS[1]),
+            _ => out!("folosire: antrenare proba [dosar] [--salveaza <cale>] (pasul de aur al lui Kronos, pe procesor; implicit {} sau {}) | antrenare control <cale> | antrenare date [dosar] [--tokenizer <cale>] [--felie <inceput> <numar>] (datele lui Kronos pe bucati)\n", antrenare::DIRS[0], antrenare::DIRS[1]),
         },
         "discuri" => {
             // P6-100 (C-148 point 5): the computer's own disks as seen at start-up (reads only).
