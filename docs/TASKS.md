@@ -538,6 +538,8 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
   Gata (2026-11-23 ~19:00 RO): `kronos-gpu-adam-ram` (nou, 17 verificări; SIMULARE: ambele planuri ACELEASI NUMERE ca PyTorch, cel mai rău 137 ‰; m, v în RAM = planul de azi bit cu bit; 75 → 78 lansări pe pas, 4 bucăți, 927 KiB RAM, 390 KiB loc de trecere; timpul pe pas 300 → 539 µs în simulare), plus `boot`, `gpu`, `gpu-sim`, `gpu-i6`, `gpu-rec`, `gpu-tur`, `gpu-var`, `gpu-ga106`, `ghpush`, `kronos-gpu-ram-vram`, `kronos-gpu-pas-aur` — 12/12.
 - [x] **P6-164** C-161 (nota centrului de comandă 23 nov 18:16; prioritatea lui Adrian 20:36): **`test-placa --antrenare-mini`** — pasul din P6-162 (vocabularul lui Kronos, model mic, lot 2 × 32) pe placa REALĂ, 10 pași, oracolul alături la fiecare pas; un singur lucru nou pentru placă: forma mare a pasului. Plan: `docs/plans/P6-164.md`.
   Gata (2026-11-23 ~21:50 RO): `kronos-gpu-antrenare-mini` (nou, 17 verificări; SIMULARE, datele de probă ale lui Kronos: pasul 1 = 9,7026 = oracolul, greutățile 6,5e-5, ACELEASI NUMERE, TRECE; arena 27 072 KiB + 40 KiB în RAM fixată), `ghpush` (formele în `ciclu::self_test`), `boot` — 3/3.
+- [x] **P6-165** PREDARE Cyber-GPU `408c69c` (viteza PCIe, decizia lui Adrian 23 nov 20:11): **rândurile `pci.legatura.port` și `pci.legatura.cauza` în turul plăcii** — doar citiri de configurație PCI; nimic nou pentru placă. Plan: `docs/plans/P6-165.md`.
+  Gata (2026-11-23 ~22:15 RO): `gpu`, `gpu-tur`, `gpu-sim`, `boot`, `kronos-gpu-pas-aur` (cyber-gpu `408c69c`); rândurile noi apar doar pe placa reală.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)

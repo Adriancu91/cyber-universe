@@ -58,11 +58,41 @@ fn tour_on<C: ConfigSpace + ?Sized, M: Mmio + ?Sized, K: Clock + ?Sized>(
 ) -> GpuResult<()> {
     let mut t = run_tour(cfg, addr, bar0, clock, journal)?;
     i6_result_fact(&mut t.facts, bar0, journal);
+    link_port_facts(&mut t.facts, cfg, addr);
     for f in &t.facts {
         lines.push(format!("{}", f));
     }
     lines.push(format!("{}: tur de citire (C-54): {} fapte, {} citiri jurnalizate", p, t.facts.len(), t.reads));
     Ok(())
+}
+
+/// P6-165 (Adrian's decision of 23 Nov 20:11, the PCIe speed; cyber-gpu note `C-157_P2r_legatura-port.md`, `408c69c`):
+/// right after the fact `pci.legatura`, the link of the port above the board (`pci.legatura.port`) and why the link is
+/// narrow (`pci.legatura.cauza`: `gpu_pci::link::diagnose`). The port = the PCI bridge whose secondary bus is the
+/// board's bus and which is a root / downstream port. Configuration READS only (as `lspci`), through [`ReadOnlyConfig`];
+/// nothing new for the board. Only on a real board (`addr`); a model tour has no port.
+fn link_port_facts<C: ConfigSpace + ?Sized>(facts: &mut Vec<nvidia_ga104::read_tour::Fact>, cfg: &mut C, addr: Option<PciAddress>) {
+    use gpu_pci::link;
+    use nvidia_ga104::read_tour::Fact;
+    let Some(a) = addr else { return };
+    let Some(at) = facts.iter().position(|f| f.key == "pci.legatura") else { return };
+    let Some(board) = gpu_pci::caps::pcie_link(cfg) else { return };
+    let devs: Vec<crate::pci::Device> = crate::pci::devices().into_iter().filter(|d| d.class == 0x06 && d.subclass == 0x04).collect();
+    let mut bridges: Vec<super::gpu::ReadOnlyConfig<'_>> = devs.iter().map(|d| super::gpu::ReadOnlyConfig { dev: d, refused: 0 }).collect();
+    let found = link::find_upstream_port(&mut bridges, a.bus);
+    let port = found.and_then(|i| gpu_pci::caps::pcie_link(&mut bridges[i]).map(|l| (i, l)));
+    let port_value = match port {
+        Some((i, l)) => format!(
+            "gen{} x{} (max gen{} x{}) la {:02x}:{:02x}.{} {:04x}:{:04x}",
+            l.speed, l.width, l.max_speed, l.max_width, devs[i].bus, devs[i].dev, devs[i].func, devs[i].vendor, devs[i].device
+        ),
+        None => String::from("negasit"),
+    };
+    let d = link::diagnose(&board, port.as_ref().map(|(_, l)| l));
+    let gbps = |x: Option<f64>| x.map_or(String::from("?"), |g| format!("{}.{:02}", g as u64, ((g * 100.0) as u64) % 100));
+    let cause = format!("{:?}: {}; plafon azi {} GB/s, cel mai bun comun {} GB/s", d.verdict, d.verdict.text(), gbps(d.now_gbps), gbps(d.best_gbps));
+    facts.insert(at + 1, Fact::new("pci.legatura.port", port_value));
+    facts.insert(at + 2, Fact::new("pci.legatura.cauza", cause));
 }
 
 /// C-72 (Adrian, 5 nov): the library's fact `i6.trece` is the I6 *pre-check* ("WPR2 down, I6 may run"), so after a
