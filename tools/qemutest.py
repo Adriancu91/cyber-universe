@@ -99,6 +99,7 @@ def main():
     keys_sent = not (a.keys or a.monitor)
     pending = []
     next_at = 0.0
+    wait_from = None
     mon_sock = None
     screen_msg = None
     screen_ok = True
@@ -127,8 +128,12 @@ def main():
             mon_sock = socket.socket(socket.AF_UNIX)  # kept open until the end (closing it early drops the last key)
             mon_sock.connect(mon_path)
         if pending and pending[0].startswith("asteapta=") and time.time() >= next_at:
-            if pending[0].split("=", 1)[1].replace("~", " ") in text:
+            # Only output that came after the token became the next one counts (an earlier run may have printed it).
+            if wait_from is None:
+                wait_from = len(text)
+            if pending[0].split("=", 1)[1].replace("~", " ") in text[wait_from:]:
                 pending.pop(0)
+                wait_from = None
                 next_at = time.time() + 1.0
         elif pending and time.time() >= next_at:
             c = pending.pop(0)
