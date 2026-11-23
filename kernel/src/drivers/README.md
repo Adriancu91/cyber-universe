@@ -265,6 +265,16 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     cuvânt cu vechiul); la `atentie-513-b4` intrările rămân în VRAM, benzile umplute din nou cu NaN, 5 × fiecare program nou. Rânduri
     `kt atentie2 …` în jurnal, `atentie2 vechi langa nou …` și `atentie2 (vechi langa nou): TRECE / NU TRECE / NU A TERMINAT;
     identice cu vechii: DA / NU` în ieșire și în răspuns. Test: `kronos-gpu-atentie2` (5/5 în margine, 5/5 identice).
+    **P6-163 (C-157, cyber-gpu `ab9b537`, nota `C-157_ADAM_RAM_m-v-in-RAM.md`): AdamW cu m, v în RAM.** Cu `test-placa …
+    --ram-vram --adam-ram` (`gpu_tur::ADAM_RAM_IN_CYCLE`; în build-ul de test `gpu adam-ram-sim on|off`; obiectul motorului de copiere
+    se alocă după I9 și când e cerută doar această probă): după proba RAM ↔ VRAM (doar dacă a trecut), `gpu_i14::adam_ram_probe` rulează
+    pasul de aur mic pe plăci, `adamw_513` × 10 pași, de două ori pe aceeași arenă din RAM: planul de azi (`Plan::new_tiles`) și
+    `Plan::new_tiles_mv_ram` + `adam_ram::RamMv` (m, v în RAM fixată după zona de control, locul de trecere în VRAM, înregistrările
+    motorului de copiere imediat după cele ale lansărilor; o trimitere pe pas cu `adam_ram::encode_step`, ultima înregistrare
+    așteptată = ultima copiere înapoi; `check_sync` după fiecare pas). Ambele judecate față de PyTorch; al doilea comparat bit cu bit
+    cu primul (pierderi, norme, gradient și greutăți după pasul 1, greutăți după pasul 10, m, v); rândurile `kt adam-ram …`, verdictul
+    `AdamW cu m, v in RAM: TRECE / NU TRECE / NU A TERMINAT / NU A RULAT` în ieșire și în răspunsul ciclului. Test:
+    `kronos-gpu-adam-ram` (ca T193: aceiași biți; 75 → 78 lansări pe pas).
     **P6-142 (C-157 punctul 5 = C-151 punctul 2, cyber-gpu `0d22357`, nota `C-157_P5_ceas-termic.md`): ceasul termic în testul pe
     placă.** Doar în ciclu cu `test-placa … --tablou-viteza` (în locul lui `--tablou`; `gpu_tur::RUSD_EARLY`; în build-ul de test
     `gpu lant --sim --ciclu-viteza --tablou-viteza`): tabloul de bord e pornit imediat după canalul de lucru, ÎNAINTE de cererea de

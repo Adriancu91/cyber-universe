@@ -108,6 +108,13 @@ const OS_CHECK_WAIT_US: u64 = 60_000_000;
 const KT_SHADOW: &str = "kt umbra lansarilor: cuvinte schimbate de placa in sloturi (0 = umbra corecta)";
 /// P6-107 (C-154, cyber-gpu C-147 point 7): the driver's diet and what it saves (`kronos --gpu` only).
 const KT_DIET: &str = "kt dieta (0/1)";
+/// P6-163: the m, v in RAM step against today's tiled plan: 1 = the same bits (losses, norms, weights, m, v).
+const KT_ADAM_RAM_SAME: &str = "kt adam-ram identice cu planul de azi (1/0)";
+/// P6-163: the median board time of one step (us), today's tiled plan / m, v in RAM.
+const KT_ADAM_RAM_US_TILES: &str = "kt adam-ram us pe pas planul de azi";
+const KT_ADAM_RAM_US_RAM: &str = "kt adam-ram us pe pas m v in RAM";
+/// P6-163: 1 = both plans as PyTorch and the same bits.
+const KT_ADAM_RAM_PASS: &str = "kt adam-ram verdict (1/0)";
 /// P6-112 (C-157 point 2b): the note written (with every held row) right before the texts, outside position 0's clock.
 const GEN_STARTS: &str = "kt generarea incepe (randurile tinute sunt pe stick; pana la final randurile de rutina raman in memorie)";
 /// P6-112: routine rows dropped from the memory ring during the generation (0 = all of them reached the stick).
@@ -2734,9 +2741,24 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
         // P6-161 (C-157, cyber-gpu `9359f21`): the RAM ↔ VRAM probe with the copy engine, only when the cycle's list asks
         // for it (`test-placa … --ram-vram`), after everything else; its failure is a line.
+        let mut rv_ok = true;
         if super::gpu_tur::RAM_VRAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
-            if let Err(e) = ram_vram_probe(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, &ctx) {
-                lines.push(format!("{}: kronos --gpu: proba RAM <-> VRAM: oprita: {}", p, e));
+            match ram_vram_probe(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, &ctx) {
+                Ok(passed) => rv_ok = passed,
+                Err(e) => {
+                    rv_ok = false;
+                    lines.push(format!("{}: kronos --gpu: proba RAM <-> VRAM: oprita: {}", p, e));
+                }
+            }
+        }
+        // P6-163 (C-157, cyber-gpu `ab9b537`): AdamW's m, v in host RAM, only when the cycle's list asks for it
+        // (`test-placa … --ram-vram --adam-ram`) and only after the RAM ↔ VRAM probe passed (when it ran); its failure is
+        // a line.
+        if super::gpu_tur::ADAM_RAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+            if !rv_ok {
+                lines.push(format!("{}: kronos --gpu: AdamW cu m, v in RAM: NU A RULAT: proba RAM <-> VRAM nu a trecut in aceasta pornire; nimic trimis", p));
+            } else if let Err(e) = adam_ram_probe(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, &ctx) {
+                lines.push(format!("{}: kronos --gpu: AdamW cu m, v in RAM: oprit: {}", p, e));
             }
         }
     }
@@ -2790,7 +2812,7 @@ fn ram_vram_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     doorbell: &mut Bell<'_, V>,
     subs: &mut u32,
     ctx: &CopyCtx,
-) -> GpuResult<()> {
+) -> GpuResult<bool> {
     use nvidia_ga104::ram_vram as rv;
     const SEED: u32 = 0x157;
     let label = if permit.is_some() { "placa" } else { "SIMULARE" };
@@ -2874,6 +2896,313 @@ fn ram_vram_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         hi_dn,
         probe.parallel_permille(rv::Dir::Up).unwrap_or(0),
         probe.parallel_permille(rv::Dir::Down).unwrap_or(0)
+    ));
+    Ok(probe.passes())
+}
+
+/// P6-163: what one run of the small golden step gave (bits compared between the two plans).
+#[derive(Default)]
+struct AdamRun {
+    out: nvidia_ga104::train_step::Outcome,
+    m: Vec<f32>,
+    v: Vec<f32>,
+}
+
+/// P6-163: the first quantity on which two runs differ (bit for bit), or `None`.
+fn adam_runs_differ(a: &AdamRun, b: &AdamRun) -> Option<&'static str> {
+    fn same(x: &[f32], y: &[f32]) -> bool {
+        x.len() == y.len() && x.iter().zip(y).all(|(p, q)| p.to_bits() == q.to_bits())
+    }
+    fn same2(x: &[Vec<f32>], y: &[Vec<f32>]) -> bool {
+        x.len() == y.len() && x.iter().zip(y).all(|(p, q)| same(p, q))
+    }
+    if !same(&a.out.losses, &b.out.losses) {
+        Some("pierderile")
+    } else if !same(&a.out.norms, &b.out.norms) {
+        Some("normele")
+    } else if !same2(&a.out.grad1, &b.out.grad1) {
+        Some("gradientul dupa pasul 1")
+    } else if !same2(&a.out.after1, &b.out.after1) {
+        Some("greutatile dupa pasul 1")
+    } else if !same2(&a.out.after_last, &b.out.after_last) {
+        Some("greutatile dupa ultimul pas")
+    } else if !same(&a.m, &b.m) {
+        Some("m")
+    } else if !same(&a.v, &b.v) {
+        Some("v")
+    } else {
+        None
+    }
+}
+
+/// P6-163: the median of the step times (us).
+fn median_us(ns: &[u64]) -> u64 {
+    if ns.is_empty() {
+        return 0;
+    }
+    let mut v = ns.to_vec();
+    v.sort_unstable();
+    v[v.len() / 2] / 1000
+}
+
+/// P6-163 (C-157 step 2 of the RAM ↔ VRAM study; cyber-gpu note `C-157_ADAM_RAM_m-v-in-RAM.md`, commit `ab9b537`):
+/// AdamW's m and v in host RAM, brought to the board piece by piece (the two tables, every layer, the final LayerNorm)
+/// by the copy engine. The small golden step (2 layers, C 64, batch 2 × 32), `adamw_513`, 10 steps, twice on the same
+/// host-RAM arena: (a) today's tiled plan (`Plan::new_tiles`, m, v in the arena), as `golden_probe` sends it; (b)
+/// `Plan::new_tiles_mv_ram` + `adam_ram::RamMv`: m, v in pinned host RAM (after the control zone), the staging place in
+/// VRAM, the copy engine's records right after the launches' records; one submission per step (`adam_ram::encode_step`:
+/// the launches before the optimizer, then per piece m, v up, the channel WAITS on the copy's record
+/// (`SEM_EXECUTE` `ACQ_STRICT_GEQ`), the piece's `opt_step`, m, v down; at the end a wait on the last copy down), the
+/// last record waited for = the last copy down. Each judged against PyTorch (`train_step::judge`); (b) compared bit for
+/// bit with (a); `adam_ram::check_sync` after every step of (b). A step the board does not finish stops the probe (no
+/// retry). New for the board: the copy engine in the training step and the wait on a semaphore; no register, no program.
+#[allow(clippy::too_many_arguments)]
+fn adam_ram_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    doorbell: &mut Bell<'_, V>,
+    subs: &mut u32,
+    ctx: &CopyCtx,
+) -> GpuResult<()> {
+    use gpu_compute::train::{self, AdamW, Recipe};
+    use nvidia_ga104::adam_ram::{self as ar, RamMv};
+    use nvidia_ga104::train_step::{self as ts, Plan};
+    const STEPS: u32 = 10;
+    let (bsz, tl) = (2usize, 32usize);
+    let label = if permit.is_some() { "placa" } else { "SIMULARE" };
+    if st.copy_obj.is_none() {
+        lines.push(format!("{}: kronos --gpu: AdamW cu m, v in RAM: motorul de copiere nu e alocat pe canal: nimic trimis", p));
+        return Err(bad("adam-ram: lipseste obiectul motorului de copiere"));
+    }
+    let data = match crate::shell::antrenare::golden_data() {
+        Ok(d) => d,
+        Err(e) => {
+            lines.push(format!("{}: kronos --gpu: AdamW cu m, v in RAM: NU A RULAT: {}; nimic trimis", p, e));
+            return Err(bad("adam-ram: datele lipsesc"));
+        }
+    };
+    if ts::check_programs().is_err() {
+        lines.push(format!("{}: kronos --gpu: AdamW cu m, v in RAM: SHA-256 al unui program nu e cel din nota: nimic trimis", p));
+        return Err(bad("adam-ram: SHA-256 gresit"));
+    }
+    // Sizes first, at a provisional base: today's tiled plan has the larger arena (m, v inside).
+    let base0 = nvidia_ga104::mmu::VA_BASE;
+    let tiles0 = Plan::new_tiles(train::MIC, bsz, tl, &data.inputs, base0)?;
+    let ram0 = Plan::new_tiles_mv_ram(train::MIC, bsz, tl, &data.inputs, base0)?;
+    if tiles0.programs() != ram0.programs() {
+        return Err(bad("adam-ram: cele doua planuri au programe diferite"));
+    }
+    let rm0 = RamMv::new(&ram0, 0, 0, 0)?;
+    let pieces = rm0.chunks.len();
+    let n_tiles = tiles0.launches_per_step(Recipe::AdamW513);
+    let n_before = n_tiles - 1;
+    let n_ram = n_before + pieces;
+    let n_rec_ram = n_ram + 1 + 2 * pieces;
+    let arena_bytes = tiles0.bytes().max(ram0.bytes()).next_multiple_of(PAGE);
+    let zone_bytes = (n_tiles.max(n_ram) as u64 * ts::SLOT).next_multiple_of(PAGE);
+    let mv_bytes = rm0.ram_bytes().next_multiple_of(PAGE);
+    if 16 * n_rec_ram as u64 > ctx.rec.size || n_rec_ram as u32 > STRIDE || n_tiles as u32 + 1 > STRIDE {
+        return Err(bad("adam-ram: prea putine inregistrari"));
+    }
+    if (arena_bytes + zone_bytes + mv_bytes) / PAGE > I11_BOARD_BYTES / PAGE {
+        return Err(bad("adam-ram: arena nu incape in paginile de urcare"));
+    }
+    lines.push(format!(
+        "{}: kronos --gpu: AdamW cu m, v in RAM ({}): pasul de aur mic pe placi, adamw_513 x {} pasi de doua ori pe aceeasi arena: planul de azi ({} lansari pe pas, m, v in arena) si m, v in RAM fixata ({} KiB; {} bucati: tabelele, {} straturi, LayerNorm-ul final; {} lansari pe pas), locul de trecere {} KiB VRAM, arena cu {} KiB mai mica; motorul de copiere + asteptarea pe semafor, cate o trimitere pe pas",
+        p,
+        label,
+        STEPS,
+        n_tiles,
+        rm0.ram_bytes() >> 10,
+        pieces,
+        train::MIC.layers,
+        n_ram,
+        rm0.stage_bytes() >> 10,
+        (tiles0.bytes() - ram0.bytes()) >> 10
+    ));
+    // The programs in VRAM (page-aligned).
+    let mut progs: Vec<(ts::Prog, Mapping)> = Vec::with_capacity(tiles0.programs().len());
+    for &prog in tiles0.programs().iter() {
+        let pm = map_vram(st, prog.code().len() as u64)?;
+        put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
+        progs.push((prog, pm));
+    }
+    let arena = st.mem.alloc_sys_mapped(&arena_pages(0, arena_bytes / PAGE)?)?;
+    let zone = st.mem.alloc_sys_mapped(&arena_pages(arena_bytes / PAGE, zone_bytes / PAGE)?)?;
+    let mv = st.mem.alloc_sys_mapped(&arena_pages((arena_bytes + zone_bytes) / PAGE, mv_bytes / PAGE)?)?;
+    let stage = map_vram(st, rm0.stage_bytes())?;
+    if !arena.va.is_multiple_of(PAGE) || !zone.va.is_multiple_of(PAGE) || !mv.va.is_multiple_of(PAGE) || !stage.va.is_multiple_of(PAGE) {
+        return Err(bad("adam-ram: memoria nu e aliniata la 4 KiB"));
+    }
+    let mut maps = ctx.maps.clone();
+    maps.extend(progs.iter().map(|(_, pm)| *pm));
+    maps.push(stage);
+    let sys = [ctx.sys.clone(), arena.clone(), zone.clone(), mv.clone()];
+    let prog_va = |want: ts::Prog| progs.iter().find(|(q, _)| *q == want).map_or(0, |(_, pm)| pm.va);
+    let read_f32s = |va: u64, n: usize| ts::f32s(&ram_read_at(&arena, va - arena.va, 4 * n as u64));
+    let upload = |plan: &Plan| -> GpuResult<()> {
+        let mut image = alloc::vec![0u8; arena_bytes as usize];
+        for (va, bytes) in plan.uploads(&data.initial, &data.inputs, &data.targets)? {
+            let at = (va - arena.va) as usize;
+            image[at..at + bytes.len()].copy_from_slice(&bytes);
+        }
+        ram_write(&arena, &image);
+        Ok(())
+    };
+    let mut stopped: Option<String> = None;
+    // (a) Today's tiled plan.
+    let tiles = Plan::new_tiles(train::MIC, bsz, tl, &data.inputs, arena.va)?;
+    upload(&tiles)?;
+    let mut a = AdamRun::default();
+    {
+        let opt = AdamW::recipe_513(&data.initial);
+        for step in 1..=STEPS {
+            let list = tiles.step(Recipe::AdamW513, &opt, step)?;
+            let (zb, qmds) = ts::pack(&list, prog_va, zone.va)?;
+            ram_write(&zone, &zb);
+            put_bytes(st.mem.writer_mut(), ctx.rec.pa, &alloc::vec![0u8; 16 * (list.len() + 1)])?;
+            let first = TOKEN_FIRST + STRIDE * *subs;
+            let mut words = alloc::vec![0u32; transfer::sequence_words_fresh(list.len())];
+            let mut pb = PushBuf::new(&mut words);
+            transfer::encode_sequence_fresh(&mut pb, &qmds, ctx.rec.va, first)?;
+            let nw = pb.len();
+            let last = first + list.len() as u32;
+            let b = match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, list.len() as u64 + 1, last, &maps, &sys, doorbell)? {
+                Ok(b) => b,
+                Err(got) => {
+                    stopped = Some(format!("planul de azi: placa nu a terminat la pasul {} (ultima inregistrare {:#x}, asteptat {:#x})", step, got, last));
+                    break;
+                }
+            };
+            *subs += 1;
+            a.out.step_ns.push(transfer::analyze_sequence(&b, list.len(), first)?.iter().sum());
+            a.out.losses.push(ts::Outcome::mean_loss(&read_f32s(tiles.loss_rows, bsz * tl)));
+            let norm = read_f32s(tiles.res, 1)[0];
+            a.out.norms.push(norm);
+            if !norm.is_finite() {
+                stopped = Some(format!("planul de azi: norma gradientului nu e finita la pasul {} ({:?})", step, norm));
+                break;
+            }
+            if step == 1 {
+                a.out.grad1 = tiles.unflat(&read_f32s(tiles.g, tiles.n_params))?;
+                a.out.after1 = tiles.unflat(&read_f32s(tiles.w, tiles.n_params))?;
+            }
+        }
+        if stopped.is_none() {
+            a.out.after_last = tiles.unflat(&read_f32s(tiles.w, tiles.n_params))?;
+            a.m = read_f32s(tiles.m, tiles.n_params);
+            a.v = read_f32s(tiles.v, tiles.n_params);
+        }
+    }
+    // (b) m, v in host RAM, piece by piece.
+    let mut b_run = AdamRun::default();
+    let ram_plan = Plan::new_tiles_mv_ram(train::MIC, bsz, tl, &data.inputs, arena.va)?;
+    let sync_va = ctx.rec.va + 16 * (n_ram as u64 + 1);
+    let rm = RamMv::new(&ram_plan, mv.va, stage.va, sync_va)?;
+    if stopped.is_none() {
+        upload(&ram_plan)?;
+        ram_write(&mv, &alloc::vec![0u8; mv_bytes as usize]);
+        let opt = AdamW::recipe_513(&data.initial);
+        for step in 1..=STEPS {
+            let (before, args) = ram_plan.step_until_opt(&opt, step)?;
+            let opt_l = rm.opt_launches(&args)?;
+            let n = before.len();
+            let all: Vec<ts::Launch> = before.into_iter().chain(opt_l).collect();
+            let (zb, qmds) = ts::pack(&all, prog_va, zone.va)?;
+            ram_write(&zone, &zb);
+            put_bytes(st.mem.writer_mut(), ctx.rec.pa, &alloc::vec![0u8; 16 * n_rec_ram])?;
+            let first = TOKEN_FIRST + STRIDE * *subs;
+            let first_sync = first + all.len() as u32;
+            let mut words = alloc::vec![0u32; ar::step_words(n, pieces)];
+            let mut pb = PushBuf::new(&mut words);
+            ar::encode_step(&mut pb, &rm, &qmds[..n], &qmds[n..], ctx.rec.va, first, first_sync)?;
+            let nw = pb.len();
+            let last = ar::sync_payload(first_sync, pieces - 1, true);
+            let recs = match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, n_rec_ram as u64, last, &maps, &sys, doorbell)? {
+                Ok(r) => r,
+                Err(got) => {
+                    stopped = Some(format!(
+                        "m, v in RAM: placa nu a terminat la pasul {} (ultima inregistrare {:#x}, asteptat {:#x}; daca lipseste, canalul a ramas la asteptarea pe semafor sau la o copiere)",
+                        step, got, last
+                    ));
+                    break;
+                }
+            };
+            *subs += 1;
+            let split = 16 * (all.len() + 1);
+            if let Err(e) = ar::check_sync(&recs[split..], pieces, first_sync) {
+                stopped = Some(format!("m, v in RAM: pasul {}: {}", step, e));
+                break;
+            }
+            b_run.out.step_ns.push(transfer::analyze_sequence(&recs[..split], all.len(), first)?.iter().sum());
+            b_run.out.losses.push(ts::Outcome::mean_loss(&read_f32s(ram_plan.loss_rows, bsz * tl)));
+            let norm = read_f32s(ram_plan.res, 1)[0];
+            b_run.out.norms.push(norm);
+            if !norm.is_finite() {
+                stopped = Some(format!("m, v in RAM: norma gradientului nu e finita la pasul {} ({:?})", step, norm));
+                break;
+            }
+            if step == 1 {
+                b_run.out.grad1 = ram_plan.unflat(&read_f32s(ram_plan.g, ram_plan.n_params))?;
+                b_run.out.after1 = ram_plan.unflat(&read_f32s(ram_plan.w, ram_plan.n_params))?;
+            }
+        }
+        if stopped.is_none() {
+            b_run.out.after_last = ram_plan.unflat(&read_f32s(ram_plan.w, ram_plan.n_params))?;
+            let nb = 4 * ram_plan.n_params as u64;
+            b_run.m = ts::f32s(&ram_read_at(&mv, 0, nb));
+            b_run.v = ts::f32s(&ram_read_at(&mv, rm.v - rm.m, nb));
+        }
+    }
+    if let Some(why) = &stopped {
+        lines.push(format!("{}: kronos --gpu: AdamW cu m, v in RAM: {}; proba oprita, fara reincercare", p, why));
+        lines.push(format!("{}: kronos --gpu: AdamW cu m, v in RAM: NU A TERMINAT (vezi randul de mai sus)", p));
+        journal.push(Event::Value { what: KT_ADAM_RAM_PASS, value: 0 });
+        return Err(GpuError::Timeout { waited_us: WAIT_US });
+    }
+    let refs = &data.adamw;
+    let va = ts::judge(Recipe::AdamW513, n_tiles, &a.out, refs);
+    let vb = ts::judge(Recipe::AdamW513, n_ram, &b_run.out, refs);
+    lines.extend(va.lines(&format!("{}, planul de azi pe placi", label)).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
+    vb.journal(journal);
+    lines.extend(vb.lines(&format!("{}, m v in RAM", label)).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
+    let differ = adam_runs_differ(&a, &b_run);
+    let (us_a, us_b) = (median_us(&a.out.step_ns), median_us(&b_run.out.step_ns));
+    journal.push(Event::Value { what: KT_ADAM_RAM_SAME, value: u32::from(differ.is_none()) });
+    journal.push(Event::Value { what: KT_ADAM_RAM_US_TILES, value: us_a as u32 });
+    journal.push(Event::Value { what: KT_ADAM_RAM_US_RAM, value: us_b as u32 });
+    lines.push(format!(
+        "{}: kronos --gpu: AdamW cu m, v in RAM fata de planul de azi: {}",
+        p,
+        match differ {
+            None => String::from("IDENTICE bit cu bit (pierderile, normele, gradientul si greutatile dupa pasul 1, greutatile dupa pasul 10, m, v)"),
+            Some(what) => format!("DIFERA ({} nu sunt aceiasi biti)", what),
+        }
+    ));
+    lines.push(format!(
+        "{}: kronos --gpu: AdamW cu m, v in RAM: timpul placii pe pas (median): planul de azi {} us, m v in RAM {} us ({:+} us; {} KiB urcati si coborati pe pas)",
+        p,
+        us_a,
+        us_b,
+        us_b as i64 - us_a as i64,
+        (16 * ram_plan.n_params as u64) >> 10
+    ));
+    let pass = va.passes() && vb.passes() && differ.is_none();
+    journal.push(Event::Value { what: KT_ADAM_RAM_PASS, value: u32::from(pass) });
+    lines.push(format!(
+        "{}: kronos --gpu: AdamW cu m, v in RAM: {}",
+        p,
+        if pass {
+            "TRECE (ambele planuri ca PyTorch, m v in RAM = planul de azi bit cu bit)"
+        } else {
+            "NU TRECE (vezi randurile de mai sus)"
+        }
     ));
     Ok(())
 }

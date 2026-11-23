@@ -980,6 +980,25 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu ram-vram-sim: exista doar in build-ul de test (pe stick o porneste doar ciclul, test-placa --ram-vram)\n");
         }
+        Some("adam-ram-sim") => {
+            // P6-163 (C-157, cyber-gpu `ab9b537`): test build only: the copy object right after I9 and, after the next
+            // `kronos --gpu-sim`'s texts (and after the RAM <-> VRAM probe, if on), the golden step with m, v in RAM beside
+            // today's tiled plan (on the stick only the cycle turns it on, `test-placa … --ram-vram --adam-ram`).
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::ADAM_RAM_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu adam-ram-sim: pornit (SIMULARE: motorul de copiere pe canalul de lucru, apoi dupa texte pasul de aur mic cu m, v in RAM langa planul de azi)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::ADAM_RAM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu adam-ram-sim: oprit\n");
+                }
+                _ => out!("folosire: gpu adam-ram-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu adam-ram-sim: exista doar in build-ul de test (pe stick il porneste doar ciclul, test-placa --ram-vram --adam-ram)\n");
+        }
         Some("atentie3-sim") => {
             // P6-160 (cyber-gpu note C-157_P2n): test build only: with `gpu atentie2-sim on` too, the third generation
             // (`attn_*_3`) after the second on the same buffers (on the stick only the cycle turns it on,

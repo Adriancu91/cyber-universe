@@ -349,6 +349,18 @@ pub static ATTN_TILE3_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::ato
 /// test build, by `gpu ram-vram-sim on`. Off by default.
 pub static RAM_VRAM_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-163 (C-157, cyber-gpu `ab9b537`, note C-157_ADAM_RAM): the small golden step with AdamW's m and v in host RAM,
+/// brought to the board piece by piece by the copy engine (`adam_ram`), beside today's tiled plan, after the RAM ↔ VRAM
+/// probe (and only if it passed, when both are asked). Needs the copy object (allocated right after I9 when this or
+/// [`RAM_VRAM_IN_CYCLE`] is set). Set only by the cycle (`test-placa … --ram-vram --adam-ram`) and, in the test build,
+/// by `gpu adam-ram-sim on`. Off by default.
+pub static ADAM_RAM_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// P6-163: the copy object is needed (the RAM ↔ VRAM probe or the m, v in RAM step).
+pub fn copy_engine_wanted() -> bool {
+    RAM_VRAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) || ADAM_RAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst)
+}
+
 /// P6-101: set only for the FLR trial's second chain (`test-placa --flr-proba`, `gpu lant --flr-proba`); taken by
 /// `chain`. Without it no chain reads WPR2 for the reset nor writes anything for it.
 pub static FLR_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
@@ -714,7 +726,7 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
                 }
             }
             // P6-161: only when the cycle asks for the RAM ↔ VRAM probe: the copy object on the work channel.
-            if r.is_ok() && RAM_VRAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+            if r.is_ok() && copy_engine_wanted() {
                 if let Err(e) = gpu_golden::copy_object_step(p, &mut rw, &mut vf, &mut clock, j, prep, st, Some(&permit), &mut lines, |_| {}) {
                     lines.push(format!("{}: motorul de copiere: obiectul nu s-a putut aloca ({}); proba RAM <-> VRAM nu ruleaza", p, e));
                 }
@@ -1521,7 +1533,7 @@ pub fn chain_sim(fault: bool, writes_allowed: bool, variant: Option<u8>, i9: sup
                 }
             }
             // P6-161 (SIMULARE): as on the board; the RM model accepts the copy object on the work channel.
-            if r.is_ok() && RAM_VRAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+            if r.is_ok() && copy_engine_wanted() {
                 if let Err(e) = gpu_golden::copy_object_step(p, &mut g, &mut vram, &mut clock, j, prep, st, None, &mut lines, |m| peer.serve(m, &mut rm)) {
                     lines.push(format!("{}: motorul de copiere: obiectul nu s-a putut aloca ({}); proba RAM <-> VRAM nu ruleaza", p, e));
                 }
