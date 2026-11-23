@@ -396,6 +396,8 @@ impl SimGpu {
             cp.register_program_with_needs(nvidia_ga104::mma16::MMA16_F16, c::mma16_f16_on_cpu, c::MMA16_F16_NEEDS);
             // P6-123 (C-155 point 3): the argmax on the board (256 threads, shfl + barrier, 16 bytes written).
             cp.register_program_with_needs(nvidia_ga104::argmax::ARGMAX, c::argmax_on_cpu, c::ARGMAX_NEEDS);
+            // P6-145 (C-157 point 7): the embedding that reads its token from the argmax slot before it (`embed_dev`).
+            cp.register_program(nvidia_ga104::kronos_batch::EMBED_DEV, c::embed_dev_on_cpu);
             // P6-134 (C-161 point 4): the first backward program of the training (`colsum`, column sums).
             cp.register_program(nvidia_ga104::colsum::COLSUM, c::colsum_on_cpu);
             // P6-137 (C-161 point 4): the training matmul on the tensor cores (`mm_tc`, 24 KiB shared, one barrier).

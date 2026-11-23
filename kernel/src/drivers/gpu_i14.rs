@@ -31,6 +31,7 @@ use gpu_core::hal::{Clock, Mmio};
 use nvidia_ga104::gsp::golden::Mapping;
 use nvidia_ga104::gsp::HardwareWritePermit;
 use nvidia_ga104::kronos_layer::{self as kl, LayerVas, OwnedLayer, Prog, WeightVas, PROGRAMS};
+use nvidia_ga104::kronos_batch as kb;
 use nvidia_ga104::kronos_diag as kd;
 use nvidia_ga104::kronos_fast as kf;
 use nvidia_ga104::kronos_gen::{GenPlan, Generation, Stop, TokenCheck, TokenOutput, TokenRunner, TopOutput, TopRunner, VramBudget};
@@ -170,6 +171,14 @@ const KT_TOP_READ: &str = "kt median citirea rezultatului (us)";
 const KT_VRAM_WORDS: &str = "kt cuvinte VRAM pe simbol (median)";
 const KT_READ: &str = "kt median citirea logit-urilor (us)";
 const KT_ARGMAX: &str = "kt median argmax (us)";
+/// P6-145 (C-157 point 7): the batch's journal rows.
+const KT_LOT_K: &str = "kt lot pozitii K";
+const KT_LOT_BELLS: &str = "kt lot sonerii";
+const KT_LOT_AGREE: &str = "kt lot pozitii identice";
+const KT_LOT_TOTAL: &str = "kt lot pozitii judecate";
+const KT_LOT_BOARD_NS: &str = "kt lot median placa pe pozitie (ns)";
+const KT_LOT_RATE_X1000: &str = "kt lot simb/s x1000";
+const KT_LOT_PASS: &str = "kt lot verdict (1 aceleasi simboluri)";
 /// P6-107: the logits compared bit for bit between two runs (os-322 had neither row: its worst deviation was printed,
 /// 1.6212463e-5 = 0x37880000, so that one is compared).
 const KT_WORST_BITS: &str = "kt abaterea maxima a logit-urilor (f32, biti)";
@@ -614,7 +623,18 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
             run_lists.push(r.list);
         }
     }
-    let extra_progs: &[Prog] = if am_prog { &[Prog::Argmax] } else { &[] };
+    // P6-145 (C-157 point 7): the batch only after the texts with the argmax without the copy, only with `lipita-ln-32`
+    // alone (`kronos_batch::TokenList::FusedLn32`); otherwise a row says why and the texts run as before.
+    let batch_asked = argmax_top && super::gpu_tur::BATCH_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    let batch = batch_asked && runs.iter().all(|r| r.list == kd::TokenList::FusedLn32);
+    if batch_asked && !batch {
+        lines.push(format!("{}: kronos --gpu: lot: sarit (doar cu lista lipita-ln-32 singura)", p));
+    }
+    let extra_progs: &[Prog] = match (am_prog, batch) {
+        (true, true) => &[Prog::Argmax, Prog::EmbedDev],
+        (true, false) => &[Prog::Argmax],
+        _ => &[],
+    };
     let lim = ks::ModelLimits::of_lists(&s, m.layers.len(), m.vocab, m.context, I11_BOARD_BYTES, &run_lists, extra_progs)?;
     let (free, largest) = st.mem.vram_free();
     lines.push(format!("{}: i14: {}; VRAM liber {} MiB (cea mai lunga bucata {} MiB)", p, budget.line(m.layers.len()), free >> 20, largest >> 20));
@@ -639,7 +659,14 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let host = st.mem.alloc_sys_mapped(&arena_pages(0, piece.div_ceil(PAGE))?)?;
     let logits_bytes = (4 * m.vocab as u64).next_multiple_of(16);
     // P6-123: the argmax's 16-byte result right after the logits (`logits_bytes` is a multiple of 16), same arena.
-    let am_bytes = if am_prog { nvidia_ga104::argmax::RESULT_BYTES } else { 0 };
+    // P6-145: with the batch, one 16-byte slot per position of the context (#513: 8 KiB).
+    let am_bytes = if batch {
+        kb::SLOT * m.context as u64
+    } else if am_prog {
+        nvidia_ga104::argmax::RESULT_BYTES
+    } else {
+        0
+    };
     let host_logits = st.mem.alloc_sys_mapped(&arena_pages(I11_BOARD_BYTES / PAGE, (logits_bytes + am_bytes).div_ceil(PAGE))?)?;
     let mut progs: Vec<(Prog, Mapping)> = Vec::new();
     // P6-110: P3's glued list needs its own program (`q8_fused`) too; uploaded only when a run uses that list.
@@ -661,6 +688,9 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     if am_prog {
         all_progs.push(Prog::Argmax);
     }
+    if batch {
+        all_progs.push(Prog::EmbedDev);
+    }
     for list in &lists {
         for q in list.programs() {
             if !all_progs.contains(q) {
@@ -679,9 +709,14 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     for _ in 0..m.layers.len() {
         caches.push((map_vram(st, kl::cache_bytes(e))?, map_vram(st, kl::cache_bytes(e))?));
     }
-    let launches = map_vram(st, 512 * n as u64)?;
+    // P6-145: the batch's positions per doorbell: as many as the pushbuffer area holds with `EachLaunch` (#513: 88
+    // launches per position, 48 bytes each); the launch slots and the records grow with them.
+    let lpp = kb::launches_per_position(m.layers.len());
+    let batch_max = if batch { (1..=m.context).take_while(|&q| 4 * kd::words(kd::SeqMode::EachLaunch, q * lpp) as u64 <= l.push.size).last().unwrap_or(0) } else { 0 };
+    let slots_n = n.max(batch_max * lpp);
+    let launches = map_vram(st, 512 * slots_n as u64)?;
     let (cb_up, q_up, rec_up) = (map_vram(st, PAGE)?, map_vram(st, PAGE)?, map_vram(st, PAGE)?);
-    let rec = map_vram(st, (16 * (n as u64 + 1)).next_multiple_of(PAGE))?;
+    let rec = map_vram(st, (16 * (slots_n as u64 + 1)).next_multiple_of(PAGE))?;
     let mut maps: Vec<Mapping> = alloc::vec![vblob, launches, cb_up, q_up, rec_up];
     maps.extend(caches.iter().flat_map(|(k, v)| [*k, *v]));
     maps.extend(progs.iter().map(|(_, pm)| *pm));
@@ -787,7 +822,7 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         logits_bytes,
         progs: &progs,
         tmaps: &tmaps,
-        n,
+        n: slots_n,
         name: String::new(),
         way: way.unwrap_or(kd::Way::REPAIR),
         from_vram: false,
@@ -827,6 +862,10 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         top_agree: 0,
         top_total: 0,
         top_first_bad: None,
+        top_words: Vec::new(),
+        keep_records: false,
+        records: Vec::new(),
+        write_us: 0,
     };
     // 3. C-139: the ladder, once, on the first token of the first control text, before the texts.
     if way.is_none() {
@@ -868,6 +907,8 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     };
     // P6-116: the warm-ups (lists warmed, total us outside the clock, VRAM words of the first one).
     let mut warm: (u32, u64, u64) = (0, 0, 0);
+    // P6-145: the batch's verdict over all texts (None = not run).
+    let mut batch_pass: Option<bool> = None;
     let mut first_prof: Option<kp::KindProfile> = None;
     for (ri, run) in runs.iter().enumerate() {
         runner.name = run.name.clone();
@@ -922,6 +963,7 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
             let positions = plan.positions();
             let mut generation = Generation::new(plan);
             runner.argmaxes.clear();
+            runner.top_words.clear();
             runner.split.clear();
             runner.diet_words.clear();
             runner.read_us.clear();
@@ -1088,6 +1130,19 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
         medians.push(stats.median_ns);
         all.push(greedy);
+        if batch {
+            let want_seq = generation.seq.clone();
+            let want_words = runner.top_words.clone();
+            batch_runs(&mut runner, run, positions, lpp, batch_max, &want_seq, &want_words, &mut batch_pass)?;
+        }
+    }
+    if batch {
+        let verdict = if batch_pass == Some(true) { "TRECE" } else { "NU TRECE" };
+        runner.journal.push(Event::Value { what: KT_LOT_PASS, value: u32::from(batch_pass == Some(true)) });
+        runner.lines.push(format!(
+            "{}: kronos --gpu: lot (simbolul ramane pe placa): {} (embed_dev, mai multe pozitii pe o sonerie, fata de rularea cu o pozitie pe trimitere)",
+            p, verdict
+        ));
     }
     if warm.0 > 0 {
         runner.journal.push(Event::Value { what: KT_WARM, value: warm.0 });
@@ -1209,6 +1264,104 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let copy = fast.then(|| CopyCtx { src_va: vblob.va, src, launches, rec, maps: tmaps, sys: host_logits, copy_va });
     let os_check = runs.iter().any(|r| r.os_check);
     Ok(RunOut { all, worst, median, run_medians, from_vram, speed, cpu_us, os_check, split: split_all, shadow_changed, prof, prof_err, prof_first: first_prof, copy, diet: diet_out })
+}
+
+/// P6-145 (C-157 point 7): the batch runs of one text (batches of 4, then the whole text or as many positions as the
+/// pushbuffer area holds), their rows and journal values; `pass` = every run so far the same as one position per doorbell.
+#[allow(clippy::too_many_arguments)]
+fn batch_runs<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    runner: &mut BoardRunner<'_, '_, V, K>,
+    run: &Run<'_>,
+    positions: usize,
+    lpp: usize,
+    batch_max: usize,
+    want_seq: &[usize],
+    want_words: &[[u32; 4]],
+    pass: &mut Option<bool>,
+) -> GpuResult<()> {
+    let p = runner.p;
+    if batch_max == 0 {
+        runner.lines.push(format!("{}: kronos --gpu: lot: nicio pozitie nu incape in zona de comenzi ({} lansari pe pozitie)", p, lpp));
+        *pass = Some(false);
+        return Ok(());
+    }
+    let whole = positions.min(batch_max);
+    if positions > batch_max {
+        runner.lines.push(format!(
+            "{}: kronos --gpu: lot: tot textul ({} pozitii) nu incape intr-o trimitere: zona de comenzi tine {} pozitii ({} lansari pe pozitie)",
+            p, positions, batch_max, lpp
+        ));
+    }
+    let mut ks: Vec<usize> = alloc::vec![4.min(whole)];
+    if whole > 4 {
+        ks.push(whole);
+    }
+    for k in ks {
+        let o = runner.run_batch(&run.prompt, run.steps, k, want_seq, want_words)?;
+        let mut b = o.board_ns.clone();
+        b.sort_unstable();
+        let med_board = b.get(b.len() / 2).copied();
+        let host_per_pos = o.host_us.checked_div(o.positions as u64);
+        let rate = (o.host_us > 0).then(|| o.positions as u64 * 1_000_000_000 / o.host_us);
+        let board_rate = (o.span_ns > 0).then(|| o.positions as u64 * 1_000_000_000_000 / o.span_ns);
+        let ok = o.clean && o.same_seq && o.total > 0 && o.agree == o.total;
+        *pass = Some(pass.unwrap_or(true) && ok);
+        runner.journal.push(Event::Value { what: KT_LOT_K, value: k as u32 });
+        runner.journal.push(Event::Value { what: KT_LOT_BELLS, value: o.bells });
+        runner.journal.push(Event::Value { what: KT_LOT_AGREE, value: o.agree });
+        runner.journal.push(Event::Value { what: KT_LOT_TOTAL, value: o.total });
+        if let Some(t) = med_board {
+            runner.journal.push(Event::Value { what: KT_LOT_BOARD_NS, value: t.min(u64::from(u32::MAX)) as u32 });
+        }
+        if let Some(r) = rate {
+            runner.journal.push(Event::Value { what: KT_LOT_RATE_X1000, value: r.min(u64::from(u32::MAX)) as u32 });
+        }
+        let name = &run.name;
+        runner.lines.push(format!(
+            "{}: kronos --gpu: kt lot pozitii K {}: \"{}\": {} pozitii in {} trimiteri ({} lansari pe pozitie, invalidare inaintea fiecarei lansari)",
+            p, k, name, o.positions, o.bells, lpp
+        ));
+        runner.lines.push(format!("{}: kronos --gpu: kt lot sonerii (K {}): {}", p, k, o.bells));
+        runner.lines.push(match med_board {
+            Some(t) => format!("{}: kronos --gpu: kt lot median placa pe pozitie (us, K {}): {}.{:03} (din inregistrari)", p, k, t / 1000, t % 1000),
+            None => format!("{}: kronos --gpu: kt lot median placa pe pozitie (us, K {}): -", p, k),
+        });
+        runner.lines.push(format!(
+            "{}: kronos --gpu: kt lot driver pe lot (us, K {}, median): construirea listei {}, scrierea lansarilor {}, trimiterea + asteptarea {}, citirea rezultatelor {}",
+            p,
+            k,
+            median_of(&o.build_us).unwrap_or(0),
+            median_of(&o.write_us).unwrap_or(0),
+            median_of(&o.send_us).unwrap_or(0),
+            median_of(&o.read_us).unwrap_or(0)
+        ));
+        runner.lines.push(format!(
+            "{}: kronos --gpu: kt lot simb/s (K {}): {} (ceasul OS-ului, {} us pe pozitie); doar placa: {}",
+            p,
+            k,
+            rate.map_or(String::from("-"), |r| format!("{}.{:03}", r / 1000, r % 1000)),
+            host_per_pos.map_or(String::from("-"), |u| format!("{}", u)),
+            board_rate.map_or(String::from("-"), |r| format!("{}.{:03}", r / 1000, r % 1000))
+        ));
+        runner.lines.push(format!(
+            "{}: kronos --gpu: kt lot K {}: {} ({}/{} pozitii cu aceleasi 4 cuvinte argmax ca o pozitie pe trimitere; simbolurile {}; {})",
+            p,
+            k,
+            if ok { "TRECE" } else { "NU TRECE" },
+            o.agree,
+            o.total,
+            if o.same_seq { "identice" } else { "DIFERITE" },
+            o.stop
+        ));
+        if let Some(why) = o.first_bad {
+            runner.lines.push(format!("{}: kronos --gpu: kt lot K {}: prima diferenta: {}", p, k, why));
+        }
+        if !ok {
+            // The note: at the first difference, the report, no other attempt.
+            break;
+        }
+    }
+    Ok(())
 }
 
 /// P6-110 (C-155 point 1): P3's proof — the glued list's logits against the plain list's on the same text, bit for bit
@@ -1517,6 +1670,14 @@ struct BoardRunner<'r, 'b, V: Mmio + ?Sized, K: Clock + ?Sized> {
     top_agree: u32,
     top_total: u32,
     top_first_bad: Option<String>,
+    /// P6-145 (C-157 point 7): the 4 argmax words of every position of the current text (one position per doorbell),
+    /// the reference of the batch run.
+    top_words: Vec<[u32; 4]>,
+    /// P6-145: `submit` keeps the records it read (the batch splits them per position).
+    keep_records: bool,
+    records: Vec<u8>,
+    /// P6-145: host time of the last `submit` spent writing the launch slots and zeroing the records (us).
+    write_us: u64,
 }
 
 impl<V: Mmio + ?Sized, K: Clock + ?Sized> BoardRunner<'_, '_, V, K> {
@@ -1532,6 +1693,91 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> BoardRunner<'_, '_, V, K> {
     /// P6-97: after the texts, the slot pieces written under the shadow are read back once and compared with it: a word
     /// the board changed would mean the shadow is wrong (C-145 §6). Returns how many words differ (`None`: no shadow).
     /// The shadow is dropped either way (the next run starts whole).
+    /// P6-145 (C-157 point 7, cyber-gpu note C-157_P7 `0d22357`): the text once more, in batches of at most `k` positions
+    /// on ONE doorbell each (`kronos_batch`): a position whose token comes from the argmax before it starts with
+    /// `embed_dev`, every position ends with its argmax into its own 16-byte slot right after the logits' buffer. Always
+    /// `EachLaunch` (the note: with `Once` the batch gives other tokens without an error, T180f). Judged against the run
+    /// with one position per doorbell (`want_seq`, `want_words`): the same tokens and the same 4 argmax words on every
+    /// position. A board error (no record, timeout) is the error; a difference is a verdict.
+    fn run_batch(&mut self, prompt: &[usize], steps: usize, k: usize, want_seq: &[usize], want_words: &[[u32; 4]]) -> GpuResult<BatchOut> {
+        let m = self.m;
+        let lpp = kb::launches_per_position(m.layers.len());
+        let plan = GenPlan::new(prompt, steps, m.vocab, m.context)?;
+        let positions = plan.positions();
+        let mut generation = Generation::new(plan);
+        let slots = (kb::SLOT as usize) * positions;
+        let results_va = self.host_logits.va + self.logits_bytes;
+        // Every slot filled with 0xEE first: a slot not written by its argmax is seen (`ArgmaxResult::token`).
+        ram_write_at(&self.host_logits, self.logits_bytes, &alloc::vec![0xee; slots]);
+        let mut out = BatchOut { k, positions, ..BatchOut::default() };
+        let mut words: Vec<[u32; 4]> = Vec::with_capacity(positions);
+        let diet2 = core::mem::replace(&mut self.diet2, false); // the planned wait is per position: not for a batch
+        self.keep_records = true;
+        let r = (|| -> GpuResult<()> {
+            while let Some((p0, inputs)) = generation.next_batch(k) {
+                let host_t0 = crate::time::since_boot_us();
+                let list = kb::batch_launches(kb::TokenList::FusedLn32, &m.shape, m.vocab, m.context, self.vas, results_va, p0, &inputs)?;
+                let built = crate::time::since_boot_us();
+                let nl = list.len();
+                self.pos = p0;
+                self.timing = None;
+                self.launch_ns.clear();
+                kd::TokenIo::submit(self, &list, 0, kd::SeqMode::EachLaunch)?;
+                // The next submission's first payload must be above this one's last (`first` grows by STRIDE).
+                *self.subs += nl as u32 / STRIDE;
+                let sent = crate::time::since_boot_us();
+                let bytes = ram_read_at(&self.host_logits, self.logits_bytes, (kb::SLOT as usize * (p0 + inputs.len())) as u64);
+                let res = kb::read_results(&bytes, p0, inputs.len())?;
+                let host_t1 = crate::time::since_boot_us();
+                let recs = core::mem::take(&mut self.records);
+                let time = |j: usize| recs.get(16 * j + 8..16 * j + 16).map_or(0, |b| u64::from_le_bytes(b.try_into().unwrap_or([0; 8])));
+                let mut outs = Vec::with_capacity(res.len());
+                for (j, r) in res.into_iter().enumerate() {
+                    let (a, b) = (time(j * lpp), time((j + 1) * lpp));
+                    let busy = self.launch_ns.get(j * lpp..(j + 1) * lpp).map_or(b.saturating_sub(a), |t| t.iter().sum());
+                    out.board_ns.push(b.saturating_sub(a));
+                    words.push(r.words);
+                    outs.push(TopOutput { result: r, start_ns: a, end_ns: b, busy_ns: busy });
+                }
+                let us = |a: Option<u64>, b: Option<u64>| a.zip(b).map(|(a, b)| b.saturating_sub(a)).unwrap_or(0);
+                out.bells += 1;
+                out.build_us.push(us(host_t0, built));
+                out.write_us.push(self.write_us);
+                out.send_us.push(us(built, sent).saturating_sub(self.write_us));
+                out.read_us.push(us(sent, host_t1));
+                out.host_us += us(host_t0, host_t1);
+                out.span_ns += time(nl).saturating_sub(time(0));
+                if generation.accept_batch(Ok(outs)).is_some() {
+                    break;
+                }
+            }
+            Ok(())
+        })();
+        self.keep_records = false;
+        self.records.clear();
+        self.diet2 = diet2;
+        r?;
+        out.stop = generation.stop.as_ref().map(|s| s.line()).unwrap_or_default();
+        out.clean = generation.stop.as_ref().is_some_and(|s| s.is_clean_end());
+        // The judgement: position by position, the first difference named (no other attempt).
+        let seq = &generation.seq;
+        let n = want_words.len().min(positions);
+        for q in 0..n {
+            out.total += 1;
+            let tok_ok = seq.get(q + 1).zip(want_seq.get(q + 1)).is_none_or(|(a, b)| a == b);
+            if words.get(q) == want_words.get(q) && tok_ok {
+                out.agree += 1;
+            } else if out.first_bad.is_none() {
+                out.first_bad = Some(match words.get(q) {
+                    Some(w) => format!("pozitia {}: lot {:08x?}, o pozitie pe trimitere {:08x?}", q, w, want_words[q]),
+                    None => format!("pozitia {}: lotul s-a oprit inainte ({})", q, out.stop),
+                });
+            }
+        }
+        out.same_seq = seq[..] == want_seq[..];
+        Ok(out)
+    }
+
     fn shadow_check(&mut self) -> GpuResult<Option<usize>> {
         let Some(sh) = self.shadow.take() else { return Ok(None) };
         let ranges = core::mem::take(&mut self.shadow_ranges);
@@ -1603,6 +1849,7 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> kd::TokenIo for BoardRunner<'_, '_, V,
         }
         let progs = self.progs;
         let prog_va = |want: Prog| progs.iter().find(|(q, _)| *q == want).map(|(_, pm)| pm.va);
+        let write_t0 = crate::time::since_boot_us();
         let w = self.st.mem.writer_mut();
         let mut qmds = Vec::with_capacity(n);
         for (i, la) in list.iter().enumerate() {
@@ -1624,6 +1871,7 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> kd::TokenIo for BoardRunner<'_, '_, V,
         if !self.diet || !self.rec_zeroed {
             put_bytes(w, self.rec.pa, &alloc::vec![0u8; 16 * (n + 1)])?;
         }
+        self.write_us = write_t0.zip(crate::time::since_boot_us()).map(|(a, b)| b.saturating_sub(a)).unwrap_or(0);
         let first = TOKEN_FIRST + STRIDE * *self.subs;
         let mut words = alloc::vec![0u32; kd::words(mode, n)];
         let mut pb = PushBuf::new(&mut words);
@@ -1668,6 +1916,9 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> kd::TokenIo for BoardRunner<'_, '_, V,
             }
         };
         *self.subs += 1;
+        if self.keep_records {
+            self.records = b.clone();
+        }
         // The records were zeroed by this submission (with or without the diet).
         self.rec_zeroed = true;
         let busy: u64 = if all {
@@ -1905,6 +2156,8 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TopRunner for BoardRunner<'_, '_, V, K
         let top = result.token(m.vocab).ok().flatten();
         self.argmaxes.truncate(pos);
         self.argmaxes.push(top.unwrap_or(usize::MAX));
+        self.top_words.truncate(pos);
+        self.top_words.push(result.words);
         let us = |a: Option<u64>, b: Option<u64>| a.zip(b).map(|(a, b)| b.saturating_sub(a)).unwrap_or(0);
         self.diet_words.truncate(pos);
         self.diet_words.push(words);
@@ -1944,6 +2197,32 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> TopRunner for BoardRunner<'_, '_, V, K
         });
         Ok(TopOutput { result, start_ns, end_ns, busy_ns })
     }
+}
+
+/// P6-145: what one batch run gave (one batch size `k`).
+#[derive(Default)]
+struct BatchOut {
+    k: usize,
+    positions: usize,
+    /// Doorbells rung (= batches sent).
+    bells: u32,
+    /// Board time of every position (from its first record to its last, ns).
+    board_ns: Vec<u64>,
+    /// Per batch (us, OS clock): building the launches, writing the slots, the rest of the submission (pushbuffer,
+    /// doorbell, wait, records), reading the results.
+    build_us: Vec<u64>,
+    write_us: Vec<u64>,
+    send_us: Vec<u64>,
+    read_us: Vec<u64>,
+    host_us: u64,
+    /// Board span of all batches (first record to last, ns).
+    span_ns: u64,
+    agree: u32,
+    total: u32,
+    first_bad: Option<String>,
+    same_seq: bool,
+    clean: bool,
+    stop: String,
 }
 
 /// The CPU engine on the same weights, for `Generation`'s judgement of every position.

@@ -296,6 +296,12 @@ pub static ARGMAX_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic:
 /// the board, as today) and they must be the same. No logits are read (no print, no deviation). Set only by the cycle
 /// when the list asks for it (`test-placa … --argmax-fara-copie`) and, in the test build, by `gpu argmax-sim fara-copie`.
 pub static ARGMAX_TOP_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+/// P6-145 (C-157 point 7, cyber-gpu `0d22357`): after the texts of `kronos --gpu` with the argmax without the copy, the
+/// same generation again in batches (`kronos_batch`): the token stays on the board (`embed_dev`), several positions on ONE
+/// doorbell — first batches of 4, then the whole text (or as many positions as the pushbuffer area holds). Set only by the
+/// cycle when the list asks for it (`test-placa … --argmax-fara-copie --dieta2 --lot`) and, in the test build, by
+/// `gpu lot-sim on`. Off by default.
+pub static BATCH_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 /// P6-117 (C-161 point 2, cyber-gpu `3199fa2`): P8, the first tensor-core computation (`mma16_f16`, 6 sets), after
 /// `kronos --gpu`'s texts. Set only by the cycle when the list asks for it (`test-placa … --p8`) and, in the test

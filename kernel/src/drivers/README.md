@@ -267,6 +267,18 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     `rusd_stop_poll_only` (fără `INIT(0)`, ca de la os-323); dacă lanțul se oprește mai devreme, citirile se opresc oricum. Nicio comandă
     nouă pentru placă, doar momentul. În SIMULARE modelul tabloului trece în P0 / 1 770 MHz după o cerere acceptată (DEDUS).
     Test: `gpu-tablou-viteza`.
+    **P6-145 (C-157 punctul 7, etapa 5 / P9, cyber-gpu `0d22357`, nota `C-157_P7_simbol-pe-placa.md`): simbolul ales rămâne pe
+    placă — mai multe poziții pe o sonerie.** Doar în ciclu cu `test-placa … --argmax-fara-copie [--dieta2] --lot` (lista implicită
+    `lipita-ln-32`; `gpu_tur::BATCH_IN_CYCLE`; în build-ul de test `gpu lot-sim on`). După textele cu o poziție pe trimitere, aceeași
+    generare din nou pe loturi (`Generation::next_batch` → `kronos_batch::batch_launches` → o trimitere `EachLaunch` → o citire a
+    `16 × poziții` octeți → `read_results` → `accept_batch`): întâi loturi de 4, apoi tot textul — sau câte poziții încap în zona de
+    comenzi (32 KiB; #513: 88 de lansări × 48 octeți pe poziție → 7 poziții). Programul nou `embed_dev` (în VRAM lângă `argmax`) ia
+    simbolul din rezultatul argmax al poziției de dinainte; rezultatele: câte 16 octeți pe poziție imediat după logit-uri, umplute
+    cu 0xEE înainte. Zonele de lansări și înregistrări cresc la `K × 88`; după un lot, numărătoarea trimiterilor sare peste
+    înregistrările lui (semaforul trebuie să crească). Dieta 2 (așteptarea planificată) e oprită pe durata lotului. Judecata: aceleași
+    4 cuvinte argmax pe fiecare poziție și aceleași simboluri ca rularea cu o poziție pe trimitere; la prima diferență raport, fără
+    altă încercare. Rânduri `kt lot …` (poziții K, sonerii, mediana plăcii pe poziție, driverul pe lot: construire / scriere /
+    trimitere + așteptare / citire, simb/s) și verdictul `lot (simbolul ramane pe placa)`. Test: `kronos-gpu-lot`.
     **P6-138 (C-157 punctul 2, nota Cyber-GPU `C-157_P2j`, `0c46879`): dieta 2 și cu argmax fără copie.** `test-placa …
     --argmax-fara-copie --dieta2` e acceptat acum: merg doar bucățile A (două înregistrări pe pozițiile care nu hrănesc profilul
     `kp`) și B (așteptarea planificată), care sunt în `submit`; C și D (amprenta, argmax pe biți) rămân în `run_token`. În `run_top`:

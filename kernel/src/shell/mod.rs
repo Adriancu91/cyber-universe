@@ -863,6 +863,25 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu mm-tc-sim: exista doar in build-ul de test (pe stick proba mm_tc o porneste doar ciclul, test-placa --mm-tc)\n");
         }
+        Some("lot-sim") => {
+            // P6-145 (C-157 point 7): test build only: after the texts of the next `kronos --gpu-sim` with the argmax without
+            // the copy, the same generation in batches on one doorbell (in the stick's system only the cycle turns it on,
+            // `test-placa … --argmax-fara-copie --lot`).
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::BATCH_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu lot-sim: pornit (SIMULARE: dupa texte, aceeasi generare pe loturi: embed_dev, mai multe pozitii pe o sonerie)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::BATCH_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu lot-sim: oprit\n");
+                }
+                _ => out!("folosire: gpu lot-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu lot-sim: exista doar in build-ul de test (pe stick lotul il porneste doar ciclul, test-placa --argmax-fara-copie --lot)\n");
+        }
         Some("atentie-placi-sim") => {
             // P6-141 (C-161 point 4): test build only: the tiled attention probe (5 small sets; atentie-513-b4 uploaded
             // and read back, its launches skipped in SIMULARE) after the next `kronos --gpu-sim`'s texts (in the stick's
