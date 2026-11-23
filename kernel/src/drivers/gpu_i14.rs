@@ -3910,7 +3910,9 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // C-157_P2n): the third after the second, likewise.
     let tile2 = super::gpu_tur::ATTN_TILE2_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     let tile3 = tile2 && super::gpu_tur::ATTN_TILE3_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
-    let gens: Vec<AttnGen> = [(tile2, AttnGen::Two), (tile3, AttnGen::Three)].into_iter().filter(|g| g.0).map(|g| g.1).collect();
+    // P6-168 (note C-157_P2q): the fourth after the third, likewise.
+    let tile4 = tile3 && super::gpu_tur::ATTN_TILE4_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    let gens: Vec<AttnGen> = [(tile2, AttnGen::Two), (tile3, AttnGen::Three), (tile4, AttnGen::Four)].into_iter().filter(|g| g.0).map(|g| g.1).collect();
     for &g in &gens {
         for k in 0..3 {
             let sha = sha256_hex(g.binary(k));
@@ -3922,7 +3924,11 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
                     sha,
                     g.sha256(k)
                 ));
-                return Err(bad(if g == AttnGen::Two { "atentie2: SHA-256 gresit" } else { "atentie3: SHA-256 gresit" }));
+                return Err(bad(match g {
+                    AttnGen::Two => "atentie2: SHA-256 gresit",
+                    AttnGen::Three => "atentie3: SHA-256 gresit",
+                    AttnGen::Four => "atentie4: SHA-256 gresit",
+                }));
             }
         }
         lines.push(format!(
@@ -4114,6 +4120,8 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // P6-149 / P6-160: every new generation's rows (journal `kt atentie2 …` / `kt atentie3 …`, its time beside the
     // generation before it) and its verdict.
     let probe2 = ap::Probe2 { sets: pairs.first().cloned().unwrap_or_default() };
+    // P6-168: the third generation's probe, kept for the fourth's times (beside the third of the same run).
+    let mut probe3_kept: Option<ap::Probe3> = None;
     for (gi, gb) in newer.iter().enumerate() {
         let sets = pairs[gi].clone();
         let (rows, passes, in_margin, identical, identical_sets, pp2, skipped) = match gb.which {
@@ -4126,7 +4134,16 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 let probe3 = ap::Probe3 { sets };
                 probe3.journal(journal);
                 lines.extend(probe3.lines(label, Some(&probe2)).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
-                (probe3.sets.len(), probe3.passes(), probe3.in_margin(), probe3.identical(), probe3.identical_sets(), probe3.per_prog(), probe3.timing_skipped())
+                let row = (probe3.sets.len(), probe3.passes(), probe3.in_margin(), probe3.identical(), probe3.identical_sets(), probe3.per_prog(), probe3.timing_skipped());
+                probe3_kept = Some(probe3);
+                row
+            }
+            AttnGen::Four => {
+                // The note C-157_P2q: judged against the first generation, its times beside the third of this run.
+                let probe4 = ap::Probe4 { sets };
+                probe4.journal(journal);
+                lines.extend(probe4.lines(label, probe3_kept.as_ref()).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
+                (probe4.sets.len(), probe4.passes(), probe4.in_margin(), probe4.identical(), probe4.identical_sets(), probe4.per_prog(), probe4.timing_skipped())
             }
         };
         let verdict2 = match (stopped, stopped2) {
@@ -4172,6 +4189,8 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
 enum AttnGen {
     Two,
     Three,
+    /// P6-168: `attn_fwd_tile3` → `attn_back_tile0_3` → `attn_back_tile_4` (only the last program new).
+    Four,
 }
 
 impl AttnGen {
@@ -4179,6 +4198,7 @@ impl AttnGen {
         match self {
             Self::Two => "atentie2",
             Self::Three => "atentie3",
+            Self::Four => "atentie4",
         }
     }
     /// "2" / "3" (the suffix in the verdict line: fwd2, back0_2, …).
@@ -4186,6 +4206,7 @@ impl AttnGen {
         match self {
             Self::Two => "2",
             Self::Three => "3",
+            Self::Four => "4",
         }
     }
     fn name(self, k: usize) -> &'static str {
@@ -4193,6 +4214,7 @@ impl AttnGen {
         match self {
             Self::Two => ap::PROGS2[k].name(),
             Self::Three => ap::PROGS3[k].name(),
+            Self::Four => ap::PROGS4[k].name(),
         }
     }
     fn binary(self, k: usize) -> &'static [u8] {
@@ -4200,6 +4222,7 @@ impl AttnGen {
         match self {
             Self::Two => ap::PROGS2[k].binary(),
             Self::Three => ap::PROGS3[k].binary(),
+            Self::Four => ap::PROGS4[k].binary(),
         }
     }
     fn sha256(self, k: usize) -> &'static str {
@@ -4207,6 +4230,7 @@ impl AttnGen {
         match self {
             Self::Two => ap::PROGS2[k].sha256(),
             Self::Three => ap::PROGS3[k].sha256(),
+            Self::Four => ap::PROGS4[k].sha256(),
         }
     }
     fn registers(self, k: usize) -> u32 {
@@ -4214,6 +4238,7 @@ impl AttnGen {
         match self {
             Self::Two => ap::PROGS2[k].registers(),
             Self::Three => ap::PROGS3[k].registers(),
+            Self::Four => ap::PROGS4[k].registers(),
         }
     }
     fn shared_bytes(self, k: usize) -> u32 {
@@ -4221,6 +4246,7 @@ impl AttnGen {
         match self {
             Self::Two => ap::PROGS2[k].shared().bytes,
             Self::Three => ap::PROGS3[k].shared().bytes,
+            Self::Four => ap::PROGS4[k].shared().bytes,
         }
     }
     #[allow(clippy::type_complexity)]
@@ -4236,6 +4262,7 @@ impl AttnGen {
         let (cb, q) = match self {
             Self::Two => ap::launch_bytes2(set, ap::PROGS2[k], prog_va, cbuf_va, buf_va)?,
             Self::Three => ap::launch_bytes3(set, ap::PROGS3[k], prog_va, cbuf_va, buf_va)?,
+            Self::Four => ap::launch_bytes4(set, ap::PROGS4[k], prog_va, cbuf_va, buf_va)?,
         };
         Ok((cb.to_vec(), q.to_vec()))
     }

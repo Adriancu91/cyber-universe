@@ -415,6 +415,9 @@ impl SimGpu {
             cp.register_program(nvidia_ga104::attn_fwd_tile3::ATTN_FWD_TILE3, c::attn_fwd_tile_on_cpu);
             cp.register_program(nvidia_ga104::attn_back_tile0_3::ATTN_BACK_TILE0_3, c::attn_back_tile0_on_cpu);
             cp.register_program(nvidia_ga104::attn_back_tile_3::ATTN_BACK_TILE_3, c::attn_back_tile_on_cpu);
+            // P6-168 (cyber-gpu note C-157_P2q): the fourth generation's only new program (the same operations, the
+            // whole diagonal on the unguarded loop); its fwd / back0 are the third's binaries, registered above.
+            cp.register_program(nvidia_ga104::attn_back_tile_4::ATTN_BACK_TILE_4, c::attn_back_tile_on_cpu);
             // P6-136 (C-161 point 4): the 11 new programs of the small golden step (`train_step`; `colsum` and `vadd`
             // are registered above).
             {
