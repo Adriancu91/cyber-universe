@@ -512,6 +512,8 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
   Gata (2026-11-23 ~03:40 RO): `fs::bucati` + `flush_all` + comanda `disc`; `disc-propriu` (21 verificări), `boot`, `shell`, `fatwrite`, `ahci`, `nvme`, `auto` trec; build `--usb` fără avertismente noi.
 - [x] **P6-147** Nota Cyber-GPU C-157_P2l (după os-358, opțional): **timpul fiecărei lansări și la seturile mici ale probei atenției** (`kt atentie set: timp fwd|back0|back1 (ns)` + un rând pe set în raport); doar citiri de ceas, nimic nou pentru placă. Plan: `docs/plans/P6-147.md`. Dep: P6-141.
   Gata (2026-11-23 ~03:55 RO): `kronos-gpu-atentie-placi` trece.
+- [x] **P6-148** C-158 punctul 10 / C-161 punctul 5: **examenul lui Kronos în OS (unealta 7), pe procesor** — `kronos --examen <fisier> [--caractere N] [--examen-verifica]`: bpb ca examenul Kronos (aceeași tăietură a textului, ferestre de `context`, log2(vocabular) pentru primul simbol), bucăți corecte, octeți ghiciți; nimic pentru placă. Plan: `docs/plans/P6-148.md`. Dep: P6-27b.
+  Gata (2026-11-23 ~04:05 RO): `kronos-kgr`, `kronos-kgr-1`, `kronos-reglaj`, `kronos-calcul*` trec; tăietura = codul Kronos pe același fișier; verificarea cu cache: abaterea 0.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)

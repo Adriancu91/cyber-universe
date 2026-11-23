@@ -1,0 +1,31 @@
+Ana are mere si pere. Capitala Romaniei este Bucuresti, un oras mare.
+Ion merge la scoala in fiecare dimineata.
+<|endoftext|>A fost odata ca niciodata un imparat care avea trei feciori.
+Cel mai mic dintre ei era si cel mai istet.
+<|endoftext|>def suma(a, b):
+    return a + b
+
+print(suma(2, 3))
+<|endoftext|>Vremea de maine: soare, 21 de grade, vant slab din nord-est.
+Pădurea, râul și țărmul mării sunt frumoase în octombrie.
+<|endoftext|>Ana are mere si pere. Capitala Romaniei este Bucuresti, un oras mare.
+Ion merge la scoala in fiecare dimineata.
+<|endoftext|>A fost odata ca niciodata un imparat care avea trei feciori.
+Cel mai mic dintre ei era si cel mai istet.
+<|endoftext|>def suma(a, b):
+    return a + b
+
+print(suma(2, 3))
+<|endoftext|>Vremea de maine: soare, 21 de grade, vant slab din nord-est.
+Pădurea, râul și țărmul mării sunt frumoase în octombrie.
+<|endoftext|>Ana are mere si pere. Capitala Romaniei este Bucuresti, un oras mare.
+Ion merge la scoala in fiecare dimineata.
+<|endoftext|>A fost odata ca niciodata un imparat care avea trei feciori.
+Cel mai mic dintre ei era si cel mai istet.
+<|endoftext|>def suma(a, b):
+    return a + b
+
+print(suma(2, 3))
+<|endoftext|>Vremea de maine: soare, 21 de grade, vant slab din nord-est.
+Pădurea, râul și țărmul mării sunt frumoase în octombrie.
+<|endoftext|>

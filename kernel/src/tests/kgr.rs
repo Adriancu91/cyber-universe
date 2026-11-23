@@ -38,6 +38,11 @@ pub fn run() {
     assert!(run_one(&vq8) == 0, "kronos: vectorii oficiali Q8_0 nu se potrivesc");
     let vq8s = ["kronos", "--vectori", "/disk/kronos/vectori.json", "q8_0", "--fara-vector"];
     assert!(run_one(&vq8s) == 0, "kronos: vectorii oficiali Q8_0 scalar nu se potrivesc");
+    // P6-148 (C-158 point 10): Kronos's bpb exam on the CPU, on a small text (the exam's cut, windows, the cache check).
+    let exam = ["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--examen", "/disk/kronos/validare.txt", "--caractere", "500", "--examen-verifica"];
+    assert!(run_one(&exam) == 0, "kronos: examenul bpb a esuat");
+    let exam2 = ["kronos", "--model", "/disk/kronos/mic_f32.kgr", "--examen", "/disk/kronos/validare.txt", "--caractere", "200"];
+    assert!(run_one(&exam2) == 0, "kronos: examenul bpb (f32, 200 caractere) a esuat");
     for text in [&["<|endoftext|>Ana"][..], &["991", "07"], &["x", "=", "1234;"]] {
         let mut a = alloc::vec!["kronos", "--model", "/disk/kronos/mic_q8_0.kgr", "--codeaza"];
         a.extend_from_slice(text);

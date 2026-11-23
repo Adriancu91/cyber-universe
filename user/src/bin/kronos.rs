@@ -339,6 +339,12 @@ struct Opts {
     /// `--strica-verificarea <pozitie>` (P6-99, with `--gpu-sim` only): this program's logits at that position are spoiled on
     /// purpose (+1 on the largest one), so the check after the board must refuse it (the test of the refusal).
     spoil: Option<usize>,
+    /// `--examen <fisier>` (P6-148, C-158 p.10 / C-161 p.5): Kronos's bpb exam on this text file, on the CPU.
+    exam: Option<String>,
+    /// `--caractere <n>`: how many characters of the exam text (Kronos's default: 100 000).
+    exam_chars: usize,
+    /// `--examen-verifica`: the first window also with the cache, one position at a time (the same bits expected).
+    exam_check: bool,
 }
 
 fn parse_args() -> Result<Opts, String> {
@@ -371,6 +377,9 @@ fn parse_args() -> Result<Opts, String> {
         gpu: None,
         kernel_check: false,
         spoil: None,
+        exam: None,
+        exam_chars: 100_000,
+        exam_check: false,
     };
     let mut args = cyber_user::args().skip(1);
     while let Some(a) = args.next() {
@@ -409,6 +418,14 @@ fn parse_args() -> Result<Opts, String> {
             "--verificare-nucleu" => o.kernel_check = true,
             "--strica-verificarea" => o.spoil = Some(val()?.parse().map_err(|_| String::from("--strica-verificarea cere o pozitie"))?),
             "--istoric" => o.history = Some(val()?.into()),
+            "--examen" => o.exam = Some(val()?.into()),
+            "--caractere" => {
+                o.exam_chars = val()?.parse().map_err(|_| String::from("--caractere cere un numar"))?;
+                if o.exam_chars < 100 {
+                    return Err("--caractere cere cel putin 100 (ca examenul Kronos)".into());
+                }
+            }
+            "--examen-verifica" => o.exam_check = true,
             "--repetitie" => {
                 let p: f32 = val()?.parse().map_err(|_| String::from("--repetitie cere un numar (de ex. 1.3)"))?;
                 if !(p >= 1.0 && p <= 10.0) {
@@ -1112,6 +1129,213 @@ fn conversation(m: &mut Model, tok: &Tokenizer, hist: &str, n: usize, context: u
 const ASK_Q: &str = "Intrebare: ";
 const ASK_A: &str = "Raspuns: ";
 
+// ---- P6-148 (C-158 point 10, C-161 point 5): Kronos's exam in the OS, on the CPU --------------------------------
+//
+// Written from Kronos's description (hub `integrare/kronos/FISA_ANTRENARE.md`, section 5; the exam's rules as Kronos
+// runs them): the text = the first N characters of the file (newlines read as "\n"), cut after the last whole text
+// (`<|endoftext|>`) if that is past the middle, else after the last line end; bits = log2(vocabulary) for the first
+// token + the cross-entropy of every next token, in windows of `context` tokens starting at 0, context, 2·context, …
+// (each window starts with nothing before it; the last one may be shorter); bpb = bits / UTF-8 bytes. Plus how many
+// tokens the most likely guess got right and how many bytes those tokens hold.
+
+const LN2: f64 = 0.693_147_180_559_945_3;
+const SEPARATOR: &str = "<|endoftext|>";
+
+/// Natural logarithm (f64, no_std): x = m·2^e with m in [√½, √2), ln m by the atanh series.
+fn ln64(x: f64) -> f64 {
+    if !(x > 0.0) {
+        return f64::NEG_INFINITY;
+    }
+    let bits = x.to_bits();
+    let mut e = ((bits >> 52) & 0x7ff) as i64 - 1023;
+    let mut m = f64::from_bits((bits & 0x000f_ffff_ffff_ffff) | (1023u64 << 52));
+    if m > core::f64::consts::SQRT_2 {
+        m /= 2.0;
+        e += 1;
+    }
+    let s = (m - 1.0) / (m + 1.0);
+    let s2 = s * s;
+    let (mut term, mut sum) = (s, 0.0);
+    let mut k = 1.0;
+    while k < 60.0 {
+        sum += term / k;
+        term *= s2;
+        k += 2.0;
+    }
+    2.0 * sum + e as f64 * LN2
+}
+
+/// e^x (f64, no_std): x = k·ln2 + r, |r| ≤ ln2/2, e^r by its series, then ·2^k.
+fn exp64(x: f64) -> f64 {
+    if x < -745.0 {
+        return 0.0;
+    }
+    if x > 709.0 {
+        return f64::INFINITY;
+    }
+    let q = x / LN2;
+    let k = (if q < 0.0 { q - 0.5 } else { q + 0.5 }) as i64;
+    let r = x - k as f64 * LN2;
+    let (mut term, mut sum) = (1.0, 1.0);
+    for i in 1..24 {
+        term *= r / i as f64;
+        sum += term;
+    }
+    let pow2 = |k: i64| f64::from_bits(((k + 1023) as u64) << 52);
+    if k < -1000 {
+        sum * pow2(-1000) * pow2(k + 1000)
+    } else {
+        sum * pow2(k)
+    }
+}
+
+/// The exam's piece of text (as Kronos's `inceput_de_text`): newlines as "\n", at most `chars` characters, cut after
+/// the last whole text if that is past the middle, else after the last line end.
+fn exam_text(raw: &str, chars: usize) -> String {
+    let norm = raw.replace("\r\n", "\n").replace('\r', "\n");
+    let mut cut = norm.len();
+    for (n, (i, _)) in norm.char_indices().enumerate() {
+        if n == chars {
+            cut = i;
+            break;
+        }
+    }
+    if cut == norm.len() {
+        return norm;
+    }
+    let head = &norm[..cut];
+    if let Some(b) = head.rfind(SEPARATOR)
+        && head[..b].chars().count() > chars / 2
+    {
+        return String::from(&head[..b]);
+    }
+    match head.rfind('\n') {
+        Some(b) => String::from(&head[..b + 1]),
+        None => String::from(head),
+    }
+}
+
+/// The nats of every next token in `row`-major logits (`n` positions), the guesses, and the bytes of the guessed ones.
+struct ExamCount {
+    nats: f64,
+    correct: usize,
+    counted: usize,
+    bytes_hit: usize,
+    bytes_counted: usize,
+}
+
+fn exam_positions(l: &[f32], vocab: usize, targets: &[u32], tok: &Tokenizer, c: &mut ExamCount, per_pos: Option<&mut Vec<f64>>) {
+    let mut per = per_pos;
+    for (i, &y) in targets.iter().enumerate() {
+        let row = &l[i * vocab..(i + 1) * vocab];
+        let max = row.iter().fold(f32::NEG_INFINITY, |a, &b| if b > a { b } else { a }) as f64;
+        let sum: f64 = row.iter().map(|&v| exp64(v as f64 - max)).sum();
+        let nat = max + ln64(sum) - row[y as usize] as f64;
+        c.nats += nat;
+        if let Some(v) = per.as_deref_mut() {
+            v.push(nat);
+        }
+        let len = tok.token_bytes(y).len();
+        c.counted += 1;
+        c.bytes_counted += len;
+        if kgr::argmax(row) == y {
+            c.correct += 1;
+            c.bytes_hit += len;
+        }
+    }
+}
+
+fn run_exam(m: &mut Model, tok: &Tokenizer, path: &str, chars: usize, check: bool) -> i64 {
+    let raw = match read_all(path) {
+        Ok(b) => b,
+        Err(e) => {
+            println!("kronos: examen: {}", e);
+            return 4;
+        }
+    };
+    let Ok(raw) = core::str::from_utf8(raw) else {
+        println!("kronos: examen: {} nu e text UTF-8", path);
+        return 4;
+    };
+    let t0 = now_ms();
+    let text = exam_text(raw, chars);
+    let ids = tok.encode(&text);
+    let (vocab, ctx) = (m.cfg.vocab, m.cfg.context);
+    let bytes = text.len();
+    if bytes == 0 || ids.is_empty() {
+        println!("kronos: examen: textul din {} e gol", path);
+        return 4;
+    }
+    let mut c = ExamCount { nats: 0.0, correct: 0, counted: 0, bytes_hit: 0, bytes_counted: 0 };
+    let mut windows = 0usize;
+    let mut first: Vec<f64> = Vec::new();
+    let mut s = 0usize;
+    while s + 1 < ids.len() {
+        let n = core::cmp::min(ctx, ids.len() - 1 - s);
+        m.reset();
+        let l = match m.forward(&ids[s..s + n], true) {
+            Ok(l) => l,
+            Err(e) => {
+                println!("kronos: examen: fereastra {}: {}", windows, e);
+                return 1;
+            }
+        };
+        exam_positions(&l, vocab, &ids[s + 1..s + n + 1], tok, &mut c, (windows == 0).then_some(&mut first));
+        windows += 1;
+        s += ctx;
+    }
+    let bits = ln64(vocab as f64) / LN2 + c.nats / LN2;
+    let bpb = bits / bytes as f64;
+    let pct = |a: usize, b: usize| if b == 0 { 0.0 } else { 100.0 * a as f64 / b as f64 };
+    println!(
+        "kronos: examen {}: {} caractere ({} cerute), {} octeti, {} simboluri, {} ferestre de cel mult {}; biti {:.3}; bpb {:.4}; bucati corecte {:.2}% ({} din {}); octeti ghiciti {:.2}%; {} ms",
+        path,
+        text.chars().count(),
+        chars,
+        bytes,
+        ids.len(),
+        windows,
+        ctx,
+        bits,
+        bpb,
+        pct(c.correct, c.counted),
+        c.correct,
+        c.counted,
+        pct(c.bytes_hit, c.bytes_counted),
+        now_ms() - t0
+    );
+    if check && !first.is_empty() {
+        // The first window again, one position at a time with the cache (as generation does).
+        m.reset();
+        let n = first.len();
+        let mut again = ExamCount { nats: 0.0, correct: 0, counted: 0, bytes_hit: 0, bytes_counted: 0 };
+        let mut per: Vec<f64> = Vec::new();
+        for i in 0..n {
+            let l = match m.forward(&ids[i..i + 1], false) {
+                Ok(l) => l,
+                Err(e) => {
+                    println!("kronos: examen: verificarea cu cache: {}", e);
+                    return 1;
+                }
+            };
+            exam_positions(&l, vocab, &ids[i + 1..i + 2], tok, &mut again, Some(&mut per));
+        }
+        let worst = first.iter().zip(&per).map(|(a, b)| if a > b { a - b } else { b - a }).fold(0.0f64, |a, b| if b > a { b } else { a });
+        let ok = worst <= 1e-3;
+        println!(
+            "kronos: examen: verificarea primei ferestre cu cache, pozitie cu pozitie: {} pozitii, abaterea maxima {:.2e} nati (prag 1e-3): {}",
+            n,
+            worst,
+            if ok { "ACELEASI" } else { "DIFERITE" }
+        );
+        if !ok {
+            return 1;
+        }
+    }
+    println!("kronos: EXAMEN: bpb {:.4} (mai mic = mai bine)", bpb);
+    0
+}
+
 fn main() -> i64 {
     let mut o = match parse_args() {
         Ok(o) => o,
@@ -1270,7 +1494,7 @@ fn main() -> i64 {
         },
         if m.tune.proj_threads > 0 { "din reglaj sau --fire-proiectie" } else { "cate capete are modelul" }
     );
-    let tok = if vectors.is_some() || !o.words.is_empty() || o.control || o.chat {
+    let tok = if vectors.is_some() || !o.words.is_empty() || o.control || o.chat || o.exam.is_some() {
         match Tokenizer::from_json(m.tokenizer, c.vocab) {
             Ok(t) => {
                 println!(
@@ -1326,6 +1550,11 @@ fn main() -> i64 {
                 1
             }
         };
+    }
+    if let (Some(path), Some(tok)) = (&o.exam, &tok) {
+        let code = run_exam(&mut m, tok, path, o.exam_chars, o.exam_check);
+        kgr::stop_pool();
+        return code;
     }
     if let (true, Some(tok)) = (o.chat, &tok) {
         let hist = o.history.clone().unwrap_or_else(|| alloc::format!("{}/conversatie.txt", dir));
