@@ -92,6 +92,22 @@ pub fn idle() -> bool {
     MOUNTS.try_lock().is_some()
 }
 
+/// P6-146 (C-158 point 7): flushes every mounted file system (the disk caches), without waiting for the lock: `None`
+/// when a file-system operation is under way (a restart in the middle of a write skips the flush and says so).
+/// Otherwise one `(mount point, result)` per mount.
+pub fn flush_all() -> Option<Vec<(String, Result<(), FsError>)>> {
+    let mounts = MOUNTS.try_lock()?;
+    Some(
+        mounts
+            .iter()
+            .map(|m| {
+                let at = if m.at.is_empty() { String::from("/") } else { alloc::format!("/{}", m.at.join("/")) };
+                (at, m.fs.flush())
+            })
+            .collect(),
+    )
+}
+
 /// Makes `fs` visible at the directory `at` (`/` for the root file system).
 pub fn mount(at: &str, fs: Box<dyn FileSystem>) -> Result<(), FsError> {
     let at: Vec<String> = components(at)?.into_iter().map(String::from).collect();

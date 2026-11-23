@@ -373,6 +373,7 @@ fn finish(list: &str, marker: &str, stamp: &str) -> ! {
     }
     let _ = fs::remove(marker);
     let _ = fs::flush(DIR);
+    crate::info!("auto: {}", fs::flush_all());
     crate::info!("auto: lista terminata, repornesc");
     say("auto: repornesc\n");
     crate::power::reboot(None)

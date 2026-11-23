@@ -1,6 +1,7 @@
 //! Files: the VFS layer (vfs.rs), the in-memory root file system (ramfs.rs) and the initrd reader (tar.rs).
 //! The functions here take absolute paths and work on whatever file system is mounted there.
 
+pub mod bucati;
 pub mod fat32;
 pub mod part;
 pub mod ramfs;
@@ -287,4 +288,19 @@ pub fn rename(from: &str, to: &str) -> Result<(), FsError> {
 /// Writes out the cache of the disk that holds `path`.
 pub fn flush(path: &str) -> Result<(), FsError> {
     vfs::with_fs(path, |fs, _| fs.flush())
+}
+
+/// P6-146 (C-158 point 7): flushes every mounted disk before a restart; returns one line for the log.
+pub fn flush_all() -> String {
+    match vfs::flush_all() {
+        None => String::from("golirea discurilor: sarita (o scriere e in curs)"),
+        Some(r) => {
+            let bad: Vec<String> = r.iter().filter_map(|(at, x)| x.err().map(|e| format!("{} ({})", at, e.message()))).collect();
+            if bad.is_empty() {
+                format!("golirea discurilor: {} sisteme de fisiere golite", r.len())
+            } else {
+                format!("golirea discurilor: {} golite, refuzate: {}", r.len() - bad.len(), bad.join(", "))
+            }
+        }
+    }
 }

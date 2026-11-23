@@ -1117,6 +1117,53 @@ fn test_own_disk() {
     assert!(after > before, "test: Flush nu a fost trimis la discul NVMe");
     info!("test: nvme: Flush trimis si acceptat ({} -> {})", before, after);
 
+    // P6-146 (C-158 point 7): chunked data, safe rewrites, a rewrite cut by a power loss, flushing every disk.
+    {
+        use fs::bucati::{self, Recovered};
+        let base = "/disk/date-proba";
+        let data: alloc::vec::Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        bucati::write_chunked(base, 0, &data, 64 * 1024).expect("test: bucati: scrierea");
+        let c = bucati::chunks(base);
+        assert!(c.len() == 4 && c[0].1 == 65536 && c[3].1 == 200_000 - 3 * 65536, "test: bucati: {:?}", c);
+        assert!(bucati::size_chunked(base) == Ok(200_000), "test: bucati: marimea totala");
+        assert!(bucati::read_all_chunked(base).unwrap() == data, "test: bucati: citite inapoi difera");
+        let mut mid = [0u8; 300];
+        assert!(bucati::read_chunked(base, 131_000, &mut mid) == Ok(300) && mid[..] == data[131_000..131_300], "test: bucati: peste granita");
+        bucati::write_chunked(base, 200_000, b"coada", 64 * 1024).expect("test: bucati: adaugarea la sfarsit");
+        assert!(bucati::size_chunked(base) == Ok(200_005), "test: bucati: dupa adaugare");
+        assert!(bucati::write_chunked(base, 0, b"x", bucati::CHUNK_MAX + 1).is_err(), "test: bucati: bucata peste 4 GiB trebuie refuzata");
+        info!("test: bucati: 200000 octeti in 4 bucati de 64 KiB, cititi inapoi identic (si peste granita), bucata peste 4 GiB refuzata");
+        assert!(bucati::remove_chunked(base) == Ok(4), "test: bucati: stergerea");
+
+        let f = "/disk/sigur.txt";
+        bucati::write_safe(f, b"versiunea 1").expect("test: golirea sigura (1)");
+        bucati::write_safe(f, b"versiunea 2").expect("test: golirea sigura (2)");
+        assert!(fs::read_all(f).unwrap() == b"versiunea 2", "test: golirea sigura: continutul");
+        assert!(fs::kind("/disk/sigur.txt.vechi").is_err() && fs::kind("/disk/sigur.txt.nou").is_err(), "test: golirea sigura: resturi");
+        // A power cut after the old file was moved aside and while the new one was half written.
+        fs::rename(f, "/disk/sigur.txt.vechi").unwrap();
+        fs::create("/disk/sigur.txt.nou", Kind::File).unwrap();
+        fs::write("/disk/sigur.txt.nou", 0, b"versiu").unwrap();
+        assert!(bucati::recover(f) == Ok(Recovered::OldBack), "test: golirea sigura: refacerea dupa pana");
+        assert!(fs::read_all(f).unwrap() == b"versiunea 2" && fs::kind("/disk/sigur.txt.nou").is_err(), "test: golirea sigura: versiunea veche");
+        // A cut after the new file was in place: only the leftover old one goes.
+        fs::create("/disk/sigur.txt.vechi", Kind::File).unwrap();
+        assert!(bucati::recover(f) == Ok(Recovered::OldRemoved), "test: golirea sigura: restul vechi");
+        info!("test: golirea sigura: rescriere fara resturi; dupa o pana la jumatate versiunea veche e pusa la loc");
+        fs::remove(f).unwrap();
+
+        let before = drivers::nvme::FLUSHES.load(Ordering::Relaxed);
+        let line = fs::flush_all();
+        assert!(line.contains("golite") && !line.contains("refuzate"), "test: {}", line);
+        assert!(drivers::nvme::FLUSHES.load(Ordering::Relaxed) > before, "test: flush_all nu a golit discul NVMe");
+        info!("test: {}", line);
+        let (rows, ok) = bucati::self_check();
+        for r in &rows {
+            info!("test: {}", r);
+        }
+        assert!(ok, "test: disc proba");
+    }
+
     drivers::gpu_i6::self_test_own_disk();
 
     assert!(shell::ciclu::k513_path() == Some(shell::ciclu::K513_DISK), "test: ciclul nu ia #513 de pe discul propriu");

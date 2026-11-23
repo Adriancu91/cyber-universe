@@ -172,6 +172,24 @@ fn dispatch(line: &str) -> bool {
                 out!("{}\n", row);
             }
         }
+        "disc" => match args {
+            // P6-146 (C-158 point 7): chunked data and safe rewrites on the own disk marked cyber.rw.
+            ["bucati", base] => {
+                let c = crate::fs::bucati::chunks(base);
+                if c.is_empty() {
+                    out!("disc bucati: nu exista {}.000\n", base);
+                }
+                for (p, n) in &c {
+                    out!("  {}  {} octeti\n", p, n);
+                }
+                if !c.is_empty() {
+                    out!("disc bucati: {} bucati, {} octeti in total\n", c.len(), c.iter().map(|(_, n)| n).sum::<u64>());
+                }
+            }
+            ["goleste"] => out!("{}\n", crate::fs::flush_all()),
+            ["proba"] => crate::fs::bucati::self_check().0.iter().for_each(|r| out!("{}\n", r)),
+            _ => out!("folosire: disc bucati <cale> | disc goleste | disc proba   (proba scrie doar pe /disk cu cyber.rw)\n"),
+        },
         "lsusb" => lsusb(),
         "usb" => usb(args),
         "net" => net(),
@@ -313,6 +331,7 @@ fn help() {
     out!("  mem              memoria libera si cea folosita\n");
     out!("  lspci            dispozitivele PCI (discuri, USB, retea...)\n");
     out!("  discuri          discurile calculatorului (controler, model, marime, partitii, cyber.rw); doar citire\n");
+    out!("  disc             bucati <cale> | goleste | proba: date in bucati de cel mult 4 GiB, golirea discurilor\n");
     out!("  lsusb            dispozitivele USB conectate\n");
     out!("  net              placa de retea (adresa MAC, pachete)\n");
     out!("  rtl porneste [variante]  reporneste placa Realtek cu variantele date (fara: ca la pornire; `rtl` le arata)\n");
@@ -1660,6 +1679,7 @@ fn reboot(args: &[&str]) {
             }
         }
     };
+    out!("{}\n", crate::fs::flush_all());
     out!("repornesc...\n");
     crate::power::reboot(only)
 }

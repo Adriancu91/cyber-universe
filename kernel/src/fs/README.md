@@ -22,6 +22,13 @@
     **Siguranță:** se scrie DOAR pe partițiile care au în rădăcină un fișier numit `cyber.rw` (pe celelalte: „doar citire”);
     ordinea e mereu date → FAT → intrarea din director (la ștergere: întâi intrarea), deci o oprire bruscă poate lăsa cel mult
     clustere pierdute, pe care `fsck`/`chkdsk` le eliberează.
+  - `bucati.rs` (P6-146, C-158 punctul 7) — **date mai mari de 4 GiB** (limita unui fișier FAT32) ca bucăți `nume.000`,
+    `nume.001`, … de cel mult `CHUNK_MAX` (4 GiB − 64 KiB), scrise și citite ca un singur fișier (`write_chunked`,
+    `read_chunked`, `read_all_chunked`, `size_chunked`, `chunks`); **golirea sigură** `write_safe` (scrie `nume.nou`, golește,
+    `nume` → `nume.vechi`, `nume.nou` → `nume`, golește, șterge `nume.vechi`) și `recover` după o pană la jumătate (versiunea
+    veche pusă la loc sau restul șters); `self_check` = comanda `disc proba` (doar pe discul propriu cu `cyber.rw`).
+    `flush_all` (în `vfs.rs` / `mod.rs`) golește toate discurile înainte de `reboot` și la sfârșitul listei automate, fără să
+    aștepte după încuietoare. Test: scenariul `disc-propriu`.
   - `tar.rs` — cititor de arhive `tar` în format ustar (cu verificarea sumei de control).
   - `mod.rs` — la pornire montează ramfs la `/` și îl umple din `initrd.tar` (încărcat de Limine);
     funcțiile `read_all`, `read`, `write`, `create`, `list`, `remove`, `size`, `kind` pe căi absolute.
