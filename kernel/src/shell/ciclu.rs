@@ -157,7 +157,7 @@ pub fn target(command: &str) -> Result<(String, String), &'static str> {
 
 /// P6-96: `test-placa [--i9 …]` of the automatic list -> the I9.
 pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
-    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou` sau `--tablou-viteza`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi` sau `--ln-32`, apoi `--k651`, apoi `--argmax-placa` sau `--argmax-fara-copie`, apoi `--dieta2`, apoi `--lot`, apoi `--p8`, apoi `--colsum`, apoi `--pas-aur`, apoi `--mm-tc`, apoi `--atentie-placi`, apoi `--atentie2` la sfarsit (in aceasta ordine; `--atentie2` doar dupa `--atentie-placi`; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi`, `--ln-32`; `--k651` nu merge cu `--lipit` sau `--simplu`; `--argmax-fara-copie` nu merge cu `--lipit`, `--ln-nou`, `--sferturi` sau `--ln-32`; `--lot` doar cu `--argmax-fara-copie` si lista implicita lipita-ln-32, fara alta alegere de lista)";
+    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou` sau `--tablou-viteza`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi` sau `--ln-32`, apoi `--k651`, apoi `--argmax-placa` sau `--argmax-fara-copie`, apoi `--dieta2`, apoi `--lot`, apoi `--p8`, apoi `--colsum`, apoi `--pas-aur`, apoi `--mm-tc`, apoi `--atentie-placi`, apoi `--atentie2`, apoi `--atentie3` la sfarsit (in aceasta ordine; `--atentie2` doar dupa `--atentie-placi`, `--atentie3` doar dupa `--atentie2`; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi`, `--ln-32`; `--k651` nu merge cu `--lipit` sau `--simplu`; `--argmax-fara-copie` nu merge cu `--lipit`, `--ln-nou`, `--sferturi` sau `--ln-32`; `--lot` doar cu `--argmax-fara-copie` si lista implicita lipita-ln-32, fara alta alegere de lista)";
     let words: Vec<&str> = command.split_whitespace().collect();
     let Some(("test-placa", rest)) = words.split_first().map(|(a, b)| (*a, b)) else { return None };
     let (i9, flags) = match rest {
@@ -189,13 +189,14 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
     // P6-137 (C-161 point 4): `--mm-tc` = after everything (after `--pas-aur`), the `mm_tc` probe (training matmul).
     // P6-141 (C-161 point 4): `--atentie-placi` = after everything (after `--mm-tc`), the tiled training attention probe.
     // P6-149 (cyber-gpu note C-157_P2m): `--atentie2` = right after `--atentie-placi`, the new programs beside the old.
+    // P6-160 (cyber-gpu note C-157_P2n): `--atentie3` = right after `--atentie2`, the third generation after the second.
     // Each at most once, in this order (the I9 text carries them as suffixes, read back in the same order).
     let mut out = String::from(i9);
     let mut next = 0;
     // P6-128: `--ln-32` = `lipita-ln`, then `lipita-ln-32` (every product on quarters), compared; one more list choice.
     // P6-135 (note C-157_P2i, point 1): `--lipita-ln` = the default until now (`lipita-ln` alone); without any list
     // choice the cycle now runs `lipita-ln-32` alone. The checks below go by name, not by position.
-    let all = [FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, P8, COLSUM, PAS_AUR, MM_TC, ATTN_TILE, ATTN_TILE2];
+    let all = [FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, P8, COLSUM, PAS_AUR, MM_TC, ATTN_TILE, ATTN_TILE2, ATTN_TILE3];
     let pos = |x: &str| all.iter().position(|y| *y == x).unwrap_or(0);
     let lists = pos(LIPIT)..=pos(LN_32);
     // The two-run lists: the argmax without the copy reads no logits, they need both runs' logits.
@@ -217,6 +218,10 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
         }
         // P6-149: the new chain only beside the old one.
         if all[at] == ATTN_TILE2 && !out.ends_with(ATTN_TILE) {
+            return Some(Err(FORM));
+        }
+        // P6-160: the third only right after the second.
+        if all[at] == ATTN_TILE3 && !out.ends_with(ATTN_TILE2) {
             return Some(Err(FORM));
         }
         out.push_str(all[at]);
@@ -704,6 +709,10 @@ pub const ATTN_TILE: &str = " --atentie-placi";
 /// the first (`test-placa … --atentie-placi --atentie2`, always last).
 pub const ATTN_TILE2: &str = " --atentie2";
 
+/// P6-160 (cyber-gpu note C-157_P2n, `d885efd`): suffix of the I9 text when the third generation (`attn_*_3`) runs after
+/// the second (`test-placa … --atentie-placi --atentie2 --atentie3`, always last).
+pub const ATTN_TILE3: &str = " --atentie3";
+
 /// P6-139 (C-158 point 5): at most this many board tests in one power-on (the list, the live mode and the hub cycle
 /// together). The first one starts with `gpu recupereaza`; the next ones with the reset from inside (FLR) at the start of
 /// their chain, the path that passed on the board in os-323 (21 Nov 08:32).
@@ -764,6 +773,10 @@ pub fn board_runs() -> usize {
 /// `nth` (P6-139) = which board test of this power-on this is (1 = the first: `gpu recupereaza`; 2.. = the reset from
 /// inside at the start of the chain instead).
 pub fn board_test(i9: &str, nth: usize) -> (String, String) {
+    let (i9, attn_tile3) = match i9.strip_suffix(ATTN_TILE3) {
+        Some(x) => (x, true),
+        None => (i9, false),
+    };
     let (i9, attn_tile2) = match i9.strip_suffix(ATTN_TILE2) {
         Some(x) => (x, true),
         None => (i9, false),
@@ -933,6 +946,8 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::ATTN_TILE_IN_CYCLE.store(attn_tile, core::sync::atomic::Ordering::SeqCst);
     // P6-149: the second generation beside the first only when the list asked for it.
     crate::drivers::gpu_tur::ATTN_TILE2_IN_CYCLE.store(attn_tile && attn_tile2, core::sync::atomic::Ordering::SeqCst);
+    // P6-160: the third generation after the second only when the list asked for it.
+    crate::drivers::gpu_tur::ATTN_TILE3_IN_CYCLE.store(attn_tile && attn_tile2 && attn_tile3, core::sync::atomic::Ordering::SeqCst);
     // P6-119 (C-157 point 3): the second diet only when the list asked for it, only for this chain's #513.
     crate::drivers::gpu_tur::DIET2_IN_CYCLE.store(diet2, core::sync::atomic::Ordering::SeqCst);
     // P6-123 (C-155 point 3): the argmax on the board only when the list asked for it, only for this chain's model.
@@ -971,6 +986,9 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     }
     if attn_tile {
         text.push_str("\n(proba atentiei pe placi: ceruta de lista (--atentie-placi); dupa textele lui #513, lantul atentiei de antrenare pe placi: attn_fwd_tile (P si att) -> attn_back_tile0 (randurile lui dS) -> attn_back_tile (dQ, dK, dV); 3 programe noi pentru placa (55 / 50 / 73 de registre, 37 / 32 / 32 KiB de memorie partajata + o bariera, blocuri de 256), pe 5 seturi mici (fiecare program judecat singur pe procesor: inainte in marginea MUFU, cele doua inapoi pe P si dS citite de pe placa, prezise bit cu bit), apoi setul atentie-513-b4 (4 texte x 512 pozitii, 12 capete; ~151 MB in VRAM, intrarile urcate si recitite inainte de orice lansare) de 5 ori fiecare program, pentru timp; trece = toate seturile in margine, garzile neatinse; Cyber-GPU estimeaza ~0,53 / ~0,49 / ~0,42-0,68 ms pe lansare)\n");
+    }
+    if attn_tile3 {
+        text.push_str("\n(atentie3, vechi langa nou: ceruta de lista (--atentie3); in aceeasi proba, dupa lantul attn_*_2 pe fiecare set, pe acelasi buffer, lantul attn_fwd_tile3 -> attn_back_tile0_3 -> attn_back_tile_3 (aceleasi operatii in aceeasi ordine, citirile din memorie fara ramura); 3 programe noi pentru placa (120 / 68 / 80 de registre, 37 888 / 33 024 / 33 024 octeti partajati); judecat cu aceleasi margini, comparat cuvant cu cuvant cu lantul vechi si cronometrat langa attn_*_2; Cyber-GPU asteapta 6 / 6 seturi in margine, 6 / 6 identice cu vechii, la atentie-513-b4 ~0,7-1,1 / ~0,5-0,9 / ~1,6-2,0 ms pe lansare)\n");
     }
     if attn_tile2 {
         text.push_str("\n(atentie2, vechi langa nou: ceruta de lista (--atentie2); in aceeasi proba, dupa lantul vechi pe fiecare set, pe acelasi buffer, lantul nou attn_fwd_tile2 -> attn_back_tile0_2 -> attn_back_tile_2 (aceleasi operatii in aceeasi ordine, bucle mai scurte); 3 programe noi pentru placa (117 / 52 / 79 de registre, 37 888 / 33 024 / 33 024 octeti partajati); judecat cu aceleasi margini si comparat cuvant cu cuvant cu cel vechi; Cyber-GPU asteapta 6 / 6 seturi in margine, 6 / 6 identice cu vechii, la atentie-513-b4 ~0,6-1,2 / ~0,7-1,1 / ~1,2-2,0 ms pe lansare)\n");
@@ -1066,6 +1084,7 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::MM_TC_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::ATTN_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::ATTN_TILE2_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::ATTN_TILE3_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::DIET2_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::ARGMAX_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::ARGMAX_TOP_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
@@ -1137,6 +1156,13 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     // P6-149: the new chain's verdict too.
     let result = if attn_tile2 {
         let verdict = text.lines().rev().find(|l| l.contains("atentie2 (vechi langa nou): ")).map_or("atentie2: niciun rezultat (vezi raportul)", |l| l.trim());
+        format!("{}; {}", result, verdict)
+    } else {
+        result
+    };
+    // P6-160: and the third's.
+    let result = if attn_tile3 {
+        let verdict = text.lines().rev().find(|l| l.contains("atentie3 (vechi langa nou): ")).map_or("atentie3: niciun rezultat (vezi raportul)", |l| l.trim());
         format!("{}; {}", result, verdict)
     } else {
         result
@@ -1354,6 +1380,11 @@ pub fn self_test() {
     assert!(board_command("test-placa --atentie2").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --mm-tc --atentie2").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --atentie2 --atentie-placi").is_some_and(|r| r.is_err()));
+    // P6-160: `--atentie3` only right after `--atentie2`.
+    assert!(board_command("test-placa --atentie-placi --atentie2 --atentie3") == Some(Ok(String::from("c135 --atentie-placi --atentie2 --atentie3"))));
+    assert!(board_command("test-placa --atentie-placi --atentie3").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --atentie3").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --atentie-placi --atentie3 --atentie2").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --pas-aur --pas-aur").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --simplu --p8 --ln-nou").is_some_and(|r| r.is_err()));
     // P6-120: `--ln-vechi` in the same place as `--ln-nou`, alone among the four list choices.

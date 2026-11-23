@@ -43,7 +43,7 @@ version = "0.1.0"
 [[package]]
 name = "gpu-command"
 version = "0.1.0"
-source = "git+https://github.com/Adriancu91/cyber-gpu?rev=1b9f79d#1b9f79d2ad29ab5b2cd4d87e4543a12a8f0c0caf"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=d885efd#d885efd9946153acff225c6afaf34a1775a0c41d"
 dependencies = [
  "gpu-core",
 ]
@@ -51,7 +51,7 @@ dependencies = [
 [[package]]
 name = "gpu-compute"
 version = "0.1.0"
-source = "git+https://github.com/Adriancu91/cyber-gpu?rev=1b9f79d#1b9f79d2ad29ab5b2cd4d87e4543a12a8f0c0caf"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=d885efd#d885efd9946153acff225c6afaf34a1775a0c41d"
 dependencies = [
  "gpu-command",
  "gpu-core",
@@ -61,12 +61,12 @@ dependencies = [
 [[package]]
 name = "gpu-core"
 version = "0.1.0"
-source = "git+https://github.com/Adriancu91/cyber-gpu?rev=1b9f79d#1b9f79d2ad29ab5b2cd4d87e4543a12a8f0c0caf"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=d885efd#d885efd9946153acff225c6afaf34a1775a0c41d"
 
 [[package]]
 name = "gpu-memory"
 version = "0.1.0"
-source = "git+https://github.com/Adriancu91/cyber-gpu?rev=1b9f79d#1b9f79d2ad29ab5b2cd4d87e4543a12a8f0c0caf"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=d885efd#d885efd9946153acff225c6afaf34a1775a0c41d"
 dependencies = [
  "gpu-core",
 ]
@@ -74,7 +74,7 @@ dependencies = [
 [[package]]
 name = "gpu-pci"
 version = "0.1.0"
-source = "git+https://github.com/Adriancu91/cyber-gpu?rev=1b9f79d#1b9f79d2ad29ab5b2cd4d87e4543a12a8f0c0caf"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=d885efd#d885efd9946153acff225c6afaf34a1775a0c41d"
 dependencies = [
  "gpu-core",
 ]
@@ -82,7 +82,7 @@ dependencies = [
 [[package]]
 name = "gpu-sim"
 version = "0.1.0"
-source = "git+https://github.com/Adriancu91/cyber-gpu?rev=1b9f79d#1b9f79d2ad29ab5b2cd4d87e4543a12a8f0c0caf"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=d885efd#d885efd9946153acff225c6afaf34a1775a0c41d"
 dependencies = [
  "gpu-compute",
  "gpu-core",
@@ -101,7 +101,7 @@ dependencies = [
 [[package]]
 name = "nvidia-ga104"
 version = "0.1.0"
-source = "git+https://github.com/Adriancu91/cyber-gpu?rev=1b9f79d#1b9f79d2ad29ab5b2cd4d87e4543a12a8f0c0caf"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=d885efd#d885efd9946153acff225c6afaf34a1775a0c41d"
 dependencies = [
  "gpu-command",
  "gpu-compute",
@@ -114,4 +114,4 @@ dependencies = [
 [[package]]
 name = "nvidia-rm570"
 version = "0.1.0"
-source = "git+https://github.com/Adriancu91/cyber-gpu?rev=1b9f79d#1b9f79d2ad29ab5b2cd4d87e4543a12a8f0c0caf"
+source = "git+https://github.com/Adriancu91/cyber-gpu?rev=d885efd#d885efd9946153acff225c6afaf34a1775a0c41d"

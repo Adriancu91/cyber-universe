@@ -337,6 +337,12 @@ pub static ATTN_TILE_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atom
 /// and, in the test build, by `gpu atentie2-sim on`. Off by default.
 pub static ATTN_TILE2_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-160 (cyber-gpu note C-157_P2n, `d885efd`): after the second generation, the third (`attn_fwd_tile3` →
+/// `attn_back_tile0_3` → `attn_back_tile_3`, branch-free global loads) on the same buffer, judged with the same margins,
+/// compared word for word with the first and timed beside the second. Only with [`ATTN_TILE2_IN_CYCLE`]. Set only by the
+/// cycle (`test-placa … --atentie-placi --atentie2 --atentie3`) and, in the test build, by `gpu atentie3-sim on`.
+pub static ATTN_TILE3_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-101: set only for the FLR trial's second chain (`test-placa --flr-proba`, `gpu lant --flr-proba`); taken by
 /// `chain`. Without it no chain reads WPR2 for the reset nor writes anything for it.
 pub static FLR_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
