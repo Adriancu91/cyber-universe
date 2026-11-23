@@ -35,6 +35,10 @@ fn prog_va(p: Prog) -> u64 {
     PROGS + 0x1_0000 * p.index() as u64
 }
 
+/// P6-166: `mm_tc` (the mixed step's matmul on the tensor cores) at slot 24, after every `Prog` slot and away from slot
+/// 21, which cyber-gpu's note `C-160_P7g` asks for `ln_back_res`.
+const TC: u64 = PROGS + 0x1_0000 * 24;
+
 /// Which arena / attention programs the step's list uses (P6-159, cyber-gpu `1b9f79d`, note C-160_P7_placi-in-pas).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Layout {
@@ -84,6 +88,8 @@ impl Layout {
 pub struct SimBoard {
     cp: c::CommandProcessor,
     layout: Layout,
+    /// P6-166 (`--mixt`): every matmul on `mm_tc` (f16 inputs, f32 sums, loss scale `ts::LOSS_SCALE`).
+    mixed: bool,
     first: u32,
     /// Launches sent so far.
     pub launches: usize,
@@ -96,12 +102,14 @@ pub struct StepOut {
     pub loss: f32,
     pub norm: f32,
     pub launches: usize,
+    /// P6-166: launches of this step on `mm_tc` (0 on the F32 list).
+    pub tc: usize,
     /// Bytes of board memory the step's arena takes (`Plan::bytes`: weights, gradients, m, v, activations, logits).
     pub arena: u64,
 }
 
 impl SimBoard {
-    pub fn new(layout: Layout) -> Result<Self, String> {
+    pub fn new(layout: Layout, mixed: bool) -> Result<Self, String> {
         ts::check_programs().map_err(|e| format!("SHA-256 al programelor: {:?}", e))?;
         let mut cp = c::CommandProcessor::new();
         for prog in ts::PROGRAMS_ALL {
@@ -132,7 +140,16 @@ impl SimBoard {
             };
             cp.mem.write(prog_va(prog), code);
         }
-        Ok(Self { cp, layout, first: 1, launches: 0 })
+        if mixed {
+            use nvidia_ga104::mm_tc as tc;
+            let sha = super::antrenare::sha256_hex(tc::MM_TC);
+            if sha != tc::MM_TC_SHA256 {
+                return Err(format!("mm_tc: SHA-256 {} nu e cel din nota ({})", sha, tc::MM_TC_SHA256));
+            }
+            let _ = cp.register_program_with_needs(tc::MM_TC, c::mm_tc_on_cpu, c::MM_TC_NEEDS);
+            cp.mem.write(TC, tc::MM_TC);
+        }
+        Ok(Self { cp, layout, mixed, first: 1, launches: 0 })
     }
 
     /// One AdamW step (`adamw_513`'s list with `adam`'s own lr / betas / eps / decay, clipping at 1.0) on the batch
@@ -158,13 +175,24 @@ impl SimBoard {
         self.cp.mem.write_f32s(plan.m, &flat(&adam.m));
         self.cp.mem.write_f32s(plan.v, &flat(&adam.v));
         let t = adam.t + 1;
-        let list = plan.step(Recipe::AdamW513, adam, t).map_err(e("lista pasului"))?;
-        let (zone, qmds) = ts::pack(&list, prog_va, ZONE).map_err(e("zona de control"))?;
+        let (zone, qmds, n, tc) = if self.mixed {
+            // The note C-160_P7f: 1/S at `res + 16` after every `uploads`, then the mixed list and its zone.
+            for (va, bytes) in plan.mixed_uploads(ts::LOSS_SCALE).map_err(e("urcarile pasului mixt"))? {
+                self.cp.mem.write(va, &bytes);
+            }
+            let list = plan.step_mixed(Recipe::AdamW513, adam, t, ts::LOSS_SCALE).map_err(e("lista pasului mixt"))?;
+            let tc = list.iter().filter(|l| matches!(l, ts::MixedLaunch::Tc { .. })).count();
+            let (zone, qmds) = ts::pack_mixed(&list, prog_va, TC, ZONE).map_err(e("zona de control (mixt)"))?;
+            (zone, qmds, list.len(), tc)
+        } else {
+            let list = plan.step(Recipe::AdamW513, adam, t).map_err(e("lista pasului"))?;
+            let (zone, qmds) = ts::pack(&list, prog_va, ZONE).map_err(e("zona de control"))?;
+            (zone, qmds, list.len(), 0)
+        };
         if zone.len() as u64 > REC - ZONE {
             return Err(String::from("zona de control prea mare"));
         }
         self.cp.mem.write(ZONE, &zone);
-        let n = list.len();
         self.cp.mem.write(REC, &alloc::vec![0u8; 16 * (n + 1)]);
         let mut w = alloc::vec![0u32; 2 + transfer::sequence_words_fresh(n)];
         let mut pb = PushBuf::new(&mut w);
@@ -181,8 +209,14 @@ impl SimBoard {
         let loss = ts::Outcome::mean_loss(&read(plan.loss_rows, batch * len)?);
         let norm = read(plan.res, 1)?[0];
         if !norm.is_finite() {
-            return Err(format!("norma gradientului nu e un numar ({}): pasul se opreste", norm));
+            return Err(format!(
+                "norma gradientului nu e un numar ({}): pasul se opreste{}",
+                norm,
+                if self.mixed { " (scara S prea mare)" } else { "" }
+            ));
         }
+        // The mixed list's `res[0]` is S × the norm (the gradients carry the loss scale).
+        let norm = if self.mixed { norm / ts::LOSS_SCALE } else { norm };
         let new_w = plan.unflat(&read(plan.w, plan.n_params)?).map_err(e("greutatile"))?;
         let new_m = plan.unflat(&read(plan.m, plan.n_params)?).map_err(e("m"))?;
         let new_v = plan.unflat(&read(plan.v, plan.n_params)?).map_err(e("v"))?;
@@ -192,6 +226,6 @@ impl SimBoard {
         adam.m = new_m;
         adam.v = new_v;
         adam.t = t;
-        Ok(StepOut { programs: plan.programs().len(), loss, norm, launches: n, arena: plan.bytes() })
+        Ok(StepOut { programs: plan.programs().len(), loss, norm, launches: n, tc, arena: plan.bytes() })
     }
 }

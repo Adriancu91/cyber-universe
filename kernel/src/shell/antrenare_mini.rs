@@ -17,7 +17,7 @@ use gpu_compute::train::{self, AdamW, Arch, Batch};
 use super::date_bucati::{self, Mt19937};
 use super::punct_control::{self, Checkpoint};
 
-const USAGE: &str = "folosire: antrenare mini [dosar] [--pasi <1..1000>] [--lot <numar 1..16> <context 1..256>] [--vocabular <64..16384>] [--samanta <s>] [--lr <x>] [--salveaza <cale>] [--din <cale>] [--placa-sim [--atentie simpla|p|placi|placi-p] [--fara-oracol]]";
+const USAGE: &str = "folosire: antrenare mini [dosar] [--pasi <1..1000>] [--lot <numar 1..16> <context 1..256>] [--vocabular <64..16384>] [--samanta <s>] [--lr <x>] [--salveaza <cale>] [--din <cale>] [--placa-sim [--atentie simpla|p|placi|placi-p] [--mixt] [--fara-oracol]]";
 
 /// Kronos's vocabulary (#513 and #651: 16 384 symbols) — the default; a smaller one only for data whose symbols fit
 /// (the QEMU test: on the processor without KVM one step with 16 384 takes ~50 s).
@@ -233,6 +233,8 @@ pub fn command(args: &[&str]) -> Vec<String> {
     let (mut board_sim, mut no_oracle) = (false, false);
     // P6-159: which arena / attention programs the simulated board's list uses (`--atentie`, only with `--placa-sim`).
     let mut layout: Option<&str> = None;
+    // P6-166: every matmul of the simulated board's step on `mm_tc` (f16 + loss scale; only with `--placa-sim`).
+    let mut mixed = false;
     let mut i = 0;
     while i < args.len() {
         let next = |k: usize| args.get(i + k).copied();
@@ -292,6 +294,10 @@ pub fn command(args: &[&str]) -> Vec<String> {
                 no_oracle = true;
                 i += 1;
             }
+            "--mixt" => {
+                mixed = true;
+                i += 1;
+            }
             x if !x.starts_with("--") && dir.is_none() => {
                 dir = Some(x);
                 i += 1;
@@ -303,7 +309,7 @@ pub fn command(args: &[&str]) -> Vec<String> {
         rows.push(format!("antrenare mini: NU A RULAT: {}", why));
         rows
     };
-    if (no_oracle || layout.is_some()) && !board_sim {
+    if (no_oracle || layout.is_some() || mixed) && !board_sim {
         return alloc::vec![String::from(USAGE)];
     }
     if layout.is_some_and(|w| !matches!(w, "simpla" | "p" | "placi" | "placi-p")) {
@@ -391,7 +397,13 @@ pub fn command(args: &[&str]) -> Vec<String> {
     let mut sim = if board_sim {
         let l = super::antrenare_sim::Layout::parse(layout.unwrap_or("simpla")).unwrap_or(super::antrenare_sim::Layout::Simple);
         rows.push(format!("antrenare mini: placa simulata: {}", l.describe()));
-        match super::antrenare_sim::SimBoard::new(l) {
+        if mixed {
+            rows.push(format!(
+                "antrenare mini: pasul mixt: toate inmultirile pe circuitele speciale (mm_tc, intrari f16, sume f32), scara erorii S = {}",
+                nvidia_ga104::train_step::LOSS_SCALE
+            ));
+        }
+        match super::antrenare_sim::SimBoard::new(l, mixed) {
             Ok(b) => Some(b),
             Err(e) => return fail(rows, format!("placa simulata: {}", e)),
         }
@@ -400,7 +412,9 @@ pub fn command(args: &[&str]) -> Vec<String> {
     };
     // The oracle's own copy, from the same start (only beside the simulated board).
     let mut oracle: Option<(Vec<Vec<f32>>, AdamW)> = (board_sim && !no_oracle).then(|| (st.params.clone(), st.adam.clone()));
-    let (mut worst_loss, mut worst_w) = (0.0f64, 0.0f64);
+    let (mut worst_loss, mut worst_w, mut worst_norm) = (0.0f64, 0.0f64, 0.0f64);
+    // P6-166: the simulated board's own time (microseconds, all steps), for symbols per second.
+    let mut board_us = 0u64;
     // P6-162: the arena the board's list needs (the figure that matters on the real board).
     #[allow(unused_mut)]
     let mut arena = 0u64;
@@ -426,26 +440,32 @@ pub fn command(args: &[&str]) -> Vec<String> {
             Some(board) => match board.step(&a, (st.numar, st.context), &x, &y, &mut st.params, &mut st.adam) {
                 Ok(o) => {
                     arena = arena.max(o.arena);
-                    Some((o.loss, o.norm, o.launches, o.programs))
+                    let us = t0.zip(crate::time::since_boot_us()).map_or(0, |(p, q)| q.saturating_sub(p));
+                    board_us += us;
+                    Some((o.loss, o.norm, o.launches, o.programs, o.tc, us))
                 }
                 Err(e) => return fail(rows, format!("pasul {} pe placa simulata: {}", st.done + 1, e)),
             },
             None => None,
         };
         #[cfg(not(feature = "test-gpu-sim"))]
-        let board_out: Option<(f32, f32, usize, usize)> = None;
+        let board_out: Option<(f32, f32, usize, usize, usize, u64)> = None;
         let (loss, norm) = match board_out {
-            Some((loss, norm, n, progs)) => {
+            Some((loss, norm, n, progs, tc, us)) => {
                 if !loss.is_finite() {
                     return fail(rows, format!("pasul {}: pierderea nu e un numar ({})", st.done + 1, loss));
                 }
-                extra = format!(", placa simulata: {} lansari, {} programe", n, progs);
+                extra = if tc > 0 {
+                    format!(", placa simulata: {} lansari ({} pe mm_tc), {} programe + mm_tc", n, tc, progs)
+                } else {
+                    format!(", placa simulata: {} lansari, {} programe", n, progs)
+                };
                 if let Some((op, oa)) = oracle.as_mut() {
                     let (ol, mut og) = match train::loss_and_grad(&a, op, &b) {
                         Ok(r) => r,
                         Err(e) => return fail(rows, format!("pasul {} (oracolul): {:?}", st.done + 1, e)),
                     };
-                    train::clip_grad_norm(&mut og, 1.0);
+                    let on = train::clip_grad_norm(&mut og, 1.0);
                     if let Err(e) = oa.step(op, &og) {
                         return fail(rows, format!("pasul {} (oracolul): AdamW: {:?}", st.done + 1, e));
                     }
@@ -453,7 +473,25 @@ pub fn command(args: &[&str]) -> Vec<String> {
                     let dw = rel_dev(&st.params, op);
                     worst_loss = worst_loss.max(dl);
                     worst_w = worst_w.max(dw);
+                    let dn = ((norm as f64 - on as f64) / (on as f64).abs().max(1e-12)).abs();
+                    worst_norm = worst_norm.max(dn);
                     extra = format!("{}; oracolul: {:.4} (abaterea pierderii {:.1e}, a greutatilor {:.1e})", extra, ol, dl, dw);
+                    if mixed {
+                        // The line the note C-160_P7f asks for, one per step.
+                        rows.push(format!(
+                            "kt antrenare-mixt pas {} eroarea {:.6} oracol {:.6} norma {:.6} oracol_norma {:.6} abatere_norma {:.1e} greutati {:.1e} lansari {} mm_tc {} placa_us {}",
+                            st.done + 1,
+                            loss,
+                            ol,
+                            norm,
+                            on,
+                            dn,
+                            dw,
+                            n,
+                            tc,
+                            us
+                        ));
+                    }
                 }
                 (loss, norm)
             }
@@ -519,7 +557,29 @@ pub fn command(args: &[&str]) -> Vec<String> {
             first, w, last, w, steps, total_ms
         ));
     }
-    if oracle.is_some() {
+    if mixed && board_us > 0 {
+        let sym = (st.numar * st.context * steps) as u64;
+        rows.push(format!(
+            "antrenare mini: pasul mixt pe placa simulata: {} simboluri in {} ms = {}.{} simboluri/s (SIMULARE in QEMU, nu viteza placii)",
+            sym,
+            board_us / 1000,
+            sym * 1_000_000 / board_us,
+            sym * 10_000_000 / board_us % 10
+        ));
+    }
+    if oracle.is_some() && mixed {
+        // The note C-160_P7f: f16 inputs move the weights ~1–2 % from the oracle in a few steps (normal, shown only);
+        // judged on the loss (≤ 1e-3 relative) and the gradient norm (≤ 2e-3 relative).
+        let same = worst_loss <= 1e-3 && worst_norm <= 2e-3;
+        rows.push(format!(
+            "antrenare mini: lista placii mixte (SIMULARE) fata de oracol: {} — cea mai mare abatere a pierderii {:.1e} (toleranta 1e-3), a normei {:.1e} (toleranta 2e-3); greutatile {:.1e} (doar afisat) in {} pasi",
+            if same { "ACELEASI NUMERE (mixt)" } else { "DIFERA" },
+            worst_loss,
+            worst_norm,
+            worst_w,
+            steps
+        ));
+    } else if oracle.is_some() {
         // The simulated board's programs round as the board does (approximate units modelled correctly rounded); the
         // oracle in f32/f64 on the processor. Tolerance: the hub's for the golden step (loss 1e-3 relative, weights
         // 1e-3 of the largest weight).
