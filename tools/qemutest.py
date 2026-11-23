@@ -116,7 +116,9 @@ def main():
         if not keys_sent and a.keys_when in text:
             # `pauza=N` in --keys (P6-56): wait N seconds before the next key, still reading the serial port, so a
             # long command does not get the following keys while it runs (the kernel's key buffer is small).
-            pending = [k if k.startswith("pauza=") else f"sendkey {k}" for k in (a.keys or "").split()]
+            # `asteapta=TEXT` (P6-163): hold the next keys until TEXT ('~' = space) is on the serial port — for a long
+            # command whose length depends on the machine (a fixed pause can end too early on a slow CI runner).
+            pending = [k if k.startswith(("pauza=", "asteapta=")) else f"sendkey {k}" for k in (a.keys or "").split()]
             # Monitor commands: ':' = space, '~' = a literal comma (device_add usb-mouse~id=m1), `pauza=N` as in --keys.
             pending += [c if c.startswith("pauza=") else c.replace(":", " ").replace("~", ",")
                         for c in (a.monitor or "").split(",") if c]
@@ -124,7 +126,11 @@ def main():
             keys_sent = True
             mon_sock = socket.socket(socket.AF_UNIX)  # kept open until the end (closing it early drops the last key)
             mon_sock.connect(mon_path)
-        if pending and time.time() >= next_at:
+        if pending and pending[0].startswith("asteapta=") and time.time() >= next_at:
+            if pending[0].split("=", 1)[1].replace("~", " ") in text:
+                pending.pop(0)
+                next_at = time.time() + 1.0
+        elif pending and time.time() >= next_at:
             c = pending.pop(0)
             if c.startswith("pauza="):
                 next_at = max(next_at, time.time()) + float(c.split("=", 1)[1])
