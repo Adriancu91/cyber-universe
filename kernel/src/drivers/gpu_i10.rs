@@ -448,6 +448,9 @@ impl SimGpu {
             }
         }
         cp.sim_launch_ns = 4000;
+        // P6-161 (C-157): the copy engine model's speed (SIMULARE numbers, as Cyber-GPU's T192), so the probe's times grow.
+        cp.sim_ce_mb_s = 12_000;
+        cp.sim_ce_copy_ns = 5_000;
         if SIM_STALE_READS.load(core::sync::atomic::Ordering::Relaxed) {
             // 128 is a power of two below a page: accepted by the model.
             let _ = cp.model_stale_reads(128);

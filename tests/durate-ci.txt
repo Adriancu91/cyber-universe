@@ -152,3 +152,4 @@ wifi 20
 windows 27
 antrenare-mini-placi 420
 kronos-gpu-atentie3 700
+kronos-gpu-ram-vram 200

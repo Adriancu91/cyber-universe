@@ -530,6 +530,8 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-159** C-161 punctul 5 (C-158 p.10): **`antrenare mini --placa-sim` și cu atenția pe plăci** — `--atentie simpla|p|placi|placi-p` (`Plan::new` / `new_p_only` / `new_tiles` / `new_p_only_tiles`, cyber-gpu `1b9f79d`); placa simulată cu toate cele 18 programe. QEMU: `placi` 3 pași (75 lansări, 14 programe) și `placi-p` 2 pași (76 lansări, 15 programe) — pierderea identică cu oracolul, greutățile ≤ 4,0e-5 → `ACELEASI NUMERE`. Nimic pentru placa reală. Plan: `docs/plans/P6-159.md`.
 - [x] **P6-160** PREDARE Cyber-GPU `d885efd` (nota C-157_P2n): **proba „vechi lângă nou” cu `attn_*_3`** (citirile fără ramură) — `test-placa --atentie-placi --atentie2 --atentie3`; nou pentru placă: doar cele 3 programe. Plan: `docs/plans/P6-160.md`.
   Gata (2026-11-23 ~07:00 RO): `boot`, `gpu`, `gpu-sim`, `kronos-gpu-atentie2`, `kronos-gpu-pas-aur` (neschimbat), `antrenare-date`, `antrenare-control` trec.
+- [x] **P6-161** PREDARE Cyber-GPU `9359f21` (C-157, punctul lui Adrian din 23 nov, a): **proba vitezei RAM ↔ VRAM cu motorul de copiere** — `test-placa --ram-vram`; nou pentru placă: doar motorul de copiere (un mesaj RM + metodele pe subcanalul 4). Plan: `docs/plans/P6-161.md`.
+  Gata (2026-11-23 ~16:35 RO): `kronos-gpu-ram-vram` (nou; SIMULARE: obiectul alocat, 10 grupuri × 3, octeți corecți, TRECE), `boot`, `gpu`, `gpu-sim`, `kronos-gpu-mm-tc`, `ghpush` — 6/6.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)

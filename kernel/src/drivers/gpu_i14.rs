@@ -2732,8 +2732,150 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 lines.push(format!("{}: kronos --gpu: proba atentiei pe placi: oprita: {}", p, e));
             }
         }
+        // P6-161 (C-157, cyber-gpu `9359f21`): the RAM ↔ VRAM probe with the copy engine, only when the cycle's list asks
+        // for it (`test-placa … --ram-vram`), after everything else; its failure is a line.
+        if super::gpu_tur::RAM_VRAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+            if let Err(e) = ram_vram_probe(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, &ctx) {
+                lines.push(format!("{}: kronos --gpu: proba RAM <-> VRAM: oprita: {}", p, e));
+            }
+        }
     }
     Ok(all.pop().unwrap_or_default())
+}
+
+/// P6-161: the host RAM of the RAM ↔ VRAM probe (A = `M` bytes, then B = `2M`): one contiguous run below 4 GiB, pinned
+/// for the rest of the boot (the board wrote there) and reused by a later probe of the same boot when large enough.
+static RV_RAM: crate::sched::Mutex<Option<(u64, u64)>> = crate::sched::Mutex::new(None);
+
+/// P6-161: `pages` contiguous pinned host pages (base bus address), or `None` if the RAM below 4 GiB is too fragmented.
+fn ram_vram_host(pages: u64) -> Option<u64> {
+    let mut slot = RV_RAM.lock();
+    if let Some((b, n)) = *slot {
+        if n >= pages {
+            return Some(b);
+        }
+    }
+    let b = crate::mem::frame::alloc_contiguous_between(pages, 16 << 20, 1 << 32)?;
+    crate::mem::frame::pin(b, pages, "gpu-ram-vram");
+    *slot = Some((b, pages));
+    Some(b)
+}
+
+/// P6-161: the bytes of the probe's host run (`len` bytes from bus address `base`).
+fn ram_vram_bytes(base: u64, len: u64) -> &'static mut [u8] {
+    // SAFETY: `base..base + len` lies inside the run `ram_vram_host` took from the frame allocator and pinned (nothing
+    // else owns it); the HHDM maps physical memory linearly, so the run is one contiguous virtual range. Only the probe
+    // touches it, and only while the board is not running (before the doorbell, after the last record).
+    unsafe { core::slice::from_raw_parts_mut(crate::mem::map::phys_to_virt(base), len as usize) }
+}
+
+/// P6-161 (C-157, Adrian's point of 23 Nov a; cyber-gpu note `C-157_RAM_VRAM_proba-motor-copiere.md`, `9359f21`): the
+/// speed of host RAM ↔ VRAM with the board's **copy engine**, outside the generation path. The copy object was allocated
+/// on the work channel right after I9 (`gpu_golden::copy_object_step`). `M` = 64 MiB on the board (256 KiB in
+/// SIMULARE), halved while the host RAM (3M, contiguous below 4 GiB) or the VRAM (2M) does not fit. A = `M` bytes RAM
+/// with the pattern, B = `2M` RAM filled with `0xEE`, V1 + V2 = `2M` VRAM, the 31 records in VRAM; one submission of
+/// `ram_vram::encode_probe` (up / down at M/64 … M, then 4 × M/4 in parallel, each 3 times). After the last record: the
+/// group times from the records, B and A judged against the pattern; `kt ramvram …` rows. A record that never comes
+/// stops the probe (no retry). New for the board: the copy engine (methods on subchannel 4); no register, no program.
+#[allow(clippy::too_many_arguments)]
+fn ram_vram_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    doorbell: &mut Bell<'_, V>,
+    subs: &mut u32,
+    ctx: &CopyCtx,
+) -> GpuResult<()> {
+    use nvidia_ga104::ram_vram as rv;
+    const SEED: u32 = 0x157;
+    let label = if permit.is_some() { "placa" } else { "SIMULARE" };
+    let Some(obj) = st.copy_obj else {
+        lines.push(format!("{}: kronos --gpu: proba RAM <-> VRAM: motorul de copiere nu e alocat pe canal: nimic trimis", p));
+        return Err(bad("ram-vram: lipseste obiectul motorului de copiere"));
+    };
+    let mut m = if permit.is_some() { rv::DEFAULT_MAX_BYTES } else { rv::MAX_BYTES_UNIT };
+    let (host, vram) = loop {
+        rv::check_max(m)?;
+        let got = ram_vram_host(3 * m / PAGE).and_then(|h| map_vram(st, 2 * m).ok().map(|v| (h, v)));
+        match got {
+            Some(x) => break x,
+            None if m > rv::MAX_BYTES_UNIT => m /= 2,
+            None => {
+                lines.push(format!("{}: kronos --gpu: proba RAM <-> VRAM: nu am {} KiB RAM contigua sau {} KiB VRAM: nimic trimis", p, 3 * m >> 10, 2 * m >> 10));
+                return Err(GpuError::OutOfMemory { requested: 3 * m });
+            }
+        }
+    };
+    let rec = map_vram(st, rv::RECORD_BYTES)?;
+    let pages = |first: u64, n: u64| (first..first + n).map(|i| host + i * PAGE).collect::<Vec<u64>>();
+    let a = st.mem.alloc_sys_mapped(&pages(0, m / PAGE))?;
+    let b = st.mem.alloc_sys_mapped(&pages(m / PAGE, 2 * m / PAGE))?;
+    if !a.va.is_multiple_of(PAGE) || !b.va.is_multiple_of(PAGE) || !vram.va.is_multiple_of(PAGE) {
+        return Err(bad("ram-vram: bufferele nu sunt aliniate la 4 KiB"));
+    }
+    lines.push(format!(
+        "{}: kronos --gpu: proba RAM <-> VRAM ({}): motorul de copiere (obiectul {:#x}, subcanalul {}), M = {} KiB: {} KiB RAM fixata + {} KiB VRAM, {} grupuri x {}, o trimitere",
+        p,
+        label,
+        obj,
+        rv::CE_SUBCH,
+        m >> 10,
+        3 * m >> 10,
+        2 * m >> 10,
+        rv::GROUPS,
+        rv::REPEATS
+    ));
+    transfer::fill_pattern(ram_vram_bytes(host, m), SEED)?;
+    ram_vram_bytes(host + m, 2 * m).fill(rv::FILL);
+    put_bytes(st.mem.writer_mut(), rec.pa, &alloc::vec![0u8; rv::RECORD_BYTES as usize])?;
+    let first = TOKEN_FIRST + STRIDE * *subs;
+    let bufs = rv::Buffers { a: a.va, b: b.va, v1: vram.va, v2: vram.va + m, records: rec.va };
+    let mut words = alloc::vec![0u32; rv::probe_words()];
+    let mut pb = PushBuf::new(&mut words);
+    rv::encode_probe(&mut pb, &bufs, m, first)?;
+    let nw = pb.len();
+    let n_rec = rv::RECORDS as u64;
+    let last = first + (rv::RECORDS as u32 - 1);
+    let mut maps = ctx.maps.clone();
+    maps.push(vram);
+    let sys = [ctx.sys.clone(), a.clone(), b.clone()];
+    let recs = match run_records(vbar, clock, journal, st, l, permit, &words[..nw], rec, n_rec, last, &maps, &sys, doorbell)? {
+        Ok(x) => x,
+        Err(got) => {
+            lines.push(format!(
+                "{}: kronos --gpu: proba RAM <-> VRAM: NU A TERMINAT: ultima inregistrare = {:#x} (asteptat {:#x}); proba oprita, fara reincercare",
+                p, got, last
+            ));
+            return Err(GpuError::Timeout { waited_us: WAIT_US });
+        }
+    };
+    *subs += 1;
+    let times = rv::analyze(&recs, m, first)?;
+    let bytes = rv::judge(ram_vram_bytes(host + m, 2 * m), ram_vram_bytes(host, m), m, SEED)?;
+    let probe = rv::Probe { max_bytes: m, times, bytes };
+    probe.journal(journal);
+    lines.extend(probe.lines(label).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
+    let (lo_up, hi_up) = rv::PREDICTED_UP_MB_S;
+    let (lo_dn, hi_dn) = rv::PREDICTED_DOWN_MB_S;
+    lines.push(format!(
+        "{}: kronos --gpu: proba RAM <-> VRAM: {}: sus {} MB/s (prezis {}-{}), jos {} MB/s (prezis {}-{}), 4 in paralel {} / {} promile din copia de M",
+        p,
+        if probe.passes() { "TRECE" } else { "NU TRECE" },
+        probe.max_mb_s(rv::Dir::Up).unwrap_or(0),
+        lo_up,
+        hi_up,
+        probe.max_mb_s(rv::Dir::Down).unwrap_or(0),
+        lo_dn,
+        hi_dn,
+        probe.parallel_permille(rv::Dir::Up).unwrap_or(0),
+        probe.parallel_permille(rv::Dir::Down).unwrap_or(0)
+    ));
+    Ok(())
 }
 
 /// P6-98 (C-147 stage 0 (a)): the table "time per kind of launch", longest first (median per token and per launch).

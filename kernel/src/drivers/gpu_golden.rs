@@ -140,6 +140,9 @@ pub(super) struct GpuState {
     /// RM messages sent (one GSP doorbell each) and VRAM words written + read back.
     pub rm_calls: u32,
     pub vram_words: u64,
+    /// P6-161 (C-157, cyber-gpu `9359f21`): the copy engine object on the work channel (`AMPERE_DMA_COPY_B`), allocated
+    /// only when the cycle asks for the RAM ↔ VRAM probe (`copy_object_step`).
+    pub copy_obj: Option<u32>,
 }
 
 impl GpuState {
@@ -147,7 +150,7 @@ impl GpuState {
         let pending: Pending = Rc::new(RefCell::new(Vec::new()));
         // The root table is allocated and cleared here (collected, written before the first RM message).
         let mem = GpuMemory::new(zone.start, zone.end, PendingVram(pending.clone()))?;
-        Ok(GpuState { mem, pending, zone, golden: None, space: None, rm_calls: 0, vram_words: 0 })
+        Ok(GpuState { mem, pending, zone, golden: None, space: None, rm_calls: 0, vram_words: 0, copy_obj: None })
     }
 }
 
@@ -372,6 +375,39 @@ pub(super) fn pstate_step<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized>
             Pstate::Refused(st) => format!("refuzata de GSP-RM (NV_STATUS {:#x})", st),
         }
     ));
+    Ok(())
+}
+
+/// P6-161 (C-157, Adrian's point of 23 Nov a; cyber-gpu note `C-157_RAM_VRAM_proba-motor-copiere.md`, `9359f21`): ONLY
+/// when the cycle asks for the RAM ↔ VRAM probe (`test-placa … --ram-vram`), once, right after the work channel is open:
+/// one RM message allocating the copy engine object (`AMPERE_DMA_COPY_B`, no parameters) on the work channel, with its
+/// first free handle (the same class the golden image allocates on its own channel). The channel's `next_handle` moves
+/// past it. Nothing is written to the board's registers. A refusal is an `Err` (the probe then does not run).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn copy_object_step<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    bar: &mut B,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    prep: &mut I7Prep,
+    st: &mut GpuState,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    poll: impl FnMut(&mut dyn SharedMem),
+) -> GpuResult<()> {
+    let Some((u, w)) = st.space.clone() else { return Err(GpuError::InvalidArgument("kc: lipseste canalul de lucru")) };
+    let GpuState { pending, zone, rm_calls, vram_words, .. } = st;
+    let r = {
+        let mut t = OsRm { bar, vbar: &mut *vbar, journal: &mut *journal, permit, prep, clock, poll, zone, pending, calls: rm_calls, words: vram_words };
+        user_space::alloc_copy_object(&mut t, &u, &w)
+    };
+    let (h, next) = r?;
+    if let Some((_, w)) = st.space.as_mut() {
+        w.next_handle = next;
+    }
+    st.copy_obj = Some(h);
+    lines.push(format!("{}: motorul de copiere (AMPERE_DMA_COPY_B) alocat pe canalul de lucru: obiectul {:#x} (un mesaj RM)", p, h));
     Ok(())
 }
 
