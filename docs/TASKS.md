@@ -521,6 +521,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-151** C-161 punctul 5, a doua bucată: **punctul de control al motorului de antrenare** — formatul `CYBKCK01` (note + tensori F32 + SHA-256), scris cu golirea sigură și recitit bit cu bit; `antrenare proba … --salveaza <cale>`, `antrenare control <cale>`; nimic pentru placă. Plan: `docs/plans/P6-151.md`. Dep: P6-146, P6-150.
   Gata (2026-11-23 ~06:00 RO): `antrenare-control` (cu verificarea discului după test), `antrenare`, `ghpush` trec.
 - [x] **P6-152** PREDARE Cyber-GPU C-160_P7: **`attn_p` legat în pasul de antrenare** (cyber-gpu `e3763c8`): brațul `AttnP` în simulator, programele pasului din `plan.programs()`; nimic nou pentru placă (în os-365 cu P6-150/151). Plan: `docs/plans/P6-152.md`. Dep: P6-149.
+- [x] **P6-153** C-161 punctul 5, a treia bucată: **loturile trase la sorți exact ca la Kronos** — `antrenare date … --lot <samanta> <loturi> <numar> <context> [--pasi-total <p>]`: MT19937 + regula `torch.randint` CPU (pragul 2^28), sămânța orei ca `_samanta_loturi`, ferestrele x/y peste granițele bucăților; aceleași poziții și amprente ca `DateBucati.lot` cu PyTorch; nimic pentru placă. Plan: `docs/plans/P6-153.md`. Dep: P6-150.
   Gata (2026-11-23 ~07:00 RO): `boot`, `gpu`, `gpu-sim`, `kronos-gpu-atentie2`, `kronos-gpu-pas-aur` (neschimbat), `antrenare-date`, `antrenare-control` trec.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
