@@ -96,6 +96,8 @@ pub struct StepOut {
     pub loss: f32,
     pub norm: f32,
     pub launches: usize,
+    /// Bytes of board memory the step's arena takes (`Plan::bytes`: weights, gradients, m, v, activations, logits).
+    pub arena: u64,
 }
 
 impl SimBoard {
@@ -190,6 +192,6 @@ impl SimBoard {
         adam.m = new_m;
         adam.v = new_v;
         adam.t = t;
-        Ok(StepOut { programs: plan.programs().len(), loss, norm, launches: n })
+        Ok(StepOut { programs: plan.programs().len(), loss, norm, launches: n, arena: plan.bytes() })
     }
 }

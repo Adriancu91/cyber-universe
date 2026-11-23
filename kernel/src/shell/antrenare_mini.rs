@@ -347,6 +347,9 @@ pub fn command(args: &[&str]) -> Vec<String> {
     // The oracle's own copy, from the same start (only beside the simulated board).
     let mut oracle: Option<(Vec<Vec<f32>>, AdamW)> = (board_sim && !no_oracle).then(|| (st.params.clone(), st.adam.clone()));
     let (mut worst_loss, mut worst_w) = (0.0f64, 0.0f64);
+    // P6-162: the arena the board's list needs (the figure that matters on the real board).
+    #[allow(unused_mut)]
+    let mut arena = 0u64;
 
     let mut g = Mt19937::new(seed);
     let mut losses: Vec<f32> = Vec::with_capacity(steps);
@@ -367,7 +370,10 @@ pub fn command(args: &[&str]) -> Vec<String> {
         #[cfg(feature = "test-gpu-sim")]
         let board_out = match sim.as_mut() {
             Some(board) => match board.step(&a, (st.numar, st.context), &x, &y, &mut st.params, &mut st.adam) {
-                Ok(o) => Some((o.loss, o.norm, o.launches, o.programs)),
+                Ok(o) => {
+                    arena = arena.max(o.arena);
+                    Some((o.loss, o.norm, o.launches, o.programs))
+                }
                 Err(e) => return fail(rows, format!("pasul {} pe placa simulata: {}", st.done + 1, e)),
             },
             None => None,
@@ -433,6 +439,20 @@ pub fn command(args: &[&str]) -> Vec<String> {
     if from.is_none() {
         // A model that knows nothing guesses every symbol alike: loss ln(16 384) = 9.704.
         rows.push(format!("antrenare mini: pierderea la pornire {:.4} (ghicit la intamplare: ln {} = {:.4})", losses[0], st.vocab, ln(st.vocab as f64)));
+    }
+    if arena > 0 {
+        let logits = 4 * (st.numar * st.context * st.vocab) as u64;
+        rows.push(format!(
+            "antrenare mini: arena placii: {} octeti ({}.{} MiB), din care logits + gradientul lor {}.{} MiB (vocabular {}, lot {} x {})",
+            arena,
+            arena >> 20,
+            (arena & 0xf_ffff) * 10 >> 20,
+            (2 * logits) >> 20,
+            ((2 * logits) & 0xf_ffff) * 10 >> 20,
+            st.vocab,
+            st.numar,
+            st.context
+        ));
     }
     if losses.len() >= 2 && last < first {
         rows.push(format!(
