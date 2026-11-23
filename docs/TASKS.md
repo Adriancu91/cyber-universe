@@ -542,6 +542,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
   Gata (2026-11-23 ~22:15 RO): `gpu`, `gpu-tur`, `gpu-sim`, `boot`, `kronos-gpu-pas-aur` (cyber-gpu `408c69c`); rândurile noi apar doar pe placa reală.
 - [x] **P6-166** PREDARE Cyber-GPU `01af040` (ordinea lui Adrian 23 nov 20:11, pasul 2; nota C-160_P7f): **`antrenare mini --placa-sim --mixt`** — înmulțirile pasului pe circuitele speciale (`mm_tc`, f16 + scalarea erorii S = 1 024), doar pe placa SIMULATĂ; fără cod nou în bibliotecă (cyber-gpu rămâne `408c69c`); nimic nou pentru placa reală (pe placă după `--antrenare-mini` F32 și os-352). Plan: `docs/plans/P6-166.md`.
   Gata (2026-11-23 ~23:15 RO): `antrenare-mini-placa-mixt` (nou, 10 verificări; datele de probă ale lui Kronos, 2 pași: 76 lansări din care 27 pe `mm_tc`, pierderea 9,702646 față de oracol 9,702648, abaterea pierderii ≤ 5,1e-6, a normei ≤ 1,6e-4, greutățile 2,0e-3 — ACELEASI NUMERE (mixt)); `antrenare-mini-placa`, `boot` trec.
+- [~] **P6-167** Nota centrului de comandă 23 nov 23:36 (după os-380 TRECE), punctul (1): **`test-placa --antrenare-mini --mixt`** — pasul întreg al lui `antrenare mini` pe placa REALĂ cu toate înmulțirile pe `mm_tc` (f16 + scara S = 1 024); un singur lucru nou pentru placă: `mm_tc` în pasul de antrenare. Plan: `docs/plans/P6-167.md`.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)

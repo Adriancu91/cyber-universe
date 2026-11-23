@@ -392,6 +392,11 @@ pub static ADAM_RAM_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomi
 /// and, in the test build, by `gpu antrenare-mini-sim on`. Off by default.
 pub static TRAIN_MINI_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-167 (center's note 23 Nov 23:36, cyber-gpu note C-160_P7f): with [`TRAIN_MINI_IN_CYCLE`], the same step as the
+/// mixed list — every matmul on `mm_tc` (f16 inputs, f32 sums, loss scale `LOSS_SCALE`). Set only by the cycle
+/// (`test-placa … --antrenare-mini --mixt`) and, in the test build, by `gpu antrenare-mini-sim mixt`. Off by default.
+pub static TRAIN_MINI_MIXED_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-163: the copy object is needed (the RAM ↔ VRAM probe or the m, v in RAM step).
 pub fn copy_engine_wanted() -> bool {
     RAM_VRAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) || ADAM_RAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst)

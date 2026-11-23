@@ -123,6 +123,12 @@ const KT_MINI_TOK_S: &str = "kt antrenare-mini simboluri pe secunda (placa, medi
 const KT_MINI_LOSS_E9: &str = "kt antrenare-mini abaterea maxima a pierderii fata de oracol (x1e9)";
 const KT_MINI_W_E9: &str = "kt antrenare-mini abaterea maxima a greutatilor fata de oracol (x1e9)";
 const KT_MINI_PASS: &str = "kt antrenare-mini verdict (1/0)";
+/// P6-167: 1 = the mixed list (`--mixt`, every matmul on `mm_tc`), 0 = the F32 list.
+const KT_MINI_MIXED: &str = "kt antrenare-mini pasul mixt (1/0)";
+/// P6-167: the mixed step: the largest relative gap of the gradient norm (divided by S) against the oracle's (x1e9).
+const KT_MINI_NORM_E9: &str = "kt antrenare-mini abaterea maxima a normei fata de oracol (x1e9)";
+/// P6-167: the mixed step: `mm_tc` launches in one step.
+const KT_MINI_TC: &str = "kt antrenare-mini lansari mm_tc pe pas";
 /// P6-112 (C-157 point 2b): the note written (with every held row) right before the texts, outside position 0's clock.
 const GEN_STARTS: &str = "kt generarea incepe (randurile tinute sunt pe stick; pana la final randurile de rutina raman in memorie)";
 /// P6-112: routine rows dropped from the memory ring during the generation (0 = all of them reached the stick).
@@ -4698,10 +4704,13 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     use gpu_compute::train::{self, AdamW, Batch, Recipe};
     use nvidia_ga104::train_step::{self as ts, Outcome, Plan};
     const TOL: f64 = 1e-3;
+    // P6-167 (`--mixt`): every matmul on `mm_tc`; the verdict on the loss and the norm (the note C-160_P7f), the
+    // weights only shown (f16 + AdamW move them ~1e-3).
+    let mixed = super::gpu_tur::TRAIN_MINI_MIXED_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     let (bsz, tl) = (2usize, 32usize);
     let steps: usize = if permit.is_some() { 10 } else { 1 };
     let label = if permit.is_some() { "placa" } else { "SIMULARE" };
-    let tag = "antrenare mini pe placa";
+    let tag = if mixed { "antrenare mini pe placa (mixt)" } else { "antrenare mini pe placa" };
     let data = match am::board_batches(bsz, tl, steps) {
         Ok(d) => d,
         Err(e) => {
@@ -4714,15 +4723,27 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         lines.push(format!("{}: kronos --gpu: {}: SHA-256 al unui program nu e cel din nota: nimic trimis", p, tag));
         return Err(bad("antrenare-mini: SHA-256 gresit"));
     }
+    if mixed && sha256_hex(nvidia_ga104::mm_tc::MM_TC) != nvidia_ga104::mm_tc::MM_TC_SHA256 {
+        lines.push(format!("{}: kronos --gpu: {}: SHA-256 al lui mm_tc nu e cel din nota: nimic trimis", p, tag));
+        return Err(bad("antrenare-mini: SHA-256 mm_tc gresit"));
+    }
     let a = am::arch(am::VOCAB, tl);
     // The arena's size and the launches over every step's plan (the segment lists depend on the batch).
     let base0 = nvidia_ga104::mmu::VA_BASE;
-    let (mut arena_bytes, mut n_launch) = (0u64, 0usize);
+    let (mut arena_bytes, mut n_launch, mut zone_need) = (0u64, 0usize, 0u64);
     let mut programs: Option<&'static [ts::Prog]> = None;
+    let adam0 = AdamW::new(&am::initial(&a, 0), 1e-3, 0.9, 0.999, 1e-8, 0.1);
     for (x, _) in &data.batches {
         let pl = Plan::new(a, bsz, tl, x, base0)?;
         arena_bytes = arena_bytes.max(pl.bytes());
-        n_launch = n_launch.max(pl.launches_per_step(Recipe::AdamW513));
+        if mixed {
+            // The mixed list's length and zone (its `mm_tc` slots are larger) do not depend on the AdamW state.
+            let list = pl.step_mixed(Recipe::AdamW513, &adam0, 1, ts::LOSS_SCALE)?;
+            n_launch = n_launch.max(list.len());
+            zone_need = zone_need.max(list.iter().map(ts::MixedLaunch::slot).sum());
+        } else {
+            n_launch = n_launch.max(pl.launches_per_step(Recipe::AdamW513));
+        }
         if programs.is_some_and(|q| q != pl.programs()) {
             return Err(bad("antrenare-mini: planurile pasilor au programe diferite"));
         }
@@ -4730,7 +4751,8 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     }
     let programs = programs.ok_or(bad("antrenare-mini: niciun pas"))?;
     let arena_bytes = arena_bytes.next_multiple_of(PAGE);
-    let zone_bytes = (n_launch as u64 * ts::SLOT).next_multiple_of(PAGE);
+    drop(adam0);
+    let zone_bytes = (n_launch as u64 * ts::SLOT).max(zone_need).next_multiple_of(PAGE);
     if 16 * (n_launch as u64 + 1) > ctx.rec.size || n_launch as u32 + 1 > STRIDE {
         return Err(bad("antrenare-mini: prea putine inregistrari"));
     }
@@ -4741,7 +4763,7 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     };
     let count: usize = a.tensors().iter().map(|t| t.elements()).sum();
     lines.push(format!(
-        "{}: kronos --gpu: {} ({}): modelul vocabular {}, context {}, E {}, {} capete, {} straturi ({} greutati), lot {} x {}, AdamW lr 1e-3, taiere 1,0; {}; {} programe (SHA-256 verificate), {} lansari pe pas, cate o trimitere; arena {} KiB + zona de control {} KiB in RAM fixata; {} pasi, oracolul pe procesor la fiecare pas",
+        "{}: kronos --gpu: {} ({}): modelul vocabular {}, context {}, E {}, {} capete, {} straturi ({} greutati), lot {} x {}, AdamW lr 1e-3, taiere 1,0; {}; {} programe{} (SHA-256 verificate), {} lansari pe pas, cate o trimitere; arena {} KiB + zona de control {} KiB in RAM fixata; {} pasi, oracolul pe procesor la fiecare pas",
         p,
         tag,
         label,
@@ -4755,6 +4777,7 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         tl,
         data.source,
         programs.len(),
+        if mixed { " + mm_tc (toate inmultirile: intrari f16, sume f32, scara erorii S = 1024)" } else { "" },
         n_launch,
         arena_bytes >> 10,
         zone_bytes >> 10,
@@ -4766,6 +4789,14 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
         progs.push((prog, pm));
     }
+    // P6-167: `mm_tc` in VRAM beside the step's programs (its own mapping, 256-aligned like every program's).
+    let tc_map = if mixed {
+        let pm = map_vram(st, nvidia_ga104::mm_tc::MM_TC.len() as u64)?;
+        put_bytes(st.mem.writer_mut(), pm.pa, nvidia_ga104::mm_tc::MM_TC)?;
+        Some(pm)
+    } else {
+        None
+    };
     let pages = |first: u64, n: u64| (first..first + n).map(|i| host + i * PAGE).collect::<Vec<u64>>();
     let arena = st.mem.alloc_sys_mapped(&pages(0, arena_bytes / PAGE))?;
     let zone = st.mem.alloc_sys_mapped(&pages(arena_bytes / PAGE, zone_bytes / PAGE))?;
@@ -4774,6 +4805,7 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     }
     let mut maps = ctx.maps.clone();
     maps.extend(progs.iter().map(|(_, pm)| *pm));
+    maps.extend(tc_map.iter().copied());
     let sys = [ctx.sys.clone(), arena.clone(), zone.clone()];
     let prog_va = |want: ts::Prog| progs.iter().find(|(q, _)| *q == want).map_or(0, |(_, pm)| pm.va);
     let arena_va = arena.va;
@@ -4791,7 +4823,7 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let mut params = am::initial(&a, 0);
     let mut adam = AdamW::new(&params, 1e-3, 0.9, 0.999, 1e-8, 0.1);
     let (mut op, mut oa) = (params.clone(), adam.clone());
-    let (mut worst_loss, mut worst_w) = (0.0f64, 0.0f64);
+    let (mut worst_loss, mut worst_w, mut worst_norm, mut tc_per_step) = (0.0f64, 0.0f64, 0.0f64, 0usize);
     let (mut board_ns, mut host_us, mut losses): (Vec<u64>, Vec<u64>, Vec<f32>) = (Vec::new(), Vec::new(), Vec::new());
     let mut stopped: Option<String> = None;
     for (k, (x, y)) in data.batches.iter().enumerate() {
@@ -4805,17 +4837,35 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         put_f32s(plan.m, &adam.m);
         put_f32s(plan.v, &adam.v);
         let t = adam.t + 1;
-        let list = plan.step(Recipe::AdamW513, &adam, t)?;
-        let (zb, qmds) = ts::pack(&list, prog_va, zone.va)?;
+        let (zb, qmds, n_list) = match tc_map {
+            Some(tc) => {
+                // The note C-160_P7f: 1/S at `res + 16` after every `uploads`, then the mixed list and its zone.
+                for (va, bytes) in plan.mixed_uploads(ts::LOSS_SCALE)? {
+                    put(va, &bytes);
+                }
+                let list = plan.step_mixed(Recipe::AdamW513, &adam, t, ts::LOSS_SCALE)?;
+                tc_per_step = list.iter().filter(|x| matches!(x, ts::MixedLaunch::Tc { .. })).count();
+                let (zb, qmds) = ts::pack_mixed(&list, prog_va, tc.va, zone.va)?;
+                (zb, qmds, list.len())
+            }
+            None => {
+                let list = plan.step(Recipe::AdamW513, &adam, t)?;
+                let (zb, qmds) = ts::pack(&list, prog_va, zone.va)?;
+                (zb, qmds, list.len())
+            }
+        };
+        if zb.len() as u64 > zone_bytes {
+            return Err(bad("antrenare-mini: zona de control prea mare"));
+        }
         ram_write(&zone, &zb);
-        put_bytes(st.mem.writer_mut(), ctx.rec.pa, &alloc::vec![0u8; 16 * (list.len() + 1)])?;
+        put_bytes(st.mem.writer_mut(), ctx.rec.pa, &alloc::vec![0u8; 16 * (n_list + 1)])?;
         let first = TOKEN_FIRST + STRIDE * *subs;
-        let mut words = alloc::vec![0u32; transfer::sequence_words_fresh(list.len())];
+        let mut words = alloc::vec![0u32; transfer::sequence_words_fresh(n_list)];
         let mut pb = PushBuf::new(&mut words);
         transfer::encode_sequence_fresh(&mut pb, &qmds, ctx.rec.va, first)?;
         let nw = pb.len();
-        let last = first + list.len() as u32;
-        let b = match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, list.len() as u64 + 1, last, &maps, &sys, doorbell)? {
+        let last = first + n_list as u32;
+        let b = match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, n_list as u64 + 1, last, &maps, &sys, doorbell)? {
             Ok(b) => b,
             Err(got) => {
                 stopped = Some(format!("placa nu a terminat la pasul {} (ultima inregistrare {:#x}, asteptat {:#x})", step, got, last));
@@ -4823,13 +4873,15 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
             }
         };
         *subs += 1;
-        board_ns.push(transfer::analyze_sequence(&b, list.len(), first)?.iter().sum());
+        board_ns.push(transfer::analyze_sequence(&b, n_list, first)?.iter().sum());
         let loss = Outcome::mean_loss(&read_f32s(plan.loss_rows, bsz * tl));
         let norm = read_f32s(plan.res, 1)[0];
         if !norm.is_finite() || !loss.is_finite() {
-            stopped = Some(format!("pasul {}: pierderea {:?} / norma gradientului {:?} nu e un numar", step, loss, norm));
+            stopped = Some(format!("pasul {}: pierderea {:?} / norma gradientului {:?} nu e un numar{}", step, loss, norm, if mixed { " (scara S prea mare?)" } else { "" }));
             break;
         }
+        // The mixed list's `res[0]` is S × the norm (the gradients carry the loss scale).
+        let norm = if mixed { norm / ts::LOSS_SCALE } else { norm };
         params = plan.unflat(&read_f32s(plan.w, plan.n_params))?;
         adam.m = plan.unflat(&read_f32s(plan.m, plan.n_params))?;
         adam.v = plan.unflat(&read_f32s(plan.v, plan.n_params))?;
@@ -4841,14 +4893,16 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         // The oracle on the same batch, from its own copy.
         let batch = Batch { inputs: x, targets: y, batch: bsz, len: tl };
         let (ol, mut og) = train::loss_and_grad(&a, &op, &batch)?;
-        train::clip_grad_norm(&mut og, 1.0);
+        let onorm = train::clip_grad_norm(&mut og, 1.0);
         oa.step(&mut op, &og)?;
+        let dn = ((norm as f64 - onorm as f64) / (onorm as f64).abs().max(1e-12)).abs();
+        worst_norm = worst_norm.max(dn);
         let dl = ((loss as f64 - ol as f64) / (ol as f64).abs().max(1e-12)).abs();
         let dw = am::rel_dev(&params, &op);
         worst_loss = worst_loss.max(dl);
         worst_w = worst_w.max(dw);
         lines.push(format!(
-            "{}: kronos --gpu: {}: pasul {}: pierderea {:.4} (oracolul {:.4}, abaterea {:.1e}), greutatile fata de oracol {:.1e}, norma gradientului {:.4}; placa {} us, pasul intreg {} ms (urcari + placa + citiri, fara oracol)",
+            "{}: kronos --gpu: {}: pasul {}: pierderea {:.4} (oracolul {:.4}, abaterea {:.1e}), greutatile fata de oracol {:.1e}, norma gradientului {:.4} (oracolul {:.4}, abaterea {:.1e}); placa {} us, pasul intreg {} ms (urcari + placa + citiri, fara oracol)",
             p,
             tag,
             step,
@@ -4857,6 +4911,8 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
             dl,
             dw,
             norm,
+            onorm,
+            dn,
             board_ns.last().copied().unwrap_or(0) / 1000,
             host_us.last().copied().unwrap_or(0) / 1000
         ));
@@ -4870,6 +4926,9 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     journal.push(Event::Value { what: KT_MINI_TOK_S, value: tok_s as u32 });
     journal.push(Event::Value { what: KT_MINI_LOSS_E9, value: (worst_loss * 1e9).min(u32::MAX as f64) as u32 });
     journal.push(Event::Value { what: KT_MINI_W_E9, value: (worst_w * 1e9).min(u32::MAX as f64) as u32 });
+    journal.push(Event::Value { what: KT_MINI_NORM_E9, value: (worst_norm * 1e9).min(u32::MAX as f64) as u32 });
+    journal.push(Event::Value { what: KT_MINI_MIXED, value: u32::from(mixed) });
+    journal.push(Event::Value { what: KT_MINI_TC, value: tc_per_step as u32 });
     if let Some(why) = &stopped {
         lines.push(format!("{}: kronos --gpu: {}: {}; proba oprita, fara reincercare", p, tag, why));
         lines.push(format!("{}: kronos --gpu: {}: NU A TERMINAT (vezi randul de mai sus)", p, tag));
@@ -4890,18 +4949,37 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         tl,
         host_ms
     ));
-    let pass = worst_loss <= TOL && worst_w <= TOL;
+    let pass = if mixed {
+        worst_loss <= ts::MIX_TOL_LOSS_REL && worst_norm <= ts::MIX_TOL_NORM_REL
+    } else {
+        worst_loss <= TOL && worst_w <= TOL
+    };
     journal.push(Event::Value { what: KT_MINI_PASS, value: u32::from(pass) });
-    lines.push(format!(
-        "{}: kronos --gpu: {}: lista placii ({}) fata de oracol: {} — cea mai mare abatere a pierderii {:.1e}, a greutatilor {:.1e} in {} pasi (toleranta 1e-3)",
-        p,
-        tag,
-        label,
-        if pass { "ACELEASI NUMERE" } else { "DIFERA" },
-        worst_loss,
-        worst_w,
-        losses.len()
-    ));
+    if mixed {
+        lines.push(format!(
+            "{}: kronos --gpu: {}: lista placii mixte ({}) fata de oracol: {} — cea mai mare abatere a pierderii {:.1e} (toleranta 1e-3), a normei {:.1e} (toleranta 2e-3); greutatile {:.1e} (doar afisat) in {} pasi; {} lansari mm_tc pe pas",
+            p,
+            tag,
+            label,
+            if pass { "ACELEASI NUMERE (mixt)" } else { "DIFERA" },
+            worst_loss,
+            worst_norm,
+            worst_w,
+            losses.len(),
+            tc_per_step
+        ));
+    } else {
+        lines.push(format!(
+            "{}: kronos --gpu: {}: lista placii ({}) fata de oracol: {} — cea mai mare abatere a pierderii {:.1e}, a greutatilor {:.1e} in {} pasi (toleranta 1e-3)",
+            p,
+            tag,
+            label,
+            if pass { "ACELEASI NUMERE" } else { "DIFERA" },
+            worst_loss,
+            worst_w,
+            losses.len()
+        ));
+    }
     lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, if pass { "TRECE (pasul intreg de antrenare pe placa = oracolul)" } else { "NU TRECE (vezi randurile de mai sus)" }));
     Ok(())
 }

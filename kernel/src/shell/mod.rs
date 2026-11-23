@@ -1007,13 +1007,21 @@ fn gpu(args: &[&str]) {
             match args.get(1).copied() {
                 Some("on") if args.len() == 2 => {
                     crate::drivers::gpu_tur::TRAIN_MINI_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_MINI_MIXED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu antrenare-mini-sim: pornit (SIMULARE: dupa texte, pasul intreg al lui antrenare mini facut de lista placii, langa oracol)\n");
+                }
+                // P6-167: `mixt` = the same, as the mixed step (every matmul on `mm_tc`).
+                Some("mixt") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TRAIN_MINI_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_MINI_MIXED_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu antrenare-mini-sim: pornit, pasul mixt (SIMULARE: dupa texte, pasul intreg al lui antrenare mini cu toate inmultirile pe mm_tc, langa oracol)\n");
                 }
                 Some("off") if args.len() == 2 => {
                     crate::drivers::gpu_tur::TRAIN_MINI_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_MINI_MIXED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu antrenare-mini-sim: oprit\n");
                 }
-                _ => out!("folosire: gpu antrenare-mini-sim on|off\n"),
+                _ => out!("folosire: gpu antrenare-mini-sim on|mixt|off\n"),
             }
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu antrenare-mini-sim: exista doar in build-ul de test (pe stick il porneste doar ciclul, test-placa --antrenare-mini)\n");
