@@ -10,6 +10,7 @@ pub mod antrenare;
 pub mod auto;
 pub mod ciclu;
 pub mod compara;
+pub mod date_bucati;
 pub mod hubcmd;
 pub mod live;
 pub mod lucrare;
@@ -163,7 +164,9 @@ fn dispatch(line: &str) -> bool {
             // P6-121 (C-161 point 3): Kronos's golden step checked in the OS (Cyber-GPU's CPU oracle; the board untouched).
             ["proba"] => antrenare::proba(None).iter().for_each(|r| out!("{}\n", r)),
             ["proba", dir] => antrenare::proba(Some(dir)).iter().for_each(|r| out!("{}\n", r)),
-            _ => out!("folosire: antrenare proba [dosar] (pasul de aur al lui Kronos, pe procesor; implicit {} sau {})\n", antrenare::DIRS[0], antrenare::DIRS[1]),
+            // P6-150 (C-161 point 5): Kronos's training data (chunks + index.json), checked as Kronos does at start-up.
+            ["date", rest @ ..] => date_bucati::command(rest).iter().for_each(|r| out!("{}\n", r)),
+            _ => out!("folosire: antrenare proba [dosar] (pasul de aur al lui Kronos, pe procesor; implicit {} sau {}) | antrenare date [dosar] [--tokenizer <cale>] [--felie <inceput> <numar>] (datele lui Kronos pe bucati)\n", antrenare::DIRS[0], antrenare::DIRS[1]),
         },
         "discuri" => {
             // P6-100 (C-148 point 5): the computer's own disks as seen at start-up (reads only).
