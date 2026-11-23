@@ -5,7 +5,8 @@
 #   tools/test.sh --no-build ...  reuse existing ISOs
 #   CYBER_NET=1 tools/test.sh    also the scenarios marked `internet` (real web sites)
 #   tools/test.sh --stress        5-minute stability test (tests/stress.txt), not run on every push
-#   tools/test.sh --shard K/N     only every N-th scenario starting with the K-th (CI runs the parts in parallel, P6-67)
+#   tools/test.sh --shard K/N     only part K of N (CI runs the parts in parallel, P6-67); P6-156: parts of about the same
+#                                 duration (tools/shard.py + tests/durate-ci.txt), else every N-th scenario
 # Exit code: 0 = all passed, 1 = at least one failed.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/qemu-common.sh"
@@ -40,12 +41,21 @@ mkdir -p "$BUILD"
 trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; echo "${s%"${s##*[![:space:]]}"}"; }
 
 passed=0; failed=0; skipped=0; failed_names=()
+# P6-156: the names of this part, balanced by the measured CI durations; empty = fall back to every N-th scenario.
+SHARD_NAMES=""
+if (( SHARD_N > 1 )) && [[ "$SCENARIOS" == "$ROOT/tests/scenarios.txt" ]]; then
+    SHARD_NAMES="$(python3 "$ROOT/tools/shard.py" "$SHARD_K/$SHARD_N" "$SCENARIOS" "$ROOT/tests/durate-ci.txt" 2>/dev/null | tr '\n' ' ')"
+fi
 index=0
 while IFS='|' read -r name features ending expects screenshot qextra; do
     name="$(trim "$name")"
     [[ -z "$name" || "$name" == \#* ]] && continue
     index=$((index+1))
-    (( (index - 1) % SHARD_N == SHARD_K - 1 )) || continue
+    if [[ -n "$SHARD_NAMES" ]]; then
+        [[ " $SHARD_NAMES" == *" $name "* ]] || continue
+    else
+        (( (index - 1) % SHARD_N == SHARD_K - 1 )) || continue
+    fi
     if (( ${#ONLY[@]} )) && [[ ! " ${ONLY[*]} " == *" $name "* ]]; then continue; fi
     features="$(trim "$features")"; ending="$(trim "$ending")"
     expects="$(trim "$expects")"; screenshot="$(trim "${screenshot:-}")"; qextra="$(trim "${qextra:-}")"
@@ -133,6 +143,6 @@ while IFS='|' read -r name features ending expects screenshot qextra; do
     fi
 done < "$SCENARIOS"
 
-(( SHARD_N > 1 )) && echo "== partea $SHARD_K/$SHARD_N din scenarii"
+(( SHARD_N > 1 )) && echo "== partea $SHARD_K/$SHARD_N din scenarii$([[ -n "$SHARD_NAMES" ]] && echo " (impartite dupa durata, tools/shard.py)")"
 echo "== rezultat: $passed trecute, $failed eșuate${failed_names:+ (${failed_names[*]})}$( (( skipped )) && echo ", $skipped sarite (fara internet)")"
 (( failed == 0 && passed > 0 ))
