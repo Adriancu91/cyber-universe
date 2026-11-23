@@ -129,6 +129,15 @@ const KT_MINI_MIXED: &str = "kt antrenare-mini pasul mixt (1/0)";
 const KT_MINI_NORM_E9: &str = "kt antrenare-mini abaterea maxima a normei fata de oracol (x1e9)";
 /// P6-167: the mixed step: `mm_tc` launches in one step.
 const KT_MINI_TC: &str = "kt antrenare-mini lansari mm_tc pe pas";
+/// P6-169: the resident arena (in VRAM) was used (1/0).
+const KT_MINI_VRAM: &str = "kt antrenare-mini arena in VRAM (1/0)";
+/// P6-169: the board time of the one RAM -> VRAM copy of the resident arena (us).
+const KT_MINI_UP_US: &str = "kt antrenare-mini urcarea arenei o data (us, placa)";
+/// P6-169: bytes written to the board per step after the first (the batch) / read per step (losses + norm).
+const KT_MINI_STEP_UP: &str = "kt antrenare-mini octeti sus pe pas";
+const KT_MINI_STEP_DOWN: &str = "kt antrenare-mini octeti jos pe pas";
+/// P6-169: the whole step in us (the resident step is a few ms; the ms row rounds it away).
+const KT_MINI_HOST_US: &str = "kt antrenare-mini us pe pas intreg (median, fara oracol)";
 /// P6-112 (C-157 point 2b): the note written (with every held row) right before the texts, outside position 0's clock.
 const GEN_STARTS: &str = "kt generarea incepe (randurile tinute sunt pe stick; pana la final randurile de rutina raman in memorie)";
 /// P6-112: routine rows dropped from the memory ring during the generation (0 = all of them reached the stick).
@@ -4727,6 +4736,10 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     subs: &mut u32,
     ctx: &CopyCtx,
 ) -> GpuResult<()> {
+    // P6-169: the resident arena (in VRAM) is its own probe.
+    if super::gpu_tur::TRAIN_MINI_VRAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+        return train_mini_resident(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx);
+    }
     use crate::shell::antrenare_mini as am;
     use gpu_compute::train::{self, AdamW, Batch, Recipe};
     use nvidia_ga104::train_step::{self as ts, Outcome, Plan};
@@ -4955,6 +4968,7 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     journal.push(Event::Value { what: KT_MINI_W_E9, value: (worst_w * 1e9).min(u32::MAX as f64) as u32 });
     journal.push(Event::Value { what: KT_MINI_NORM_E9, value: (worst_norm * 1e9).min(u32::MAX as f64) as u32 });
     journal.push(Event::Value { what: KT_MINI_MIXED, value: u32::from(mixed) });
+    journal.push(Event::Value { what: KT_MINI_VRAM, value: 0 });
     journal.push(Event::Value { what: KT_MINI_TC, value: tc_per_step as u32 });
     if let Some(why) = &stopped {
         lines.push(format!("{}: kronos --gpu: {}: {}; proba oprita, fara reincercare", p, tag, why));
@@ -5008,6 +5022,322 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         ));
     }
     lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, if pass { "TRECE (pasul intreg de antrenare pe placa = oracolul)" } else { "NU TRECE (vezi randurile de mai sus)" }));
+    Ok(())
+}
+
+/// P6-169 (center's note 23 Nov 23:36, point 2; cyber-gpu note C-160_P8, `f2e5097`): the step of `antrenare mini` as in
+/// [`train_mini_probe`] (F32, the 13 programs of os-380), but with the **resident arena**: the plan's arena (26.4 MiB:
+/// weights, gradient, m, v, activations) lives in VRAM for the whole run. Before step 1 the CPU fills it in the pinned
+/// host run (`Plan::uploads`) and one launch of the copy program (on the board since I11, the upload of #513's
+/// weights) carries it RAM → VRAM; between steps only `Plan::batch_uploads` (~1.3 KiB, written straight into VRAM) and,
+/// after every step, only `Plan::step_reads` (the per-row losses + the norm, 260 B, read through the VRAM window of
+/// os-345). At the end one copy VRAM → RAM brings the weights back for the oracle. The oracle (F32, CPU) runs beside
+/// it: the loss and the norm at every step, the weights at the end. New for the board: the arena in VRAM and the two
+/// large copies; no new program, no new register.
+#[allow(clippy::too_many_arguments)]
+fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    doorbell: &mut Bell<'_, V>,
+    subs: &mut u32,
+    ctx: &CopyCtx,
+) -> GpuResult<()> {
+    use crate::shell::antrenare_mini as am;
+    use gpu_compute::train::{self, AdamW, Batch, Recipe};
+    use nvidia_ga104::train_step::{self as ts, Outcome, Plan};
+    const TOL: f64 = 1e-3;
+    let (bsz, tl) = (2usize, 32usize);
+    // SIMULARE: 2 steps, so the second batch goes through `batch_uploads` too.
+    let steps: usize = if permit.is_some() { 10 } else { 2 };
+    let label = if permit.is_some() { "placa" } else { "SIMULARE" };
+    let tag = "antrenare mini pe placa (arena in VRAM)";
+    journal.push(Event::Value { what: KT_MINI_VRAM, value: 1 });
+    journal.push(Event::Value { what: KT_MINI_MIXED, value: 0 });
+    let data = match am::board_batches(bsz, tl, steps) {
+        Ok(d) => d,
+        Err(e) => {
+            lines.push(format!("{}: kronos --gpu: {}: NU A RULAT: {}; nimic trimis", p, tag, e));
+            journal.push(Event::Value { what: KT_MINI_PASS, value: 0 });
+            return Err(bad("antrenare-mini: datele"));
+        }
+    };
+    if ts::check_programs().is_err() {
+        lines.push(format!("{}: kronos --gpu: {}: SHA-256 al unui program nu e cel din nota: nimic trimis", p, tag));
+        return Err(bad("antrenare-mini: SHA-256 gresit"));
+    }
+    let a = am::arch(am::VOCAB, tl);
+    let (x0, y0) = data.batches.first().ok_or(bad("antrenare-mini: niciun pas"))?;
+    // The shape first (any base): the resident arena's size and every batch's launch count.
+    let probe0 = Plan::new(a, bsz, tl, x0, nvidia_ga104::mmu::VA_BASE)?.resident()?;
+    let mut n_launch = 0usize;
+    for (x, _) in &data.batches {
+        let pl = probe0.rebatch(x)?;
+        n_launch = n_launch.max(pl.launches_per_step(Recipe::AdamW513));
+    }
+    let arena_bytes = probe0.bytes().next_multiple_of(PAGE);
+    let zone_bytes = (n_launch as u64 * ts::SLOT).next_multiple_of(PAGE);
+    if 16 * (n_launch as u64 + 1) > ctx.rec.size || n_launch as u32 + 1 > STRIDE {
+        return Err(bad("antrenare-mini: prea putine inregistrari"));
+    }
+    let varena = map_vram(st, arena_bytes)?;
+    let plan0 = Plan::new(a, bsz, tl, x0, varena.va)?.resident()?;
+    if plan0.bytes() > arena_bytes || plan0.programs() != probe0.programs() {
+        return Err(bad("antrenare-mini: planul rezident difera intre adrese"));
+    }
+    let Some(host) = ram_vram_host((arena_bytes + zone_bytes) / PAGE) else {
+        lines.push(format!("{}: kronos --gpu: {}: NU A RULAT: nu am {} KiB RAM contigua sub 4 GiB; nimic trimis", p, tag, (arena_bytes + zone_bytes) >> 10));
+        journal.push(Event::Value { what: KT_MINI_PASS, value: 0 });
+        return Err(GpuError::OutOfMemory { requested: arena_bytes + zone_bytes });
+    };
+    let traffic = plan0.traffic();
+    let count: usize = a.tensors().iter().map(|t| t.elements()).sum();
+    lines.push(format!(
+        "{}: kronos --gpu: {} ({}): modelul vocabular {}, context {}, E {}, {} capete, {} straturi ({} greutati), lot {} x {}, AdamW lr 1e-3, taiere 1,0; {}; {} programe (SHA-256 verificate), {} lansari pe pas, cate o trimitere; arena {} KiB in VRAM (facuta o data), zona de control {} KiB in RAM fixata; {} pasi, oracolul pe procesor la fiecare pas (pierderea, norma), greutatile la sfarsit",
+        p,
+        tag,
+        label,
+        a.vocab,
+        a.ctx,
+        a.n_emb,
+        a.heads,
+        a.layers,
+        count,
+        bsz,
+        tl,
+        data.source,
+        plan0.programs().len(),
+        n_launch,
+        arena_bytes >> 10,
+        zone_bytes >> 10,
+        steps
+    ));
+    lines.push(format!(
+        "{}: kronos --gpu: {}: octeti pe legatura: o data {} KiB sus; pe pas {} B sus / {} B jos (drumul os-380: {} KiB sus / {} KiB jos pe pas); la sfarsit {} KiB jos",
+        p,
+        tag,
+        traffic.once_up >> 10,
+        traffic.step_up,
+        traffic.step_down,
+        traffic.today_step_up >> 10,
+        traffic.today_step_down >> 10,
+        traffic.final_down >> 10
+    ));
+    let mut progs: Vec<(ts::Prog, Mapping)> = Vec::with_capacity(plan0.programs().len());
+    for &prog in plan0.programs().iter() {
+        let pm = map_vram(st, prog.code().len() as u64)?;
+        put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
+        progs.push((prog, pm));
+    }
+    let pages = |first: u64, n: u64| (first..first + n).map(|i| host + i * PAGE).collect::<Vec<u64>>();
+    let stage = st.mem.alloc_sys_mapped(&pages(0, arena_bytes / PAGE))?;
+    let ctl = st.mem.alloc_sys_mapped(&pages(arena_bytes / PAGE, zone_bytes / PAGE))?;
+    if !stage.va.is_multiple_of(PAGE) || !ctl.va.is_multiple_of(PAGE) {
+        return Err(bad("antrenare-mini: zona RAM nu e aliniata la 4 KiB"));
+    }
+    let mut maps = ctx.maps.clone();
+    maps.push(varena);
+    maps.extend(progs.iter().map(|(_, pm)| *pm));
+    let sys = [ctx.sys.clone(), stage.clone(), ctl.clone()];
+    let prog_va = |want: ts::Prog| progs.iter().find(|(q, _)| *q == want).map_or(0, |(_, pm)| pm.va);
+    // One launch of the copy program: `len` bytes from `src` to `dst` (GPU VAs), its own submission; the board time.
+    let copy = |st: &mut GpuState, vbar: &mut V, clock: &mut K, journal: &mut Journal, l: &mut Launched, doorbell: &mut Bell<'_, V>, subs: &mut u32, src: u64, dst: u64, len: u64| -> GpuResult<Option<u64>> {
+        let (cb_va, cb_pa) = (ctx.launches.va, ctx.launches.pa);
+        {
+            let w = st.mem.writer_mut();
+            put_bytes(w, cb_pa, &transfer::copy_cbuf(src, dst, len)?)?;
+            put_bytes(w, cb_pa + 256, &transfer::copy_qmd(ctx.copy_va, cb_va, len)?.to_bytes()?)?;
+            put_bytes(w, ctx.rec.pa, &[0; 32])?;
+        }
+        let first = TOKEN_FIRST + STRIDE * *subs;
+        let mut words = alloc::vec![0u32; transfer::sequence_words(1)];
+        let mut pb = PushBuf::new(&mut words);
+        transfer::encode_sequence(&mut pb, &[cb_va + 256], ctx.rec.va, first)?;
+        let nw = pb.len();
+        match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, 2, first + 1, &maps, &sys, doorbell)? {
+            Ok(b) => {
+                *subs += 1;
+                Ok(Some(transfer::analyze_sequence(&b, 1, first)?[0]))
+            }
+            Err(_) => Ok(None),
+        }
+    };
+    // 1. The arena, once: filled in the host run, then RAM → VRAM.
+    let params0 = am::initial(&a, 0);
+    ram_vram_bytes(host, arena_bytes).fill(0);
+    for (va, bytes) in plan0.uploads(&params0, x0, y0)? {
+        ram_vram_bytes(host + (va - varena.va), bytes.len() as u64).copy_from_slice(&bytes);
+    }
+    let Some(up_ns) = copy(st, vbar, clock, journal, l, doorbell, subs, stage.va, varena.va, arena_bytes)? else {
+        lines.push(format!("{}: kronos --gpu: {}: urcarea arenei RAM -> VRAM nu s-a terminat; proba oprita, fara reincercare", p, tag));
+        journal.push(Event::Value { what: KT_MINI_PASS, value: 0 });
+        return Err(GpuError::Timeout { waited_us: WAIT_US });
+    };
+    journal.push(Event::Value { what: KT_MINI_UP_US, value: (up_ns / 1000) as u32 });
+    lines.push(format!("{}: kronos --gpu: {}: arena urcata o data RAM -> VRAM: {} KiB in {} us (placa)", p, tag, arena_bytes >> 10, up_ns / 1000));
+    // The VRAM reads after a step: the per-row losses and the norm, through the VRAM window.
+    let read_vram_f32s = |st: &mut GpuState, vbar: &mut V, journal: &mut Journal, va: u64, n: usize| -> GpuResult<Vec<f32>> {
+        let GpuState { zone, .. } = &*st;
+        let mut vw = nvidia_ga104::vram_window::VramWindow::new(&mut *vbar, &mut *journal, permit, zone.vram_size, &zone.protected)?;
+        let pa = varena.pa + (va - varena.va);
+        let r = (0..n).map(|i| vw.read_u32(pa + 4 * i as u64).map(f32::from_bits)).collect::<GpuResult<Vec<f32>>>();
+        let back = vw.restore();
+        r.and_then(|v| back.map(|_| v))
+    };
+    let adam = AdamW::new(&params0, 1e-3, 0.9, 0.999, 1e-8, 0.1);
+    let (mut op, mut oa) = (params0.clone(), adam.clone());
+    let (mut worst_loss, mut worst_norm) = (0.0f64, 0.0f64);
+    let (mut board_ns, mut host_us, mut losses): (Vec<u64>, Vec<u64>, Vec<f32>) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut bytes_up, mut bytes_down) = (0u64, 0u64);
+    let mut stopped: Option<String> = None;
+    for (k, (x, y)) in data.batches.iter().enumerate() {
+        let step = k as u32 + 1;
+        let t0 = crate::time::since_boot_us();
+        let plan = plan0.rebatch(x)?;
+        if plan.w != plan0.w || plan.m != plan0.m || plan.v != plan0.v || plan.loss_rows != plan0.loss_rows || plan.res != plan0.res {
+            return Err(bad("antrenare-mini: adresele planului rezident s-au mutat"));
+        }
+        if k > 0 {
+            let w = st.mem.writer_mut();
+            for (va, bytes) in plan.batch_uploads(x, y)? {
+                bytes_up += bytes.len() as u64;
+                put_bytes(w, varena.pa + (va - varena.va), &bytes)?;
+            }
+        }
+        let list = plan.step(Recipe::AdamW513, &adam, step)?;
+        let (zb, qmds) = ts::pack(&list, prog_va, ctl.va)?;
+        if zb.len() as u64 > zone_bytes {
+            return Err(bad("antrenare-mini: zona de control prea mare"));
+        }
+        ram_write(&ctl, &zb);
+        let n_list = list.len();
+        put_bytes(st.mem.writer_mut(), ctx.rec.pa, &alloc::vec![0u8; 16 * (n_list + 1)])?;
+        let first = TOKEN_FIRST + STRIDE * *subs;
+        let mut words = alloc::vec![0u32; transfer::sequence_words_fresh(n_list)];
+        let mut pb = PushBuf::new(&mut words);
+        transfer::encode_sequence_fresh(&mut pb, &qmds, ctx.rec.va, first)?;
+        let nw = pb.len();
+        let last = first + n_list as u32;
+        let b = match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, n_list as u64 + 1, last, &maps, &sys, doorbell)? {
+            Ok(b) => b,
+            Err(got) => {
+                stopped = Some(format!("placa nu a terminat la pasul {} (ultima inregistrare {:#x}, asteptat {:#x})", step, got, last));
+                break;
+            }
+        };
+        *subs += 1;
+        board_ns.push(transfer::analyze_sequence(&b, n_list, first)?.iter().sum());
+        let [(lr_va, lr_n), (res_va, res_n)] = plan.step_reads();
+        let rows = read_vram_f32s(st, vbar, journal, lr_va, (lr_n / 4) as usize)?;
+        let norm = read_vram_f32s(st, vbar, journal, res_va, (res_n / 4) as usize)?[0];
+        bytes_down += lr_n + res_n;
+        let loss = Outcome::mean_loss(&rows);
+        if let Some(us) = t0.zip(crate::time::since_boot_us()).map(|(p0, p1)| p1.saturating_sub(p0)) {
+            host_us.push(us);
+        }
+        if !norm.is_finite() || !loss.is_finite() {
+            stopped = Some(format!("pasul {}: pierderea {:?} / norma gradientului {:?} nu e un numar", step, loss, norm));
+            break;
+        }
+        losses.push(loss);
+        let batch = Batch { inputs: x, targets: y, batch: bsz, len: tl };
+        let (ol, mut og) = train::loss_and_grad(&a, &op, &batch)?;
+        let onorm = train::clip_grad_norm(&mut og, 1.0);
+        oa.step(&mut op, &og)?;
+        let dn = ((norm as f64 - onorm as f64) / (onorm as f64).abs().max(1e-12)).abs();
+        let dl = ((loss as f64 - ol as f64) / (ol as f64).abs().max(1e-12)).abs();
+        worst_norm = worst_norm.max(dn);
+        worst_loss = worst_loss.max(dl);
+        lines.push(format!(
+            "{}: kronos --gpu: {}: pasul {}: pierderea {:.4} (oracolul {:.4}, abaterea {:.1e}), norma gradientului {:.4} (oracolul {:.4}, abaterea {:.1e}); placa {} us, pasul intreg {} us (lotul sus + placa + pierderile jos, fara oracol)",
+            p,
+            tag,
+            step,
+            loss,
+            ol,
+            dl,
+            norm,
+            onorm,
+            dn,
+            board_ns.last().copied().unwrap_or(0) / 1000,
+            host_us.last().copied().unwrap_or(0)
+        ));
+    }
+    // 2. At the end: VRAM → RAM once, the weights against the oracle's.
+    let mut worst_w = f64::INFINITY;
+    if stopped.is_none() {
+        match copy(st, vbar, clock, journal, l, doorbell, subs, varena.va, stage.va, arena_bytes)? {
+            Some(down_ns) => {
+                let wb = ts::f32s(ram_vram_bytes(host + (plan0.w - varena.va), 4 * plan0.n_params as u64));
+                let board_w = plan0.unflat(&wb)?;
+                worst_w = am::rel_dev(&board_w, &op);
+                lines.push(format!(
+                    "{}: kronos --gpu: {}: arena adusa inapoi VRAM -> RAM la sfarsit in {} us (placa); greutatile dupa {} pasi fata de oracol: {:.1e}",
+                    p,
+                    tag,
+                    down_ns / 1000,
+                    losses.len(),
+                    worst_w
+                ));
+            }
+            None => stopped = Some(String::from("copia arenei VRAM -> RAM de la sfarsit nu s-a terminat")),
+        }
+    }
+    let us = median_us(&board_ns);
+    let host_med_us = median_us(&host_us.iter().map(|u| u * 1000).collect::<Vec<u64>>());
+    let tok_s = if us > 0 { (bsz * tl) as u64 * 1_000_000 / us } else { 0 };
+    let full_tok_s = if host_med_us > 0 { (bsz * tl) as u64 * 1_000_000 / host_med_us } else { 0 };
+    let per_step = |b: u64| if steps > 1 { b / (steps as u64 - 1).max(1) } else { b };
+    journal.push(Event::Value { what: KT_MINI_STEPS, value: losses.len() as u32 });
+    journal.push(Event::Value { what: KT_MINI_US, value: us as u32 });
+    journal.push(Event::Value { what: KT_MINI_HOST_MS, value: (host_med_us / 1000) as u32 });
+    journal.push(Event::Value { what: KT_MINI_HOST_US, value: host_med_us as u32 });
+    journal.push(Event::Value { what: KT_MINI_TOK_S, value: tok_s as u32 });
+    journal.push(Event::Value { what: KT_MINI_LOSS_E9, value: (worst_loss * 1e9).min(u32::MAX as f64) as u32 });
+    journal.push(Event::Value { what: KT_MINI_W_E9, value: (worst_w * 1e9).min(u32::MAX as f64) as u32 });
+    journal.push(Event::Value { what: KT_MINI_NORM_E9, value: (worst_norm * 1e9).min(u32::MAX as f64) as u32 });
+    journal.push(Event::Value { what: KT_MINI_STEP_UP, value: per_step(bytes_up) as u32 });
+    journal.push(Event::Value { what: KT_MINI_STEP_DOWN, value: (bytes_down / losses.len().max(1) as u64) as u32 });
+    if let Some(why) = &stopped {
+        lines.push(format!("{}: kronos --gpu: {}: {}; proba oprita, fara reincercare", p, tag, why));
+        lines.push(format!("{}: kronos --gpu: {}: NU A TERMINAT (vezi randul de mai sus)", p, tag));
+        journal.push(Event::Value { what: KT_MINI_PASS, value: 0 });
+        return Err(GpuError::Timeout { waited_us: WAIT_US });
+    }
+    if let Some(l0) = losses.first() {
+        lines.push(format!("{}: kronos --gpu: {}: pierderea la pornire {:.4} (ghicit la intamplare: ln {} = {:.4})", p, tag, l0, a.vocab, am::ln(a.vocab as f64)));
+    }
+    lines.push(format!(
+        "{}: kronos --gpu: {}: timpul pe pas (median, {} pasi): placa {} us = {} simboluri/s la antrenare (lot {} x {}); pasul intreg {} us = {} simboluri/s (lotul sus, placa, pierderile + norma jos; fara oracol)",
+        p,
+        tag,
+        losses.len(),
+        us,
+        tok_s,
+        bsz,
+        tl,
+        host_med_us,
+        full_tok_s
+    ));
+    let pass = worst_loss <= TOL && worst_norm <= TOL && worst_w <= TOL;
+    journal.push(Event::Value { what: KT_MINI_PASS, value: u32::from(pass) });
+    lines.push(format!(
+        "{}: kronos --gpu: {}: lista placii ({}) fata de oracol: {} — cea mai mare abatere a pierderii {:.1e}, a normei {:.1e} in {} pasi, a greutatilor la sfarsit {:.1e} (toleranta 1e-3)",
+        p,
+        tag,
+        label,
+        if pass { "ACELEASI NUMERE" } else { "DIFERA" },
+        worst_loss,
+        worst_norm,
+        losses.len(),
+        worst_w
+    ));
+    lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, if pass { "TRECE (antrenarea cu arena in VRAM = oracolul)" } else { "NU TRECE (vezi randurile de mai sus)" }));
     Ok(())
 }
 

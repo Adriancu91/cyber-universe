@@ -159,3 +159,4 @@ kronos-gpu-ram-vram 200
 antrenare-mini-placa-kronos 640
 antrenare-mini-placa-mixt 700
 kronos-gpu-adam-ram 450
+kronos-gpu-antrenare-mini-vram 780
