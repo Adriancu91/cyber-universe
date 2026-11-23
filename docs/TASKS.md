@@ -533,6 +533,8 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-161** PREDARE Cyber-GPU `9359f21` (C-157, punctul lui Adrian din 23 nov, a): **proba vitezei RAM ↔ VRAM cu motorul de copiere** — `test-placa --ram-vram`; nou pentru placă: doar motorul de copiere (un mesaj RM + metodele pe subcanalul 4). Plan: `docs/plans/P6-161.md`.
   Gata (2026-11-23 ~16:35 RO): `kronos-gpu-ram-vram` (nou; SIMULARE: obiectul alocat, 10 grupuri × 3, octeți corecți, TRECE), `boot`, `gpu`, `gpu-sim`, `kronos-gpu-mm-tc`, `ghpush` — 6/6.
 - [x] **P6-162** C-161 punctul 5 (C-158 p.10): **`antrenare mini --placa-sim` pe vocabularul lui Kronos (16 384)** — lista plăcii (SIMULARE) pe datele de probă ale lui Kronos, cu stratul de ieșire mare (logits 16 384), față de oracol: o rulare de măsură + scenariu `antrenare-mini-placa-kronos`; nimic pentru placa reală. Plan: `docs/plans/P6-162.md`.
+
+- [~] **P6-163** PREDARE Cyber-GPU `ab9b537` (C-157, nota ADAM_RAM): **AdamW cu m, v în RAM, strat cu strat** — `test-placa --ram-vram --adam-ram`; nou pentru placă: motorul de copiere în pas + așteptarea pe semafor. Plan: `docs/plans/P6-163.md`.
   Gata (2026-11-23 ~18:30 RO): `antrenare-mini-placa-kronos` (nou, 18 verificări; vocabular 16 384, lot 2 × 32: pasul 1 = 9,7026 identic cu oracolul, greutățile ≤ 6,5e-5, ACELEASI NUMERE la `simpla` 2 pași și `placi-p` 1 pas; arena 26,4 MiB, din care logits 8,0; ~110 s pe pas în QEMU), `antrenare-mini-placa`, `boot` trec.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
