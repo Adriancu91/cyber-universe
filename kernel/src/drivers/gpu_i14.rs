@@ -3481,6 +3481,15 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
             out.extend_from_slice(&ram_read_at(&buf, o as u64, n as u64));
         }
         probe.add(ap::judge_set(i, &out, [&ns[..1], &ns[1..2], &ns[2..]])?);
+        // P6-147 (note C-157_P2l): the time of each launch on the small sets too (fixed costs vs work on the board).
+        const T: [&str; 3] = ["kt atentie set: timp fwd (ns)", "kt atentie set: timp back0 (ns)", "kt atentie set: timp back1 (ns)"];
+        for (k, what) in T.iter().enumerate() {
+            journal.push(Event::Value { what: *what, value: u32::try_from(ns[k]).unwrap_or(u32::MAX) });
+        }
+        lines.push(format!(
+            "{}: kronos --gpu: kt atentie set {} ({}): timp fwd {} ns, back0 {} ns, back1 {} ns",
+            p, i, set.name, ns[0], ns[1], ns[2]
+        ));
     }
     if stopped.is_none() {
         match attn_tile_big(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, &maps, prog_va, &zones)? {
