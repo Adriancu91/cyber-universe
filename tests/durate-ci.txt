@@ -7,6 +7,7 @@ antrenare-control 230
 antrenare-date 51
 antrenare-lot 30
 antrenare-mini 450
+antrenare-mini-placa 240
 appnet 27
 appwindow 26
 auto 26

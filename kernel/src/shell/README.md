@@ -98,3 +98,8 @@
   scrise (`train::TOL_*`) → `antrenare proba: ACELEASI NUMERE / DIFERITE / NU A RULAT`. Depinde de `gpu-compute` (cyber-gpu) și de
   datele de pe disc (`/disk/antrenare/pas_de_aur_mic`, apoi `/usb/…`). Inspirația: testul T151 al Cyber-GPU (cod propriu). Testat în
   scenariul `antrenare` (+ `self_test` în `ghpush`).
+- **`antrenare mini … --placa-sim [--fara-oracol]` (P6-158, C-161 punctul 5, `antrenare_sim.rs`, doar build-ul `test-gpu-sim`):**
+  pasul lui `antrenare mini` (P6-157) făcut de lista plăcii (`nvidia_ga104::train_step::Plan::step`, 13 programe, 75 de
+  lansări, o trimitere pe pas) pe placa simulată (`gpu_sim::cmdproc`), cu starea AdamW a rulării urcată în arenă; oracolul
+  `gpu_compute::train` merge alături pe aceleași loturi → `ACELEASI NUMERE / DIFERA` (toleranța 1e-3). Depinde de `nvidia-ga104`,
+  `gpu-sim`, `gpu-compute` (cyber-gpu). Inspirația: testul T165 al Cyber-GPU (cod propriu). Testat în scenariul `antrenare-mini-placa`.

@@ -8,6 +8,8 @@ use alloc::{format, string::String, vec::Vec};
 mod analiza;
 pub mod antrenare;
 pub mod antrenare_mini;
+#[cfg(feature = "test-gpu-sim")]
+pub mod antrenare_sim;
 pub mod auto;
 pub mod ciclu;
 pub mod compara;

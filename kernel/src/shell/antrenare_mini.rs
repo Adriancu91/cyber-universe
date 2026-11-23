@@ -17,7 +17,7 @@ use gpu_compute::train::{self, AdamW, Arch, Batch};
 use super::date_bucati::{self, Mt19937};
 use super::punct_control::{self, Checkpoint};
 
-const USAGE: &str = "folosire: antrenare mini [dosar] [--pasi <1..1000>] [--lot <numar 1..16> <context 1..256>] [--vocabular <64..16384>] [--samanta <s>] [--lr <x>] [--salveaza <cale>] [--din <cale>]";
+const USAGE: &str = "folosire: antrenare mini [dosar] [--pasi <1..1000>] [--lot <numar 1..16> <context 1..256>] [--vocabular <64..16384>] [--samanta <s>] [--lr <x>] [--salveaza <cale>] [--din <cale>] [--placa-sim [--fara-oracol]]";
 
 /// Kronos's vocabulary (#513 and #651: 16 384 symbols) — the default; a smaller one only for data whose symbols fit
 /// (the QEMU test: on the processor without KVM one step with 16 384 takes ~50 s).
@@ -68,6 +68,16 @@ fn ln(mut x: f64) -> f64 {
         term *= z * z;
     }
     2.0 * sum + k * core::f64::consts::LN_2
+}
+
+/// The largest relative difference between two sets of tensors: max |a − b| / max |b|.
+fn rel_dev(a: &[Vec<f32>], b: &[Vec<f32>]) -> f64 {
+    let (mut diff, mut scale) = (0.0f64, 1e-12f64);
+    for (x, y) in a.iter().flatten().zip(b.iter().flatten()) {
+        diff = diff.max((*x as f64 - *y as f64).abs());
+        scale = scale.max((*y as f64).abs());
+    }
+    diff / scale
 }
 
 fn mean(v: &[f32]) -> f64 {
@@ -165,6 +175,8 @@ pub fn command(args: &[&str]) -> Vec<String> {
         Option<&str>,
         Option<&str>,
     ) = (None, 20, None, None, None, None, None, None);
+    // P6-158: the step done by the board's list on the simulated board (test builds), with the oracle beside it.
+    let (mut board_sim, mut no_oracle) = (false, false);
     let mut i = 0;
     while i < args.len() {
         let next = |k: usize| args.get(i + k).copied();
@@ -212,6 +224,14 @@ pub fn command(args: &[&str]) -> Vec<String> {
                 from = next(1);
                 i += 2;
             }
+            "--placa-sim" => {
+                board_sim = true;
+                i += 1;
+            }
+            "--fara-oracol" => {
+                no_oracle = true;
+                i += 1;
+            }
             x if !x.starts_with("--") && dir.is_none() => {
                 dir = Some(x);
                 i += 1;
@@ -223,6 +243,13 @@ pub fn command(args: &[&str]) -> Vec<String> {
         rows.push(format!("antrenare mini: NU A RULAT: {}", why));
         rows
     };
+    if no_oracle && !board_sim {
+        return alloc::vec![String::from(USAGE)];
+    }
+    #[cfg(not(feature = "test-gpu-sim"))]
+    if board_sim {
+        return fail(rows, String::from("--placa-sim exista doar in build-ul de simulare (test-gpu-sim); pe placa reala doar cu o comanda noua"));
+    }
 
     // The data, checked as Kronos checks it at start-up.
     let dir = match dir {
@@ -280,9 +307,35 @@ pub fn command(args: &[&str]) -> Vec<String> {
     // Kronos: one batch generator per training hour, seeded with `samanta` (first hour) or `samanta·1 000 003 + pasi_total`.
     let seed = date_bucati::batch_seed(st.samanta, st.done);
     rows.push(format!(
-        "antrenare mini: modelul: vocabular {}, context {}, E {}, {} capete, {} straturi ({} greutati); lot {} x {}; AdamW lr {}, taiere la 1,0; loturile ca Kronos (generatorul cu {}); oracolul Cyber-GPU pe procesor (fara placa)",
-        a.vocab, a.ctx, a.n_emb, a.heads, a.layers, count, st.numar, st.context, st.lr, seed
+        "antrenare mini: modelul: vocabular {}, context {}, E {}, {} capete, {} straturi ({} greutati); lot {} x {}; AdamW lr {}, taiere la 1,0; loturile ca Kronos (generatorul cu {}); {}",
+        a.vocab,
+        a.ctx,
+        a.n_emb,
+        a.heads,
+        a.layers,
+        count,
+        st.numar,
+        st.context,
+        st.lr,
+        seed,
+        match (board_sim, no_oracle) {
+            (false, _) => "oracolul Cyber-GPU pe procesor (fara placa)",
+            (true, false) => "pasul = lista placii (13 programe, SIMULARE, fara placa reala); oracolul alaturi, pe aceleasi loturi",
+            (true, true) => "pasul = lista placii (13 programe, SIMULARE, fara placa reala); fara oracol",
+        }
     ));
+    #[cfg(feature = "test-gpu-sim")]
+    let mut sim = if board_sim {
+        match super::antrenare_sim::SimBoard::new() {
+            Ok(b) => Some(b),
+            Err(e) => return fail(rows, format!("placa simulata: {}", e)),
+        }
+    } else {
+        None
+    };
+    // The oracle's own copy, from the same start (only beside the simulated board).
+    let mut oracle: Option<(Vec<Vec<f32>>, AdamW)> = (board_sim && !no_oracle).then(|| (st.params.clone(), st.adam.clone()));
+    let (mut worst_loss, mut worst_w) = (0.0f64, 0.0f64);
 
     let mut g = Mt19937::new(seed);
     let mut losses: Vec<f32> = Vec::with_capacity(steps);
@@ -299,28 +352,67 @@ pub fn command(args: &[&str]) -> Vec<String> {
             return fail(rows, format!("lotul pasului {}: simbolul {} e in afara vocabularului ({})", st.done + 1, bad, st.vocab));
         }
         let b = Batch { inputs: &x, targets: &y, batch: st.numar, len: st.context };
-        let (loss, mut grads) = match train::loss_and_grad(&a, &st.params, &b) {
-            Ok(r) => r,
-            Err(e) => return fail(rows, format!("pasul {}: {:?}", st.done + 1, e)),
+        let mut extra = String::new();
+        #[cfg(feature = "test-gpu-sim")]
+        let board_out = match sim.as_mut() {
+            Some(board) => match board.step(&a, (st.numar, st.context), &x, &y, &mut st.params, &mut st.adam) {
+                Ok(o) => Some((o.loss, o.norm, o.launches)),
+                Err(e) => return fail(rows, format!("pasul {} pe placa simulata: {}", st.done + 1, e)),
+            },
+            None => None,
         };
-        if !loss.is_finite() {
-            return fail(rows, format!("pasul {}: pierderea nu e un numar ({})", st.done + 1, loss));
-        }
-        let norm = train::clip_grad_norm(&mut grads, 1.0);
-        if let Err(e) = st.adam.step(&mut st.params, &grads) {
-            return fail(rows, format!("pasul {}: AdamW: {:?}", st.done + 1, e));
-        }
+        #[cfg(not(feature = "test-gpu-sim"))]
+        let board_out: Option<(f32, f32, usize)> = None;
+        let (loss, norm) = match board_out {
+            Some((loss, norm, n)) => {
+                if !loss.is_finite() {
+                    return fail(rows, format!("pasul {}: pierderea nu e un numar ({})", st.done + 1, loss));
+                }
+                extra = format!(", placa simulata: {} lansari", n);
+                if let Some((op, oa)) = oracle.as_mut() {
+                    let (ol, mut og) = match train::loss_and_grad(&a, op, &b) {
+                        Ok(r) => r,
+                        Err(e) => return fail(rows, format!("pasul {} (oracolul): {:?}", st.done + 1, e)),
+                    };
+                    train::clip_grad_norm(&mut og, 1.0);
+                    if let Err(e) = oa.step(op, &og) {
+                        return fail(rows, format!("pasul {} (oracolul): AdamW: {:?}", st.done + 1, e));
+                    }
+                    let dl = ((loss as f64 - ol as f64) / (ol as f64).abs().max(1e-12)).abs();
+                    let dw = rel_dev(&st.params, op);
+                    worst_loss = worst_loss.max(dl);
+                    worst_w = worst_w.max(dw);
+                    extra = format!("{}; oracolul: {:.4} (abaterea pierderii {:.1e}, a greutatilor {:.1e})", extra, ol, dl, dw);
+                }
+                (loss, norm)
+            }
+            None => {
+                let (loss, mut grads) = match train::loss_and_grad(&a, &st.params, &b) {
+                    Ok(r) => r,
+                    Err(e) => return fail(rows, format!("pasul {}: {:?}", st.done + 1, e)),
+                };
+                if !loss.is_finite() {
+                    return fail(rows, format!("pasul {}: pierderea nu e un numar ({})", st.done + 1, loss));
+                }
+                let norm = train::clip_grad_norm(&mut grads, 1.0);
+                if let Err(e) = st.adam.step(&mut st.params, &grads) {
+                    return fail(rows, format!("pasul {}: AdamW: {:?}", st.done + 1, e));
+                }
+                (loss, norm)
+            }
+        };
         st.done += 1;
         losses.push(loss);
         let ms = t0.zip(crate::time::since_boot_us()).map_or(0, |(p, q)| q.saturating_sub(p) / 1000);
         if steps <= 20 || k % (steps / 10).max(1) == 0 || k + 1 == steps {
             rows.push(format!(
-                "antrenare mini: pasul {}: pierderea {:.4}, norma gradientului {:.4}, lotul {}, {} ms",
+                "antrenare mini: pasul {}: pierderea {:.4}, norma gradientului {:.4}, lotul {}, {} ms{}",
                 st.done,
                 loss,
                 norm,
                 date_bucati::batch_fingerprint(&x, &y),
-                ms
+                ms,
+                extra
             ));
         }
     }
@@ -340,6 +432,19 @@ pub fn command(args: &[&str]) -> Vec<String> {
         rows.push(format!(
             "antrenare mini: NU SCADE: pierderea medie {:.4} (primii {} pasi) -> {:.4} (ultimii {}); {} pasi in {} ms",
             first, w, last, w, steps, total_ms
+        ));
+    }
+    if oracle.is_some() {
+        // The simulated board's programs round as the board does (approximate units modelled correctly rounded); the
+        // oracle in f32/f64 on the processor. Tolerance: the hub's for the golden step (loss 1e-3 relative, weights
+        // 1e-3 of the largest weight).
+        let same = worst_loss <= 1e-3 && worst_w <= 1e-3;
+        rows.push(format!(
+            "antrenare mini: lista placii (SIMULARE) fata de oracol: {} — cea mai mare abatere a pierderii {:.1e}, a greutatilor {:.1e} in {} pasi (toleranta 1e-3)",
+            if same { "ACELEASI NUMERE" } else { "DIFERA" },
+            worst_loss,
+            worst_w,
+            steps
         ));
     }
     if let Some(path) = save {
