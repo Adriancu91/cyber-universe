@@ -29,7 +29,7 @@ const WINDOW: usize = 5;
 /// The checkpoint's kind (meta `fel`), so `--din` refuses the golden step's checkpoints.
 const KIND: &str = "antrenare-mini";
 
-fn arch(vocab: usize, context: usize) -> Arch {
+pub fn arch(vocab: usize, context: usize) -> Arch {
     Arch { vocab, ctx: context, n_emb: 64, heads: 4, layers: 2 }
 }
 
@@ -55,7 +55,7 @@ pub fn initial(a: &Arch, samanta: u64) -> Vec<Vec<f32>> {
 }
 
 /// Natural logarithm for the start-loss reference (no libm): ln x = 2·atanh((x−1)/(x+1)), after halving to [1, 2).
-fn ln(mut x: f64) -> f64 {
+pub fn ln(mut x: f64) -> f64 {
     let mut k = 0.0;
     while x >= 2.0 {
         x /= 2.0;
@@ -71,13 +71,67 @@ fn ln(mut x: f64) -> f64 {
 }
 
 /// The largest relative difference between two sets of tensors: max |a − b| / max |b|.
-fn rel_dev(a: &[Vec<f32>], b: &[Vec<f32>]) -> f64 {
+pub fn rel_dev(a: &[Vec<f32>], b: &[Vec<f32>]) -> f64 {
     let (mut diff, mut scale) = (0.0f64, 1e-12f64);
     for (x, y) in a.iter().flatten().zip(b.iter().flatten()) {
         diff = diff.max((*x as f64 - *y as f64).abs());
         scale = scale.max((*y as f64).abs());
     }
     diff / scale
+}
+
+/// P6-164: the batches of `test-placa --antrenare-mini` (the board run): where they come from and the (inputs, targets)
+/// of every step.
+pub struct BoardBatches {
+    pub source: String,
+    pub batches: Vec<(Vec<u32>, Vec<u32>)>,
+}
+
+/// P6-164: `steps` batches of `numar` × `context` for the board run, read-only. Kronos's data when a folder of
+/// [`date_bucati::DIRS`] has an `index.json` (checked as Kronos checks it; the batches exactly as Kronos draws them, the
+/// first hour's generator with seed 0, as `antrenare mini` with no options). Without any data: synthetic batches from
+/// MT19937 (seed 0x164) over the whole vocabulary — the step's numbers are judged against the oracle either way. Data
+/// that is there but fails the check is an error (never replaced in silence).
+pub fn board_batches(numar: usize, context: usize, steps: usize) -> Result<BoardBatches, String> {
+    let Some(dir) = date_bucati::DIRS.iter().find(|d| crate::fs::size(&format!("{}/index.json", d)).is_ok()) else {
+        let mut g = Mt19937::new(0x164);
+        let batches = (0..steps)
+            .map(|_| {
+                let (mut x, mut y) = (Vec::with_capacity(numar * context), Vec::with_capacity(numar * context));
+                for _ in 0..numar {
+                    let row: Vec<u32> = (0..=context).map(|_| g.next_u32() % VOCAB as u32).collect();
+                    x.extend_from_slice(&row[..context]);
+                    y.extend_from_slice(&row[1..]);
+                }
+                (x, y)
+            })
+            .collect();
+        return Ok(BoardBatches {
+            source: format!("loturi sintetice (MT19937, samanta 0x164; nu exista {}/index.json sau {}/index.json)", date_bucati::DIRS[0], date_bucati::DIRS[1]),
+            batches,
+        });
+    };
+    let ix = date_bucati::read_index(dir)?;
+    let c = date_bucati::check(&ix, None);
+    if !c.ok() {
+        return Err(format!("datele din {} nu trec verificarea lui Kronos ({} probleme)", dir, c.wrong.len()));
+    }
+    if !date_bucati::generator_matches_torch() {
+        return Err(String::from("generatorul nu da valorile PyTorch de referinta"));
+    }
+    let mut g = Mt19937::new(date_bucati::batch_seed(0, 0));
+    let mut batches = Vec::with_capacity(steps);
+    for k in 0..steps {
+        let (x, y) = date_bucati::positions(&mut g, ix.total, numar, context as u64).and_then(|p| date_bucati::batch(&ix, &p, context as u64))?;
+        if let Some(bad) = x.iter().chain(y.iter()).find(|&&s| s as usize >= VOCAB) {
+            return Err(format!("lotul pasului {}: simbolul {} e in afara vocabularului ({})", k + 1, bad, VOCAB));
+        }
+        batches.push((x, y));
+    }
+    Ok(BoardBatches {
+        source: format!("datele lui Kronos din {} ({} simboluri, verificate ca la Kronos, amprenta {}; loturile ca Kronos, samanta 0)", dir, ix.total, date_bucati::fingerprint(&ix)),
+        batches,
+    })
 }
 
 fn mean(v: &[f32]) -> f64 {

@@ -999,6 +999,25 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu adam-ram-sim: exista doar in build-ul de test (pe stick il porneste doar ciclul, test-placa --ram-vram --adam-ram)\n");
         }
+        Some("antrenare-mini-sim") => {
+            // P6-164 (C-161): test build only: after the next `kronos --gpu-sim`'s texts (and every other probe that is
+            // on), the whole training step of `antrenare mini` done by the board's list on the simulated board, beside the
+            // oracle (on the stick only the cycle turns it on, `test-placa … --antrenare-mini`).
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TRAIN_MINI_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu antrenare-mini-sim: pornit (SIMULARE: dupa texte, pasul intreg al lui antrenare mini facut de lista placii, langa oracol)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TRAIN_MINI_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu antrenare-mini-sim: oprit\n");
+                }
+                _ => out!("folosire: gpu antrenare-mini-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu antrenare-mini-sim: exista doar in build-ul de test (pe stick il porneste doar ciclul, test-placa --antrenare-mini)\n");
+        }
         Some("atentie3-sim") => {
             // P6-160 (cyber-gpu note C-157_P2n): test build only: with `gpu atentie2-sim on` too, the third generation
             // (`attn_*_3`) after the second on the same buffers (on the stick only the cycle turns it on,

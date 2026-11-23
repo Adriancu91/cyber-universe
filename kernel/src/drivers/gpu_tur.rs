@@ -356,6 +356,12 @@ pub static RAM_VRAM_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomi
 /// by `gpu adam-ram-sim on`. Off by default.
 pub static ADAM_RAM_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-164 (C-161, command-center note of 23 Nov 18:16): the whole training step of `antrenare mini` (Kronos's vocabulary,
+/// the small model, batch 2 × 32) done by the board's list on the board, after `kronos --gpu`'s texts and every other
+/// probe, with Cyber-GPU's CPU oracle beside it at every step. Set only by the cycle (`test-placa … --antrenare-mini`)
+/// and, in the test build, by `gpu antrenare-mini-sim on`. Off by default.
+pub static TRAIN_MINI_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-163: the copy object is needed (the RAM ↔ VRAM probe or the m, v in RAM step).
 pub fn copy_engine_wanted() -> bool {
     RAM_VRAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) || ADAM_RAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst)
