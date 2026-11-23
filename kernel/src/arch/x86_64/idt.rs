@@ -150,6 +150,20 @@ extern "x86-interrupt" fn page_fault(frame: InterruptStackFrame, code: u64) {
         if code & 2 != 0 { "scriere" } else { "citire" },
         if code & 4 != 0 { "mod utilizator" } else { "mod nucleu" },
     );
+    if code & 4 != 0 {
+        // B-007 diagnostic (rare user #PF at the program's first instruction): which tables were active, which ones the
+        // thread should run on, and what each of them maps the address to.
+        let (cr3, root) = (crate::mem::paging::cr3(), crate::sched::current_root());
+        let in_root = if root == 0 { None } else { crate::mem::paging::translate_in(root, address) };
+        crate::error!(
+            "diagnostic #PF (B-007): CR3={:#x}, radacina firului={:#x} ({}), adresa in tabelele active -> {:?}, in tabelele firului -> {:?}",
+            cr3,
+            root,
+            if root == cr3 { "aceeasi" } else { "DIFERITA" },
+            crate::mem::paging::translate(address),
+            in_root
+        );
+    }
     fatal("page fault (#PF)", &frame, Some(code));
 }
 

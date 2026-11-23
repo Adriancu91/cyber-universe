@@ -331,6 +331,12 @@ fn kick_idle(s: &Scheduler) {
     }
 }
 
+/// Page-table root of the running thread (0 = the kernel's tables). For the user page-fault diagnostic (B-007); never
+/// called with the scheduler lock held by this processor (a fault in ring 3 holds no kernel lock).
+pub fn current_root() -> u64 {
+    with_sched(|s| s.cpus[percpu::index()].current.as_ref().map_or(0, |t| t.root))
+}
+
 /// Id of the running thread.
 #[allow(dead_code)] // used by the self-tests now
 pub fn current_id() -> u64 {

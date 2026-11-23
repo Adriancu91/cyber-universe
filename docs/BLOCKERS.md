@@ -38,6 +38,10 @@
 - **Ce ar debloca:** la următoarea apariție, mai multe date: la un #PF în mod utilizator, scrise în jurnal CR3 față de rădăcina firului
   și ce găsește `translate` pentru adresă (diagnostic mic, sarcină separată când coada se deschide). Ipoteze de verificat: un cadru
   folosit de două ori (eliberat și realocat cât încă e folosit), sau CR3 greșit la comutarea firului.
+- **2026-11-23 (P6-154):** diagnosticul e în nucleu: la orice #PF în mod utilizator, rândul `diagnostic #PF (B-007): CR3=…,
+  radacina firului=… (aceeasi/DIFERITA), adresa in tabelele active -> …, in tabelele firului -> …`. La următoarea apariție:
+  „DIFERITA” = CR3 greșit la comutare; „aceeasi” + `None` = pagina lipsește chiar din tabelele procesului (cadru refolosit
+  sau tabelă eliberată prea devreme).
 - **Nevoie de Adrian:** nu.
 
 <!-- Șablon:
