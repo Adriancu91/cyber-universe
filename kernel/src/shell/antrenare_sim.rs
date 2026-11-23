@@ -35,9 +35,55 @@ fn prog_va(p: Prog) -> u64 {
     PROGS + 0x1_0000 * p.index() as u64
 }
 
-/// The simulated board with the 13 programs of `train_step::PROGRAMS` in its memory.
+/// Which arena / attention programs the step's list uses (P6-159, cyber-gpu `1b9f79d`, note C-160_P7_placi-in-pas).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Layout {
+    /// `Plan::new`: P kept per layer, the simple attention programs (13 programs, os-351 on the board).
+    Simple,
+    /// `Plan::new_p_only`: one shared P, rebuilt on the way back with `attn_p` (14 programs).
+    POnly,
+    /// `Plan::new_tiles`: P kept per layer, attention on the tiled `attn_*_2` programs (14 programs, os-364).
+    Tiles,
+    /// `Plan::new_p_only_tiles`: one shared P, the tiled attention, P rebuilt with `attn_p_tile` (15 programs).
+    TilesPOnly,
+}
+
+impl Layout {
+    /// The word after `--atentie` (`simpla`, `p`, `placi`, `placi-p`).
+    pub fn parse(word: &str) -> Option<Self> {
+        match word {
+            "simpla" => Some(Self::Simple),
+            "p" => Some(Self::POnly),
+            "placi" => Some(Self::Tiles),
+            "placi-p" => Some(Self::TilesPOnly),
+            _ => None,
+        }
+    }
+
+    /// For the report.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::Simple => "atentia simpla, P pastrat pe strat (13 programe, Plan::new)",
+            Self::POnly => "atentia simpla, un singur P refacut cu attn_p (14 programe, Plan::new_p_only)",
+            Self::Tiles => "atentia pe placi attn_*_2, P pastrat pe strat (14 programe, Plan::new_tiles)",
+            Self::TilesPOnly => "atentia pe placi attn_*_2, un singur P refacut cu attn_p_tile (15 programe, Plan::new_p_only_tiles)",
+        }
+    }
+
+    fn plan(self, a: Arch, batch: usize, len: usize, inputs: &[u32]) -> gpu_core::error::GpuResult<Plan> {
+        match self {
+            Self::Simple => Plan::new(a, batch, len, inputs, HEAP),
+            Self::POnly => Plan::new_p_only(a, batch, len, inputs, HEAP),
+            Self::Tiles => Plan::new_tiles(a, batch, len, inputs, HEAP),
+            Self::TilesPOnly => Plan::new_p_only_tiles(a, batch, len, inputs, HEAP),
+        }
+    }
+}
+
+/// The simulated board with every program of `train_step::PROGRAMS_ALL` in its memory.
 pub struct SimBoard {
     cp: c::CommandProcessor,
+    layout: Layout,
     first: u32,
     /// Launches sent so far.
     pub launches: usize,
@@ -45,16 +91,18 @@ pub struct SimBoard {
 
 /// What one step gave back.
 pub struct StepOut {
+    /// The distinct programs this step's list launched.
+    pub programs: usize,
     pub loss: f32,
     pub norm: f32,
     pub launches: usize,
 }
 
 impl SimBoard {
-    pub fn new() -> Result<Self, String> {
+    pub fn new(layout: Layout) -> Result<Self, String> {
         ts::check_programs().map_err(|e| format!("SHA-256 al programelor: {:?}", e))?;
         let mut cp = c::CommandProcessor::new();
-        for prog in ts::PROGRAMS {
+        for prog in ts::PROGRAMS_ALL {
             let code = prog.code();
             let _ = match prog {
                 Prog::MmTrain => cp.register_program_with_needs(code, c::mm_train_on_cpu, c::MM_TRAIN_NEEDS),
@@ -70,12 +118,19 @@ impl SimBoard {
                 Prog::OptStep => cp.register_program(code, c::opt_step_on_cpu),
                 Prog::Colsum => cp.register_program(code, c::colsum_on_cpu),
                 Prog::Vadd => cp.register_program(code, c::vadd_on_cpu),
+                Prog::AttnP => cp.register_program(code, c::attn_p_on_cpu),
+                // The `_2` programs do the same operations in the same order as the first tiled ones: the same CPU
+                // models (as `gpu_i10.rs`, P6-149).
+                Prog::AttnFwdTile2 => cp.register_program(code, c::attn_fwd_tile_on_cpu),
+                Prog::AttnBackTile0_2 => cp.register_program(code, c::attn_back_tile0_on_cpu),
+                Prog::AttnBackTile2 => cp.register_program(code, c::attn_back_tile_on_cpu),
+                Prog::AttnPTile => cp.register_program(code, c::attn_p_tile_on_cpu),
                 #[allow(unreachable_patterns)]
-                _ => return Err(format!("programul {} nu e in lista pasului de aur", prog.name())),
+                _ => return Err(format!("programul {} nu are model pe procesor", prog.name())),
             };
             cp.mem.write(prog_va(prog), code);
         }
-        Ok(Self { cp, first: 1, launches: 0 })
+        Ok(Self { cp, layout, first: 1, launches: 0 })
     }
 
     /// One AdamW step (`adamw_513`'s list with `adam`'s own lr / betas / eps / decay, clipping at 1.0) on the batch
@@ -92,7 +147,7 @@ impl SimBoard {
         fn e(what: &'static str) -> impl Fn(gpu_core::error::GpuError) -> String {
             move |err| format!("{}: {:?}", what, err)
         }
-        let plan = Plan::new(*a, batch, len, inputs, HEAP).map_err(e("planul"))?;
+        let plan = self.layout.plan(*a, batch, len, inputs).map_err(e("planul"))?;
         for (va, bytes) in plan.uploads(params, inputs, targets).map_err(e("urcarile"))? {
             self.cp.mem.write(va, &bytes);
         }
@@ -135,6 +190,6 @@ impl SimBoard {
         adam.m = new_m;
         adam.v = new_v;
         adam.t = t;
-        Ok(StepOut { loss, norm, launches: n })
+        Ok(StepOut { programs: plan.programs().len(), loss, norm, launches: n })
     }
 }

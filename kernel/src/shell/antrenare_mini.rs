@@ -17,7 +17,7 @@ use gpu_compute::train::{self, AdamW, Arch, Batch};
 use super::date_bucati::{self, Mt19937};
 use super::punct_control::{self, Checkpoint};
 
-const USAGE: &str = "folosire: antrenare mini [dosar] [--pasi <1..1000>] [--lot <numar 1..16> <context 1..256>] [--vocabular <64..16384>] [--samanta <s>] [--lr <x>] [--salveaza <cale>] [--din <cale>] [--placa-sim [--fara-oracol]]";
+const USAGE: &str = "folosire: antrenare mini [dosar] [--pasi <1..1000>] [--lot <numar 1..16> <context 1..256>] [--vocabular <64..16384>] [--samanta <s>] [--lr <x>] [--salveaza <cale>] [--din <cale>] [--placa-sim [--atentie simpla|p|placi|placi-p] [--fara-oracol]]";
 
 /// Kronos's vocabulary (#513 and #651: 16 384 symbols) — the default; a smaller one only for data whose symbols fit
 /// (the QEMU test: on the processor without KVM one step with 16 384 takes ~50 s).
@@ -177,6 +177,8 @@ pub fn command(args: &[&str]) -> Vec<String> {
     ) = (None, 20, None, None, None, None, None, None);
     // P6-158: the step done by the board's list on the simulated board (test builds), with the oracle beside it.
     let (mut board_sim, mut no_oracle) = (false, false);
+    // P6-159: which arena / attention programs the simulated board's list uses (`--atentie`, only with `--placa-sim`).
+    let mut layout: Option<&str> = None;
     let mut i = 0;
     while i < args.len() {
         let next = |k: usize| args.get(i + k).copied();
@@ -228,6 +230,10 @@ pub fn command(args: &[&str]) -> Vec<String> {
                 board_sim = true;
                 i += 1;
             }
+            "--atentie" if next(1).is_some() => {
+                layout = next(1);
+                i += 2;
+            }
             "--fara-oracol" => {
                 no_oracle = true;
                 i += 1;
@@ -243,7 +249,10 @@ pub fn command(args: &[&str]) -> Vec<String> {
         rows.push(format!("antrenare mini: NU A RULAT: {}", why));
         rows
     };
-    if no_oracle && !board_sim {
+    if (no_oracle || layout.is_some()) && !board_sim {
+        return alloc::vec![String::from(USAGE)];
+    }
+    if layout.is_some_and(|w| !matches!(w, "simpla" | "p" | "placi" | "placi-p")) {
         return alloc::vec![String::from(USAGE)];
     }
     #[cfg(not(feature = "test-gpu-sim"))]
@@ -320,13 +329,15 @@ pub fn command(args: &[&str]) -> Vec<String> {
         seed,
         match (board_sim, no_oracle) {
             (false, _) => "oracolul Cyber-GPU pe procesor (fara placa)",
-            (true, false) => "pasul = lista placii (13 programe, SIMULARE, fara placa reala); oracolul alaturi, pe aceleasi loturi",
-            (true, true) => "pasul = lista placii (13 programe, SIMULARE, fara placa reala); fara oracol",
+            (true, false) => "pasul = lista placii (SIMULARE, fara placa reala); oracolul alaturi, pe aceleasi loturi",
+            (true, true) => "pasul = lista placii (SIMULARE, fara placa reala); fara oracol",
         }
     ));
     #[cfg(feature = "test-gpu-sim")]
     let mut sim = if board_sim {
-        match super::antrenare_sim::SimBoard::new() {
+        let l = super::antrenare_sim::Layout::parse(layout.unwrap_or("simpla")).unwrap_or(super::antrenare_sim::Layout::Simple);
+        rows.push(format!("antrenare mini: placa simulata: {}", l.describe()));
+        match super::antrenare_sim::SimBoard::new(l) {
             Ok(b) => Some(b),
             Err(e) => return fail(rows, format!("placa simulata: {}", e)),
         }
@@ -356,19 +367,19 @@ pub fn command(args: &[&str]) -> Vec<String> {
         #[cfg(feature = "test-gpu-sim")]
         let board_out = match sim.as_mut() {
             Some(board) => match board.step(&a, (st.numar, st.context), &x, &y, &mut st.params, &mut st.adam) {
-                Ok(o) => Some((o.loss, o.norm, o.launches)),
+                Ok(o) => Some((o.loss, o.norm, o.launches, o.programs)),
                 Err(e) => return fail(rows, format!("pasul {} pe placa simulata: {}", st.done + 1, e)),
             },
             None => None,
         };
         #[cfg(not(feature = "test-gpu-sim"))]
-        let board_out: Option<(f32, f32, usize)> = None;
+        let board_out: Option<(f32, f32, usize, usize)> = None;
         let (loss, norm) = match board_out {
-            Some((loss, norm, n)) => {
+            Some((loss, norm, n, progs)) => {
                 if !loss.is_finite() {
                     return fail(rows, format!("pasul {}: pierderea nu e un numar ({})", st.done + 1, loss));
                 }
-                extra = format!(", placa simulata: {} lansari", n);
+                extra = format!(", placa simulata: {} lansari, {} programe", n, progs);
                 if let Some((op, oa)) = oracle.as_mut() {
                     let (ol, mut og) = match train::loss_and_grad(&a, op, &b) {
                         Ok(r) => r,
