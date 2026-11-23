@@ -430,12 +430,14 @@ impl SimGpu {
                         T::Gnorm => cp.register_program_with_needs(code, c::gnorm_on_cpu, c::GNORM_NEEDS),
                         T::OptStep => cp.register_program(code, c::opt_step_on_cpu),
                         T::Colsum | T::Vadd => 0,
-                        // P6-142 (cyber-gpu session 168): `train_step::Prog` gets `AttnP` next; this arm keeps the OS building
-                        // until its exact row (`T::AttnP => cp.register_program(code, c::attn_p_on_cpu)`) is bound with it.
+                        // P6-152 (cyber-gpu note C-160_P7_attn_p-in-pas): `attn_p` rebuilds only P (no P·V) for
+                        // `Plan::new_p_only`; it is not in `PROGRAMS`, so it is registered below.
+                        T::AttnP => 0,
                         #[allow(unreachable_patterns)]
                         _ => 0,
                     };
                 }
+                let _ = cp.register_program(T::AttnP.code(), c::attn_p_on_cpu);
             }
         }
         cp.sim_launch_ns = 4000;

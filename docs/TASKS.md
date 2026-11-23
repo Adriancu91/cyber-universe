@@ -520,6 +520,8 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
   Gata (2026-11-23 ~05:30 RO): scenariul `antrenare-date` trece; aceeași amprentă / felie / refuz ca `module/date_bucati.py` pe aceleași fișiere.
 - [x] **P6-151** C-161 punctul 5, a doua bucată: **punctul de control al motorului de antrenare** — formatul `CYBKCK01` (note + tensori F32 + SHA-256), scris cu golirea sigură și recitit bit cu bit; `antrenare proba … --salveaza <cale>`, `antrenare control <cale>`; nimic pentru placă. Plan: `docs/plans/P6-151.md`. Dep: P6-146, P6-150.
   Gata (2026-11-23 ~06:00 RO): `antrenare-control` (cu verificarea discului după test), `antrenare`, `ghpush` trec.
+- [x] **P6-152** PREDARE Cyber-GPU C-160_P7: **`attn_p` legat în pasul de antrenare** (cyber-gpu `e3763c8`): brațul `AttnP` în simulator, programele pasului din `plan.programs()`; nimic nou pentru placă (în os-365 cu P6-150/151). Plan: `docs/plans/P6-152.md`. Dep: P6-149.
+  Gata (2026-11-23 ~07:00 RO): `boot`, `gpu`, `gpu-sim`, `kronos-gpu-atentie2`, `kronos-gpu-pas-aur` (neschimbat), `antrenare-date`, `antrenare-control` trec.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)

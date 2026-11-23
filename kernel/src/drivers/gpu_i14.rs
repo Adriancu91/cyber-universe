@@ -3970,9 +3970,11 @@ fn golden_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         probe_plan.launches_per_step(Recipe::Sgd),
         probe_plan.launches_per_step(Recipe::AdamW513)
     ));
-    // The 13 programs in VRAM (each mapping page-aligned, so 256-byte aligned).
-    let mut progs: Vec<(ts::Prog, Mapping)> = Vec::with_capacity(ts::PROGRAMS.len());
-    for prog in ts::PROGRAMS {
+    // The plan's programs in VRAM (each mapping page-aligned, so 256-byte aligned). P6-152: `Plan::programs()` gives
+    // exactly `ts::PROGRAMS` (13) for `Plan::new`; `Plan::new_p_only` would add `attn_p`.
+    let plan_programs = probe_plan.programs();
+    let mut progs: Vec<(ts::Prog, Mapping)> = Vec::with_capacity(plan_programs.len());
+    for &prog in plan_programs.iter() {
         let pm = map_vram(st, prog.code().len() as u64)?;
         put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
         progs.push((prog, pm));
