@@ -5663,6 +5663,7 @@ const KT_513_TOK_S: &str = "kt antrenare-513 simboluri/s placa";
 const KT_513_LOSS1_E4: &str = "kt antrenare-513 pierderea la pasul 1 (x1e4)";
 const KT_513_LOSSN_E4: &str = "kt antrenare-513 pierderea la ultimul pas (x1e4)";
 const KT_513_PASS: &str = "kt antrenare-513 verdict (1/0)";
+const KT_513_ORACLE: &str = "kt antrenare-513 = oracolul procesorului in pasii 1-9 (1/0)";
 
 /// P6-172: the pieces of the arena that are not zero before the first step, written into one upload piece
 /// `[cva, cva + buf.len())` of the arena: the weights (tensor by tensor, straight from `params`, so the GiB of the
@@ -6063,26 +6064,94 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, row));
         }
     }
-    let pass = if board {
+    // P6-184: on the synthetic batches with exactly the oracle's recipe, the verdict is the oracle (steps 1–9);
+    // on Kronos's data the old one (the loss starts at ln V and falls).
+    let oracle = (board && data.synthetic && bsz == 2 && tl == 512 && steps == gpu_compute::train::ORACLE_513_SYNTH.len())
+        .then(|| oracle_513_check(&losses, &norms));
+    if let Some(o) = &oracle {
+        journal.push(Event::Value { what: KT_513_ORACLE, value: u32::from(o.pass) });
+        lines.push(format!(
+            "{}: kronos --gpu: {}: fata de oracolul procesorului (ORACLE_513_SYNTH, loturile sintetice): {} — pasii 1-9: abaterea pierderii {:.1e}, a normei {:.1e} (toleranta 1e-3); pasul 10 doar afisat: {:.1e} / {:.1e}",
+            p, tag, if o.pass { "ACELEASI NUMERE" } else { "DIFERA" }, o.worst.0, o.worst.1, o.last.0, o.last.1
+        ));
+    }
+    let pass = if let Some(o) = &oracle {
+        start_ok && o.pass && bad_w == 0 && losses.len() == steps
+    } else if board {
         start_ok && falls && bad_w == 0 && losses.len() == steps
     } else {
         lines.push(format!(
             "{}: kronos --gpu: {}: lista placii pe bucati si parti fata de oracol: {} — abaterea pierderii {:.1e}, a normei {:.1e}, a greutatilor la sfarsit {:.1e} (toleranta 1e-3)",
             p, tag, if worst_loss <= TOL && worst_norm <= TOL && worst_w <= TOL { "ACELEASI NUMERE" } else { "DIFERA" }, worst_loss, worst_norm, worst_w
         ));
-        pieces_ok && worst_loss <= TOL && worst_norm <= TOL && worst_w <= TOL && bad_w == 0 && losses.len() == steps
+        // P6-184: the check of the oracle verdict (the small model cannot use the #513 oracle itself).
+        let self_ok = oracle_513_self_test();
+        lines.push(format!(
+            "{}: kronos --gpu: {}: verdictul fata de oracolul #513 (P6-184), verificat pe numerele lui: {}",
+            p, tag, if self_ok { "MERGE (oracolul si os-395 trec, o abatere de 2e-3 si 9 pasi nu)" } else { "GRESIT" }
+        ));
+        self_ok && pieces_ok && worst_loss <= TOL && worst_norm <= TOL && worst_w <= TOL && bad_w == 0 && losses.len() == steps
     };
     journal.push(Event::Value { what: KT_513_PASS, value: u32::from(pass) });
     lines.push(format!(
         "{}: kronos --gpu: {}: {}",
         p, tag,
         match (pass, board) {
+            (true, true) if oracle.is_some() => "TRECE (pasul #513 cu arena in VRAM = oracolul procesorului in pasii 1-9, toate numerele finite)",
             (true, true) => "TRECE (pasul #513 cu arena in VRAM: pierderea porneste de la ln V si scade, toate numerele finite)",
             (true, false) => "TRECE (pasul #513 pe bucati si parti = oracolul, bucatile = urcarile planului)",
             _ => "NU TRECE (vezi randurile de mai sus)",
         }
     ));
     Ok(pass)
+}
+
+/// P6-184 (PREDARE Cyber-GPU `8de6436`, note `C-157_P2u_oracol-513.md`): the board's #513 run on the synthetic batches
+/// against the CPU oracle measured in the cloud (`gpu_compute::train::ORACLE_513_SYNTH`, 4 decimals). Steps 1–9: loss and
+/// norm within 1e-3 relative; step 10 (where the run jumps, norm 0.93 → 1.65) only shown. Valid only for exactly that
+/// recipe (M513, batch 2 × 512, 10 steps, the synthetic batches with seed 0x164, AdamW lr 1e-3) — the caller checks.
+struct Oracle513 {
+    /// Worst relative deviation over steps 1–9: (loss, norm).
+    worst: (f64, f64),
+    /// Step 10's relative deviation (loss, norm), shown only.
+    last: (f64, f64),
+    pass: bool,
+}
+
+fn oracle_513_check(losses: &[f32], norms: &[f32]) -> Oracle513 {
+    use gpu_compute::train::ORACLE_513_SYNTH as O;
+    const TOL: f64 = 1e-3;
+    let rel = |x: f32, o: f32| {
+        let (x, o) = (x as f64, o as f64);
+        if x.is_finite() { ((x - o) / o).abs() } else { f64::INFINITY }
+    };
+    let n = O.len();
+    let complete = losses.len() == n && norms.len() == n;
+    let mut worst = (0.0f64, 0.0f64);
+    for k in 0..(n - 1).min(losses.len()).min(norms.len()) {
+        worst.0 = worst.0.max(rel(losses[k], O[k].0));
+        worst.1 = worst.1.max(rel(norms[k], O[k].1));
+    }
+    let last = if complete { (rel(losses[n - 1], O[n - 1].0), rel(norms[n - 1], O[n - 1].1)) } else { (f64::INFINITY, f64::INFINITY) };
+    Oracle513 { worst, last, pass: complete && worst.0 <= TOL && worst.1 <= TOL }
+}
+
+/// P6-184: the check of the check, run in SIMULARE (the small model cannot use the #513 oracle): the oracle's own
+/// numbers must pass, the os-395 board numbers must pass, one step-5 loss off by 2e-3 must fail, 9 steps must fail.
+fn oracle_513_self_test() -> bool {
+    use gpu_compute::train::ORACLE_513_SYNTH as O;
+    let (l, n): (Vec<f32>, Vec<f32>) = O.iter().copied().unzip();
+    // os-395 on the board (the note's table): steps 8–10 differ.
+    let mut lb = l.clone();
+    let mut nb = n.clone();
+    lb[7] = 9.9389;
+    nb[7] = 0.9363;
+    lb[8] = 9.9930;
+    lb[9] = 10.1774;
+    nb[9] = 1.6549;
+    let mut lw = l.clone();
+    lw[4] *= 1.002;
+    oracle_513_check(&l, &n).pass && oracle_513_check(&lb, &nb).pass && !oracle_513_check(&lw, &n).pass && !oracle_513_check(&l[..9], &n[..9]).pass
 }
 
 /// P6-175: what one resident run leaves for the comparison glued / not glued.

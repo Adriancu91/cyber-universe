@@ -84,6 +84,8 @@ pub fn rel_dev(a: &[Vec<f32>], b: &[Vec<f32>]) -> f64 {
 /// of every step.
 pub struct BoardBatches {
     pub source: String,
+    /// P6-184: true when no data folder was found and the batches are the synthetic MT19937 ones (seed 0x164).
+    pub synthetic: bool,
     pub batches: Vec<(Vec<u32>, Vec<u32>)>,
 }
 
@@ -107,6 +109,7 @@ pub fn board_batches(numar: usize, context: usize, steps: usize) -> Result<Board
             })
             .collect();
         return Ok(BoardBatches {
+            synthetic: true,
             source: format!("loturi sintetice (MT19937, samanta 0x164; nu exista {}/index.json sau {}/index.json)", date_bucati::DIRS[0], date_bucati::DIRS[1]),
             batches,
         });
@@ -129,6 +132,7 @@ pub fn board_batches(numar: usize, context: usize, steps: usize) -> Result<Board
         batches.push((x, y));
     }
     Ok(BoardBatches {
+        synthetic: false,
         source: format!("datele lui Kronos din {} ({} simboluri, verificate ca la Kronos, amprenta {}; loturile ca Kronos, samanta 0)", dir, ix.total, date_bucati::fingerprint(&ix)),
         batches,
     })

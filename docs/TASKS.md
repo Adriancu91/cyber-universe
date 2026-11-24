@@ -575,6 +575,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-182** Profilul pasului #513 pe programe (raportul os-395: pasul ~1,12 s, cererea „timpul pe fel de program”): `StepProfile` din P6-179 și pe lista #513 (385 lansări în 2 trimiteri). Nimic nou pentru placă. Plan: `docs/plans/P6-182.md`.
 - [x] **P6-183** Cele două ceasuri unul lângă altul (raportul os-395 punctul 3: „placa” > „pasul întreg” cu ~3 %): ritmul TSC la pornire / acum / CPUID lângă raportul placă / pas, la sfârșitul lui #513. Nimic nou pentru placă. Plan: `docs/plans/P6-183.md`.
   Gata (2026-11-24 ~11:45 RO, pe `wip/P6-180`): `kronos-gpu-antrenare-513` (16 verificări; SIMULARE: profilul pe 2 pași) trece.
+- [~] **P6-184** PREDARE Cyber-GPU sesiunea 205 (`8de6436`, nota `C-157_P2u_oracol-513.md`): **verdictul lui `--antrenare-513` față de oracolul procesorului** pe loturile sintetice (pașii 1–9 la 1e-3, pasul 10 afișat) în locul criteriului „pierderea scade”. Nimic nou pentru placă. Plan: `docs/plans/P6-184.md`.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
