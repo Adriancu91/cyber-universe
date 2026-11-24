@@ -5683,6 +5683,10 @@ const KT_513_TILES3: &str = "kt antrenare-513 atentia pe placi gen 3 (1/0)";
 const KT_513_MM_TILE: &str = "kt antrenare-513 inmultirile pe mm_train_tile (1/0)";
 /// P6-189: 1 = the step's `colsum` launches split over rows (`--colsum-impartit`).
 const KT_513_COLSUM_SPLIT: &str = "kt antrenare-513 colsum impartit pe randuri (1/0)";
+/// P6-190: the night race's rows with the witness's bits, rows that differ, and the step time the winners would save.
+const KT_513_RACE_SAME: &str = "kt cursa mm randuri cu aceiasi biti";
+const KT_513_RACE_DIFFER: &str = "kt cursa mm randuri diferite";
+const KT_513_RACE_SAVED_US: &str = "kt cursa mm pasul ar scadea cu (us, DEDUS)";
 
 /// P6-172: the pieces of the arena that are not zero before the first step, written into one upload piece
 /// `[cva, cva + buf.len())` of the arena: the weights (tensor by tensor, straight from `params`, so the GiB of the
@@ -5710,6 +5714,81 @@ fn fill_arena_piece(buf: &mut [u8], cva: u64, w_vas: &[u64], params: &[Vec<f32>]
         let (from, to) = (cva.max(*va), end.min(pend));
         buf[(from - cva) as usize..(to - cva) as usize].copy_from_slice(&bytes[(from - va) as usize..(to - va) as usize]);
     }
+}
+
+/// P6-190 (C-165, cyber-gpu note `C-165_cursa-mm.md`): one shape of the race — the step's first `mm_train` /
+/// `mm_train_tile` launch of that (M, N, K, flags), its A, B and bias addresses (real arena data after the steps), and
+/// how many launches of the step have it.
+#[derive(Clone, Copy)]
+struct RaceForm {
+    m: u32,
+    n: u32,
+    k: u32,
+    flags: u32,
+    count: u32,
+    a: u64,
+    b: u64,
+    bias: u64,
+}
+
+/// P6-190: the race's shapes from one step's list, in the order of `mm_train_variants::forms`.
+fn race_forms(list: &[nvidia_ga104::train_step::Launch]) -> Vec<RaceForm> {
+    use nvidia_ga104::train_step::Prog as TP;
+    let u32_at = |cb: &[u8; 0x100], o: usize| u32::from_le_bytes([cb[o], cb[o + 1], cb[o + 2], cb[o + 3]]);
+    let u64_at = |cb: &[u8; 0x100], o: usize| u64::from(u32_at(cb, o)) | (u64::from(u32_at(cb, o + 4)) << 32);
+    nvidia_ga104::mm_train_variants::forms(list)
+        .iter()
+        .filter_map(|f| {
+            let l = list.iter().find(|l| {
+                matches!(l.prog, TP::MmTrain | TP::MmTrainTile)
+                    && (u32_at(&l.cbuf, 0x48), u32_at(&l.cbuf, 0x4c), u32_at(&l.cbuf, 0x50), u32_at(&l.cbuf, 0x54)) == (f.m, f.n, f.k, f.flags)
+            })?;
+            Some(RaceForm { m: f.m, n: f.n, k: f.k, flags: f.flags, count: f.count, a: u64_at(&l.cbuf, 0x28), b: u64_at(&l.cbuf, 0x30), bias: u64_at(&l.cbuf, 0x40) })
+        })
+        .collect()
+}
+
+/// P6-190: what one variant gave on one shape.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RaceBits {
+    /// C (and the guard after it) the same bits as the witness's C.
+    Same,
+    /// Another C, or a guard word changed: never used in the step.
+    Differ,
+    /// The board did not finish the launches (the race stops there).
+    Unfinished,
+    /// Not run: its SHA-256 is not the note's, or C does not fit the scratch piece.
+    Skipped,
+}
+
+impl RaceBits {
+    fn text(self) -> &'static str {
+        match self {
+            RaceBits::Same => "=",
+            RaceBits::Differ => "DIFERA",
+            RaceBits::Unfinished => "NETERMINAT",
+            RaceBits::Skipped => "SARIT",
+        }
+    }
+}
+
+/// P6-190: FNV-1a over bytes, 64 bits (the witness's C against each variant's, piece by piece).
+fn fnv64(mut h: u64, b: &[u8]) -> u64 {
+    for &x in b {
+        h ^= u64::from(x);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// P6-190: one race row of the report: `cursa: varianta · forma · us median · TFLOP/s · biti`.
+fn race_row(name: &str, f: &RaceForm, ns: Option<u64>, bits: RaceBits) -> String {
+    let flops = 2 * u64::from(f.m) * u64::from(f.n) * u64::from(f.k);
+    let (us, tf) = match ns {
+        Some(n) if n > 0 => (format!("{}.{} us", n / 1000, (n % 1000) / 100), format!("{}.{:02} TFLOP/s", flops / n / 1000, (flops * 100 / n / 1000) % 100)),
+        _ => (String::from("- us"), String::from("- TFLOP/s")),
+    };
+    format!("cursa: {} | {}x{}x{} f{} (x{} in pas) | {} median | {} | biti {}", name, f.m, f.n, f.k, f.flags, f.count, us, tf, bits.text())
 }
 
 /// P6-172 (command-center note of 23 Nov 23:36, point 3; plan `docs/plans/P6-172.md`): the training step of Kronos #513
@@ -5789,6 +5868,9 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     journal.push(Event::Value { what: KT_513_TILES3, value: tiles3 as u32 });
     journal.push(Event::Value { what: KT_513_MM_TILE, value: mm_tile as u32 });
     journal.push(Event::Value { what: KT_513_COLSUM_SPLIT, value: colsum_split as u32 });
+    // P6-190 (C-165, cyber-gpu note `C-165_cursa-mm.md`): with `--cursa-mm` (only after `--mm-placi`), after the steps,
+    // every variant of `mm_train_variants::VARIANTS` on every `mm_train` shape of the step, against the witness.
+    let race = mm_tile && super::gpu_tur::TRAIN_513_RACE_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     let probe0 = build(nvidia_ga104::mmu::VA_BASE)?.resident()?;
     let mut n_launch = 0usize;
     for (x, _) in &data.batches {
@@ -5844,9 +5926,29 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     if !stage.va.is_multiple_of(PAGE) || !ctl.va.is_multiple_of(PAGE) {
         return Err(bad("antrenare-513: zona RAM nu e aliniata la 4 KiB"));
     }
+    // P6-190: the race's scratch C (the largest product the step can have + a 256-byte guard) and its 5 programs, mapped
+    // before the step so they are in the submissions' map list.
+    let race_c: Option<Mapping> = if race {
+        let (r, v, e) = ((bsz * tl) as u64, a.vocab as u64, a.n_emb as u64);
+        let most = [r * v, v * e, r * 4 * e, 4 * e * e, r * 3 * e, 3 * e * e, r * e, e * e].into_iter().max().unwrap_or(0);
+        Some(map_vram(st, (4 * most + 256).next_multiple_of(PAGE))?)
+    } else {
+        None
+    };
+    let mut race_progs: Vec<Mapping> = Vec::new();
+    if race {
+        for v in nvidia_ga104::mm_train_variants::VARIANTS.iter() {
+            let pm = map_vram(st, v.code.len() as u64)?;
+            put_bytes(st.mem.writer_mut(), pm.pa, v.code)?;
+            race_progs.push(pm);
+        }
+    }
+    let mut race_shapes: Vec<RaceForm> = Vec::new();
     let mut maps = ctx.maps.clone();
     maps.push(varena);
     maps.extend(progs.iter().map(|(_, pm)| *pm));
+    maps.extend(race_c);
+    maps.extend(race_progs.iter().copied());
     let sys = [ctx.sys.clone(), stage.clone(), ctl.clone()];
     let prog_va = |want: ts::Prog| progs.iter().find(|(q, _)| *q == want).map_or(0, |(_, pm)| pm.va);
     // One launch of the copy program, as in `train_mini_resident`.
@@ -5960,6 +6062,9 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             let (zb, qmds) = ts::pack(&list, prog_va, ctl.va)?;
             if zb.len() as u64 > zone_bytes {
                 return Err(bad("antrenare-513: zona de control prea mare"));
+            }
+            if race && race_shapes.is_empty() {
+                race_shapes = race_forms(&list);
             }
             ram_write(&ctl, &zb);
             if prof.is_none() {
@@ -6107,6 +6212,176 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         for row in pr.lines(8) {
             lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, row));
         }
+    }
+    // P6-190 (C-165, decision H3): the night race. After the steps (the arena holds real weights, activations and
+    // gradients, nothing reads it any more), for every `mm_train` shape of the step: the same A, B (and bias) as the
+    // step's first launch of that shape, C redirected to a scratch piece. For each variant: SHA-256 checked, C and a
+    // 256-byte guard filled with a sentinel (through RAM with the copy program), one warm-up launch + N timed ones in one
+    // submission (each its own QMD, the variant's own grid / block / shared memory), C + guard read back through RAM and
+    // compared bit for bit with the witness (`mm_train_tile`, index 0, on the board since os-410). Nothing new for the
+    // board but the programs; it does not change #513's verdict. The fastest variant with the same bits per shape is
+    // what `Plan::with_mm_choice` (Cyber-GPU, next) will take.
+    if let Some(c_map) = race_c.filter(|_| stopped.is_none()) {
+        use nvidia_ga104::mm_train::Args as MmArgs;
+        use nvidia_ga104::mm_train_variants::{Variant, VARIANTS};
+        use nvidia_ga104::qmd::ComputeQmd;
+        const SENTINEL: [u8; 4] = (-12345.0f32).to_le_bytes();
+        let reps = (if board { 8usize } else { 2 }).min(rec_cap).min((zone_bytes / ts::SLOT) as usize);
+        let shas: Vec<bool> = VARIANTS.iter().map(|v| sha256_hex(v.code) == v.sha256).collect();
+        lines.push(format!(
+            "{}: kronos --gpu: {}: cursa mm (C-165, {}): {} forme ale lui mm_train din pas ({} lansari) x {} variante ({}); martorul {} (trecut pe placa la os-410); C pe o bucata de {} MiB in VRAM + 256 octeti de paza, umplute cu -12345.0; {} lansari pe varianta si forma (prima de incalzire), comparate bit cu bit cu martorul",
+            p, tag, label, race_shapes.len(), race_shapes.iter().map(|f| f.count).sum::<u32>(), VARIANTS.len(),
+            VARIANTS.iter().zip(&shas).map(|(v, ok)| if *ok { String::from(v.name) } else { format!("{} SHA-256 GRESIT", v.name) }).collect::<Vec<_>>().join(", "),
+            VARIANTS[0].name, c_map.size >> 20, reps
+        ));
+        // Sentinel → C piece by piece (the stage is refilled each time: the reads below overwrite it).
+        let fill = |st: &mut GpuState, vbar: &mut V, clock: &mut K, journal: &mut Journal, l: &mut Launched, doorbell: &mut Bell<'_, V>, subs: &mut u32, len: u64| -> GpuResult<bool> {
+            let mut off = 0u64;
+            while off < len {
+                let n = piece.min(len - off);
+                for w in ram_vram_bytes(host, n).chunks_exact_mut(4) {
+                    w.copy_from_slice(&SENTINEL);
+                }
+                if copy(st, vbar, clock, journal, l, doorbell, subs, stage.va, c_map.va + off, n)?.is_none() {
+                    return Ok(false);
+                }
+                off += n;
+            }
+            Ok(true)
+        };
+        // C + guard back through RAM: (hash of C, guard intact, words still the sentinel inside C).
+        let read = |st: &mut GpuState, vbar: &mut V, clock: &mut K, journal: &mut Journal, l: &mut Launched, doorbell: &mut Bell<'_, V>, subs: &mut u32, c_len: u64, len: u64| -> GpuResult<Option<(u64, bool, u64)>> {
+            let (mut h, mut guard_ok, mut unwritten, mut off) = (0xcbf2_9ce4_8422_2325u64, true, 0u64, 0u64);
+            while off < len {
+                let n = piece.min(len - off);
+                if copy(st, vbar, clock, journal, l, doorbell, subs, c_map.va + off, stage.va, n)?.is_none() {
+                    return Ok(None);
+                }
+                let buf = ram_vram_bytes(host, n);
+                let in_c = c_len.saturating_sub(off).min(n) as usize;
+                h = fnv64(h, &buf[..in_c]);
+                unwritten += buf[..in_c].chunks_exact(4).filter(|w| *w == SENTINEL).count() as u64;
+                guard_ok &= buf[in_c..].chunks_exact(4).all(|w| w == SENTINEL);
+                off += n;
+            }
+            Ok(Some((h, guard_ok, unwritten)))
+        };
+        let (mut rows_same, mut rows_differ, mut saved_ns, mut race_stopped) = (0u32, 0u32, 0u64, None::<String>);
+        'forms: for (fi, f) in race_shapes.iter().enumerate() {
+            let c_len = 4 * u64::from(f.m) * u64::from(f.n);
+            let len = c_len.next_multiple_of(256) + 256;
+            let args = MmArgs { a: f.a, b: f.b, c: c_map.va, bias: f.bias, m: f.m, n: f.n, k: f.k, flags: f.flags };
+            let Some(cb_args) = args.cbuf() else {
+                lines.push(format!("{}: kronos --gpu: {}: cursa: forma {}x{}x{} f{}: argumentele refuzate; sarita", p, tag, f.m, f.n, f.k, f.flags));
+                continue;
+            };
+            // SIMULARE: the shapes with the vocabulary (~67 M multiply-adds each) take minutes per launch on the emulated
+            // CPU; the race path is the same on the small ones.
+            if !board && u64::from(f.m) * u64::from(f.n) * u64::from(f.k) > 1 << 20 {
+                lines.push(format!("{}: kronos --gpu: {}: cursa: forma {}x{}x{} f{}: sarita in SIMULARE (prea mare pentru procesorul emulat)", p, tag, f.m, f.n, f.k, f.flags));
+                continue;
+            }
+            let mut cb = [0u8; 0x100];
+            cb[..cb_args.len()].copy_from_slice(&cb_args);
+            let mut witness: Option<u64> = None;
+            let mut best: Option<(usize, u64)> = None;
+            let mut witness_ns: Option<u64> = None;
+            for (vi, v) in VARIANTS.iter().enumerate() {
+                let skip = !shas[vi] || len > c_map.size || (vi > 0 && witness.is_none());
+                if skip {
+                    lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, race_row(v.name, f, None, RaceBits::Skipped)));
+                    continue;
+                }
+                if !fill(st, vbar, clock, journal, l, doorbell, subs, len)? {
+                    race_stopped = Some(format!("umplerea lui C nu s-a terminat (forma {}, {})", fi + 1, v.name));
+                    break 'forms;
+                }
+                // `reps` copies of the same cbuf + QMD, one slot each (as the step's control zone).
+                let q = ComputeQmd { program_va: race_progs[vi].va, registers: v.registers, cbuf0_va: 0, cbuf0_size: 0x100, grid: v.grid(&args), block: v.block(), release: None };
+                let mut zb = alloc::vec![0u8; reps * ts::SLOT as usize];
+                let mut qv = Vec::with_capacity(reps);
+                for r in 0..reps {
+                    let at = r * ts::SLOT as usize;
+                    let cb_va = ctl.va + at as u64;
+                    let qb = ComputeQmd { cbuf0_va: cb_va, ..q }.to_bytes_with_shared(&Variant::shared(v))?;
+                    zb[at..at + 0x100].copy_from_slice(&cb);
+                    zb[at + 0x100..at + 0x100 + qb.len()].copy_from_slice(&qb);
+                    qv.push(cb_va + 0x100);
+                }
+                ram_write(&ctl, &zb);
+                put_bytes(st.mem.writer_mut(), ctx.rec.pa, &alloc::vec![0u8; 16 * (reps + 1)])?;
+                let first = TOKEN_FIRST + STRIDE * *subs;
+                let mut words = alloc::vec![0u32; transfer::sequence_words_fresh(reps)];
+                let mut pb = PushBuf::new(&mut words);
+                transfer::encode_sequence_fresh(&mut pb, &qv, ctx.rec.va, first)?;
+                let nw = pb.len();
+                let last = first + reps as u32;
+                let ns = match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, reps as u64 + 1, last, &maps, &sys, doorbell)? {
+                    Ok(b) => {
+                        *subs += 1;
+                        transfer::analyze_sequence(&b, reps, first)?
+                    }
+                    Err(got) => {
+                        lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, race_row(v.name, f, None, RaceBits::Unfinished)));
+                        race_stopped = Some(format!("placa nu a terminat {} pe forma {} (ultima inregistrare {:#x}, asteptat {:#x})", v.name, fi + 1, got, last));
+                        break 'forms;
+                    }
+                };
+                let med = median_of(ns.get(1..).filter(|t| !t.is_empty()).unwrap_or(&ns));
+                let Some((h, guard_ok, unwritten)) = read(st, vbar, clock, journal, l, doorbell, subs, c_len, len)? else {
+                    race_stopped = Some(format!("citirea lui C nu s-a terminat (forma {}, {})", fi + 1, v.name));
+                    break 'forms;
+                };
+                let bits = if vi == 0 {
+                    // The witness: every word written, the guard intact; otherwise the shape is not raced.
+                    if guard_ok && unwritten == 0 {
+                        witness = Some(h);
+                        witness_ns = med;
+                        RaceBits::Same
+                    } else {
+                        RaceBits::Differ
+                    }
+                } else if guard_ok && witness == Some(h) {
+                    RaceBits::Same
+                } else {
+                    RaceBits::Differ
+                };
+                match bits {
+                    RaceBits::Same => rows_same += 1,
+                    _ => rows_differ += 1,
+                }
+                if bits == RaceBits::Same {
+                    if let Some(t) = med {
+                        if best.is_none_or(|(_, b)| t < b) {
+                            best = Some((vi, t));
+                        }
+                    }
+                }
+                lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, race_row(v.name, f, med, bits)));
+            }
+            if let (Some((vi, t)), Some(w)) = (best, witness_ns) {
+                saved_ns += w.saturating_sub(t) * u64::from(f.count);
+                lines.push(format!(
+                    "{}: kronos --gpu: {}: cursa: forma {}x{}x{} f{}: cea mai rapida cu aceiasi biti = {} ({}.{} us; martorul {}.{} us)",
+                    p, tag, f.m, f.n, f.k, f.flags, VARIANTS[vi].name, t / 1000, (t % 1000) / 100, w / 1000, (w % 1000) / 100
+                ));
+            }
+        }
+        journal.push(Event::Value { what: KT_513_RACE_SAME, value: rows_same });
+        journal.push(Event::Value { what: KT_513_RACE_DIFFER, value: rows_differ });
+        journal.push(Event::Value { what: KT_513_RACE_SAVED_US, value: (saved_ns / 1000).min(u32::MAX as u64) as u32 });
+        lines.push(format!(
+            "{}: kronos --gpu: {}: cursa mm: {}: {} randuri cu aceiasi biti, {} diferite; cu castigatoarele pe fiecare forma pasul ar scadea cu ~{} us (din timpii izolati; DEDUS)",
+            p,
+            tag,
+            match &race_stopped {
+                Some(why) => format!("NU A TERMINAT ({})", why),
+                None => String::from("GATA"),
+            },
+            rows_same,
+            rows_differ,
+            saved_ns / 1000
+        ));
     }
     // P6-187 (command centre note 24 Nov 14:20, point 1): the fair Windows <-> OS bench — the same figures as PyTorch, one row.
     if losses.len() == steps {

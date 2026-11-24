@@ -438,6 +438,12 @@ pub static TRAIN_513_MM_TILE_IN_CYCLE: core::sync::atomic::AtomicBool = core::sy
 /// --colsum-impartit`) and, in the test build, by `gpu antrenare-mini-sim vram-513-placi3-mm-cs`. Off by default.
 pub static TRAIN_513_COLSUM_SPLIT_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-190 (cyber-gpu `a98298e`, note C-165_cursa-mm, decision H3): with [`TRAIN_513_MM_TILE_IN_CYCLE`], after #513's
+/// steps, the night race of `mm_train_variants::VARIANTS` on every `mm_train` shape of the step, against the witness
+/// `mm_train_tile`. Set only by the cycle (`test-placa … --mm-placi [--colsum-impartit] --cursa-mm`) and, in the test
+/// build, by `gpu antrenare-mini-sim vram-513-cursa`. Off by default.
+pub static TRAIN_513_RACE_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-178 (cyber-gpu `d173a59`, note C-157_P2s): with [`TRAIN_MINI_VRAM_IN_CYCLE`], the resident run twice from the same
 /// state — the batch and the results through the VRAM window (os-390), then through pinned RAM with the copy program in
 /// the step's own list — compared bit for bit. Set only by the cycle (`test-placa … --antrenare-mini --vram --lot-ram`)

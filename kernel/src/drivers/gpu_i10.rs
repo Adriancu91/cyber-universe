@@ -447,6 +447,15 @@ impl SimGpu {
             cp.register_program_with_needs(nvidia_ga104::mm_train_tile::MM_TRAIN_TILE, c::mm_train_tile_on_cpu, c::MM_TRAIN_TILE_NEEDS);
             // P6-189 (cyber-gpu note C-157_P2y): the row-split column sum (`colsum_part`, no needs).
             cp.register_program(nvidia_ga104::colsum_part::COLSUM_PART, c::colsum_part_on_cpu);
+            // P6-190 (cyber-gpu note C-165_cursa-mm): the race's 4 new variants of `mm_train_tile` (index 0 is
+            // `mm_train_tile` itself, registered above), each with its own tiles' CPU model.
+            {
+                use nvidia_ga104::mm_train_variants as mv;
+                cp.register_program_with_needs(mv::MM_TV_128X64, c::mm_tv_128x64_on_cpu, c::MM_TV_128X64.needs());
+                cp.register_program_with_needs(mv::MM_TV_64X128, c::mm_tv_64x128_on_cpu, c::MM_TV_64X128.needs());
+                cp.register_program_with_needs(mv::MM_TV_128X128, c::mm_tv_128x128_on_cpu, c::MM_TV_128X128.needs());
+                cp.register_program_with_needs(mv::MM_TV_64X64K8, c::mm_tv_64x64k8_on_cpu, c::MM_TV_64X64K8.needs());
+            }
             // P6-136 (C-161 point 4): the 11 new programs of the small golden step (`train_step`; `colsum` and `vadd`
             // are registered above).
             {
