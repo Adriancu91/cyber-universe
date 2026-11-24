@@ -93,6 +93,10 @@ pub struct SimBoard {
     /// P6-170 (`--lipit`, cyber-gpu notes C-160_P7g / P7h): `ln_back_res` and `mm_train_gelu` glued into the step
     /// (`Plan::with_fused_back().with_fused_gelu()`, 3·L launches fewer, the same bits).
     fused: bool,
+    /// P6-171 (`--recalcul`, cyber-gpu note C-160_P9): one set of layer buffers for all layers, every layer but the
+    /// last re-runs its forward at the start of its backward (`Plan::with_recompute()`, 8·(L − 1) launches more,
+    /// the same bits, a smaller arena).
+    recompute: bool,
     first: u32,
     /// Launches sent so far.
     pub launches: usize,
@@ -112,7 +116,7 @@ pub struct StepOut {
 }
 
 impl SimBoard {
-    pub fn new(layout: Layout, mixed: bool, fused: bool) -> Result<Self, String> {
+    pub fn new(layout: Layout, mixed: bool, fused: bool, recompute: bool) -> Result<Self, String> {
         ts::check_programs().map_err(|e| format!("SHA-256 al programelor: {:?}", e))?;
         if mixed && fused {
             // The note C-160_P7h: `step_mixed` refuses `with_fused_gelu` (not glued on `mm_tc` yet).
@@ -160,7 +164,7 @@ impl SimBoard {
             let _ = cp.register_program_with_needs(tc::MM_TC, c::mm_tc_on_cpu, c::MM_TC_NEEDS);
             cp.mem.write(TC, tc::MM_TC);
         }
-        Ok(Self { cp, layout, mixed, fused, first: 1, launches: 0 })
+        Ok(Self { cp, layout, mixed, fused, recompute, first: 1, launches: 0 })
     }
 
     /// One AdamW step (`adamw_513`'s list with `adam`'s own lr / betas / eps / decay, clipping at 1.0) on the batch
@@ -179,6 +183,8 @@ impl SimBoard {
         }
         let plan = self.layout.plan(*a, batch, len, inputs).map_err(e("planul"))?;
         let plan = if self.fused { plan.with_fused_back().with_fused_gelu() } else { plan };
+        // The note C-160_P9: the arena moves with the recompute, so every address below comes from this plan.
+        let plan = if self.recompute { plan.with_recompute().map_err(e("recalcularea"))? } else { plan };
         for (va, bytes) in plan.uploads(params, inputs, targets).map_err(e("urcarile"))? {
             self.cp.mem.write(va, &bytes);
         }

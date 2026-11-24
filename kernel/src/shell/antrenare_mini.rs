@@ -17,7 +17,7 @@ use gpu_compute::train::{self, AdamW, Arch, Batch};
 use super::date_bucati::{self, Mt19937};
 use super::punct_control::{self, Checkpoint};
 
-const USAGE: &str = "folosire: antrenare mini [dosar] [--pasi <1..1000>] [--lot <numar 1..16> <context 1..256>] [--vocabular <64..16384>] [--samanta <s>] [--lr <x>] [--salveaza <cale>] [--din <cale>] [--placa-sim [--atentie simpla|p|placi|placi-p] [--mixt | --lipit] [--fara-oracol]]";
+const USAGE: &str = "folosire: antrenare mini [dosar] [--pasi <1..1000>] [--lot <numar 1..16> <context 1..256>] [--vocabular <64..16384>] [--samanta <s>] [--lr <x>] [--salveaza <cale>] [--din <cale>] [--placa-sim [--atentie simpla|p|placi|placi-p] [--mixt | --lipit] [--recalcul] [--fara-oracol]]";
 
 /// Kronos's vocabulary (#513 and #651: 16 384 symbols) — the default; a smaller one only for data whose symbols fit
 /// (the QEMU test: on the processor without KVM one step with 16 384 takes ~50 s).
@@ -237,6 +237,8 @@ pub fn command(args: &[&str]) -> Vec<String> {
     let mut mixed = false;
     // P6-170: `ln_back_res` + `mm_train_gelu` glued into the step, beside the plain list (the same bits expected).
     let mut fused = false;
+    // P6-171: the activations recomputed in the backward pass (one set of layer buffers), beside the plain list.
+    let mut recompute = false;
     let mut i = 0;
     while i < args.len() {
         let next = |k: usize| args.get(i + k).copied();
@@ -304,6 +306,10 @@ pub fn command(args: &[&str]) -> Vec<String> {
                 fused = true;
                 i += 1;
             }
+            "--recalcul" => {
+                recompute = true;
+                i += 1;
+            }
             x if !x.starts_with("--") && dir.is_none() => {
                 dir = Some(x);
                 i += 1;
@@ -315,7 +321,7 @@ pub fn command(args: &[&str]) -> Vec<String> {
         rows.push(format!("antrenare mini: NU A RULAT: {}", why));
         rows
     };
-    if ((no_oracle || layout.is_some() || mixed || fused) && !board_sim) || (mixed && fused) {
+    if ((no_oracle || layout.is_some() || mixed || fused || recompute) && !board_sim) || (mixed && fused) {
         return alloc::vec![String::from(USAGE)];
     }
     if layout.is_some_and(|w| !matches!(w, "simpla" | "p" | "placi" | "placi-p")) {
@@ -414,7 +420,12 @@ pub fn command(args: &[&str]) -> Vec<String> {
                 "antrenare mini: lipirea: ln_back_res (LayerNorm inapoi + rezidualul) si mm_train_gelu (proj-dX + derivata GELU) in pas, langa lista fara lipire pe o a doua placa simulata (asteptat: aceiasi biti)",
             ));
         }
-        match super::antrenare_sim::SimBoard::new(l, mixed, fused) {
+        if recompute {
+            rows.push(String::from(
+                "antrenare mini: recalcularea: un singur set de bufere de strat, fiecare strat in afara de ultimul isi reface inainte-ul la intoarcere (8 lansari pe strat), langa lista fara recalculare pe o a doua placa simulata (asteptat: aceiasi biti, arena mai mica)",
+            ));
+        }
+        match super::antrenare_sim::SimBoard::new(l, mixed, fused, recompute) {
             Ok(b) => Some(b),
             Err(e) => return fail(rows, format!("placa simulata: {}", e)),
         }
@@ -423,9 +434,10 @@ pub fn command(args: &[&str]) -> Vec<String> {
     };
     // P6-170: the plain list on its own simulated board, from the same start, for the bit-for-bit comparison.
     #[cfg(feature = "test-gpu-sim")]
-    let mut twin = if fused {
+    // P6-171: with `--recalcul` the twin keeps `--mixt` (same matmuls) and drops the recompute and the gluing.
+    let mut twin = if fused || recompute {
         let l = super::antrenare_sim::Layout::parse(layout.unwrap_or("simpla")).unwrap_or(super::antrenare_sim::Layout::Simple);
-        match super::antrenare_sim::SimBoard::new(l, false, false) {
+        match super::antrenare_sim::SimBoard::new(l, mixed, false, false) {
             Ok(b) => Some((b, st.params.clone(), st.adam.clone())),
             Err(e) => return fail(rows, format!("placa simulata (fara lipire): {}", e)),
         }
@@ -437,6 +449,9 @@ pub fn command(args: &[&str]) -> Vec<String> {
     let mut fused_same = 0usize;
     #[allow(unused_mut)]
     let mut fused_launches = (0usize, 0usize);
+    // P6-171: the arena of the plain list (the twin's), beside the one of the list under test.
+    #[allow(unused_mut)]
+    let mut twin_arena = 0u64;
     // The oracle's own copy, from the same start (only beside the simulated board).
     let mut oracle: Option<(Vec<Vec<f32>>, AdamW)> = (board_sim && !no_oracle).then(|| (st.params.clone(), st.adam.clone()));
     let (mut worst_loss, mut worst_w, mut worst_norm) = (0.0f64, 0.0f64, 0.0f64);
@@ -486,8 +501,10 @@ pub fn command(args: &[&str]) -> Vec<String> {
             let same = loss.to_bits() == o.loss.to_bits() && norm.to_bits() == o.norm.to_bits() && w_diff == 0;
             fused_same += usize::from(same);
             fused_launches = (n, o.launches);
+            twin_arena = twin_arena.max(o.arena);
             rows.push(format!(
-                "antrenare mini: lipirea pasul {}: {} lansari fata de {}; pierderea {:.6} / {:.6}, norma {:.6} / {:.6}, greutati diferite {} -> {}",
+                "antrenare mini: {} pasul {}: {} lansari fata de {}; pierderea {:.6} / {:.6}, norma {:.6} / {:.6}, greutati diferite {} -> {}",
+                what_twin(fused, recompute),
                 st.done + 1,
                 n,
                 o.launches,
@@ -608,10 +625,27 @@ pub fn command(args: &[&str]) -> Vec<String> {
             first, w, last, w, steps, total_ms
         ));
     }
-    if fused {
+    if fused || recompute {
         let pass = fused_same == steps;
+        let what = match (fused, recompute) {
+            (true, false) => "lipirea (ln_back_res + mm_train_gelu) fata de lista fara lipire",
+            (false, _) => "recalcularea fata de lista fara recalculare",
+            (true, true) => "lipirea + recalcularea fata de lista simpla",
+        };
+        if recompute && twin_arena > 0 {
+            let mib = |b: u64| format!("{}.{}", b >> 20, (b & 0xf_ffff) * 10 >> 20);
+            rows.push(format!(
+                "antrenare mini: arena cu recalculare {} MiB fata de {} MiB fara (vocabular {}, lot {} x {})",
+                mib(arena),
+                mib(twin_arena),
+                st.vocab,
+                st.numar,
+                st.context
+            ));
+        }
         rows.push(format!(
-            "antrenare mini: lipirea (ln_back_res + mm_train_gelu) fata de lista fara lipire: {} — {} din {} pasi bit cu bit (pierderea, norma, toate greutatile); {} lansari pe pas in loc de {}",
+            "antrenare mini: {}: {} — {} din {} pasi bit cu bit (pierderea, norma, toate greutatile); {} lansari pe pas in loc de {}",
+            what,
             if pass { "ACEIASI BITI" } else { "DIFERA" },
             fused_same,
             steps,
@@ -668,4 +702,14 @@ pub fn command(args: &[&str]) -> Vec<String> {
         }
     }
     rows
+}
+
+/// P6-170 / P6-171: the name of the twin comparison in the per-step rows.
+#[allow(dead_code)]
+fn what_twin(fused: bool, recompute: bool) -> &'static str {
+    match (fused, recompute) {
+        (true, false) => "lipirea",
+        (false, _) => "recalcularea",
+        (true, true) => "lipirea + recalcularea",
+    }
 }
