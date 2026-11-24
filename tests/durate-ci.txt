@@ -168,3 +168,4 @@ kronos-gpu-antrenare-mini-vram-ram 1000
 kronos-gpu-antrenare-513 1700
 kronos-gpu-antrenare-513-placi3 1700
 kronos-gpu-antrenare-513-mm-placi 1700
+kronos-gpu-antrenare-513-colsum 1700

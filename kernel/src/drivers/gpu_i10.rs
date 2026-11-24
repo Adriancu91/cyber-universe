@@ -445,6 +445,8 @@ impl SimGpu {
             // P6-188 (cyber-gpu note C-157_P2x step 2): the tiled training matmul (`mm_train_tile`, the same cbuf as
             // `mm_train`, 8 KiB shared, one barrier).
             cp.register_program_with_needs(nvidia_ga104::mm_train_tile::MM_TRAIN_TILE, c::mm_train_tile_on_cpu, c::MM_TRAIN_TILE_NEEDS);
+            // P6-189 (cyber-gpu note C-157_P2y): the row-split column sum (`colsum_part`, no needs).
+            cp.register_program(nvidia_ga104::colsum_part::COLSUM_PART, c::colsum_part_on_cpu);
             // P6-136 (C-161 point 4): the 11 new programs of the small golden step (`train_step`; `colsum` and `vadd`
             // are registered above).
             {

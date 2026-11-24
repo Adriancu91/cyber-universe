@@ -24,6 +24,7 @@ jobs:
   # run 45114337749 (os-366 + P6-153/154) took 50 / 41 / 37 / 41 min with every fourth scenario; balanced: ~34 min each.
   # P6-167: seven parts (teste-1..6): with the mixed step the five QEMU parts reached ~51 of the 60 minutes.
   # P6-176: eight parts (teste-1..7): with `antrenare-mini-placa-mixt-lipit` the table gave ~57 min per part out of 6.
+  # P6-189: nine QEMU parts (teste-1..9): with `kronos-gpu-antrenare-513-colsum` the table gave ~59 min per part out of 8.
   build-and-test:
     name: ${{ matrix.parte }}
     runs-on: ubuntu-24.04
@@ -33,21 +34,23 @@ jobs:
       matrix:
         include:
           - parte: teste-1
-            shard: 1/8
+            shard: 1/9
           - parte: teste-2
-            shard: 2/8
+            shard: 2/9
           - parte: teste-3
-            shard: 3/8
+            shard: 3/9
           - parte: teste-4
-            shard: 4/8
+            shard: 4/9
           - parte: teste-5
-            shard: 5/8
+            shard: 5/9
           - parte: teste-6
-            shard: 6/8
+            shard: 6/9
           - parte: teste-7
-            shard: 7/8
+            shard: 7/9
           - parte: teste-8
-            shard: 8/8
+            shard: 8/9
+          - parte: teste-9
+            shard: 9/9
           - parte: stick
             shard: ""
     steps:

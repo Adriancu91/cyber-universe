@@ -432,6 +432,12 @@ pub static TRAIN_513_TILES3_IN_CYCLE: core::sync::atomic::AtomicBool = core::syn
 /// default.
 pub static TRAIN_513_MM_TILE_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-189 (cyber-gpu `ffdb679`, note C-157_P2y): with [`TRAIN_513_MM_TILE_IN_CYCLE`], #513's `colsum` launches split over
+/// rows (`Plan::with_colsum_split`: `colsum_part` + `colsum` over the partial sums, a work zone after the arena; not the
+/// same bits, judged against the oracle as before). Set only by the cycle (`test-placa … --placi3 --mm-placi
+/// --colsum-impartit`) and, in the test build, by `gpu antrenare-mini-sim vram-513-placi3-mm-cs`. Off by default.
+pub static TRAIN_513_COLSUM_SPLIT_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-178 (cyber-gpu `d173a59`, note C-157_P2s): with [`TRAIN_MINI_VRAM_IN_CYCLE`], the resident run twice from the same
 /// state — the batch and the results through the VRAM window (os-390), then through pinned RAM with the copy program in
 /// the step's own list — compared bit for bit. Set only by the cycle (`test-placa … --antrenare-mini --vram --lot-ram`)

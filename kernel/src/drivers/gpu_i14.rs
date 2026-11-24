@@ -5681,6 +5681,8 @@ const KT_513_ORACLE: &str = "kt antrenare-513 = oracolul procesorului in pasii 1
 const KT_513_TILES3: &str = "kt antrenare-513 atentia pe placi gen 3 (1/0)";
 /// P6-188: 1 = the step's `mm_train` launches on `mm_train_tile` (`--mm-placi`).
 const KT_513_MM_TILE: &str = "kt antrenare-513 inmultirile pe mm_train_tile (1/0)";
+/// P6-189: 1 = the step's `colsum` launches split over rows (`--colsum-impartit`).
+const KT_513_COLSUM_SPLIT: &str = "kt antrenare-513 colsum impartit pe randuri (1/0)";
 
 /// P6-172: the pieces of the arena that are not zero before the first step, written into one upload piece
 /// `[cva, cva + buf.len())` of the arena: the weights (tensor by tensor, straight from `params`, so the GiB of the
@@ -5775,12 +5777,18 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // P6-188 (cyber-gpu note C-157_P2x step 2): with `--mm-placi` (only after `--placi3`), the 147 `mm_train` launches on
     // `mm_train_tile` (the same cbuf; the same bits in SIMULARE); the same arena, the same launches in the same order.
     let mm_tile = tiles3 && super::gpu_tur::TRAIN_513_MM_TILE_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    // P6-189 (cyber-gpu note C-157_P2y): with `--colsum-impartit` (only after `--mm-placi`), each `colsum` split over rows
+    // (`colsum_part` + `colsum` over the partial sums): 385 -> 483 launches, a work zone after the arena counted by
+    // `Plan::bytes`; not the same bits, judged against the oracle as before.
+    let colsum_split = mm_tile && super::gpu_tur::TRAIN_513_COLSUM_SPLIT_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     let build = |base: u64| -> GpuResult<Plan> {
         let pl = if tiles3 { Plan::new_tiles3(a, bsz, tl, x0, base)? } else { Plan::new(a, bsz, tl, x0, base)? };
-        Ok(if mm_tile { pl.with_mm_tile() } else { pl })
+        let pl = if mm_tile { pl.with_mm_tile() } else { pl };
+        Ok(if colsum_split { pl.with_colsum_split() } else { pl })
     };
     journal.push(Event::Value { what: KT_513_TILES3, value: tiles3 as u32 });
     journal.push(Event::Value { what: KT_513_MM_TILE, value: mm_tile as u32 });
+    journal.push(Event::Value { what: KT_513_COLSUM_SPLIT, value: colsum_split as u32 });
     let probe0 = build(nvidia_ga104::mmu::VA_BASE)?.resident()?;
     let mut n_launch = 0usize;
     for (x, _) in &data.batches {
@@ -5800,7 +5808,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     drop(probe0);
     let varena = map_vram(st, arena_bytes)?;
     let plan0 = build(varena.va)?.resident()?;
-    if plan0.bytes() > arena_bytes || plan0.mm_tile() != mm_tile || plan0.programs() != probe_programs {
+    if plan0.bytes() > arena_bytes || plan0.mm_tile() != mm_tile || plan0.colsum_split() != colsum_split || plan0.programs() != probe_programs {
         return Err(bad("antrenare-513: planul rezident difera intre adrese"));
     }
     let Some(host) = ram_vram_host((piece + zone_bytes) / PAGE) else {
@@ -5813,15 +5821,19 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     journal.push(Event::Value { what: KT_513_LAUNCHES, value: n_launch as u32 });
     journal.push(Event::Value { what: KT_513_SUBS, value: n_parts as u32 });
     lines.push(format!(
-        "{}: kronos --gpu: {} ({}): modelul vocabular {}, context {}, E {}, {} capete, {} straturi ({} greutati), lot {} x {}, AdamW lr 1e-3, taiere 1,0; {}; {}{}; {} programe (SHA-256 verificate), {} lansari pe pas in {} trimiteri (cel mult {} lansari pe trimitere); arena {} MiB in VRAM (VRAM liber {} MiB), urcata o data pe bucati de {} KiB; {} pasi{}",
+        "{}: kronos --gpu: {} ({}): modelul vocabular {}, context {}, E {}, {} capete, {} straturi ({} greutati), lot {} x {}, AdamW lr 1e-3, taiere 1,0; {}; {}{}{}; {} programe (SHA-256 verificate), {} lansari pe pas in {} trimiteri (cel mult {} lansari pe trimitere); arena {} MiB in VRAM (VRAM liber {} MiB), urcata o data pe bucati de {} KiB; {} pasi{}",
         p, tag, label, a.vocab, a.ctx, a.n_emb, a.heads, a.layers, count, bsz, tl, data.source,
         if tiles3 { "atentia pe placi gen 3 (attn_fwd_tile3, attn_back_tile0_3, attn_back_tile_3; --placi3)" } else { "atentia de baza (attn_fwd, attn_back)" },
         if mm_tile { "; inmultirile pe mm_train_tile (blocuri 256 x 64 x 64; --mm-placi)" } else { "" },
-        plan0.programs().len() + plan0.mm_tile_programs().len(), n_launch, n_parts, split, arena_bytes >> 20, free >> 20, piece >> 10, steps,
+        match plan0.colsum_scratch() {
+            Some((_, _, words)) => format!("; colsum impartit pe randuri (colsum_part + colsum; zona de lucru {} KiB dupa arena; --colsum-impartit)", (2 * 4 * words as u64) >> 10),
+            None => String::new(),
+        },
+        plan0.programs().len() + plan0.mm_tile_programs().len() + plan0.colsum_split_programs().len(), n_launch, n_parts, split, arena_bytes >> 20, free >> 20, piece >> 10, steps,
         if board { "; fara oracol (procesorul nu face pasul #513 in timp util): pierderea la pasul 1 ~ ln 16 384, apoi scade" } else { ", oracolul pe procesor la fiecare pas, greutatile la sfarsit" }
     ));
-    let mut progs: Vec<(ts::Prog, Mapping)> = Vec::with_capacity(plan0.programs().len() + plan0.mm_tile_programs().len());
-    for &prog in plan0.programs().iter().chain(plan0.mm_tile_programs()) {
+    let mut progs: Vec<(ts::Prog, Mapping)> = Vec::with_capacity(plan0.programs().len() + plan0.mm_tile_programs().len() + plan0.colsum_split_programs().len());
+    for &prog in plan0.programs().iter().chain(plan0.mm_tile_programs()).chain(plan0.colsum_split_programs()) {
         let pm = map_vram(st, prog.code().len() as u64)?;
         put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
         progs.push((prog, pm));
