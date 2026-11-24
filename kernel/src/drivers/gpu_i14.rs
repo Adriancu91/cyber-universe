@@ -138,6 +138,12 @@ const KT_MINI_STEP_UP: &str = "kt antrenare-mini octeti sus pe pas";
 const KT_MINI_STEP_DOWN: &str = "kt antrenare-mini octeti jos pe pas";
 /// P6-169: the whole step in us (the resident step is a few ms; the ms row rounds it away).
 const KT_MINI_HOST_US: &str = "kt antrenare-mini us pe pas intreg (median, fara oracol)";
+/// P6-174 (cyber-gpu notes C-157_P2_os-386 + C-157_P2_taieturi): the stick writes of the live journal during the steps
+/// (the routine rows are held in memory, as in the generation; expected 0), the journal's time in the steps, and the
+/// record words read over all steps (only the first + the last on most steps).
+const KT_MINI_STICK: &str = "kt antrenare-mini scrieri pe stick in pasi";
+const KT_MINI_JOURNAL_US: &str = "kt antrenare-mini us de jurnal in pasi (total)";
+const KT_MINI_REC_WORDS: &str = "kt antrenare-mini cuvinte de inregistrari citite (total)";
 /// P6-173 (command-center note of 24 Nov 03:12): where the resident step's host time goes, piece by piece (median us).
 const KT_MINI_PARTS: [&str; 5] = [
     "kt antrenare-mini bucata planul lotului (rebatch, us median)",
@@ -5217,6 +5223,23 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let mut stopped: Option<String> = None;
     let mut parts: [Vec<u64>; 5] = Default::default();
     let mut kicks: [Vec<u64>; 6] = Default::default();
+    // P6-174 (cyber-gpu notes `C-157_P2_os-386_pasul-intreg.md`, `C-157_P2_taieturi-pasul-intreg.md`; nothing new for the
+    // board): (1) the journal as in the generation — the routine rows (VRAM window, TLB, doorbell and their notes) stay
+    // in memory during the steps (`GenHold` + the routine, `flush_live` once per step), instead of one stick write each
+    // (~16.5 ms, 22 per step in os-386); (2) the second row of cuts — the pushbuffer through a write shadow (the list is
+    // the same every step), the records zeroed once (step 1; the payloads grow by `STRIDE` per submission, an old record
+    // never passes for a new one), only the first + the last record read except on the `RecordPlan::DIET` steps, and the
+    // planned wait. The same tools run on the board in `kronos --gpu`.
+    let mut push_shadow = kf::WriteShadow::new(l.push.pa, l.push.size)?;
+    let mut wait_plan = nvidia_ga104::kronos_diet2::WaitPlan::new();
+    let (mut rec_words, mut polls_sum, mut full_steps) = (0u64, 0u64, 0usize);
+    let writes0 = super::gpu_i6::HELD_WRITES.load(core::sync::atomic::Ordering::Relaxed);
+    let dropped0 = super::gpu_i6::DROPPED.load(core::sync::atomic::Ordering::Relaxed);
+    let jus0 = super::gpu_i6::JOURNAL_US.load(core::sync::atomic::Ordering::Relaxed);
+    journal.flush_live();
+    let hold = super::gpu_i6::GenHold::start();
+    journal.set_routine(Some(kf::gen_routine(&GEN_NOTES)));
+    let mut run_steps = || -> GpuResult<()> {
     for (k, (x, y)) in data.batches.iter().enumerate() {
         let step = k as u32 + 1;
         let t0 = crate::time::since_boot_us();
@@ -5241,7 +5264,10 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
         ram_write(&ctl, &zb);
         let n_list = list.len();
-        put_bytes(st.mem.writer_mut(), ctx.rec.pa, &alloc::vec![0u8; 16 * (n_list + 1)])?;
+        if k == 0 {
+            // P6-174: the records on zero once, for the longest list of the run.
+            put_bytes(st.mem.writer_mut(), ctx.rec.pa, &alloc::vec![0u8; 16 * (n_launch.max(n_list) + 1)])?;
+        }
         let first = TOKEN_FIRST + STRIDE * *subs;
         let mut words = alloc::vec![0u32; transfer::sequence_words_fresh(n_list)];
         let mut pb = PushBuf::new(&mut words);
@@ -5249,9 +5275,17 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         let nw = pb.len();
         let last = first + n_list as u32;
         marks[2] = crate::time::since_boot_us();
-        let b = match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, n_list as u64 + 1, last, &maps, &sys, doorbell)? {
-            Ok(b) => b,
-            Err(got) => {
+        let all = nvidia_ga104::kronos_diet2::RecordPlan::DIET.reads_all(k);
+        let mut polls = 0u32;
+        let d2 = super::gpu_i11::Diet2Wait { plan: &wait_plan, all, polls: &mut polls };
+        let b = match super::gpu_i11::run_records_d2(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, n_list as u64 + 1, last, &maps, &sys, doorbell, Some(&mut push_shadow), Some(d2)) {
+            Ok(Ok(b)) => b,
+            Err(e) => {
+                wait_plan.forget();
+                return Err(e);
+            }
+            Ok(Err(got)) => {
+                wait_plan.forget();
                 stopped = Some(format!("placa nu a terminat la pasul {} (ultima inregistrare {:#x}, asteptat {:#x})", step, got, last));
                 break;
             }
@@ -5264,13 +5298,24 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 kicks[i].push(*v);
             }
         }
-        board_ns.push(transfer::analyze_sequence(&b, n_list, first)?.iter().sum());
+        let busy: u64 = if all {
+            full_steps += 1;
+            transfer::analyze_sequence(&b, n_list, first)?.iter().sum()
+        } else {
+            nvidia_ga104::kronos_diet2::ends_span(&b[..16], &b[16 * n_list..16 * (n_list + 1)], n_list, first)?
+        };
+        wait_plan.observe(busy / 1000);
+        rec_words += if all { 4 * (n_list as u64 + 1) } else { 8 };
+        polls_sum += u64::from(polls);
+        board_ns.push(busy);
         let [(lr_va, lr_n), (res_va, res_n)] = plan.step_reads();
         let rows = read_vram_f32s(st, vbar, journal, lr_va, (lr_n / 4) as usize)?;
         let norm = read_vram_f32s(st, vbar, journal, res_va, (res_n / 4) as usize)?[0];
         bytes_down += lr_n + res_n;
         let loss = Outcome::mean_loss(&rows);
         marks[4] = crate::time::since_boot_us();
+        // P6-174: once per step, as once per token in the generation (in a `GenHold` nothing goes to the stick here).
+        journal.flush_live();
         if let Some(us) = t0.zip(marks[4]).map(|(p0, p1)| p1.saturating_sub(p0)) {
             host_us.push(us);
         }
@@ -5311,6 +5356,22 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             step_kick.map_or(String::new(), |g| format!("; trimiterea: {}", kick_gaps_text(&g)))
         ));
     }
+    Ok(())
+    };
+    let steps_r = run_steps();
+    drop(hold);
+    journal.set_routine(None);
+    let stick_writes = super::gpu_i6::HELD_WRITES.load(core::sync::atomic::Ordering::Relaxed).saturating_sub(writes0);
+    let dropped = super::gpu_i6::DROPPED.load(core::sync::atomic::Ordering::Relaxed).saturating_sub(dropped0);
+    let journal_us = super::gpu_i6::JOURNAL_US.load(core::sync::atomic::Ordering::Relaxed).saturating_sub(jus0);
+    journal.push(Event::Value { what: KT_MINI_STICK, value: stick_writes.min(u32::MAX as usize) as u32 });
+    journal.push(Event::Value { what: KT_MINI_JOURNAL_US, value: journal_us.min(u32::MAX as u64) as u32 });
+    journal.push(Event::Value { what: KT_MINI_REC_WORDS, value: rec_words.min(u32::MAX as u64) as u32 });
+    lines.push(format!(
+        "{}: kronos --gpu: {}: taieturile pasului (P6-174): jurnalul in pasi {} scrieri pe stick ({} us de jurnal, {} randuri de rutina aruncate); pushbuffer prin umbra; inregistrarile pe zero o data, citite toate la {} pasi, altfel prima + ultima ({} cuvinte citite in total); asteptarea planificata ({} citiri)",
+        p, tag, stick_writes, journal_us, dropped, full_steps, rec_words, polls_sum
+    ));
+    steps_r?;
     // 2. At the end: VRAM → RAM once, the weights against the oracle's.
     let mut worst_w = f64::INFINITY;
     if stopped.is_none() {
