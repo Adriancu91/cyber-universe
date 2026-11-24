@@ -157,6 +157,27 @@ impl<M: Mmio + ?Sized> ChannelMemory for Reader<'_, '_, M> {
     }
 }
 
+/// P6-173 (command-center note of 24 Nov 03:12): the marks of the last submission through [`kick_and_wait`] (us since
+/// boot, 0 = no clock): 0 the submission starts (pushbuffer written), 1 pushbuffer written, 2 flush done, 3 TLB
+/// invalidated, 4 doorbell rung, 5 the last record seen, 6 the records read back. Only read by the training probe.
+pub(super) static KICK_MARKS: [core::sync::atomic::AtomicU64; 7] = [const { core::sync::atomic::AtomicU64::new(0) }; 7];
+
+/// P6-173: sets mark `i` of [`KICK_MARKS`] to now.
+pub(super) fn kick_mark(i: usize) {
+    if let Some(m) = KICK_MARKS.get(i) {
+        m.store(crate::time::since_boot_us().unwrap_or(0), core::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// P6-173: the six gaps between the marks of the last submission (us), `None` if a mark is missing or out of order.
+pub(super) fn kick_gaps() -> Option<[u64; 6]> {
+    let m: [u64; 7] = core::array::from_fn(|i| KICK_MARKS[i].load(core::sync::atomic::Ordering::Relaxed));
+    if m.iter().any(|&v| v == 0) || m.windows(2).any(|w| w[1] < w[0]) {
+        return None;
+    }
+    Some(core::array::from_fn(|i| m[i + 1] - m[i]))
+}
+
 /// Flush + TLB invalidate (window put back), the doorbell, then `wait` on the window (window put back on every path).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn kick_and_wait<V: Mmio + ?Sized, K: Clock + ?Sized, T>(
@@ -174,13 +195,16 @@ pub(super) fn kick_and_wait<V: Mmio + ?Sized, K: Clock + ?Sized, T>(
     wait: impl FnOnce(&mut Reader<'_, '_, V>, &mut K) -> GpuResult<T>,
 ) -> GpuResult<T> {
     flush(&mut *vbar, &mut *journal, permit, zone, pending, words)?;
+    kick_mark(2);
     {
         let mut vw = VramWindow::new(&mut *vbar, &mut *journal, permit, zone.vram_size, &zone.protected)?;
         let r = vw.invalidate_tlb(&mut *clock, root);
         let back = vw.restore();
         r.and(back)?;
     }
+    kick_mark(3);
     doorbell(&mut *vbar, &mut *journal, bell.0, bell.1, ring)?;
+    kick_mark(4);
     let mut vw = VramWindow::new(&mut *vbar, &mut *journal, permit, zone.vram_size, &zone.protected)?;
     let r = wait(&mut Reader(&mut vw), clock);
     let back = vw.restore();

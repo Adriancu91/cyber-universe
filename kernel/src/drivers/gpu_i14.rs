@@ -138,6 +138,26 @@ const KT_MINI_STEP_UP: &str = "kt antrenare-mini octeti sus pe pas";
 const KT_MINI_STEP_DOWN: &str = "kt antrenare-mini octeti jos pe pas";
 /// P6-169: the whole step in us (the resident step is a few ms; the ms row rounds it away).
 const KT_MINI_HOST_US: &str = "kt antrenare-mini us pe pas intreg (median, fara oracol)";
+/// P6-173 (command-center note of 24 Nov 03:12): where the resident step's host time goes, piece by piece (median us).
+const KT_MINI_PARTS: [&str; 5] = [
+    "kt antrenare-mini bucata planul lotului (rebatch, us median)",
+    "kt antrenare-mini bucata lotul sus (us median)",
+    "kt antrenare-mini bucata lista + zona de control + inregistrari (us median)",
+    "kt antrenare-mini bucata trimitere + asteptare (us median)",
+    "kt antrenare-mini bucata pierderile + norma jos (us median)",
+];
+/// P6-173: the pieces of one submission (gaps between `gpu_i10::KICK_MARKS`), journal rows and names.
+const KT_MINI_KICKS: [&str; 6] = [
+    "kt antrenare-mini trimitere: pushbuffer scris (us median)",
+    "kt antrenare-mini trimitere: golirea scrierilor in VRAM (us median)",
+    "kt antrenare-mini trimitere: TLB (us median)",
+    "kt antrenare-mini trimitere: soneria (us median)",
+    "kt antrenare-mini trimitere: asteptarea ultimei inregistrari (us median)",
+    "kt antrenare-mini trimitere: inregistrarile citite (us median)",
+];
+const KICK_NAMES: [&str; 6] = ["pushbuffer", "golirea in VRAM", "TLB", "soneria", "asteptarea", "inregistrarile citite"];
+/// P6-173: the names of the pieces, in the order of [`KT_MINI_PARTS`].
+const MINI_PART_NAMES: [&str; 5] = ["planul lotului", "lotul sus", "lista + zona de control", "trimitere + asteptare", "pierderile + norma jos"];
 /// P6-112 (C-157 point 2b): the note written (with every held row) right before the texts, outside position 0's clock.
 const GEN_STARTS: &str = "kt generarea incepe (randurile tinute sunt pe stick; pana la final randurile de rutina raman in memorie)";
 /// P6-112: routine rows dropped from the memory ring during the generation (0 = all of them reached the stick).
@@ -5195,13 +5215,17 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let (mut board_ns, mut host_us, mut losses): (Vec<u64>, Vec<u64>, Vec<f32>) = (Vec::new(), Vec::new(), Vec::new());
     let (mut bytes_up, mut bytes_down) = (0u64, 0u64);
     let mut stopped: Option<String> = None;
+    let mut parts: [Vec<u64>; 5] = Default::default();
+    let mut kicks: [Vec<u64>; 6] = Default::default();
     for (k, (x, y)) in data.batches.iter().enumerate() {
         let step = k as u32 + 1;
         let t0 = crate::time::since_boot_us();
+        let mut marks: [Option<u64>; 5] = [None; 5];
         let plan = plan0.rebatch(x)?;
         if plan.w != plan0.w || plan.m != plan0.m || plan.v != plan0.v || plan.loss_rows != plan0.loss_rows || plan.res != plan0.res {
             return Err(bad("antrenare-mini: adresele planului rezident s-au mutat"));
         }
+        marks[0] = crate::time::since_boot_us();
         if k > 0 {
             let w = st.mem.writer_mut();
             for (va, bytes) in plan.batch_uploads(x, y)? {
@@ -5209,6 +5233,7 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 put_bytes(w, varena.pa + (va - varena.va), &bytes)?;
             }
         }
+        marks[1] = crate::time::since_boot_us();
         let list = plan.step(Recipe::AdamW513, &adam, step)?;
         let (zb, qmds) = ts::pack(&list, prog_va, ctl.va)?;
         if zb.len() as u64 > zone_bytes {
@@ -5223,6 +5248,7 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         transfer::encode_sequence_fresh(&mut pb, &qmds, ctx.rec.va, first)?;
         let nw = pb.len();
         let last = first + n_list as u32;
+        marks[2] = crate::time::since_boot_us();
         let b = match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, n_list as u64 + 1, last, &maps, &sys, doorbell)? {
             Ok(b) => b,
             Err(got) => {
@@ -5231,14 +5257,29 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             }
         };
         *subs += 1;
+        marks[3] = crate::time::since_boot_us();
+        let step_kick = super::gpu_i10::kick_gaps();
+        if let Some(g) = step_kick {
+            for (i, v) in g.iter().enumerate() {
+                kicks[i].push(*v);
+            }
+        }
         board_ns.push(transfer::analyze_sequence(&b, n_list, first)?.iter().sum());
         let [(lr_va, lr_n), (res_va, res_n)] = plan.step_reads();
         let rows = read_vram_f32s(st, vbar, journal, lr_va, (lr_n / 4) as usize)?;
         let norm = read_vram_f32s(st, vbar, journal, res_va, (res_n / 4) as usize)?[0];
         bytes_down += lr_n + res_n;
         let loss = Outcome::mean_loss(&rows);
-        if let Some(us) = t0.zip(crate::time::since_boot_us()).map(|(p0, p1)| p1.saturating_sub(p0)) {
+        marks[4] = crate::time::since_boot_us();
+        if let Some(us) = t0.zip(marks[4]).map(|(p0, p1)| p1.saturating_sub(p0)) {
             host_us.push(us);
+        }
+        // P6-173: the five pieces of the host step (each = the time since the previous mark).
+        let step_parts = mini_parts(t0, &marks);
+        if let Some(sp) = step_parts {
+            for (i, v) in sp.iter().enumerate() {
+                parts[i].push(*v);
+            }
         }
         if !norm.is_finite() || !loss.is_finite() {
             stopped = Some(format!("pasul {}: pierderea {:?} / norma gradientului {:?} nu e un numar", step, loss, norm));
@@ -5254,7 +5295,7 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         worst_norm = worst_norm.max(dn);
         worst_loss = worst_loss.max(dl);
         lines.push(format!(
-            "{}: kronos --gpu: {}: pasul {}: pierderea {:.4} (oracolul {:.4}, abaterea {:.1e}), norma gradientului {:.4} (oracolul {:.4}, abaterea {:.1e}); placa {} us, pasul intreg {} us (lotul sus + placa + pierderile jos, fara oracol)",
+            "{}: kronos --gpu: {}: pasul {}: pierderea {:.4} (oracolul {:.4}, abaterea {:.1e}), norma gradientului {:.4} (oracolul {:.4}, abaterea {:.1e}); placa {} us, pasul intreg {} us (lotul sus + placa + pierderile jos, fara oracol){}{}",
             p,
             tag,
             step,
@@ -5265,7 +5306,9 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             onorm,
             dn,
             board_ns.last().copied().unwrap_or(0) / 1000,
-            host_us.last().copied().unwrap_or(0)
+            host_us.last().copied().unwrap_or(0),
+            step_parts.map_or(String::new(), |sp| format!("; bucatile: {}", mini_parts_text(&sp))),
+            step_kick.map_or(String::new(), |g| format!("; trimiterea: {}", kick_gaps_text(&g)))
         ));
     }
     // 2. At the end: VRAM → RAM once, the weights against the oracle's.
@@ -5297,6 +5340,12 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     journal.push(Event::Value { what: KT_MINI_US, value: us as u32 });
     journal.push(Event::Value { what: KT_MINI_HOST_MS, value: (host_med_us / 1000) as u32 });
     journal.push(Event::Value { what: KT_MINI_HOST_US, value: host_med_us as u32 });
+    let part_med: Option<[u64; 5]> = (!parts[0].is_empty()).then(|| core::array::from_fn(|i| median_us(&parts[i].iter().map(|u| u * 1000).collect::<Vec<u64>>())));
+    if let Some(pm) = part_med {
+        for (i, v) in pm.iter().enumerate() {
+            journal.push(Event::Value { what: KT_MINI_PARTS[i], value: (*v).min(u32::MAX as u64) as u32 });
+        }
+    }
     journal.push(Event::Value { what: KT_MINI_TOK_S, value: tok_s as u32 });
     journal.push(Event::Value { what: KT_MINI_LOSS_E9, value: (worst_loss * 1e9).min(u32::MAX as f64) as u32 });
     journal.push(Event::Value { what: KT_MINI_W_E9, value: (worst_w * 1e9).min(u32::MAX as f64) as u32 });
@@ -5324,6 +5373,26 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         host_med_us,
         full_tok_s
     ));
+    if let Some(pm) = part_med {
+        let biggest = (0..5).max_by_key(|&i| pm[i]).unwrap_or(0);
+        lines.push(format!(
+            "{}: kronos --gpu: {}: pasul intreg pe bucati (median, {} pasi): {}; cea mai mare: {} ({} us din {} us)",
+            p,
+            tag,
+            parts[0].len(),
+            mini_parts_text(&pm),
+            MINI_PART_NAMES[biggest],
+            pm[biggest],
+            host_med_us
+        ));
+    }
+    if !kicks[0].is_empty() {
+        let km: [u64; 6] = core::array::from_fn(|i| median_us(&kicks[i].iter().map(|u| u * 1000).collect::<Vec<u64>>()));
+        for (i, v) in km.iter().enumerate() {
+            journal.push(Event::Value { what: KT_MINI_KICKS[i], value: (*v).min(u32::MAX as u64) as u32 });
+        }
+        lines.push(format!("{}: kronos --gpu: {}: trimiterea + asteptarea pe bucati (median, {} pasi): {}", p, tag, kicks[0].len(), kick_gaps_text(&km)));
+    }
     let pass = worst_loss <= TOL && worst_norm <= TOL && worst_w <= TOL;
     journal.push(Event::Value { what: KT_MINI_PASS, value: u32::from(pass) });
     lines.push(format!(
@@ -5357,4 +5426,27 @@ fn cpu_speed(us: &[u64]) -> (Option<u64>, Option<u64>) {
     let total: u64 = us.iter().sum();
     let x100 = (total > 0).then(|| (us.len() as u128 * 100 * 1_000_000 / total as u128) as u64);
     (Some(v[v.len() / 2]), x100)
+}
+
+/// P6-173: the five pieces of one resident step (us), from the step's start and the five marks; `None` if the clock
+/// was missing at any mark.
+fn mini_parts(t0: Option<u64>, marks: &[Option<u64>; 5]) -> Option<[u64; 5]> {
+    let mut prev = t0?;
+    let mut out = [0u64; 5];
+    for (i, m) in marks.iter().enumerate() {
+        let now = (*m)?;
+        out[i] = now.saturating_sub(prev);
+        prev = now;
+    }
+    Some(out)
+}
+
+/// P6-173: `planul lotului 12 us, lotul sus 3 us, …`.
+fn mini_parts_text(v: &[u64; 5]) -> String {
+    MINI_PART_NAMES.iter().zip(v.iter()).map(|(n, u)| format!("{} {} us", n, u)).collect::<Vec<String>>().join(", ")
+}
+
+/// P6-173: `pushbuffer 5 us, golirea in VRAM 120 us, …`.
+fn kick_gaps_text(v: &[u64; 6]) -> String {
+    KICK_NAMES.iter().zip(v.iter()).map(|(n, u)| format!("{} {} us", n, u)).collect::<Vec<String>>().join(", ")
 }

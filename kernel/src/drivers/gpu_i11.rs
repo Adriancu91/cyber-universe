@@ -250,6 +250,10 @@ fn run_records_inner<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let w = st.space.as_ref().map(|(_, w)| w.clone()).ok_or(GpuError::InvalidArgument("I11: lipseste canalul de lucru"))?;
     let last_va = rec.va + RECORD * (n_rec - 1);
     let last_pa = rec.pa + RECORD * (n_rec - 1);
+    for i in 0..7 {
+        super::gpu_i10::KICK_MARKS[i].store(0, core::sync::atomic::Ordering::Relaxed);
+    }
+    super::gpu_i10::kick_mark(0);
     let bell = match push_shadow {
         Some(sh) => {
             let mut m = nvidia_ga104::kronos_fast::ShadowedMemory::new(st.mem.writer_mut(), sh);
@@ -260,6 +264,7 @@ fn run_records_inner<V: Mmio + ?Sized, K: Clock + ?Sized>(
     if bell.bar0_offset != DOORBELL || bell.value != w.doorbell_token {
         return Err(GpuError::InvalidArgument("I11: soneria nu e cea documentata sau jetonul difera"));
     }
+    super::gpu_i10::kick_mark(1);
     let root = st.mem.root();
     let mut all: Vec<Mapping> = alloc::vec![w.ring, l.push];
     all.extend_from_slice(maps);
@@ -287,6 +292,7 @@ fn run_records_inner<V: Mmio + ?Sized, K: Clock + ?Sized>(
         if !waited {
             return Ok(Err(last));
         }
+        super::gpu_i10::kick_mark(5);
         let mut b = Vec::with_capacity((RECORD * n_rec) as usize);
         if all {
             for o in (0..RECORD * n_rec).step_by(4) {
@@ -303,6 +309,7 @@ fn run_records_inner<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
         wq.update_get(rd)?;
         wq.retire(last_va, u64::from(last_payload))?;
+        super::gpu_i10::kick_mark(6);
         Ok(Ok(b))
     })
 }
