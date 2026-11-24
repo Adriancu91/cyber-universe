@@ -6085,6 +6085,30 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, row));
         }
     }
+    // P6-187 (command centre note 24 Nov 14:20, point 1): the fair Windows <-> OS bench — the same figures as PyTorch, one row.
+    if losses.len() == steps {
+        let version = crate::fs::read_all("/usb/VERSIUNE")
+            .ok()
+            .and_then(|v| String::from_utf8_lossy(&v).lines().next().map(|l| String::from(l.trim())))
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| String::from("necunoscuta"));
+        let bench = Bench {
+            version: &version,
+            model: if board { "#513" } else { "modelul mic (SIMULARE)" },
+            batch: bsz,
+            context: tl,
+            precision: "F32",
+            data: if data.synthetic { String::from("sintetice MT19937 0x164") } else { data.source.clone() },
+            attention: if tiles3 { "pe placi gen 3" } else { "de baza" },
+            step_us: host_med,
+            board_us: us,
+            losses: &losses,
+            norms: &norms,
+        };
+        for row in bench.lines() {
+            lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, row));
+        }
+    }
     // P6-184: on the synthetic batches with exactly the oracle's recipe, the verdict is the oracle (steps 1–9);
     // on Kronos's data the old one (the loss starts at ln V and falls).
     let oracle = (board && data.synthetic && bsz == 2 && tl == 512 && steps == gpu_compute::train::ORACLE_513_SYNTH.len())
@@ -6125,6 +6149,46 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
     ));
     Ok(pass)
+}
+
+/// P6-187: one training run as the fair Windows <-> OS bench reads it (`docs/BANC.md`): the same fields PyTorch writes.
+struct Bench<'a> {
+    version: &'a str,
+    model: &'a str,
+    batch: usize,
+    context: usize,
+    precision: &'a str,
+    data: String,
+    attention: &'a str,
+    /// The whole step on the CPU clock (batch up + board + losses down), median, µs.
+    step_us: u64,
+    /// The board's own time per step, median, µs.
+    board_us: u64,
+    losses: &'a [f32],
+    norms: &'a [f32],
+}
+
+impl Bench<'_> {
+    /// Two rows: `banc antrenare:` with fixed ` | `-separated `key value` fields, and `banc rand tabel:` ready to paste.
+    fn lines(&self) -> [String; 2] {
+        let tokens = (self.batch * self.context) as u64;
+        let tok_s = if self.step_us > 0 { tokens * 1_000_000 / self.step_us } else { 0 };
+        let ms = |us: u64| format!("{}.{:03}", us / 1000, us % 1000);
+        let list = |v: &[f32]| v.iter().map(|x| format!("{:.4}", x)).collect::<Vec<String>>().join(" ");
+        let first = self.losses.first().map_or(String::from("-"), |x| format!("{:.4}", x));
+        let last = self.losses.last().map_or(String::from("-"), |x| format!("{:.4}", x));
+        [
+            format!(
+                "banc antrenare: sistem OS {} | model {} | lot {} x {} | precizie {} | loturi {} | atentia {} | pasi {} | ms pe pas {} | simb/s {} | placa ms pe pas {} | pierderea {} | norma {}",
+                self.version, self.model, self.batch, self.context, self.precision, self.data, self.attention,
+                self.losses.len(), ms(self.step_us), tok_s, ms(self.board_us), list(self.losses), list(self.norms)
+            ),
+            format!(
+                "banc rand tabel: | OS {} | {} | {} x {} | {} | {} | {} | {} | {} | {} -> {} |",
+                self.version, self.model, self.batch, self.context, self.precision, self.data, self.losses.len(), ms(self.step_us), tok_s, first, last
+            ),
+        ]
+    }
 }
 
 /// P6-184 (PREDARE Cyber-GPU `8de6436`, note `C-157_P2u_oracol-513.md`): the board's #513 run on the synthetic batches
