@@ -153,6 +153,8 @@ const KT_MINI_FUSED_SAME: &str = "kt antrenare-mini lipit = nelipit bit cu bit (
 /// program inside the step's own list (1/0 per run), and the steps bit for bit the same as the run through the window.
 const KT_MINI_RAM: &str = "kt antrenare-mini lot prin RAM (1/0)";
 const KT_MINI_RAM_SAME: &str = "kt antrenare-mini lot prin RAM = prin fereastra bit cu bit (pasi)";
+/// P6-179: how many fully read steps the per-launch profile of the step was made from.
+const KT_MINI_PROFILE: &str = "kt antrenare-mini profilul pasului (pasi cititi intregi)";
 /// P6-173 (command-center note of 24 Nov 03:12): where the resident step's host time goes, piece by piece (median us).
 const KT_MINI_PARTS: [&str; 5] = [
     "kt antrenare-mini bucata planul lotului (rebatch, us median)",
@@ -5331,6 +5333,8 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let mut push_shadow = kf::WriteShadow::new(l.push.pa, l.push.size)?;
     let mut wait_plan = nvidia_ga104::kronos_diet2::WaitPlan::new();
     let (mut rec_words, mut polls_sum, mut full_steps) = (0u64, 0u64, 0usize);
+    // P6-179: the board time of the fully read steps split by launch (tag, program, stage), Cyber-GPU `12b622d`.
+    let mut prof: Option<nvidia_ga104::train_profile::StepProfile> = None;
     let writes0 = super::gpu_i6::HELD_WRITES.load(core::sync::atomic::Ordering::Relaxed);
     let dropped0 = super::gpu_i6::DROPPED.load(core::sync::atomic::Ordering::Relaxed);
     let jus0 = super::gpu_i6::JOURNAL_US.load(core::sync::atomic::Ordering::Relaxed);
@@ -5373,6 +5377,17 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
         ram_write(&ctl, &zb);
         let n_list = qmds.len();
+        if prof.is_none() {
+            let pr = nvidia_ga104::train_profile::StepProfile::from_launches(&list)?;
+            let pr = match &via {
+                Some(v) => pr.with_copies(v.copies_in.len(), v.copies_out.len())?,
+                None => pr,
+            };
+            if pr.launches() != n_list {
+                return Err(bad("antrenare-mini: profilul pasului nu are cate lansari are lista"));
+            }
+            prof = Some(pr);
+        }
         if k == 0 {
             // P6-174: the records on zero once, for the longest list of the run.
             put_bytes(st.mem.writer_mut(), ctx.rec.pa, &alloc::vec![0u8; 16 * (n_launch.max(n_list) + 1)])?;
@@ -5409,7 +5424,12 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
         let busy: u64 = if all {
             full_steps += 1;
-            transfer::analyze_sequence(&b, n_list, first)?.iter().sum()
+            let ns = transfer::analyze_sequence(&b, n_list, first)?;
+            // P6-179: the same records the step's time comes from; a list of another length is refused there.
+            if let Some(pr) = prof.as_mut() {
+                pr.add_step(&ns)?;
+            }
+            ns.iter().sum()
         } else {
             nvidia_ga104::kronos_diet2::ends_span(&b[..16], &b[16 * n_list..16 * (n_list + 1)], n_list, first)?
         };
@@ -5489,6 +5509,14 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         "{}: kronos --gpu: {}: taieturile pasului (P6-174): jurnalul in pasi {} scrieri pe stick ({} us de jurnal, {} randuri de rutina aruncate); pushbuffer prin umbra; inregistrarile pe zero o data, citite toate la {} pasi, altfel prima + ultima ({} cuvinte citite in total); asteptarea planificata ({} citiri)",
         p, tag, stick_writes, journal_us, dropped, full_steps, rec_words, polls_sum
     ));
+    // P6-179: once, at the end (~30 rows): the total, the stages, the 8 longest tags, the programs.
+    let prof_steps = prof.as_ref().map_or(0, |pr| pr.steps());
+    journal.push(Event::Value { what: KT_MINI_PROFILE, value: prof_steps as u32 });
+    if let Some(pr) = &prof {
+        for row in pr.lines(8) {
+            lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, row));
+        }
+    }
     steps_r?;
     // 2. At the end: VRAM → RAM once, the weights against the oracle's.
     let mut worst_w = f64::INFINITY;
