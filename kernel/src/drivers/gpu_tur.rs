@@ -408,6 +408,12 @@ pub static TRAIN_MINI_MIXED_IN_CYCLE: core::sync::atomic::AtomicBool = core::syn
 /// the cycle (`test-placa … --antrenare-mini --vram`) and, in the test build, by `gpu antrenare-mini-sim vram`.
 pub static TRAIN_MINI_VRAM_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-175 (cyber-gpu `d3d1ddd` + `f170042`; P6-170 in SIMULARE): with [`TRAIN_MINI_VRAM_IN_CYCLE`], the resident run
+/// twice from the same state — without gluing, then with `ln_back_res` + `mm_train_gelu` glued into the step — compared
+/// bit for bit. Set only by the cycle (`test-placa … --antrenare-mini --vram --pas-lipit`) and, in the test build, by
+/// `gpu antrenare-mini-sim vram-lipit`. Off by default.
+pub static TRAIN_MINI_FUSED_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-163: the copy object is needed (the RAM ↔ VRAM probe or the m, v in RAM step).
 pub fn copy_engine_wanted() -> bool {
     RAM_VRAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) || ADAM_RAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst)

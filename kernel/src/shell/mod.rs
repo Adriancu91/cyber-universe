@@ -1023,15 +1023,25 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::TRAIN_MINI_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_MINI_MIXED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_MINI_VRAM_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_MINI_FUSED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu antrenare-mini-sim: pornit, arena in VRAM (SIMULARE: dupa texte, pasul intreg al lui antrenare mini cu arena facuta o data in VRAM, langa oracol)\n");
+                }
+                // P6-175: `vram-lipit` = the resident run without gluing, then glued (`ln_back_res` + `mm_train_gelu`).
+                Some("vram-lipit") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TRAIN_MINI_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_MINI_MIXED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_MINI_VRAM_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_MINI_FUSED_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu antrenare-mini-sim: pornit, arena in VRAM, nelipit apoi lipit (SIMULARE: ln_back_res + mm_train_gelu, comparat bit cu bit)\n");
                 }
                 Some("off") if args.len() == 2 => {
                     crate::drivers::gpu_tur::TRAIN_MINI_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_MINI_MIXED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_MINI_VRAM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_MINI_FUSED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu antrenare-mini-sim: oprit\n");
                 }
-                _ => out!("folosire: gpu antrenare-mini-sim on|mixt|vram|off\n"),
+                _ => out!("folosire: gpu antrenare-mini-sim on|mixt|vram|vram-lipit|off\n"),
             }
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu antrenare-mini-sim: exista doar in build-ul de test (pe stick il porneste doar ciclul, test-placa --antrenare-mini)\n");

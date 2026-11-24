@@ -556,6 +556,8 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
   Gata (2026-11-24 ~03:25 RO): `kronos-gpu-antrenare-mini-vram` (29 verificări) + `boot` trec.
 - [x] **P6-174** PREDĂRI Cyber-GPU sesiunile 197 + 198 (notele `C-157_P2_os-386_pasul-intreg.md`, `C-157_P2_taieturi-pasul-intreg.md`): **pasul întreg al antrenării** în `test-placa --antrenare-mini --vram` — jurnalul ținut în memorie în pași (ca la generare) + umbra pushbuffer-ului, înregistrările pe zero o dată, doar prima + ultima citite, așteptarea planificată. Nimic nou pentru placă. Plan: `docs/plans/P6-174.md`.
   Gata (2026-11-24 ~05:55 RO): `kronos-gpu-antrenare-mini-vram` (31 verificări; SIMULARE: aceleași numere, 0 scrieri pe stick în pași, umbra + citirile scurte) + `boot` trec.
+- [x] **P6-175** Coada C-158 (după P6-174): **`test-placa --antrenare-mini --vram --pas-lipit`** — pasul cu arena în VRAM de două ori din aceeași stare, nelipit și lipit (`ln_back_res` + `mm_train_gelu`, PREDĂRI `d3d1ddd`, `f170042`), comparat bit cu bit pe placa reală. Nou pentru placă: doar cele două programe lipite. Plan: `docs/plans/P6-175.md`.
+  Gata (2026-11-24 ~06:40 RO, pe `wip/P6-175`, de adus în `main` după Release-ul lui P6-174): `kronos-gpu-antrenare-mini-vram-lipit` (nou; SIMULARE: 69 lansări în loc de 75, 2 / 2 pași bit cu bit, greutățile ACEIASI BITI 0 / 1 150 720, ambele = oracolul), `ghpush` (ciclul), `boot` trec.
 - [ ] **P6-172** Nota centrului de comandă 23 nov 23:36, punctul 3: **`test-placa --antrenare-513`** — pasul de antrenare #513 pe placa reală (arena în VRAM, planul rezident), pentru comparația cu Windows. Dep: rezultatul os-386 pe placă. Plan: `docs/plans/P6-172.md`.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 

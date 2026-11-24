@@ -472,6 +472,9 @@ impl SimGpu {
                 // P6-155 (cyber-gpu note C-160_P7_placi-in-pas, 1b9f79d): `Plan::new_p_only_tiles` rebuilds P with
                 // `attn_p_tile`; the three `attn_*_2` programs of `Plan::new_tiles` are registered with the tile probe.
                 let _ = cp.register_program(T::AttnPTile.code(), c::attn_p_tile_on_cpu);
+                // P6-175 (cyber-gpu `d3d1ddd`, `f170042`): the two glued programs of the step (`--pas-lipit`).
+                let _ = cp.register_program_with_needs(T::LnBackRes.code(), c::ln_back_res_on_cpu, c::LN_BACK_RES_NEEDS);
+                let _ = cp.register_program_with_needs(T::MmTrainGelu.code(), c::mm_train_gelu_on_cpu, c::MM_TRAIN_GELU_NEEDS);
             }
         }
         cp.sim_launch_ns = 4000;

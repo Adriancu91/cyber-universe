@@ -144,6 +144,11 @@ const KT_MINI_HOST_US: &str = "kt antrenare-mini us pe pas intreg (median, fara 
 const KT_MINI_STICK: &str = "kt antrenare-mini scrieri pe stick in pasi";
 const KT_MINI_JOURNAL_US: &str = "kt antrenare-mini us de jurnal in pasi (total)";
 const KT_MINI_REC_WORDS: &str = "kt antrenare-mini cuvinte de inregistrari citite (total)";
+/// P6-175 (cyber-gpu `d3d1ddd` + `f170042`, P6-170 on the simulated board): the glued step on the real board — the
+/// resident run with `ln_back_res` + `mm_train_gelu` (1/0 per run), and the steps whose loss, norm and (at the end)
+/// weights came out bit for bit the same as the run without gluing.
+const KT_MINI_FUSED: &str = "kt antrenare-mini pas lipit (1/0)";
+const KT_MINI_FUSED_SAME: &str = "kt antrenare-mini lipit = nelipit bit cu bit (pasi)";
 /// P6-173 (command-center note of 24 Nov 03:12): where the resident step's host time goes, piece by piece (median us).
 const KT_MINI_PARTS: [&str; 5] = [
     "kt antrenare-mini bucata planul lotului (rebatch, us median)",
@@ -4764,7 +4769,13 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
 ) -> GpuResult<()> {
     // P6-169: the resident arena (in VRAM) is its own probe.
     if super::gpu_tur::TRAIN_MINI_VRAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
-        return train_mini_resident(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx);
+        if !super::gpu_tur::TRAIN_MINI_FUSED_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+            return train_mini_resident(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, false).map(|_| ());
+        }
+        // P6-175: the same run twice from the same state — without gluing, then glued — compared bit for bit.
+        let plain = train_mini_resident(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, false)?;
+        let glued = train_mini_resident(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, true)?;
+        return fused_verdict(p, journal, lines, &plain, &glued);
     }
     use crate::shell::antrenare_mini as am;
     use gpu_compute::train::{self, AdamW, Batch, Recipe};
@@ -5073,7 +5084,8 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     doorbell: &mut Bell<'_, V>,
     subs: &mut u32,
     ctx: &CopyCtx,
-) -> GpuResult<()> {
+    fused: bool,
+) -> GpuResult<ResidentRun> {
     use crate::shell::antrenare_mini as am;
     use gpu_compute::train::{self, AdamW, Batch, Recipe};
     use nvidia_ga104::train_step::{self as ts, Outcome, Plan};
@@ -5082,8 +5094,11 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // SIMULARE: 2 steps, so the second batch goes through `batch_uploads` too.
     let steps: usize = if permit.is_some() { 10 } else { 2 };
     let label = if permit.is_some() { "placa" } else { "SIMULARE" };
-    let tag = "antrenare mini pe placa (arena in VRAM)";
+    let tag = if fused { "antrenare mini pe placa (arena in VRAM, lipit)" } else { "antrenare mini pe placa (arena in VRAM)" };
+    // P6-175: `ln_back_res` + `mm_train_gelu` glued into the step (the same plan, the same arena, 2·L + L launches fewer).
+    let glue = |pl: Plan| if fused { pl.with_fused_back().with_fused_gelu() } else { pl };
     journal.push(Event::Value { what: KT_MINI_VRAM, value: 1 });
+    journal.push(Event::Value { what: KT_MINI_FUSED, value: u32::from(fused) });
     journal.push(Event::Value { what: KT_MINI_MIXED, value: 0 });
     let data = match am::board_batches(bsz, tl, steps) {
         Ok(d) => d,
@@ -5100,7 +5115,7 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let a = am::arch(am::VOCAB, tl);
     let (x0, y0) = data.batches.first().ok_or(bad("antrenare-mini: niciun pas"))?;
     // The shape first (any base): the resident arena's size and every batch's launch count.
-    let probe0 = Plan::new(a, bsz, tl, x0, nvidia_ga104::mmu::VA_BASE)?.resident()?;
+    let probe0 = glue(Plan::new(a, bsz, tl, x0, nvidia_ga104::mmu::VA_BASE)?).resident()?;
     let mut n_launch = 0usize;
     for (x, _) in &data.batches {
         let pl = probe0.rebatch(x)?;
@@ -5112,8 +5127,8 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         return Err(bad("antrenare-mini: prea putine inregistrari"));
     }
     let varena = map_vram(st, arena_bytes)?;
-    let plan0 = Plan::new(a, bsz, tl, x0, varena.va)?.resident()?;
-    if plan0.bytes() > arena_bytes || plan0.programs() != probe0.programs() {
+    let plan0 = glue(Plan::new(a, bsz, tl, x0, varena.va)?).resident()?;
+    if plan0.bytes() > arena_bytes || plan0.programs() != probe0.programs() || plan0.fused_programs() != probe0.fused_programs() || plan0.fused_back() != fused || plan0.fused_gelu() != fused {
         return Err(bad("antrenare-mini: planul rezident difera intre adrese"));
     }
     let Some(host) = ram_vram_host((arena_bytes + zone_bytes) / PAGE) else {
@@ -5137,7 +5152,7 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         bsz,
         tl,
         data.source,
-        plan0.programs().len(),
+        plan0.programs().len() + plan0.fused_programs().len(),
         n_launch,
         arena_bytes >> 10,
         zone_bytes >> 10,
@@ -5154,8 +5169,8 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         traffic.today_step_down >> 10,
         traffic.final_down >> 10
     ));
-    let mut progs: Vec<(ts::Prog, Mapping)> = Vec::with_capacity(plan0.programs().len());
-    for &prog in plan0.programs().iter() {
+    let mut progs: Vec<(ts::Prog, Mapping)> = Vec::with_capacity(plan0.programs().len() + plan0.fused_programs().len());
+    for &prog in plan0.programs().iter().chain(plan0.fused_programs().iter()) {
         let pm = map_vram(st, prog.code().len() as u64)?;
         put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
         progs.push((prog, pm));
@@ -5219,6 +5234,8 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let (mut op, mut oa) = (params0.clone(), adam.clone());
     let (mut worst_loss, mut worst_norm) = (0.0f64, 0.0f64);
     let (mut board_ns, mut host_us, mut losses): (Vec<u64>, Vec<u64>, Vec<f32>) = (Vec::new(), Vec::new(), Vec::new());
+    let mut norms: Vec<f32> = Vec::new();
+    let mut final_w: Vec<f32> = Vec::new();
     let (mut bytes_up, mut bytes_down) = (0u64, 0u64);
     let mut stopped: Option<String> = None;
     let mut parts: [Vec<u64>; 5] = Default::default();
@@ -5245,7 +5262,7 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         let t0 = crate::time::since_boot_us();
         let mut marks: [Option<u64>; 5] = [None; 5];
         let plan = plan0.rebatch(x)?;
-        if plan.w != plan0.w || plan.m != plan0.m || plan.v != plan0.v || plan.loss_rows != plan0.loss_rows || plan.res != plan0.res {
+        if plan.fused_back() != fused || plan.fused_gelu() != fused || plan.w != plan0.w || plan.m != plan0.m || plan.v != plan0.v || plan.loss_rows != plan0.loss_rows || plan.res != plan0.res {
             return Err(bad("antrenare-mini: adresele planului rezident s-au mutat"));
         }
         marks[0] = crate::time::since_boot_us();
@@ -5331,6 +5348,7 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             break;
         }
         losses.push(loss);
+        norms.push(norm);
         let batch = Batch { inputs: x, targets: y, batch: bsz, len: tl };
         let (ol, mut og) = train::loss_and_grad(&a, &op, &batch)?;
         let onorm = train::clip_grad_norm(&mut og, 1.0);
@@ -5379,6 +5397,7 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             Some(down_ns) => {
                 let wb = ts::f32s(ram_vram_bytes(host + (plan0.w - varena.va), 4 * plan0.n_params as u64));
                 let board_w = plan0.unflat(&wb)?;
+                final_w = wb.clone();
                 worst_w = am::rel_dev(&board_w, &op);
                 lines.push(format!(
                     "{}: kronos --gpu: {}: arena adusa inapoi VRAM -> RAM la sfarsit in {} us (placa); greutatile dupa {} pasi fata de oracol: {:.1e}",
@@ -5468,7 +5487,56 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         worst_w
     ));
     lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, if pass { "TRECE (antrenarea cu arena in VRAM = oracolul)" } else { "NU TRECE (vezi randurile de mai sus)" }));
-    Ok(())
+    Ok(ResidentRun { losses, norms, weights: final_w, launches: n_launch, pass, board_us: us })
+}
+
+/// P6-175: what one resident run leaves for the comparison glued / not glued.
+struct ResidentRun {
+    losses: Vec<f32>,
+    norms: Vec<f32>,
+    weights: Vec<f32>,
+    launches: usize,
+    pass: bool,
+    board_us: u64,
+}
+
+/// P6-175 (cyber-gpu T200 / T201: the glued step = the plain step bit for bit): both runs against the oracle, and the
+/// glued one against the plain one — the loss and the norm at every step, the weights at the end, by bits.
+fn fused_verdict(p: &str, journal: &mut Journal, lines: &mut Vec<String>, plain: &ResidentRun, glued: &ResidentRun) -> GpuResult<()> {
+    let tag = "antrenare mini pe placa (arena in VRAM, lipit)";
+    let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<u32>>();
+    let steps = plain.losses.len().min(glued.losses.len());
+    let same_steps = (0..steps).filter(|&k| plain.losses[k].to_bits() == glued.losses[k].to_bits() && plain.norms.get(k).map(|x| x.to_bits()) == glued.norms.get(k).map(|x| x.to_bits())).count();
+    let same_w = !plain.weights.is_empty() && bits(&plain.weights) == bits(&glued.weights);
+    let diff_w = plain.weights.iter().zip(glued.weights.iter()).filter(|(a, b)| a.to_bits() != b.to_bits()).count();
+    let same = same_steps == steps && steps == plain.losses.len() && steps == glued.losses.len() && same_w;
+    journal.push(Event::Value { what: KT_MINI_FUSED_SAME, value: same_steps as u32 });
+    lines.push(format!(
+        "{}: kronos --gpu: {}: lipit fata de nelipit: {} lansari pe pas in loc de {}; placa {} us fata de {} us pe pas (median); {} / {} pasi cu aceeasi pierdere si norma bit cu bit; greutatile la sfarsit {} ({} diferite din {})",
+        p,
+        tag,
+        glued.launches,
+        plain.launches,
+        glued.board_us,
+        plain.board_us,
+        same_steps,
+        steps,
+        if same_w { "ACEIASI BITI" } else { "ALTI BITI" },
+        diff_w,
+        plain.weights.len()
+    ));
+    let pass = same && plain.pass && glued.pass;
+    lines.push(format!(
+        "{}: kronos --gpu: {}: {}",
+        p,
+        tag,
+        if pass { "TRECE (lipit = nelipit bit cu bit, ambele = oracolul)" } else { "NU TRECE (vezi randurile de mai sus)" }
+    ));
+    if pass {
+        Ok(())
+    } else {
+        Err(bad("antrenare-mini: pasul lipit difera de cel nelipit"))
+    }
 }
 
 /// P6-99: positions per second × 100 with the check: every position's OS time (board + driver + journal) plus its check.
