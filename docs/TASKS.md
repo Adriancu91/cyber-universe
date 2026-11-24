@@ -552,6 +552,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
   Gata (2026-11-24 ~02:45 RO, pe ramura `wip/P6-170`, de adus în `main` după Release-ul lui P6-169): `antrenare-mini-placa-lipit` (nou, 9 verificări; 2 pași: 69 lansări în loc de 75, ACEIASI BITI 2 / 2 — pierderea, norma, toate greutățile; ACELEASI NUMERE față de oracol).
 - [x] **P6-171** PREDARE Cyber-GPU `c5fcb2e` (nota C-160_P9; ordinea lui Adrian 23 nov 20:11, pasul 4): **`antrenare mini --placa-sim --recalcul`** — recalcularea activărilor (un singur set de bufere de strat, „înainte”-ul refăcut la întoarcere), lângă lista fără recalculare pe o a doua placă simulată, bit cu bit; doar SIMULARE. Plan: `docs/plans/P6-171.md`.
   Gata (2026-11-24 ~02:50 RO): cyber-gpu `f2e5097` → `c5fcb2e`; `antrenare-mini-placa-recalcul` (nou, 10 verificări; 2 pași: 83 lansări în loc de 75, ACEIASI BITI 2 / 2, arena 26,1 MiB față de 26,4 — la 2 straturi câștigul e mic, logits domină; ACELEASI NUMERE față de oracol). Regresie: `antrenare-mini-placa-lipit`, `kronos-gpu-antrenare-mini-vram`, `boot` trec.
+- [ ] **P6-172** Nota centrului de comandă 23 nov 23:36, punctul 3: **`test-placa --antrenare-513`** — pasul de antrenare #513 pe placa reală (arena în VRAM, planul rezident), pentru comparația cu Windows. Dep: rezultatul os-386 pe placă. Plan: `docs/plans/P6-172.md`.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
