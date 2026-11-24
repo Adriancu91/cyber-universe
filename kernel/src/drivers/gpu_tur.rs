@@ -450,6 +450,11 @@ pub static TRAIN_513_FUSED_TILE_IN_CYCLE: core::sync::atomic::AtomicBool = core:
 /// build, by `gpu antrenare-mini-sim vram-513-cursa`. Off by default.
 pub static TRAIN_513_RACE_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-195 (cyber-gpu `edc3ae3`, note C-165_os413_64x64k8, proposal 3): with [`TRAIN_513_RACE_IN_CYCLE`], instead of the
+/// big race, only the witness and `mm_tv_64x64k8` on the qkv shape, mapped with the tail page. Set only by the cycle
+/// (`test-placa … --cursa-mm --proba-64k8`) and, in the test build, by `gpu antrenare-mini-sim vram-513-proba64`.
+pub static TRAIN_513_PROBE_64K8_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-178 (cyber-gpu `d173a59`, note C-157_P2s): with [`TRAIN_MINI_VRAM_IN_CYCLE`], the resident run twice from the same
 /// state — the batch and the results through the VRAM window (os-390), then through pinned RAM with the copy program in
 /// the step's own list — compared bit for bit. Set only by the cycle (`test-placa … --antrenare-mini --vram --lot-ram`)

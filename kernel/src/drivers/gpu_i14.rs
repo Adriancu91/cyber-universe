@@ -5689,6 +5689,10 @@ const KT_513_FUSED_TILE: &str = "kt antrenare-513 lipit pe mm_train_tile_gelu (1
 const KT_513_RACE_SAME: &str = "kt cursa mm randuri cu aceiasi biti";
 const KT_513_RACE_DIFFER: &str = "kt cursa mm randuri diferite";
 const KT_513_RACE_SAVED_US: &str = "kt cursa mm pasul ar scadea cu (us, DEDUS)";
+/// P6-195: the lone `mm_tv_64x64k8` probe finished with the witness's bits (1) or not (0).
+const KT_513_PROBE_64K8: &str = "kt proba 64x64k8 terminata cu aceiasi biti (1/0)";
+/// P6-195: the variant held since os-413 (`RACE_HOLD`), probed alone with `--proba-64k8`.
+const PROBE_64K8_NAME: &str = "mm_tv_64x64k8";
 
 /// P6-172: the pieces of the arena that are not zero before the first step, written into one upload piece
 /// `[cva, cva + buf.len())` of the arena: the weights (tensor by tensor, straight from `params`, so the GiB of the
@@ -5884,6 +5888,10 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // P6-190 (C-165, cyber-gpu note `C-165_cursa-mm.md`): with `--cursa-mm` (only after `--mm-placi`), after the steps,
     // every variant of `mm_train_variants::VARIANTS` on every `mm_train` shape of the step, against the witness.
     let race = mm_tile && super::gpu_tur::TRAIN_513_RACE_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    // P6-195 (cyber-gpu note `C-165_os413_64x64k8.md`, proposal 3): with `--proba-64k8` (only after `--cursa-mm`), instead
+    // of the big race only the witness and `mm_tv_64x64k8` (held since os-413) on the qkv shape, with the tail page.
+    let probe64 = race && super::gpu_tur::TRAIN_513_PROBE_64K8_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    let probe64_vi = nvidia_ga104::mm_train_variants::VARIANTS.iter().position(|v| v.name == PROBE_64K8_NAME);
     let probe0 = build(nvidia_ga104::mmu::VA_BASE)?.resident()?;
     let mut n_launch = 0usize;
     for (x, _) in &data.batches {
@@ -5961,7 +5969,9 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let mut race_progs: Vec<Option<Mapping>> = Vec::new();
     if race {
         for (vi, v) in nvidia_ga104::mm_train_variants::VARIANTS.iter().enumerate() {
-            if !nvidia_ga104::mm_train_variants::in_race(vi) {
+            // P6-195: the probe maps only the witness and 64x64k8, in `VARIANTS`' order (64x64k8 last, as at os-413).
+            let wanted = if probe64 { vi == 0 || Some(vi) == probe64_vi } else { nvidia_ga104::mm_train_variants::in_race(vi) };
+            if !wanted {
                 race_progs.push(None);
                 continue;
             }
@@ -6274,14 +6284,30 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         const SENTINEL: [u8; 4] = (-12345.0f32).to_le_bytes();
         let reps = (if board { 8usize } else { 2 }).min(rec_cap).min((zone_bytes / ts::SLOT) as usize);
         let shas: Vec<bool> = VARIANTS.iter().map(|v| sha256_hex(v.code) == v.sha256).collect();
+        // P6-195: who runs and on which shapes — the race list on every shape, or (the probe) the witness and 64x64k8 on
+        // the qkv shape only (the first with N = 3 K: 1024 x 2304 x 768 on the board, where os-413 stopped).
+        let racers: Vec<(usize, &'static Variant)> = if probe64 {
+            VARIANTS.iter().enumerate().filter(|(i, _)| *i == 0 || Some(*i) == probe64_vi).collect()
+        } else {
+            race_list().collect()
+        };
+        if probe64 {
+            race_shapes = race_shapes.iter().filter(|f| f.n == 3 * f.k).take(1).copied().collect();
+            lines.push(format!(
+                "{}: kronos --gpu: {}: proba 64x64k8 (P6-195, propunerea 3 Cyber-GPU dupa os-413): in locul cursei mari, doar martorul {} si {} pe forma qkv ({}); {} mapata ultima, ca la os-413, dar cu o pagina de paza dupa cod (qmd::program_map_bytes)",
+                p, tag, VARIANTS[0].name, PROBE_64K8_NAME,
+                race_shapes.first().map_or(String::from("negasita"), |f| format!("{}x{}x{} f{}", f.m, f.n, f.k, f.flags)),
+                PROBE_64K8_NAME
+            ));
+        }
         lines.push(format!(
             "{}: kronos --gpu: {}: cursa mm (C-165, {}): {} forme ale lui mm_train din pas ({} lansari) x {} variante ({}); martorul {} (trecut pe placa la os-410); C pe o bucata de {} MiB in VRAM + 256 octeti de paza, umplute cu -12345.0; {} lansari pe varianta si forma (prima de incalzire), comparate bit cu bit cu martorul",
-            p, tag, label, race_shapes.len(), race_shapes.iter().map(|f| f.count).sum::<u32>(), race_list().count(),
-            race_list().map(|(i, v)| if shas[i] { String::from(v.name) } else { format!("{} SHA-256 GRESIT", v.name) }).collect::<Vec<_>>().join(", "),
+            p, tag, label, race_shapes.len(), race_shapes.iter().map(|f| f.count).sum::<u32>(), racers.len(),
+            racers.iter().map(|&(i, v)| if shas[i] { String::from(v.name) } else { format!("{} SHA-256 GRESIT", v.name) }).collect::<Vec<_>>().join(", "),
             VARIANTS[0].name, c_map.size >> 20, reps
         ));
         // P6-194: the held variants (os-413: `mm_tv_64x64k8` did not finish), named once, never launched.
-        for &i in RACE_HOLD.iter().filter(|&&i| i < VARIANTS.len()) {
+        for &i in RACE_HOLD.iter().filter(|&&i| i < VARIANTS.len() && !probe64) {
             lines.push(format!("{}: kronos --gpu: {}: cursa mm: {} scoasa din cursa (RACE_HOLD; os-413: nu a terminat), nelansata", p, tag, VARIANTS[i].name));
         }
         lines.push(format!("{}: kronos --gpu: {}: cursa mm: programele mapate cu o pagina de paza dupa cod (qmd::program_map_bytes, P6-194)", p, tag));
@@ -6318,6 +6344,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             Ok(Some((h, guard_ok, unwritten)))
         };
         let (mut rows_same, mut rows_differ, mut saved_ns, mut race_stopped) = (0u32, 0u32, 0u64, None::<String>);
+        let mut probe64_bits: Option<RaceBits> = None;
         let mut race_dash: Vec<super::gpu_golden::StepSample> = Vec::new();
         'forms: for (fi, f) in race_shapes.iter().enumerate() {
             let c_len = 4 * u64::from(f.m) * u64::from(f.n);
@@ -6338,7 +6365,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             let mut witness: Option<u64> = None;
             let mut best: Option<(usize, u64)> = None;
             let mut witness_ns: Option<u64> = None;
-            for (vi, v) in race_list() {
+            for &(vi, v) in &racers {
                 let skip = !shas[vi] || len > c_map.size || (vi > 0 && witness.is_none());
                 if skip {
                     lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, race_row(v.name, f, None, RaceBits::Skipped)));
@@ -6375,6 +6402,9 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                     }
                     Err(got) => {
                         lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, race_row(v.name, f, None, RaceBits::Unfinished)));
+                        if Some(vi) == probe64_vi {
+                            probe64_bits = Some(RaceBits::Unfinished);
+                        }
                         race_stopped = Some(format!("placa nu a terminat {} pe forma {} (ultima inregistrare {:#x}, asteptat {:#x})", v.name, fi + 1, got, last));
                         break 'forms;
                     }
@@ -6410,6 +6440,9 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                     }
                 }
                 lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, race_row(v.name, f, med, bits)));
+                if Some(vi) == probe64_vi {
+                    probe64_bits = Some(bits);
+                }
             }
             if let (Some((vi, t)), Some(w)) = (best, witness_ns) {
                 saved_ns += w.saturating_sub(t) * u64::from(f.count);
@@ -6444,6 +6477,17 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             rows_differ,
             saved_ns / 1000
         ));
+        // P6-195: the probe's verdict, from its single row (the witness first, then 64x64k8).
+        if probe64 {
+            let verdict = match probe64_bits {
+                Some(RaceBits::Same) => "TERMINA cu aceiasi biti ca martorul: blocajul de la os-413 venea (foarte probabil) din citirea in avans dupa capatul codului; varianta poate reveni in cursa",
+                Some(RaceBits::Differ) => "a terminat, dar C DIFERA de martor: nu se foloseste",
+                Some(RaceBits::Unfinished) => "NU A TERMINAT nici cu pagina de paza: cauza e in program; ramane scoasa din cursa",
+                _ => "NELANSATA (martorul sau forma qkv lipsesc, ori SHA-256 gresit)",
+            };
+            journal.push(Event::Value { what: KT_513_PROBE_64K8, value: u32::from(probe64_bits == Some(RaceBits::Same)) });
+            lines.push(format!("{}: kronos --gpu: {}: proba 64x64k8: {}: {}", p, tag, PROBE_64K8_NAME, verdict));
+        }
         if super::gpu_tur::step_dashboard_lent() {
             for row in super::gpu_golden::dash_summary(p, "in timpul cursei", "tablou cursa", &race_dash) {
                 lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, row));
