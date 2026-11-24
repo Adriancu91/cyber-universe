@@ -149,6 +149,10 @@ const KT_MINI_REC_WORDS: &str = "kt antrenare-mini cuvinte de inregistrari citit
 /// weights came out bit for bit the same as the run without gluing.
 const KT_MINI_FUSED: &str = "kt antrenare-mini pas lipit (1/0)";
 const KT_MINI_FUSED_SAME: &str = "kt antrenare-mini lipit = nelipit bit cu bit (pasi)";
+/// P6-178 (cyber-gpu `d173a59`, note C-157_P2s): the batch and the step's results through pinned RAM, moved by the copy
+/// program inside the step's own list (1/0 per run), and the steps bit for bit the same as the run through the window.
+const KT_MINI_RAM: &str = "kt antrenare-mini lot prin RAM (1/0)";
+const KT_MINI_RAM_SAME: &str = "kt antrenare-mini lot prin RAM = prin fereastra bit cu bit (pasi)";
 /// P6-173 (command-center note of 24 Nov 03:12): where the resident step's host time goes, piece by piece (median us).
 const KT_MINI_PARTS: [&str; 5] = [
     "kt antrenare-mini bucata planul lotului (rebatch, us median)",
@@ -4814,8 +4818,14 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
 ) -> GpuResult<()> {
     // P6-169: the resident arena (in VRAM) is its own probe.
     if super::gpu_tur::TRAIN_MINI_VRAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+        // P6-178: the same run twice from the same state — the batch through the VRAM window, then through RAM.
+        if super::gpu_tur::TRAIN_MINI_RAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+            let window = train_mini_resident(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, false, false)?;
+            let ram = train_mini_resident(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, false, true)?;
+            return ram_verdict(p, journal, lines, &window, &ram);
+        }
         if !super::gpu_tur::TRAIN_MINI_FUSED_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
-            let mini = train_mini_resident(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, false)?;
+            let mini = train_mini_resident(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, false, false)?;
             // P6-172: #513's step only after the small model's resident run passed in the same power-on.
             if super::gpu_tur::TRAIN_513_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
                 if !mini.pass {
@@ -4827,8 +4837,8 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
             return Ok(());
         }
         // P6-175: the same run twice from the same state — without gluing, then glued — compared bit for bit.
-        let plain = train_mini_resident(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, false)?;
-        let glued = train_mini_resident(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, true)?;
+        let plain = train_mini_resident(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, false, false)?;
+        let glued = train_mini_resident(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, true, false)?;
         return fused_verdict(p, journal, lines, &plain, &glued);
     }
     use crate::shell::antrenare_mini as am;
@@ -5139,6 +5149,7 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     subs: &mut u32,
     ctx: &CopyCtx,
     fused: bool,
+    via_ram: bool,
 ) -> GpuResult<ResidentRun> {
     use crate::shell::antrenare_mini as am;
     use gpu_compute::train::{self, AdamW, Batch, Recipe};
@@ -5148,11 +5159,19 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // SIMULARE: 2 steps, so the second batch goes through `batch_uploads` too.
     let steps: usize = if permit.is_some() { 10 } else { 2 };
     let label = if permit.is_some() { "placa" } else { "SIMULARE" };
-    let tag = if fused { "antrenare mini pe placa (arena in VRAM, lipit)" } else { "antrenare mini pe placa (arena in VRAM)" };
+    let tag = match (fused, via_ram) {
+        (true, _) => "antrenare mini pe placa (arena in VRAM, lipit)",
+        (false, true) => "antrenare mini pe placa (arena in VRAM, lot prin RAM)",
+        (false, false) => "antrenare mini pe placa (arena in VRAM)",
+    };
+    if fused && via_ram {
+        return Err(bad("antrenare-mini: lotul prin RAM nu merge cu pasul lipit"));
+    }
     // P6-175: `ln_back_res` + `mm_train_gelu` glued into the step (the same plan, the same arena, 2·L + L launches fewer).
     let glue = |pl: Plan| if fused { pl.with_fused_back().with_fused_gelu() } else { pl };
     journal.push(Event::Value { what: KT_MINI_VRAM, value: 1 });
     journal.push(Event::Value { what: KT_MINI_FUSED, value: u32::from(fused) });
+    journal.push(Event::Value { what: KT_MINI_RAM, value: u32::from(via_ram) });
     journal.push(Event::Value { what: KT_MINI_MIXED, value: 0 });
     let data = match am::board_batches(bsz, tl, steps) {
         Ok(d) => d,
@@ -5176,6 +5195,14 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         n_launch = n_launch.max(pl.launches_per_step(Recipe::AdamW513));
     }
     let arena_bytes = probe0.bytes().next_multiple_of(PAGE);
+    // P6-178: through RAM the list carries the copies in front and behind (5 + 2 at `antrenare mini`).
+    if via_ram {
+        let v = nvidia_ga104::batch_ram::via_ram(&probe0, x0, y0, 0)?;
+        n_launch += nvidia_ga104::batch_ram::extra_launches(&v);
+        if v.staging.len() as u64 > arena_bytes {
+            return Err(bad("antrenare-mini: zona de tranzit mai mare decat arena"));
+        }
+    }
     let zone_bytes = (n_launch as u64 * ts::SLOT).next_multiple_of(PAGE);
     if 16 * (n_launch as u64 + 1) > ctx.rec.size || n_launch as u32 + 1 > STRIDE {
         return Err(bad("antrenare-mini: prea putine inregistrari"));
@@ -5320,7 +5347,15 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             return Err(bad("antrenare-mini: adresele planului rezident s-au mutat"));
         }
         marks[0] = crate::time::since_boot_us();
-        if k > 0 {
+        // P6-178: through RAM the batch goes into the start of `stage` (pinned RAM, unused between the arena's two
+        // big copies) every step, step 1 too, so every step is the same; the copies in the list carry it.
+        let via = if via_ram { Some(nvidia_ga104::batch_ram::via_ram(&plan, x, y, stage.va)?) } else { None };
+        if let Some(v) = &via {
+            ram_vram_bytes(host, v.staging.len() as u64).copy_from_slice(&v.staging);
+            if k > 0 {
+                bytes_up += v.copies_in.iter().map(|c| c.bytes).sum::<u64>();
+            }
+        } else if k > 0 {
             let w = st.mem.writer_mut();
             for (va, bytes) in plan.batch_uploads(x, y)? {
                 bytes_up += bytes.len() as u64;
@@ -5329,12 +5364,15 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
         marks[1] = crate::time::since_boot_us();
         let list = plan.step(Recipe::AdamW513, &adam, step)?;
-        let (zb, qmds) = ts::pack(&list, prog_va, ctl.va)?;
+        let (zb, qmds) = match &via {
+            Some(v) => nvidia_ga104::batch_ram::pack_via_ram(&list, prog_va, ctx.copy_va, ctl.va, v)?,
+            None => ts::pack(&list, prog_va, ctl.va)?,
+        };
         if zb.len() as u64 > zone_bytes {
             return Err(bad("antrenare-mini: zona de control prea mare"));
         }
         ram_write(&ctl, &zb);
-        let n_list = list.len();
+        let n_list = qmds.len();
         if k == 0 {
             // P6-174: the records on zero once, for the longest list of the run.
             put_bytes(st.mem.writer_mut(), ctx.rec.pa, &alloc::vec![0u8; 16 * (n_launch.max(n_list) + 1)])?;
@@ -5380,8 +5418,16 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         polls_sum += u64::from(polls);
         board_ns.push(busy);
         let [(lr_va, lr_n), (res_va, res_n)] = plan.step_reads();
-        let rows = read_vram_f32s(st, vbar, journal, lr_va, (lr_n / 4) as usize)?;
-        let norm = read_vram_f32s(st, vbar, journal, res_va, (res_n / 4) as usize)?[0];
+        let (rows, norm) = match &via {
+            // P6-178: the two copies at the end of the list brought them into the staging area (a copy that did not
+            // arrive leaves 0 — the area is written with zeros with the batch — and the oracle catches it).
+            Some(v) => nvidia_ga104::batch_ram::results(ram_vram_bytes(host, v.staging.len() as u64), v)?,
+            None => {
+                let rows = read_vram_f32s(st, vbar, journal, lr_va, (lr_n / 4) as usize)?;
+                let norm = read_vram_f32s(st, vbar, journal, res_va, (res_n / 4) as usize)?[0];
+                (rows, norm)
+            }
+        };
         bytes_down += lr_n + res_n;
         let loss = Outcome::mean_loss(&rows);
         marks[4] = crate::time::since_boot_us();
@@ -5541,7 +5587,7 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         worst_w
     ));
     lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, if pass { "TRECE (antrenarea cu arena in VRAM = oracolul)" } else { "NU TRECE (vezi randurile de mai sus)" }));
-    Ok(ResidentRun { losses, norms, weights: final_w, launches: n_launch, pass, board_us: us })
+    Ok(ResidentRun { losses, norms, weights: final_w, launches: n_launch, pass, board_us: us, host_us: host_med_us, parts: part_med })
 }
 
 /// P6-172 (command-center note of 23 Nov 23:36, point 3): the journal rows of the #513 training step on the board.
@@ -5954,6 +6000,9 @@ struct ResidentRun {
     launches: usize,
     pass: bool,
     board_us: u64,
+    /// P6-178: the whole step (median us) and its pieces, for the comparison window / RAM.
+    host_us: u64,
+    parts: Option<[u64; 5]>,
 }
 
 /// P6-175 (cyber-gpu T200 / T201: the glued step = the plain step bit for bit): both runs against the oracle, and the
@@ -5992,6 +6041,51 @@ fn fused_verdict(p: &str, journal: &mut Journal, lines: &mut Vec<String>, plain:
         Ok(())
     } else {
         Err(bad("antrenare-mini: pasul lipit difera de cel nelipit"))
+    }
+}
+
+/// P6-178 (cyber-gpu T209: through RAM = through the window bit for bit, the arena identical): both runs against the
+/// oracle, and the RAM one against the window one — the loss and the norm at every step, the weights at the end, by
+/// bits — plus where the whole step's time went (cyber-gpu predicts ~4 150 -> ~3 800 us on the board).
+fn ram_verdict(p: &str, journal: &mut Journal, lines: &mut Vec<String>, window: &ResidentRun, ram: &ResidentRun) -> GpuResult<()> {
+    let tag = "antrenare mini pe placa (arena in VRAM, lot prin RAM)";
+    let steps = window.losses.len().min(ram.losses.len());
+    let same_steps = (0..steps).filter(|&k| window.losses[k].to_bits() == ram.losses[k].to_bits() && window.norms.get(k).map(|x| x.to_bits()) == ram.norms.get(k).map(|x| x.to_bits())).count();
+    let same_w = !window.weights.is_empty() && window.weights.len() == ram.weights.len() && window.weights.iter().zip(ram.weights.iter()).all(|(a, b)| a.to_bits() == b.to_bits());
+    let diff_w = window.weights.iter().zip(ram.weights.iter()).filter(|(a, b)| a.to_bits() != b.to_bits()).count();
+    let same = same_steps == steps && steps == window.losses.len() && steps == ram.losses.len() && same_w;
+    journal.push(Event::Value { what: KT_MINI_RAM_SAME, value: same_steps as u32 });
+    lines.push(format!(
+        "{}: kronos --gpu: {}: prin RAM fata de prin fereastra: {} lansari pe pas in loc de {} (copierile lotului si ale rezultatelor in lista); pasul intreg {} us fata de {} us, placa {} us fata de {} us pe pas (median); {} / {} pasi cu aceeasi pierdere si norma bit cu bit; greutatile la sfarsit {} ({} diferite din {})",
+        p,
+        tag,
+        ram.launches,
+        window.launches,
+        ram.host_us,
+        window.host_us,
+        ram.board_us,
+        window.board_us,
+        same_steps,
+        steps,
+        if same_w { "ACEIASI BITI" } else { "ALTI BITI" },
+        diff_w,
+        window.weights.len()
+    ));
+    if let (Some(a), Some(b)) = (window.parts, ram.parts) {
+        let row = (0..5).map(|i| format!("{} {} -> {} us", MINI_PART_NAMES[i], a[i], b[i])).collect::<Vec<String>>().join(", ");
+        lines.push(format!("{}: kronos --gpu: {}: bucatile pasului (median, fereastra -> RAM): {}", p, tag, row));
+    }
+    let pass = same && window.pass && ram.pass;
+    lines.push(format!(
+        "{}: kronos --gpu: {}: {}",
+        p,
+        tag,
+        if pass { "TRECE (prin RAM = prin fereastra bit cu bit, ambele = oracolul)" } else { "NU TRECE (vezi randurile de mai sus)" }
+    ));
+    if pass {
+        Ok(())
+    } else {
+        Err(bad("antrenare-mini: lotul prin RAM difera de cel prin fereastra"))
     }
 }
 

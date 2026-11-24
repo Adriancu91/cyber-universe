@@ -420,6 +420,12 @@ pub static TRAIN_MINI_FUSED_IN_CYCLE: core::sync::atomic::AtomicBool = core::syn
 /// antrenare-mini-sim vram-513`. Off by default.
 pub static TRAIN_513_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-178 (cyber-gpu `d173a59`, note C-157_P2s): with [`TRAIN_MINI_VRAM_IN_CYCLE`], the resident run twice from the same
+/// state — the batch and the results through the VRAM window (os-390), then through pinned RAM with the copy program in
+/// the step's own list — compared bit for bit. Set only by the cycle (`test-placa … --antrenare-mini --vram --lot-ram`)
+/// and, in the test build, by `gpu antrenare-mini-sim vram-ram`. Off by default.
+pub static TRAIN_MINI_RAM_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-163: the copy object is needed (the RAM ↔ VRAM probe or the m, v in RAM step).
 pub fn copy_engine_wanted() -> bool {
     RAM_VRAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) || ADAM_RAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst)
