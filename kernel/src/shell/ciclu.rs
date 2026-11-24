@@ -1356,8 +1356,7 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     };
     // P6-164: the whole training step on the board, its verdict.
     let result = if train_mini {
-        let verdict = text.lines().rev().find(|l| (l.contains("antrenare mini pe placa: ") || l.contains("antrenare mini pe placa (mixt): ")) && (l.contains("TRECE") || l.contains("NU A")) ).map_or("antrenare mini pe placa: niciun rezultat (vezi raportul)", |l| l.trim());
-        format!("{}; {}", result, verdict)
+        format!("{}; {}", result, train_verdicts(&text))
     } else {
         result
     };
@@ -1461,6 +1460,25 @@ pub fn resume() {
     }
 }
 
+/// P6-181 (os-390 / os-392 / os-395 reports: the summary said "niciun rezultat" although the block said TRECE): every
+/// verdict row of the training on the board (`antrenare mini pe placa …`, with or without `(arena in VRAM …)` /
+/// `(mixt)`, and `antrenare #513 pe placa …`), in order, after `kronos --gpu: `; none = "niciun rezultat".
+pub fn train_verdicts(text: &str) -> String {
+    let rows: Vec<&str> = text
+        .lines()
+        .filter_map(|l| {
+            let at = l.find("kronos --gpu: antrenare ")?;
+            let r = l[at + "kronos --gpu: ".len()..].trim();
+            let ends = [": TRECE (", ": NU TRECE (", ": NU A RULAT", ": NU A TERMINAT"];
+            ends.iter().any(|e| r.contains(e)).then_some(r)
+        })
+        .collect();
+    if rows.is_empty() {
+        return String::from("antrenare mini pe placa: niciun rezultat (vezi raportul)");
+    }
+    rows.join("; ")
+}
+
 /// True when a cycle is in progress (the boot thread finishes it before listening).
 pub fn in_progress() -> bool {
     fs::kind(&state_path()).is_ok()
@@ -1512,6 +1530,12 @@ pub fn self_test() {
     assert!(d.contains("simbolurile DIFERITE"), "test: dieta simboluri: {}", d);
     let d = diet_block("/x", "", "");
     assert!(d.contains("dieta driverului necitita") && d.contains("driverul pe simbol (us, kt median driver): necitit") && d.contains("os-322? necitit"), "test: dieta gol: {}", d);
+    // P6-181: the training verdicts in the summary (the rows of os-390 / os-395, with the cycle's prefix).
+    let rep = "kronos: lant: gpu0: kronos --gpu: antrenare mini pe placa (arena in VRAM): pasul 1: pierderea 9.7404 (oracolul 9.7404)\nkronos: lant: gpu0: kronos --gpu: antrenare mini pe placa (arena in VRAM): TRECE (antrenarea cu arena in VRAM = oracolul)\nkronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): NU TRECE (vezi randurile de mai sus)\n";
+    let v = train_verdicts(rep);
+    assert!(v == "antrenare mini pe placa (arena in VRAM): TRECE (antrenarea cu arena in VRAM = oracolul); antrenare #513 pe placa (arena in VRAM): NU TRECE (vezi randurile de mai sus)", "test: verdictele antrenarii: {}", v);
+    assert!(train_verdicts("kronos: lant: gpu0: kronos --gpu: antrenare mini pe placa (mixt): NU A RULAT: x; nimic trimis\n") == "antrenare mini pe placa (mixt): NU A RULAT: x; nimic trimis");
+    assert!(train_verdicts("x antrenare mini pe placa: pasul 1\n").contains("niciun rezultat"));
     // P6-101: the FLR trial form.
     assert!(board_command("test-placa --flr-proba") == Some(Ok(String::from("c135 --flr-proba"))));
     assert!(board_command("test-placa --i9 c133 --flr-proba") == Some(Ok(String::from("c133 --flr-proba"))));
