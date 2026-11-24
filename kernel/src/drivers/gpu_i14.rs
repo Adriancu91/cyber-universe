@@ -855,11 +855,16 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
     maps.extend(progs.iter().map(|(_, pm)| *pm));
     let mut up_ns = 0u64;
     let mut k = 0u32;
-    let mut speed = ks::Speed::new(if permit.is_some() { ks::Source::Placa } else { ks::Source::Simulare });
+    let source = if permit.is_some() { ks::Source::Placa } else { ks::Source::Simulare };
+    let mut speed = ks::Speed::new(source);
+    // P6-186 (C-157 p.2 after the x16 test): the host's time per piece in three parts — the copy into the RAM arena,
+    // the copy's commands, the submission + wait — to see where ~19 ms per 8 MiB piece go. Clock reads only.
+    let mut parts = ks::UploadHostParts::new();
     for (i, chunk) in blob.bytes.chunks(piece as usize).enumerate() {
         let host_t0 = crate::time::since_boot_us();
         let len = (chunk.len() as u64).next_multiple_of(16);
         ram_write(&host, chunk);
+        let host_t1 = crate::time::since_boot_us();
         let w = st.mem.writer_mut();
         put_bytes(w, cb_up.pa, &transfer::copy_cbuf(host.va, vblob.va + i as u64 * piece, len)?)?;
         put_bytes(w, q_up.pa, &transfer::copy_qmd(copy_va, cb_up.va, len)?.to_bytes()?)?;
@@ -871,12 +876,18 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         transfer::encode_sequence(&mut pb, &[q_up.va], rec_up.va, first)?;
         let nw = pb.len();
         let sys = [host.clone()];
+        let host_t2 = crate::time::since_boot_us();
         match run_records(vbar, clock, journal, st, l, permit, &words[..nw], rec_up, 2, first + 1, &maps, &sys, doorbell)? {
             Ok(b) => {
+                let host_t3 = crate::time::since_boot_us();
                 let ns = transfer::analyze_sequence(&b, 1, first)?[0];
                 up_ns += ns;
-                let host = host_t0.zip(crate::time::since_boot_us()).map(|(a, b)| b.saturating_sub(a));
+                let host = host_t0.zip(host_t3).map(|(a, b)| b.saturating_sub(a));
                 speed.add_piece(chunk.len() as u64, ns, host);
+                if let (Some(a), Some(b1), Some(c), Some(d)) = (host_t0, host_t1, host_t2, host_t3) {
+                    // A clock going back only skips this piece; the measurement never stops the upload.
+                    let _ = parts.add_piece(chunk.len() as u64, a, b1, c, d);
+                }
             }
             Err(last) => {
                 lines.push(format!("{}: I14: urcarea bucatii {} nu s-a terminat (inregistrarea 1 = {:#x})", p, i, last));
@@ -888,6 +899,8 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         "{}: i14: {} octeti (greutati + spatiu de lucru + logit-uri) urcati in {} bucati in {} ns ({} MB/s)",
         p, total, k, up_ns, transfer::CopySpeed::mb_per_s(total, up_ns)
     ));
+    lines.push(format!("{}: kronos --gpu: {}", p, parts.line(source)));
+    parts.journal(journal);
     // 2. The VAs. The copy of the logits down is now the last launch of a token's list (`kl::copy_launch`, C-139).
     let at = |o: u64| vblob.va + o;
     let mut lvas = Vec::with_capacity(m.layers.len());
