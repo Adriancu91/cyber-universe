@@ -1031,6 +1031,7 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::TRAIN_513_TILES3_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_MM_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_COLSUM_SPLIT_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_513_FUSED_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_RACE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_MINI_RAM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu antrenare-mini-sim: pornit (SIMULARE: dupa texte, pasul intreg al lui antrenare mini facut de lista placii, langa oracol)\n");
@@ -1044,6 +1045,7 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::TRAIN_513_TILES3_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_MM_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_COLSUM_SPLIT_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_513_FUSED_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_RACE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_MINI_RAM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu antrenare-mini-sim: pornit, pasul mixt (SIMULARE: dupa texte, pasul intreg al lui antrenare mini cu toate inmultirile pe mm_tc, langa oracol)\n");
@@ -1057,6 +1059,7 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::TRAIN_513_TILES3_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_MM_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_COLSUM_SPLIT_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_513_FUSED_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_RACE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_MINI_RAM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_MINI_FUSED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
@@ -1071,6 +1074,7 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::TRAIN_513_TILES3_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_MM_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_COLSUM_SPLIT_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_513_FUSED_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_RACE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_MINI_RAM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_MINI_FUSED_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
@@ -1086,6 +1090,7 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::TRAIN_513_TILES3_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_MM_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_COLSUM_SPLIT_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_513_FUSED_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_RACE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_MINI_RAM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu antrenare-mini-sim: pornit, arena in VRAM, apoi pasul #513 (SIMULARE: pe modelul mic, arena pe bucati, pasul in parti, langa oracol)\n");
@@ -1100,6 +1105,7 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::TRAIN_513_TILES3_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_MM_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_COLSUM_SPLIT_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_513_FUSED_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_RACE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_MINI_RAM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu antrenare-mini-sim: pornit, arena in VRAM, apoi pasul #513 pe atentia pe placi gen 3 (SIMULARE: pe modelul mic, Plan::new_tiles3, langa oracol)\n");
@@ -1114,6 +1120,7 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::TRAIN_513_TILES3_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_MM_TILE_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_COLSUM_SPLIT_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_513_FUSED_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_RACE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_MINI_RAM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu antrenare-mini-sim: pornit, arena in VRAM, apoi pasul #513 pe atentia pe placi gen 3 si inmultirile pe mm_train_tile (SIMULARE: pe modelul mic, Plan::new_tiles3 + with_mm_tile, langa oracol)\n");
@@ -1128,9 +1135,25 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::TRAIN_513_TILES3_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_MM_TILE_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_COLSUM_SPLIT_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_513_FUSED_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_RACE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_MINI_RAM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu antrenare-mini-sim: pornit, arena in VRAM, apoi pasul #513 pe placi gen 3, mm_train_tile si colsum impartit (SIMULARE: pe modelul mic, Plan::new_tiles3 + with_mm_tile + with_colsum_split, langa oracol)\n");
+                }
+                // P6-193: `vram-513-placi3-mm-lipit` = as `vram-513-placi3-mm`, #513's step glued on the 64x64 tiles.
+                Some("vram-513-placi3-mm-lipit") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TRAIN_MINI_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_MINI_MIXED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_MINI_VRAM_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_MINI_FUSED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_513_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_513_TILES3_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_513_MM_TILE_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_513_COLSUM_SPLIT_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_513_FUSED_TILE_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_513_RACE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_MINI_RAM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu antrenare-mini-sim: pornit, arena in VRAM, apoi pasul #513 pe placi gen 3, lipit pe mm_train_tile_gelu (SIMULARE: pe modelul mic, Plan::new_tiles3 + with_fused_back + with_fused_gelu + with_mm_tile_gelu, langa oracol)\n");
                 }
                 // P6-190: `vram-513-cursa` = as `vram-513-placi3-mm`, then the night race of `mm_train_tile`'s variants.
                 Some("vram-513-cursa") if args.len() == 2 => {
@@ -1142,6 +1165,7 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::TRAIN_513_TILES3_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_MM_TILE_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_COLSUM_SPLIT_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_513_FUSED_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_RACE_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_MINI_RAM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu antrenare-mini-sim: pornit, arena in VRAM, apoi pasul #513 pe placi gen 3 si mm_train_tile, apoi cursa mm (SIMULARE: pe modelul mic, variantele lui mm_train_tile fata de martor)\n");
@@ -1156,6 +1180,7 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::TRAIN_513_TILES3_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_MM_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_COLSUM_SPLIT_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_513_FUSED_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_RACE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_MINI_RAM_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu antrenare-mini-sim: pornit, arena in VRAM, lotul prin fereastra apoi prin RAM (SIMULARE: comparat bit cu bit)\n");
@@ -1168,12 +1193,13 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::TRAIN_513_TILES3_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_MM_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_COLSUM_SPLIT_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_513_FUSED_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_RACE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_MINI_RAM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_MINI_FUSED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu antrenare-mini-sim: oprit\n");
                 }
-                _ => out!("folosire: gpu antrenare-mini-sim on|mixt|vram|vram-lipit|vram-513|vram-513-placi3|vram-513-placi3-mm|vram-513-placi3-mm-cs|vram-513-cursa|vram-ram|off\n"),
+                _ => out!("folosire: gpu antrenare-mini-sim on|mixt|vram|vram-lipit|vram-513|vram-513-placi3|vram-513-placi3-mm|vram-513-placi3-mm-cs|vram-513-placi3-mm-lipit|vram-513-cursa|vram-ram|off\n"),
             }
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu antrenare-mini-sim: exista doar in build-ul de test (pe stick il porneste doar ciclul, test-placa --antrenare-mini)\n");

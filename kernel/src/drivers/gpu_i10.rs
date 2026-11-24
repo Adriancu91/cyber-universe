@@ -447,6 +447,9 @@ impl SimGpu {
             cp.register_program_with_needs(nvidia_ga104::mm_train_tile::MM_TRAIN_TILE, c::mm_train_tile_on_cpu, c::MM_TRAIN_TILE_NEEDS);
             // P6-189 (cyber-gpu note C-157_P2y): the row-split column sum (`colsum_part`, no needs).
             cp.register_program(nvidia_ga104::colsum_part::COLSUM_PART, c::colsum_part_on_cpu);
+            // P6-193 (cyber-gpu note C-165_mm-tile-gelu): the tiled glued "proj-dX+gelu" product (`mm_train_tile_gelu`,
+            // the same cbuf as `mm_train_gelu`, 8 KiB shared, one barrier).
+            cp.register_program_with_needs(nvidia_ga104::mm_train_tile_gelu::MM_TRAIN_TILE_GELU, c::mm_train_tile_gelu_on_cpu, c::MM_TRAIN_TILE_GELU_NEEDS);
             // P6-190 (cyber-gpu note C-165_cursa-mm): the race's 4 new variants of `mm_train_tile` (index 0 is
             // `mm_train_tile` itself, registered above), each with its own tiles' CPU model.
             {
