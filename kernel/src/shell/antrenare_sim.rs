@@ -90,6 +90,9 @@ pub struct SimBoard {
     layout: Layout,
     /// P6-166 (`--mixt`): every matmul on `mm_tc` (f16 inputs, f32 sums, loss scale `ts::LOSS_SCALE`).
     mixed: bool,
+    /// P6-170 (`--lipit`, cyber-gpu notes C-160_P7g / P7h): `ln_back_res` and `mm_train_gelu` glued into the step
+    /// (`Plan::with_fused_back().with_fused_gelu()`, 3·L launches fewer, the same bits).
+    fused: bool,
     first: u32,
     /// Launches sent so far.
     pub launches: usize,
@@ -109,10 +112,15 @@ pub struct StepOut {
 }
 
 impl SimBoard {
-    pub fn new(layout: Layout, mixed: bool) -> Result<Self, String> {
+    pub fn new(layout: Layout, mixed: bool, fused: bool) -> Result<Self, String> {
         ts::check_programs().map_err(|e| format!("SHA-256 al programelor: {:?}", e))?;
+        if mixed && fused {
+            // The note C-160_P7h: `step_mixed` refuses `with_fused_gelu` (not glued on `mm_tc` yet).
+            return Err(String::from("pasul mixt nu merge cu lipirea (mm_train_gelu nu e pe mm_tc)"));
+        }
         let mut cp = c::CommandProcessor::new();
-        for prog in ts::PROGRAMS_ALL {
+        let extra: &[Prog] = if fused { &ts::PROGRAMS_FUSED_BOTH_EXTRA } else { &[] };
+        for &prog in ts::PROGRAMS_ALL.iter().chain(extra) {
             let code = prog.code();
             let _ = match prog {
                 Prog::MmTrain => cp.register_program_with_needs(code, c::mm_train_on_cpu, c::MM_TRAIN_NEEDS),
@@ -135,6 +143,9 @@ impl SimBoard {
                 Prog::AttnBackTile0_2 => cp.register_program(code, c::attn_back_tile0_on_cpu),
                 Prog::AttnBackTile2 => cp.register_program(code, c::attn_back_tile_on_cpu),
                 Prog::AttnPTile => cp.register_program(code, c::attn_p_tile_on_cpu),
+                // P6-170: the glued programs (slots 21 and 22; `mm_tc` stays at 24).
+                Prog::LnBackRes => cp.register_program_with_needs(code, c::ln_back_res_on_cpu, c::LN_BACK_RES_NEEDS),
+                Prog::MmTrainGelu => cp.register_program_with_needs(code, c::mm_train_gelu_on_cpu, c::MM_TRAIN_GELU_NEEDS),
                 #[allow(unreachable_patterns)]
                 _ => return Err(format!("programul {} nu are model pe procesor", prog.name())),
             };
@@ -149,7 +160,7 @@ impl SimBoard {
             let _ = cp.register_program_with_needs(tc::MM_TC, c::mm_tc_on_cpu, c::MM_TC_NEEDS);
             cp.mem.write(TC, tc::MM_TC);
         }
-        Ok(Self { cp, layout, mixed, first: 1, launches: 0 })
+        Ok(Self { cp, layout, mixed, fused, first: 1, launches: 0 })
     }
 
     /// One AdamW step (`adamw_513`'s list with `adam`'s own lr / betas / eps / decay, clipping at 1.0) on the batch
@@ -167,6 +178,7 @@ impl SimBoard {
             move |err| format!("{}: {:?}", what, err)
         }
         let plan = self.layout.plan(*a, batch, len, inputs).map_err(e("planul"))?;
+        let plan = if self.fused { plan.with_fused_back().with_fused_gelu() } else { plan };
         for (va, bytes) in plan.uploads(params, inputs, targets).map_err(e("urcarile"))? {
             self.cp.mem.write(va, &bytes);
         }
@@ -226,6 +238,6 @@ impl SimBoard {
         adam.m = new_m;
         adam.v = new_v;
         adam.t = t;
-        Ok(StepOut { programs: plan.programs().len(), loss, norm, launches: n, tc, arena: plan.bytes() })
+        Ok(StepOut { programs: plan.programs().len() + plan.fused_programs().len(), loss, norm, launches: n, tc, arena: plan.bytes() })
     }
 }
