@@ -170,3 +170,4 @@ kronos-gpu-antrenare-513-placi3 1700
 kronos-gpu-antrenare-513-mm-placi 1700
 kronos-gpu-antrenare-513-colsum 1700
 kronos-gpu-antrenare-513-cursa 2400
+kronos-gpu-antrenare-513-tablou 2400

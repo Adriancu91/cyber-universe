@@ -548,6 +548,93 @@ impl nvidia_ga104::gsp::rusd::RusdMem for SimRusdPage {
     }
 }
 
+// SAFETY: the page is owned by this one value (allocated in `new`, freed only after GSP-RM confirmed the stop); the
+// kernel runs the chain on one CPU and the value only moves between the chain and `STEP_DASH_HW` (behind its lock), so
+// the raw pointer is never used from two places at once.
+#[cfg(feature = "gpu-scrie")]
+unsafe impl Send for RusdPage {}
+
+/// P6-192 (A4): the early dashboard, lent by the chain to its I14 step (where the training runs) and taken back after,
+/// so #513's steps and the race can read it while they work. Only reads of our RAM page; no command.
+#[cfg(feature = "gpu-scrie")]
+static STEP_DASH_HW: crate::sched::Mutex<Option<gpu_golden::EarlyDashboard<RusdPage>>> = crate::sched::Mutex::new(None);
+
+/// P6-192 (SIMULARE): a dashboard model for `gpu antrenare-mini-sim … tablou` (the RM model's page, P0 at the boost
+/// clock under load), rendered at every reading.
+#[cfg(feature = "test-gpu-sim")]
+pub struct SimStepDash {
+    model: gpu_sim::fake_rm::SimRusd,
+    dash: gpu_golden::EarlyDashboard<SimRusdPage>,
+}
+
+#[cfg(feature = "test-gpu-sim")]
+static STEP_DASH_SIM: crate::sched::Mutex<Option<SimStepDash>> = crate::sched::Mutex::new(None);
+
+/// P6-192 (SIMULARE): `on` = a polling dashboard model (P0, 1 770 MHz, load 97 %, 231 W of 290, 63 °C); `off` = none.
+#[cfg(feature = "test-gpu-sim")]
+pub fn sim_step_dashboard(on: bool) {
+    let mut slot = STEP_DASH_SIM.lock();
+    *slot = None;
+    if !on {
+        return;
+    }
+    let mut m = gpu_sim::fake_rm::SimRusd::new(gpu_sim::fake_rm::RusdRule::Accept);
+    m.phys = Some(SIM_RUSD_PHYS);
+    m.mask = nvidia_ga104::gsp::rusd::poll::DASHBOARD;
+    m.poll_ms = nvidia_ga104::gsp::rusd::POLL_MS_DEFAULT;
+    m.clk_graphics_mhz = SIM_BOOST_CLK_MHZ;
+    m.clk_memory_mhz = 9501;
+    m.pstate_mask = 1;
+    m.load_gpu = 97;
+    m.load_mem = 41;
+    m.reasons = 0;
+    m.avg_power_mw = 231_000;
+    m.temp_x256 = 63 * 256;
+    let start = nvidia_ga104::gsp::rusd::RusdStart { init: Some(0), interval: Some(0), mask: Some(0) };
+    let plan = nvidia_ga104::gsp::rusd::RusdPlan { enabled: true, ..Default::default() };
+    let t0 = crate::time::since_boot_us().unwrap_or(0);
+    if let Some(dash) = gpu_golden::EarlyDashboard::new(start, plan, SimRusdPage(vec![0u8; 4096]), SIM_RUSD_PHYS, t0) {
+        *slot = Some(SimStepDash { model: m, dash });
+    }
+}
+
+/// P6-192: true when a dashboard is lent to the running job (the summaries are written only then).
+pub(super) fn step_dashboard_lent() -> bool {
+    #[cfg(feature = "gpu-scrie")]
+    if STEP_DASH_HW.lock().is_some() {
+        return true;
+    }
+    #[cfg(feature = "test-gpu-sim")]
+    if STEP_DASH_SIM.lock().is_some() {
+        return true;
+    }
+    false
+}
+
+/// P6-192 (A4): one reading of the dashboard lent to the running job, if any (`None` = no dashboard: the list did not
+/// ask for `--tablou-viteza`, or the board did not accept it).
+pub(super) fn step_dashboard(p: &str, what: &str, journal: &mut Journal, lines: &mut Vec<String>) -> Option<super::gpu_golden::StepSample> {
+    let now = crate::time::since_boot_us().unwrap_or(0);
+    #[cfg(feature = "gpu-scrie")]
+    {
+        let mut slot = STEP_DASH_HW.lock();
+        if let Some(e) = slot.as_mut() {
+            return e.read_at(p, what, now, journal, lines);
+        }
+    }
+    #[cfg(feature = "test-gpu-sim")]
+    {
+        let mut slot = STEP_DASH_SIM.lock();
+        if let Some(s) = slot.as_mut() {
+            let b = s.model.render(now.saturating_mul(1000).max(1));
+            s.dash.page.0[..b.len()].copy_from_slice(&b);
+            return s.dash.read_at(p, what, now, journal, lines);
+        }
+    }
+    let _ = (p, what, now, journal, lines);
+    None
+}
+
 /// The page's address in SIMULARE (a system-memory address the RM model only records).
 #[cfg(feature = "test-gpu-sim")]
 const SIM_RUSD_PHYS: u64 = 0x0200_0000;
@@ -865,6 +952,12 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
             let mut bell = |_: &mut gpu_i6::hw::VramFence, j: &mut Journal, off: u64, v: u32, _: &gpu_i10::Ring<'_>| {
                 ring_work_doorbell(&mut db, j, off, v)
             };
+            // P6-192 (A4): the early dashboard lent to the I14 step (#513's steps and the race read it), taken back after.
+            if s.id == "i14-simbol" {
+                if let Some(e) = early.take() {
+                    *STEP_DASH_HW.lock() = Some(e);
+                }
+            }
             let r = match s.id {
                 "i11-copiere" => {
                     gpu_i11::copy_step(p, &mut vf, &mut clock, j, st, l, gpu_i11::I11_BOARD_BYTES, Some(&permit), &mut lines, &mut bell)
@@ -875,6 +968,9 @@ pub fn chain(variant: Option<u8>, i9: super::gpu_golden::I9Choice) -> Vec<String
                 }
                 _ => gpu_i14::token_step(p, &mut vf, &mut clock, j, st, l, gpu_i14::MIC_BOARD, Some(&permit), &mut lines, &mut bell),
             };
+            if let Some(e) = STEP_DASH_HW.lock().take() {
+                early = Some(e);
+            }
             refused += vf.refused + db.refused;
             // P6-98 (C-148 point 3): the board's performance state, read once at the end of the chain (after I14 passed).
             if s.id == "i14-simbol" && r.is_ok() {

@@ -6041,6 +6041,8 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // P6-182 (os-395 report, Cyber-GPU's ask: "the time per kind of program for #513's step"): the P6-179 profile on
     // #513's list, every step (each part's records are read whole).
     let mut prof: Option<nvidia_ga104::train_profile::StepProfile> = None;
+    // P6-192 (A4): the dashboard readings taken during the steps.
+    let mut step_dash: Vec<super::gpu_golden::StepSample> = Vec::new();
     journal.flush_live();
     let hold = super::gpu_i6::GenHold::start();
     journal.set_routine(Some(kf::gen_routine(&GEN_NOTES)));
@@ -6135,6 +6137,17 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 "{}: kronos --gpu: {}: pasul {}: pierderea {:.4}, norma gradientului {:.4}{}; placa {} us ({} trimiteri), pasul intreg {} us",
                 p, tag, step, loss, norm, oracle_part, busy / 1000, n_parts, host_us.last().copied().unwrap_or(0)
             ));
+            // P6-192 (A4): the dashboard right after the step (outside its clock). GSP-RM writes the page every 500 ms
+            // and the board works ~98 % of the time here, so the values are those of the board at work. The thermal
+            // watch's stop ends the steps.
+            if let Some(s) = super::gpu_tur::step_dashboard(p, &format!("in timpul pasilor #513 (dupa pasul {})", step), journal, lines) {
+                let stop = s.stop.then(|| s.verdict.clone());
+                step_dash.push(s);
+                if let Some(v) = stop {
+                    stopped = Some(format!("ceasul termic dupa pasul {}: {}", step, v));
+                    return Ok(());
+                }
+            }
         }
         Ok(())
     };
@@ -6205,6 +6218,12 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         if host_med > 0 { us * 1000 / host_med } else { 0 },
         crate::arch::x86_64::apic::clock_note()
     ));
+    // P6-192 (A4): what the dashboard said during the steps (the clock, the power, the load, the reasons).
+    if super::gpu_tur::step_dashboard_lent() {
+        for row in super::gpu_golden::dash_summary(p, "in timpul pasilor #513", "tablou pasi-513", &step_dash) {
+            lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, row));
+        }
+    }
     // P6-182: once, at the end: the total, the stages, the 8 longest tags, the programs.
     let prof_steps = prof.as_ref().map_or(0, |pr| pr.steps());
     journal.push(Event::Value { what: KT_513_PROFILE, value: prof_steps as u32 });
@@ -6267,6 +6286,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             Ok(Some((h, guard_ok, unwritten)))
         };
         let (mut rows_same, mut rows_differ, mut saved_ns, mut race_stopped) = (0u32, 0u32, 0u64, None::<String>);
+        let mut race_dash: Vec<super::gpu_golden::StepSample> = Vec::new();
         'forms: for (fi, f) in race_shapes.iter().enumerate() {
             let c_len = 4 * u64::from(f.m) * u64::from(f.n);
             let len = c_len.next_multiple_of(256) + 256;
@@ -6366,6 +6386,16 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                     p, tag, f.m, f.n, f.k, f.flags, VARIANTS[vi].name, t / 1000, (t % 1000) / 100, w / 1000, (w % 1000) / 100
                 ));
             }
+            // P6-192 (A4): the dashboard after each shape's variants; the thermal watch's stop ends the race (C-165).
+            let what = format!("in timpul cursei (dupa forma {} din {})", fi + 1, race_shapes.len());
+            if let Some(s) = super::gpu_tur::step_dashboard(p, &what, journal, lines) {
+                let stop = s.stop.then(|| s.verdict.clone());
+                race_dash.push(s);
+                if let Some(v) = stop {
+                    race_stopped = Some(format!("ceasul termic dupa forma {}: {}", fi + 1, v));
+                    break 'forms;
+                }
+            }
         }
         journal.push(Event::Value { what: KT_513_RACE_SAME, value: rows_same });
         journal.push(Event::Value { what: KT_513_RACE_DIFFER, value: rows_differ });
@@ -6382,6 +6412,11 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             rows_differ,
             saved_ns / 1000
         ));
+        if super::gpu_tur::step_dashboard_lent() {
+            for row in super::gpu_golden::dash_summary(p, "in timpul cursei", "tablou cursa", &race_dash) {
+                lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, row));
+            }
+        }
     }
     // P6-187 (command centre note 24 Nov 14:20, point 1): the fair Windows <-> OS bench — the same figures as PyTorch, one row.
     if losses.len() == steps {
@@ -6433,7 +6468,13 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             "{}: kronos --gpu: {}: verdictul fata de oracolul #513 (P6-184), verificat pe numerele lui: {}",
             p, tag, if self_ok { "MERGE (oracolul si os-395 trec, o abatere de 2e-3 si 9 pasi nu)" } else { "GRESIT" }
         ));
-        self_ok && pieces_ok && worst_loss <= TOL && worst_norm <= TOL && worst_w <= TOL && bad_w == 0 && losses.len() == steps
+        // P6-192: the dashboard's summary, checked on its own numbers.
+        let dash_ok = super::gpu_golden::dash_summary_self_test();
+        lines.push(format!(
+            "{}: kronos --gpu: {}: rezumatul tabloului (P6-192), verificat pe numerele lui: {}",
+            p, tag, if dash_ok { "MERGE" } else { "GRESIT" }
+        ));
+        self_ok && dash_ok && pieces_ok && worst_loss <= TOL && worst_norm <= TOL && worst_w <= TOL && bad_w == 0 && losses.len() == steps
     };
     journal.push(Event::Value { what: KT_513_PASS, value: u32::from(pass) });
     lines.push(format!(

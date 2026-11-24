@@ -999,6 +999,24 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu adam-ram-sim: exista doar in build-ul de test (pe stick il porneste doar ciclul, test-placa --ram-vram --adam-ram)\n");
         }
+        Some("tablou-pas-sim") => {
+            // P6-192 (A4): test build only: a polling dashboard model lent to the next training run (#513's steps and the
+            // race read it while they work); on the stick it is the early dashboard (`test-placa --tablou-viteza …`).
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::sim_step_dashboard(true);
+                    out!("gpu tablou-pas-sim: pornit (SIMULARE: tabloul de bord citit dupa fiecare pas #513 si dupa fiecare forma a cursei)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::sim_step_dashboard(false);
+                    out!("gpu tablou-pas-sim: oprit\n");
+                }
+                _ => out!("folosire: gpu tablou-pas-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu tablou-pas-sim: exista doar in build-ul de test (pe stick: test-placa --tablou-viteza ...)\n");
+        }
         Some("antrenare-mini-sim") => {
             // P6-164 (C-161): test build only: after the next `kronos --gpu-sim`'s texts (and every other probe that is
             // on), the whole training step of `antrenare mini` done by the board's list on the simulated board, beside the

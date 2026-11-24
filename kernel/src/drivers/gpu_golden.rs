@@ -718,10 +718,186 @@ impl<M: nvidia_ga104::gsp::rusd::RusdMem> EarlyDashboard<M> {
         Some((d, v))
     }
 
+    /// P6-192 (A4): one reading at `now_us` (the caller's clock) with the long line: both clocks, the P-state, the load,
+    /// the power against its limit, the slow-down reasons by name, the temperature and the thermal watch's verdict.
+    /// Only reads our own RAM page (no command). `None` = not polling.
+    pub fn read_at(&mut self, p: &str, what: &str, now_us: u64, journal: &mut Journal, lines: &mut Vec<String>) -> Option<StepSample> {
+        use nvidia_ga104::gsp::{rusd as kd, rusd_watch as kw};
+        if !self.start.polling() {
+            return None;
+        }
+        let d = kd::read_dashboard(&mut self.page, journal);
+        let stamp = kw::temp_stamp(&mut self.page);
+        let t_ms = now_us.saturating_sub(self.t0_us) / 1000;
+        let v = self.watch.observe(t_ms, &d, stamp, journal);
+        self.last = Some(v);
+        lines.push(format!("{}: kw tabloul {} (la {} ms): {}; ceasul termic: {}", p, what, t_ms, dash_text(&d), verdict_text(v)));
+        Some(StepSample { dash: d, stop: matches!(v, nvidia_ga104::gsp::rusd_watch::Verdict::Stop(_)), verdict: verdict_text(v) })
+    }
+
     /// True when the last reading said "stop" (the max-speed request is then not sent).
     pub fn says_stop(&self) -> bool {
         matches!(self.last, Some(nvidia_ga104::gsp::rusd_watch::Verdict::Stop(_)))
     }
+}
+
+/// P6-192 (A4): one dashboard reading taken during a long job (#513's steps, the race).
+#[derive(Clone, Debug)]
+pub(super) struct StepSample {
+    pub dash: nvidia_ga104::gsp::rusd::Dashboard,
+    /// The thermal watch said "stop" (the job stops there).
+    pub stop: bool,
+    /// The watch's verdict, in words.
+    pub verdict: String,
+}
+
+/// P6-192: the slow-down reasons by name (NVIDIA's `NV2080_CTRL_PERF_..._REASON` bits, `rusd::reason`).
+pub(super) fn reasons_text(r: u32) -> String {
+    use nvidia_ga104::gsp::rusd::reason as rr;
+    const NAMES: [(u32, &str); 9] = [
+        (rr::GPU_IDLE, "repaus"),
+        (rr::APPLICATION_CLOCK_SETTING, "ceas fixat de aplicatie"),
+        (rr::SW_POWER_CAP, "plafonul de putere"),
+        (rr::HW_SLOWDOWN, "incetinire hardware"),
+        (rr::SYNC_BOOST, "sync boost"),
+        (rr::SW_THERMAL_SLOWDOWN, "termic (program)"),
+        (rr::HW_THERMAL_SLOWDOWN, "termic (hardware)"),
+        (rr::HW_POWER_BRAKES_SLOWDOWN, "franele de putere"),
+        (rr::DISPLAY_CLOCK_SETTING, "ceasul ecranului"),
+    ];
+    if r == 0 {
+        return String::from("niciunul");
+    }
+    let mut v: Vec<String> = NAMES.iter().filter(|(b, _)| r & b != 0).map(|(_, n)| String::from(*n)).collect();
+    let known = NAMES.iter().fold(0u32, |a, (b, _)| a | b);
+    if r & !known != 0 {
+        v.push(format!("alti biti {:#x}", r & !known));
+    }
+    format!("{:#x} = {}", r, v.join(", "))
+}
+
+/// P6-192: a dashboard in one line (every field; "necitit" when the section was not read).
+pub(super) fn dash_text(d: &nvidia_ga104::gsp::rusd::Dashboard) -> String {
+    let n = || String::from("necitit");
+    format!(
+        "ceasul nucleului {}, memoria {}, stare {}, incarcarea nucleului {} / memoriei {}, puterea {} din limita {}, motivele incetinirii {}, temperatura {}",
+        d.clk_graphics_mhz.map_or_else(n, |x| format!("{} MHz", x)),
+        d.clk_memory_mhz.map_or_else(n, |x| format!("{} MHz", x)),
+        d.pstate().map_or_else(n, pstate_text),
+        d.load_gpu.map_or_else(n, |x| format!("{} %", x)),
+        d.load_mem.map_or_else(n, |x| format!("{} %", x)),
+        d.avg_power_mw.map_or_else(n, |x| format!("{}.{} W", x / 1000, (x % 1000) / 100)),
+        d.power_limit_mw.map_or_else(n, |x| format!("{} W", x / 1000)),
+        d.reasons.map_or_else(n, reasons_text),
+        d.temp_c().map_or_else(n, |c| format!("{} grade C", c)),
+    )
+}
+
+/// P6-192: median, min and max of the values read (`None` when none was read).
+fn spread(mut v: Vec<u32>) -> Option<(u32, u32, u32)> {
+    if v.is_empty() {
+        return None;
+    }
+    v.sort_unstable();
+    Some((v[v.len() / 2], v[0], v[v.len() - 1]))
+}
+
+/// P6-192 (A4): the summary of the readings taken during `what` (one line + `kt` key rows for the center's tables).
+/// The RTX 3070 Ti's boost clock (NVIDIA's public sheet) is 1 770 MHz: a median well under it while the board works is
+/// the "common brake" Cyber-GPU suspected after os-410.
+pub(super) fn dash_summary(p: &str, what: &str, key: &str, samples: &[StepSample]) -> Vec<String> {
+    let mut out = Vec::new();
+    if samples.is_empty() {
+        out.push(format!("{}: kw tabloul {}: nicio citire (tabloul nu era pornit: `--tablou-viteza` in lista)", p, what));
+        return out;
+    }
+    let col = |f: fn(&nvidia_ga104::gsp::rusd::Dashboard) -> Option<u32>| spread(samples.iter().filter_map(|s| f(&s.dash)).collect());
+    let clk = col(|d| d.clk_graphics_mhz);
+    let mem = col(|d| d.clk_memory_mhz);
+    let load = col(|d| d.load_gpu);
+    let pw = col(|d| d.avg_power_mw);
+    let temp = col(|d| d.temp_c().map(|c| c.max(0) as u32));
+    let limit = samples.iter().filter_map(|s| s.dash.power_limit_mw).max();
+    let mut states: Vec<(String, u32)> = Vec::new();
+    for s in samples {
+        let t = s.dash.pstate().map_or_else(|| String::from("necitita"), pstate_text);
+        match states.iter_mut().find(|(n, _)| *n == t) {
+            Some((_, c)) => *c += 1,
+            None => states.push((t, 1)),
+        }
+    }
+    let reasons = samples.iter().filter_map(|s| s.dash.reasons).fold(0u32, |a, r| a | r);
+    let any_reason = samples.iter().any(|s| s.dash.reasons.is_some());
+    let mm = |x: Option<(u32, u32, u32)>, unit: &str| x.map_or_else(|| String::from("necitit"), |(m, a, b)| format!("{} {} ({}..{})", m, unit, a, b));
+    let watts = pw.map_or_else(
+        || String::from("necitita"),
+        |(m, a, b)| format!("{}.{} W ({}.{}..{}.{})", m / 1000, (m % 1000) / 100, a / 1000, (a % 1000) / 100, b / 1000, (b % 1000) / 100),
+    );
+    out.push(format!(
+        "{}: kw tabloul {} (rezumat, {} citiri, mediana (min..max)): ceasul nucleului {}, memoria {}, incarcarea nucleului {}, puterea {}{}, stari {}, motivele incetinirii vazute {}, temperatura {}{}",
+        p,
+        what,
+        samples.len(),
+        mm(clk, "MHz"),
+        mm(mem, "MHz"),
+        mm(load, "%"),
+        watts,
+        limit.map_or_else(String::new, |l| format!(" din limita {} W", l / 1000)),
+        states.iter().map(|(n, c)| format!("{} x{}", n, c)).collect::<Vec<_>>().join(", "),
+        if any_reason { reasons_text(reasons) } else { String::from("necitite") },
+        mm(temp, "grade C"),
+        if samples.iter().any(|s| s.stop) { "; CEASUL TERMIC A SPUS OPRIRE" } else { "" }
+    ));
+    if let Some((m, _, _)) = clk {
+        out.push(format!(
+            "{}: kw tabloul {}: ceasul nucleului median {} MHz = {} la mie din ceasul de boost al RTX 3070 Ti (1 770 MHz, fisa publica NVIDIA)",
+            p,
+            what,
+            m,
+            m as u64 * 1000 / 1770
+        ));
+    }
+    let kt = |n: &str, v: Option<u32>| format!("kt {} {} {}", key, n, v.map_or_else(|| String::from("-"), |x| format!("{}", x)));
+    out.push(kt("citiri", Some(samples.len() as u32)));
+    out.push(kt("ceasul nucleului median MHz", clk.map(|x| x.0)));
+    out.push(kt("ceasul memoriei median MHz", mem.map(|x| x.0)));
+    out.push(kt("incarcarea nucleului mediana %", load.map(|x| x.0)));
+    out.push(kt("puterea mediana mW", pw.map(|x| x.0)));
+    out.push(kt("puterea maxima mW", pw.map(|x| x.2)));
+    out.push(kt("temperatura maxima C", temp.map(|x| x.2)));
+    out.push(kt("motivele incetinirii (sau pe biti)", any_reason.then_some(reasons)));
+    out
+}
+
+/// P6-192: self-test of the summary (median, the names of the reasons, the per-mille of the boost clock).
+pub(super) fn dash_summary_self_test() -> bool {
+    let d = |clk: u32, pw: u32, r: u32| StepSample {
+        dash: nvidia_ga104::gsp::rusd::Dashboard {
+            temp_x256: Some(60 * 256),
+            clk_graphics_mhz: Some(clk),
+            clk_memory_mhz: Some(9501),
+            pstate_mask: Some(1),
+            load_gpu: Some(99),
+            load_mem: Some(40),
+            reasons: Some(r),
+            avg_power_mw: Some(pw),
+            power_limit_mw: Some(290_000),
+            sections: 0x7f,
+            busy: 0,
+        },
+        stop: false,
+        verdict: String::from("continua"),
+    };
+    let s = [d(1500, 200_000, 0x4), d(1770, 250_000, 0), d(1600, 220_000, 0)];
+    let l = dash_summary("t", "x", "k", &s);
+    l[0].contains("ceasul nucleului 1600 MHz (1500..1770)")
+        && l[0].contains("puterea 220.0 W (200.0..250.0) din limita 290 W")
+        && l[0].contains("stari P0 x3")
+        && l[0].contains("0x4 = plafonul de putere")
+        && l[1].contains("903 la mie")
+        && l.iter().any(|x| x == "kt k puterea maxima mW 250000")
+        && reasons_text(0x201) == "0x201 = repaus, alti biti 0x200"
+        && dash_summary("t", "x", "k", &[]).len() == 1
 }
 
 /// P6-142: what the dashboard says the max-speed request did (`compare_boost`, `kw viteza maxima` rows + one line).
