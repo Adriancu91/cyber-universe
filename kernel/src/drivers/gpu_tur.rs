@@ -426,6 +426,12 @@ pub static TRAIN_513_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atom
 /// vram-513-placi3`. Off by default.
 pub static TRAIN_513_TILES3_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-188 (cyber-gpu `4042ce9`, note C-157_P2x step 2): with [`TRAIN_513_TILES3_IN_CYCLE`], #513's `mm_train` launches on
+/// `mm_train_tile` (`Plan::with_mm_tile`: the same cbuf, the same bits in SIMULARE). Set only by the cycle (`test-placa …
+/// --antrenare-513 --placi3 --mm-placi`) and, in the test build, by `gpu antrenare-mini-sim vram-513-placi3-mm`. Off by
+/// default.
+pub static TRAIN_513_MM_TILE_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-178 (cyber-gpu `d173a59`, note C-157_P2s): with [`TRAIN_MINI_VRAM_IN_CYCLE`], the resident run twice from the same
 /// state — the batch and the results through the VRAM window (os-390), then through pinned RAM with the copy program in
 /// the step's own list — compared bit for bit. Set only by the cycle (`test-placa … --antrenare-mini --vram --lot-ram`)
