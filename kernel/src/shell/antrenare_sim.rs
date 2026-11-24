@@ -38,6 +38,9 @@ fn prog_va(p: Prog) -> u64 {
 /// P6-166: `mm_tc` (the mixed step's matmul on the tensor cores) at slot 24, after every `Prog` slot and away from slot
 /// 21, which cyber-gpu's note `C-160_P7g` asks for `ln_back_res`.
 const TC: u64 = PROGS + 0x1_0000 * 24;
+/// P6-176: `mm_tc_gelu` (cyber-gpu `338dbc3`, note `C-157_P2_gelu-pe-mm_tc`: proj-dX + GELU' on the tensor cores) at
+/// slot 25, right after `mm_tc`; only with `--mixt --lipit`.
+const TCG: u64 = PROGS + 0x1_0000 * 25;
 
 /// Which arena / attention programs the step's list uses (P6-159, cyber-gpu `1b9f79d`, note C-160_P7_placi-in-pas).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -118,10 +121,6 @@ pub struct StepOut {
 impl SimBoard {
     pub fn new(layout: Layout, mixed: bool, fused: bool, recompute: bool) -> Result<Self, String> {
         ts::check_programs().map_err(|e| format!("SHA-256 al programelor: {:?}", e))?;
-        if mixed && fused {
-            // The note C-160_P7h: `step_mixed` refuses `with_fused_gelu` (not glued on `mm_tc` yet).
-            return Err(String::from("pasul mixt nu merge cu lipirea (mm_train_gelu nu e pe mm_tc)"));
-        }
         let mut cp = c::CommandProcessor::new();
         let extra: &[Prog] = if fused { &ts::PROGRAMS_FUSED_BOTH_EXTRA } else { &[] };
         for &prog in ts::PROGRAMS_ALL.iter().chain(extra) {
@@ -164,6 +163,16 @@ impl SimBoard {
             let _ = cp.register_program_with_needs(tc::MM_TC, c::mm_tc_on_cpu, c::MM_TC_NEEDS);
             cp.mem.write(TC, tc::MM_TC);
         }
+        if mixed && fused {
+            // P6-176 (note C-157_P2_gelu-pe-mm_tc): the mixed step with `with_fused_gelu` launches `mm_tc_gelu`.
+            use nvidia_ga104::mm_tc_gelu as tg;
+            let sha = super::antrenare::sha256_hex(tg::MM_TC_GELU);
+            if sha != tg::MM_TC_GELU_SHA256 {
+                return Err(format!("mm_tc_gelu: SHA-256 {} nu e cel din nota ({})", sha, tg::MM_TC_GELU_SHA256));
+            }
+            let _ = cp.register_program_with_needs(tg::MM_TC_GELU, c::mm_tc_gelu_on_cpu, c::MM_TC_GELU_NEEDS);
+            cp.mem.write(TCG, tg::MM_TC_GELU);
+        }
         Ok(Self { cp, layout, mixed, fused, recompute, first: 1, launches: 0 })
     }
 
@@ -199,8 +208,13 @@ impl SimBoard {
                 self.cp.mem.write(va, &bytes);
             }
             let list = plan.step_mixed(Recipe::AdamW513, adam, t, ts::LOSS_SCALE).map_err(e("lista pasului mixt"))?;
-            let tc = list.iter().filter(|l| matches!(l, ts::MixedLaunch::Tc { .. })).count();
-            let (zone, qmds) = ts::pack_mixed(&list, prog_va, TC, ZONE).map_err(e("zona de control (mixt)"))?;
+            // P6-176: `TcGelu` runs on the tensor cores too.
+            let tc = list.iter().filter(|l| matches!(l, ts::MixedLaunch::Tc { .. } | ts::MixedLaunch::TcGelu { .. })).count();
+            let (zone, qmds) = if self.fused {
+                ts::pack_mixed_gelu(&list, prog_va, TC, TCG, ZONE).map_err(e("zona de control (mixt, lipit)"))?
+            } else {
+                ts::pack_mixed(&list, prog_va, TC, ZONE).map_err(e("zona de control (mixt)"))?
+            };
             (zone, qmds, list.len(), tc)
         } else {
             let list = plan.step(Recipe::AdamW513, adam, t).map_err(e("lista pasului"))?;

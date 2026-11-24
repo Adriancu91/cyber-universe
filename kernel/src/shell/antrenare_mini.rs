@@ -17,7 +17,7 @@ use gpu_compute::train::{self, AdamW, Arch, Batch};
 use super::date_bucati::{self, Mt19937};
 use super::punct_control::{self, Checkpoint};
 
-const USAGE: &str = "folosire: antrenare mini [dosar] [--pasi <1..1000>] [--lot <numar 1..16> <context 1..256>] [--vocabular <64..16384>] [--samanta <s>] [--lr <x>] [--salveaza <cale>] [--din <cale>] [--placa-sim [--atentie simpla|p|placi|placi-p] [--mixt | --lipit] [--recalcul] [--fara-oracol]]";
+const USAGE: &str = "folosire: antrenare mini [dosar] [--pasi <1..1000>] [--lot <numar 1..16> <context 1..256>] [--vocabular <64..16384>] [--samanta <s>] [--lr <x>] [--salveaza <cale>] [--din <cale>] [--placa-sim [--atentie simpla|p|placi|placi-p] [--mixt] [--lipit] [--recalcul] [--fara-oracol]]";
 
 /// Kronos's vocabulary (#513 and #651: 16 384 symbols) — the default; a smaller one only for data whose symbols fit
 /// (the QEMU test: on the processor without KVM one step with 16 384 takes ~50 s).
@@ -321,7 +321,7 @@ pub fn command(args: &[&str]) -> Vec<String> {
         rows.push(format!("antrenare mini: NU A RULAT: {}", why));
         rows
     };
-    if ((no_oracle || layout.is_some() || mixed || fused || recompute) && !board_sim) || (mixed && fused) {
+    if ((no_oracle || layout.is_some() || mixed || fused || recompute) && !board_sim) {
         return alloc::vec![String::from(USAGE)];
     }
     if layout.is_some_and(|w| !matches!(w, "simpla" | "p" | "placi" | "placi-p")) {
@@ -415,7 +415,12 @@ pub fn command(args: &[&str]) -> Vec<String> {
                 nvidia_ga104::train_step::LOSS_SCALE
             ));
         }
-        if fused {
+        if fused && mixed {
+            // P6-176: on the mixed step the GELU' glue is `mm_tc_gelu` (cyber-gpu `338dbc3`).
+            rows.push(String::from(
+                "antrenare mini: lipirea: ln_back_res (LayerNorm inapoi + rezidualul) si mm_tc_gelu (proj-dX + derivata GELU pe circuitele speciale) in pasul mixt, langa pasul mixt fara lipire pe o a doua placa simulata (asteptat: aceiasi biti)",
+            ));
+        } else if fused {
             rows.push(String::from(
                 "antrenare mini: lipirea: ln_back_res (LayerNorm inapoi + rezidualul) si mm_train_gelu (proj-dX + derivata GELU) in pas, langa lista fara lipire pe o a doua placa simulata (asteptat: aceiasi biti)",
             ));
@@ -628,6 +633,7 @@ pub fn command(args: &[&str]) -> Vec<String> {
     if fused || recompute {
         let pass = fused_same == steps;
         let what = match (fused, recompute) {
+            (true, false) if mixed => "lipirea in pasul mixt (ln_back_res + mm_tc_gelu) fata de pasul mixt fara lipire",
             (true, false) => "lipirea (ln_back_res + mm_train_gelu) fata de lista fara lipire",
             (false, _) => "recalcularea fata de lista fara recalculare",
             (true, true) => "lipirea + recalcularea fata de lista simpla",
