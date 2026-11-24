@@ -5664,6 +5664,8 @@ const KT_513_LOSS1_E4: &str = "kt antrenare-513 pierderea la pasul 1 (x1e4)";
 const KT_513_LOSSN_E4: &str = "kt antrenare-513 pierderea la ultimul pas (x1e4)";
 const KT_513_PASS: &str = "kt antrenare-513 verdict (1/0)";
 const KT_513_ORACLE: &str = "kt antrenare-513 = oracolul procesorului in pasii 1-9 (1/0)";
+/// P6-185: 1 = the step built with `Plan::new_tiles3` (`--placi3`).
+const KT_513_TILES3: &str = "kt antrenare-513 atentia pe placi gen 3 (1/0)";
 
 /// P6-172: the pieces of the arena that are not zero before the first step, written into one upload piece
 /// `[cva, cva + buf.len())` of the arena: the weights (tensor by tensor, straight from `params`, so the GiB of the
@@ -5752,7 +5754,12 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         return Err(bad("antrenare-513: SHA-256 gresit"));
     }
     let (x0, y0) = data.batches.first().ok_or(bad("antrenare-513: niciun pas"))?;
-    let probe0 = Plan::new(a, bsz, tl, x0, nvidia_ga104::mmu::VA_BASE)?.resident()?;
+    // P6-185 (cyber-gpu note C-157_P2v): with `--placi3`, the attention on the third-generation tiles (`attn_fwd_tile3`,
+    // `attn_back_tile0_3`, `attn_back_tile_3`; on the board since os-375); the same arena, the same number of launches.
+    let tiles3 = super::gpu_tur::TRAIN_513_TILES3_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    let build = |base: u64| if tiles3 { Plan::new_tiles3(a, bsz, tl, x0, base) } else { Plan::new(a, bsz, tl, x0, base) };
+    journal.push(Event::Value { what: KT_513_TILES3, value: tiles3 as u32 });
+    let probe0 = build(nvidia_ga104::mmu::VA_BASE)?.resident()?;
     let mut n_launch = 0usize;
     for (x, _) in &data.batches {
         n_launch = n_launch.max(probe0.rebatch(x)?.launches_per_step(Recipe::AdamW513));
@@ -5769,7 +5776,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     }
     drop(probe0);
     let varena = map_vram(st, arena_bytes)?;
-    let plan0 = Plan::new(a, bsz, tl, x0, varena.va)?.resident()?;
+    let plan0 = build(varena.va)?.resident()?;
     if plan0.bytes() > arena_bytes {
         return Err(bad("antrenare-513: planul rezident difera intre adrese"));
     }
@@ -5783,8 +5790,9 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     journal.push(Event::Value { what: KT_513_LAUNCHES, value: n_launch as u32 });
     journal.push(Event::Value { what: KT_513_SUBS, value: n_parts as u32 });
     lines.push(format!(
-        "{}: kronos --gpu: {} ({}): modelul vocabular {}, context {}, E {}, {} capete, {} straturi ({} greutati), lot {} x {}, AdamW lr 1e-3, taiere 1,0; {}; {} programe (SHA-256 verificate), {} lansari pe pas in {} trimiteri (cel mult {} lansari pe trimitere); arena {} MiB in VRAM (VRAM liber {} MiB), urcata o data pe bucati de {} KiB; {} pasi{}",
+        "{}: kronos --gpu: {} ({}): modelul vocabular {}, context {}, E {}, {} capete, {} straturi ({} greutati), lot {} x {}, AdamW lr 1e-3, taiere 1,0; {}; {}; {} programe (SHA-256 verificate), {} lansari pe pas in {} trimiteri (cel mult {} lansari pe trimitere); arena {} MiB in VRAM (VRAM liber {} MiB), urcata o data pe bucati de {} KiB; {} pasi{}",
         p, tag, label, a.vocab, a.ctx, a.n_emb, a.heads, a.layers, count, bsz, tl, data.source,
+        if tiles3 { "atentia pe placi gen 3 (attn_fwd_tile3, attn_back_tile0_3, attn_back_tile_3; --placi3)" } else { "atentia de baza (attn_fwd, attn_back)" },
         plan0.programs().len(), n_launch, n_parts, split, arena_bytes >> 20, free >> 20, piece >> 10, steps,
         if board { "; fara oracol (procesorul nu face pasul #513 in timp util): pierderea la pasul 1 ~ ln 16 384, apoi scade" } else { ", oracolul pe procesor la fiecare pas, greutatile la sfarsit" }
     ));
