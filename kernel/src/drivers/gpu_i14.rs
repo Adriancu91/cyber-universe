@@ -6047,6 +6047,14 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         "{}: kronos --gpu: {}: timpul pe pas (median, {} pasi): placa {} us = {} simboluri/s la antrenare (lot {} x {}; Windows / PyTorch ~39 300); pasul intreg {} us = {} simboluri/s",
         p, tag, losses.len(), us, tok_s, bsz, tl, host_med, full_tok_s
     ));
+    // P6-183 (os-395: "placa" > "pasul intreg" by ~3 %): the two clocks side by side, so the next report says which.
+    lines.push(format!(
+        "{}: kronos --gpu: {}: ceasurile: placa / pasul intreg = {} la mie (median; peste 1000 = un ceas gresit); {}",
+        p,
+        tag,
+        if host_med > 0 { us * 1000 / host_med } else { 0 },
+        crate::arch::x86_64::apic::clock_note()
+    ));
     // P6-182: once, at the end: the total, the stages, the 8 longest tags, the programs.
     let prof_steps = prof.as_ref().map_or(0, |pr| pr.steps());
     journal.push(Event::Value { what: KT_513_PROFILE, value: prof_steps as u32 });

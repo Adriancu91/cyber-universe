@@ -8,6 +8,7 @@
 use super::{inb, outb};
 use crate::mem::paging;
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use alloc::string::String;
 
 /// CPU vector of the system timer.
 pub const TIMER_VECTOR: u8 = 32;
@@ -383,6 +384,50 @@ fn ref_wait_ms(ms: u64) -> bool {
         }
         _ => pit_wait_ms(ms),
     }
+}
+
+/// P6-183 (os-395: the board's records summed to ~3 % more than the CPU's "whole step"): the CPU clock as the
+/// reports should state it — the reference clock chosen at boot, the TSC rate it measured over 10 ms, the rate
+/// measured again now over 5 × 50 ms on the same reference clock, and the rate CPUID states (if any), with the
+/// differences in per mille. Takes ~250 ms; reads only (the PIT/PM ports, CPUID, the TSC).
+pub fn clock_note() -> String {
+    let boot = TSC_PER_MS.load(Ordering::Relaxed);
+    let name = match REF_CLOCK.load(Ordering::Relaxed) {
+        x if x == RefClock::PmTimer as u8 => RefClock::PmTimer.name(),
+        x if x == RefClock::Tsc as u8 => RefClock::Tsc.name(),
+        _ => RefClock::Pit.name(),
+    };
+    let mut again = alloc::vec::Vec::new();
+    for _ in 0..5 {
+        let t0 = super::rdtsc();
+        if !ref_wait_ms(50) {
+            break;
+        }
+        again.push(super::rdtsc().wrapping_sub(t0) / 50);
+    }
+    again.sort_unstable();
+    let permille = |a: u64, b: u64| -> String {
+        if b == 0 {
+            return String::from("?");
+        }
+        let d = (a as i128 - b as i128) * 1000 / b as i128;
+        alloc::format!("{:+}", d)
+    };
+    let now = again.get(again.len() / 2).copied();
+    let cpuid = cpuid_tsc_hz().map(|hz| hz / 1000);
+    alloc::format!(
+        "ceasul procesorului: referinta {}; TSC la pornire {} kHz (10 ms); acum {} (median din {} x 50 ms{}); CPUID {}",
+        name,
+        boot,
+        now.map_or(String::from("nemasurat"), |n| alloc::format!("{} kHz", n)),
+        again.len(),
+        now.map_or(String::new(), |n| alloc::format!(", pornire fata de acum {} la mie", permille(boot, n))),
+        cpuid.map_or(String::from("nu spune frecventa"), |c| alloc::format!(
+            "{} kHz (pornire fata de CPUID {} la mie)",
+            c,
+            permille(boot, c)
+        )),
+    )
 }
 
 /// One calibration run against `clock`: APIC timer counts and TSC cycles in 10 ms (`None` if the clock does not count).
