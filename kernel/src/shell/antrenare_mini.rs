@@ -17,7 +17,7 @@ use gpu_compute::train::{self, AdamW, Arch, Batch};
 use super::date_bucati::{self, Mt19937};
 use super::punct_control::{self, Checkpoint};
 
-const USAGE: &str = "folosire: antrenare mini [dosar] [--pasi <1..1000>] [--lot <numar 1..16> <context 1..256>] [--vocabular <64..16384>] [--samanta <s>] [--lr <x>] [--salveaza <cale>] [--din <cale>] [--placa-sim [--atentie simpla|p|placi|placi-p] [--mixt] [--fara-oracol]]";
+const USAGE: &str = "folosire: antrenare mini [dosar] [--pasi <1..1000>] [--lot <numar 1..16> <context 1..256>] [--vocabular <64..16384>] [--samanta <s>] [--lr <x>] [--salveaza <cale>] [--din <cale>] [--placa-sim [--atentie simpla|p|placi|placi-p] [--mixt | --lipit] [--fara-oracol]]";
 
 /// Kronos's vocabulary (#513 and #651: 16 384 symbols) — the default; a smaller one only for data whose symbols fit
 /// (the QEMU test: on the processor without KVM one step with 16 384 takes ~50 s).
@@ -235,6 +235,8 @@ pub fn command(args: &[&str]) -> Vec<String> {
     let mut layout: Option<&str> = None;
     // P6-166: every matmul of the simulated board's step on `mm_tc` (f16 + loss scale; only with `--placa-sim`).
     let mut mixed = false;
+    // P6-170: `ln_back_res` + `mm_train_gelu` glued into the step, beside the plain list (the same bits expected).
+    let mut fused = false;
     let mut i = 0;
     while i < args.len() {
         let next = |k: usize| args.get(i + k).copied();
@@ -298,6 +300,10 @@ pub fn command(args: &[&str]) -> Vec<String> {
                 mixed = true;
                 i += 1;
             }
+            "--lipit" => {
+                fused = true;
+                i += 1;
+            }
             x if !x.starts_with("--") && dir.is_none() => {
                 dir = Some(x);
                 i += 1;
@@ -309,7 +315,7 @@ pub fn command(args: &[&str]) -> Vec<String> {
         rows.push(format!("antrenare mini: NU A RULAT: {}", why));
         rows
     };
-    if (no_oracle || layout.is_some() || mixed) && !board_sim {
+    if ((no_oracle || layout.is_some() || mixed || fused) && !board_sim) || (mixed && fused) {
         return alloc::vec![String::from(USAGE)];
     }
     if layout.is_some_and(|w| !matches!(w, "simpla" | "p" | "placi" | "placi-p")) {
@@ -403,13 +409,34 @@ pub fn command(args: &[&str]) -> Vec<String> {
                 nvidia_ga104::train_step::LOSS_SCALE
             ));
         }
-        match super::antrenare_sim::SimBoard::new(l, mixed) {
+        if fused {
+            rows.push(String::from(
+                "antrenare mini: lipirea: ln_back_res (LayerNorm inapoi + rezidualul) si mm_train_gelu (proj-dX + derivata GELU) in pas, langa lista fara lipire pe o a doua placa simulata (asteptat: aceiasi biti)",
+            ));
+        }
+        match super::antrenare_sim::SimBoard::new(l, mixed, fused) {
             Ok(b) => Some(b),
             Err(e) => return fail(rows, format!("placa simulata: {}", e)),
         }
     } else {
         None
     };
+    // P6-170: the plain list on its own simulated board, from the same start, for the bit-for-bit comparison.
+    #[cfg(feature = "test-gpu-sim")]
+    let mut twin = if fused {
+        let l = super::antrenare_sim::Layout::parse(layout.unwrap_or("simpla")).unwrap_or(super::antrenare_sim::Layout::Simple);
+        match super::antrenare_sim::SimBoard::new(l, false, false) {
+            Ok(b) => Some((b, st.params.clone(), st.adam.clone())),
+            Err(e) => return fail(rows, format!("placa simulata (fara lipire): {}", e)),
+        }
+    } else {
+        None
+    };
+    // P6-170: steps whose loss, norm and weights are the plain list's bit for bit; launches per step (glued, plain).
+    #[allow(unused_mut)]
+    let mut fused_same = 0usize;
+    #[allow(unused_mut)]
+    let mut fused_launches = (0usize, 0usize);
     // The oracle's own copy, from the same start (only beside the simulated board).
     let mut oracle: Option<(Vec<Vec<f32>>, AdamW)> = (board_sim && !no_oracle).then(|| (st.params.clone(), st.adam.clone()));
     let (mut worst_loss, mut worst_w, mut worst_norm) = (0.0f64, 0.0f64, 0.0f64);
@@ -448,6 +475,30 @@ pub fn command(args: &[&str]) -> Vec<String> {
             },
             None => None,
         };
+        #[cfg(feature = "test-gpu-sim")]
+        if let (Some((tb, tp, ta)), Some((loss, norm, n, ..))) = (twin.as_mut(), board_out) {
+            let o = match tb.step(&a, (st.numar, st.context), &x, &y, tp, ta) {
+                Ok(o) => o,
+                Err(e) => return fail(rows, format!("pasul {} pe placa simulata fara lipire: {}", st.done + 1, e)),
+            };
+            let bits = |set: &[Vec<f32>]| set.iter().flatten().map(|v| v.to_bits()).collect::<Vec<u32>>();
+            let w_diff = bits(&st.params).iter().zip(bits(tp)).filter(|(p, q)| **p != *q).count();
+            let same = loss.to_bits() == o.loss.to_bits() && norm.to_bits() == o.norm.to_bits() && w_diff == 0;
+            fused_same += usize::from(same);
+            fused_launches = (n, o.launches);
+            rows.push(format!(
+                "antrenare mini: lipirea pasul {}: {} lansari fata de {}; pierderea {:.6} / {:.6}, norma {:.6} / {:.6}, greutati diferite {} -> {}",
+                st.done + 1,
+                n,
+                o.launches,
+                loss,
+                o.loss,
+                norm,
+                o.norm,
+                w_diff,
+                if same { "ACEIASI BITI" } else { "DIFERA" }
+            ));
+        }
         #[cfg(not(feature = "test-gpu-sim"))]
         let board_out: Option<(f32, f32, usize, usize, usize, u64)> = None;
         let (loss, norm) = match board_out {
@@ -555,6 +606,17 @@ pub fn command(args: &[&str]) -> Vec<String> {
         rows.push(format!(
             "antrenare mini: NU SCADE: pierderea medie {:.4} (primii {} pasi) -> {:.4} (ultimii {}); {} pasi in {} ms",
             first, w, last, w, steps, total_ms
+        ));
+    }
+    if fused {
+        let pass = fused_same == steps;
+        rows.push(format!(
+            "antrenare mini: lipirea (ln_back_res + mm_train_gelu) fata de lista fara lipire: {} — {} din {} pasi bit cu bit (pierderea, norma, toate greutatile); {} lansari pe pas in loc de {}",
+            if pass { "ACEIASI BITI" } else { "DIFERA" },
+            fused_same,
+            steps,
+            fused_launches.0,
+            fused_launches.1
         ));
     }
     if mixed && board_us > 0 {
