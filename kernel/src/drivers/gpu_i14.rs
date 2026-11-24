@@ -335,7 +335,17 @@ pub(crate) fn card_choice(f: &[u8]) -> (Result<bool, &'static str>, Vec<String>)
     match nvidia_ga104::packs::select(&card) {
         Ok(choice) => {
             let proved = matches!(choice.proof, nvidia_ga104::packs::Proof::Board(_));
-            (Ok(proved), alloc::vec![head, choice.line()])
+            let mut rows = alloc::vec![head, choice.line()];
+            // P6-180 (C-157 point 8 step 2): the work channel's limits from the card alone, before any tensor is read
+            // (`run_model` checks the same numbers again from the tensors' shapes, with the lists that actually run).
+            match choice.limits_with(I11_BOARD_BYTES, &[Prog::Argmax]) {
+                Ok(lim) => rows.extend(lim.lines().into_iter().map(|x| format!("limitele din fisa (cu argmax pe placa): {}", x))),
+                Err(e) => {
+                    rows.push(format!("REFUZ: limitele din fisa: {}; nimic nu ruleaza pe placa", e));
+                    return (Err("limitele fisei modelului nu se pot calcula: nimic nu ruleaza pe placa"), rows);
+                }
+            }
+            (Ok(proved), rows)
         }
         Err(r) => {
             let mut out = alloc::vec![head];
@@ -343,6 +353,24 @@ pub(crate) fn card_choice(f: &[u8]) -> (Result<bool, &'static str>, Vec<String>)
             (Err("niciun pachet de calcul nu se potriveste fisei modelului: nimic nu ruleaza pe placa"), out)
         }
     }
+}
+
+/// P6-180 (C-157 point 8 step 2): the card read from the start of a KGR1 file must describe the tensors read from the
+/// same file (layers, heads, n_emb, context, vocabulary): the pack was chosen on the card. `None` = they agree.
+pub(crate) fn card_vs_tensors(f: &[u8], m: &OwnedModel) -> Option<String> {
+    let card = match gpu_compute::card::ModelCard::from_kgr1(f) {
+        Ok(c) => c,
+        Err(e) => return Some(format!("REFUZ: fisa modelului: {}; nimic nu ruleaza pe placa", e.line())),
+    };
+    let t = (m.layers.len(), m.shape.heads, m.shape.e, m.context, m.vocab);
+    let c = card.form();
+    if c == t {
+        return None;
+    }
+    Some(format!(
+        "REFUZ: fisa modelului nu se potriveste cu tensorii (fisa: {} straturi, {} capete, n_emb {}, context {}, vocabular {}; tensorii: {} straturi, {} capete, n_emb {}, context {}, vocabular {}); nimic nu ruleaza pe placa",
+        c.0, c.1, c.2, c.3, c.4, t.0, t.1, t.2, t.3, t.4
+    ))
 }
 
 /// [`card_choice`] with the rows prefixed for the `kronos --gpu` report.
@@ -356,7 +384,7 @@ fn model_pack(p: &str, f: &[u8], lines: &mut Vec<String>) -> Result<bool, &'stat
 
 /// A KGR1 Q8_0 `kronos_gpt` file → the model Cyber-GPU's launches and CPU oracle take (Q8_0 blocks = f32 scale +
 /// 32 × i8, the same 36 bytes in both).
-pub(super) fn read_kgr1(f: &[u8]) -> GpuResult<OwnedModel> {
+pub(crate) fn read_kgr1(f: &[u8]) -> GpuResult<OwnedModel> {
     let mut c = Cursor { b: f, at: 0 };
     if c.take(4)? != b"KGR1" || c.u32()? != 1 {
         return Err(bad("KGR1: antet necunoscut"));
@@ -2506,6 +2534,10 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
         return Err(format!("{}: {}", job.path, why));
     }
     let m = read_kgr1(&file).map_err(|e| format!("{}: {}", job.path, e))?;
+    if let Some(why) = card_vs_tensors(&file, &m) {
+        lines.push(format!("{}: kronos --gpu: {}", p, why));
+        return Err(format!("{}: fisa modelului nu se potriveste cu tensorii: nimic nu ruleaza pe placa", job.path));
+    }
     drop(file);
     if job.prompt.is_empty() || job.n == 0 {
         return Err(String::from("cererea nu are simboluri sau n = 0"));

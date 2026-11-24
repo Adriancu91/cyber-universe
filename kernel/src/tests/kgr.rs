@@ -165,7 +165,11 @@ pub fn run() {
 /// test model (Q8_0, a form never run on the board) → "PROBA NECESARA"; the #513 and #651 cards → proved on the board;
 /// an F32 file, an untied head and a broken file → refused, nothing would run on the board.
 fn card_checks() {
-    use crate::drivers::gpu_i14::card_choice;
+    use crate::drivers::gpu_i14::{card_choice, card_vs_tensors, read_kgr1};
+    use nvidia_ga104::transfer::I11_DEFAULT_BYTES as I11_BOARD_BYTES;
+    use nvidia_ga104::kronos_diag::TokenList;
+    use nvidia_ga104::kronos_layer::Prog;
+    use nvidia_ga104::kronos_speed as ks;
     use alloc::vec::Vec;
     use gpu_compute::card::{KeyValue, kgr1_header, kronos_keys};
     let show = |name: &str, rows: &[alloc::string::String]| {
@@ -182,7 +186,27 @@ fn card_checks() {
         let (r, rows) = card_choice(&kgr1_header(&kronos_keys(l, h, e, c, v)));
         show(name, &rows);
         assert!(r == Ok(true) && rows.iter().any(|x| x.contains("dovedit pe placa")), "fisa {}: {:?} {:?}", name, r, rows);
+        // P6-180: the card's limits (the pack's list + argmax) = the numbers `ModelLimits::of_lists` gives from the
+        // shapes, as `run_model` computes them = the numbers of Cyber-GPU's reference card.
+        let (l, h, e, c, v) = (l as usize, h as usize, e as usize, c as usize, v as usize);
+        let shape = gpu_compute::layer::Shape { e, heads: h, eps: 1e-5 };
+        let reference = if l == 12 { ks::card_k513() } else { ks::card_k651() };
+        let list: TokenList = nvidia_ga104::packs::select(&reference).expect("pachetul fisei de referinta").pack.list;
+        let from_shapes = ks::ModelLimits::of_lists(&shape, l, v, c, I11_BOARD_BYTES, &[list], &[Prog::Argmax]).expect("limitele din forme");
+        let from_ref = ks::ModelLimits::of_card_lists(&reference, I11_BOARD_BYTES, &[list], &[Prog::Argmax]).expect("limitele fisei de referinta");
+        assert!(from_ref.lines() == from_shapes.lines(), "fisa {}: referinta {:?} / forme {:?}", name, from_ref.lines(), from_shapes.lines());
+        for x in from_shapes.lines() {
+            let want = alloc::format!("limitele din fisa (cu argmax pe placa): {}", x);
+            assert!(rows.iter().any(|r| *r == want), "fisa {}: lipseste {:?} in {:?}", name, want, rows);
+        }
     }
+    // P6-180: the card must describe the tensors: the tiny model's own card agrees, #513's card in front of the tiny
+    // model's tensors is refused.
+    let m = read_kgr1(&mic).expect("fisa: modelul mic se citeste");
+    assert!(card_vs_tensors(&mic, &m).is_none(), "fisa: modelul mic nu se potriveste cu fisa lui");
+    let wrong = card_vs_tensors(&kgr1_header(&kronos_keys(12, 12, 768, 512, 16_384)), &m);
+    crate::info!("kronos: fisa #513 langa tensorii modelului mic: {:?}", wrong);
+    assert!(wrong.as_deref().is_some_and(|x| x.starts_with("REFUZ: fisa modelului nu se potriveste cu tensorii")), "fisa gresita: {:?}", wrong);
     let f32m = crate::fs::read_all("/disk/kronos/mini-f32.kgr").expect("fisa: lipseste mini-f32.kgr");
     let (r, rows) = card_choice(&f32m);
     show("mini-f32", &rows);
@@ -197,5 +221,5 @@ fn card_checks() {
     let (r, rows) = card_choice(&mic[..20]);
     show("taiat", &rows);
     assert!(r.is_err() && rows.len() == 1 && rows[0].starts_with("REFUZ: fisa modelului"), "fisa taiata: {:?} {:?}", r, rows);
-    crate::info!("test: fisa modelului: mic = PROBA NECESARA, #513 si #651 dovedite pe placa, f32 / cap nelegat / fisier taiat refuzate OK");
+    crate::info!("test: fisa modelului: mic = PROBA NECESARA, #513 si #651 dovedite pe placa (limitele din fisa = limitele din forme), fisa = tensorii, f32 / cap nelegat / fisier taiat / fisa straina refuzate OK");
 }
