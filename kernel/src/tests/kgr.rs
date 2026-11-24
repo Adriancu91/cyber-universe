@@ -148,6 +148,7 @@ pub fn run() {
         let code = run_one(&pick);
         assert!(code == 3, "kronos: {}: copia modelului mic cu numele modelului mare acceptata (cod {})", dir, code);
     }
+    card_checks();
     let ms = (crate::arch::x86_64::apic::ticks() - t0) * 1000 / crate::arch::x86_64::apic::HZ;
     while sched::alive() > 1 {
         sched::sleep_ms(10);
@@ -158,4 +159,43 @@ pub fn run() {
         ms,
         sched::running_cpus()
     );
+}
+
+/// P6-177 (C-157 point 8): the model card picks the compute pack before `kronos --gpu` uploads anything. The tiny
+/// test model (Q8_0, a form never run on the board) → "PROBA NECESARA"; the #513 and #651 cards → proved on the board;
+/// an F32 file, an untied head and a broken file → refused, nothing would run on the board.
+fn card_checks() {
+    use crate::drivers::gpu_i14::card_choice;
+    use alloc::vec::Vec;
+    use gpu_compute::card::{KeyValue, kgr1_header, kronos_keys};
+    let show = |name: &str, rows: &[alloc::string::String]| {
+        for r in rows {
+            crate::info!("kronos: fisa {}: {}", name, r);
+        }
+    };
+    let mic = crate::fs::read_all("/disk/kronos/mic_q8_0.kgr").expect("fisa: lipseste mic_q8_0.kgr");
+    let (r, rows) = card_choice(&mic);
+    show("mic_q8_0", &rows);
+    assert!(r == Ok(false) && rows.iter().any(|x| x.contains("PROBA NECESARA")), "fisa: modelul mic: {:?} {:?}", r, rows);
+    for (name, form) in [("#513", (12, 12, 768, 512, 16_384)), ("#651", (24, 12, 768, 512, 16_384))] {
+        let (l, h, e, c, v) = form;
+        let (r, rows) = card_choice(&kgr1_header(&kronos_keys(l, h, e, c, v)));
+        show(name, &rows);
+        assert!(r == Ok(true) && rows.iter().any(|x| x.contains("dovedit pe placa")), "fisa {}: {:?} {:?}", name, r, rows);
+    }
+    let f32m = crate::fs::read_all("/disk/kronos/mini-f32.kgr").expect("fisa: lipseste mini-f32.kgr");
+    let (r, rows) = card_choice(&f32m);
+    show("mini-f32", &rows);
+    assert!(r.is_err() && rows.iter().any(|x| x.starts_with("REFUZ:")) && rows.iter().any(|x| x.contains("`f32`")), "fisa f32: {:?} {:?}", r, rows);
+    let untied: Vec<(&str, KeyValue<'_>)> = kronos_keys(12, 12, 768, 512, 16_384)
+        .into_iter()
+        .map(|(k, v)| if k == "cap_legat" { (k, KeyValue::Int(0)) } else { (k, v) })
+        .collect();
+    let (r, rows) = card_choice(&kgr1_header(&untied));
+    show("cap nelegat", &rows);
+    assert!(r.is_err() && rows.iter().any(|x| x.contains("capul nu e legat")), "fisa cap nelegat: {:?} {:?}", r, rows);
+    let (r, rows) = card_choice(&mic[..20]);
+    show("taiat", &rows);
+    assert!(r.is_err() && rows.len() == 1 && rows[0].starts_with("REFUZ: fisa modelului"), "fisa taiata: {:?} {:?}", r, rows);
+    crate::info!("test: fisa modelului: mic = PROBA NECESARA, #513 si #651 dovedite pe placa, f32 / cap nelegat / fisier taiat refuzate OK");
 }

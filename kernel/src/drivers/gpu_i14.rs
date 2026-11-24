@@ -310,6 +310,44 @@ struct Tensor<'a> {
     off: usize,
 }
 
+/// P6-177 (C-157 point 8): the model card read from the start of a KGR1 file (`ModelCard::from_kgr1`) and the compute
+/// pack chosen for it (`packs::select`). Returns the console rows and `Ok(true)` = the form was proved on the board,
+/// `Ok(false)` = "PROBA NECESARA" (the CPU check runs first), `Err` = refused (a broken card or no pack): nothing may
+/// run on the board.
+pub(crate) fn card_choice(f: &[u8]) -> (Result<bool, &'static str>, Vec<String>) {
+    let card = match gpu_compute::card::ModelCard::from_kgr1(f) {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                Err("fisa modelului nu se poate citi: nimic nu ruleaza pe placa"),
+                alloc::vec![format!("REFUZ: fisa modelului: {}; nimic nu ruleaza pe placa", e.line())],
+            )
+        }
+    };
+    let (l, h, e, c, v) = card.form();
+    let head = format!("fisa modelului: {} straturi, {} capete, n_emb {}, context {}, vocabular {}", l, h, e, c, v);
+    match nvidia_ga104::packs::select(&card) {
+        Ok(choice) => {
+            let proved = matches!(choice.proof, nvidia_ga104::packs::Proof::Board(_));
+            (Ok(proved), alloc::vec![head, choice.line()])
+        }
+        Err(r) => {
+            let mut out = alloc::vec![head];
+            out.extend(r.lines());
+            (Err("niciun pachet de calcul nu se potriveste fisei modelului: nimic nu ruleaza pe placa"), out)
+        }
+    }
+}
+
+/// [`card_choice`] with the rows prefixed for the `kronos --gpu` report.
+fn model_pack(p: &str, f: &[u8], lines: &mut Vec<String>) -> Result<bool, &'static str> {
+    let (r, rows) = card_choice(f);
+    for x in rows {
+        lines.push(format!("{}: kronos --gpu: {}", p, x));
+    }
+    r
+}
+
 /// A KGR1 Q8_0 `kronos_gpt` file → the model Cyber-GPU's launches and CPU oracle take (Q8_0 blocks = f32 scale +
 /// 32 × i8, the same 36 bytes in both).
 pub(super) fn read_kgr1(f: &[u8]) -> GpuResult<OwnedModel> {
@@ -2454,6 +2492,13 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
     way: kd::Way,
 ) -> Result<Vec<usize>, String> {
     let file = crate::fs::read_all(&job.path).map_err(|e| format!("nu pot citi {}: {}", job.path, e.message()))?;
+    // P6-177 (C-157 point 8, cyber-gpu note `C-157_P8_fisa-modelului`): the model card picks the compute pack before
+    // anything is uploaded; no pack → the refusal rows and nothing runs on the board. "PROBA NECESARA" needs nothing
+    // more here: every `kronos --gpu` position is already judged against the processor (in the kernel or, with
+    // `os_check`, by `/bin/kronos` after the board) — the proof the note asks for.
+    if let Err(why) = model_pack(p, &file, lines) {
+        return Err(format!("{}: {}", job.path, why));
+    }
     let m = read_kgr1(&file).map_err(|e| format!("{}: {}", job.path, e))?;
     drop(file);
     if job.prompt.is_empty() || job.n == 0 {
