@@ -589,6 +589,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
   Gata (2026-11-24 ~17:25 RO): cyber-gpu `6f6ca33` → `4042ce9` (strămoș verificat); `--mm-placi` doar după `--placi3`; SIMULARE (modelul mic): `mm_train_tile` 27 lansări în profil, ACELEASI NUMERE cu oracolul (9,8e-8 / 4,1e-6 / 6,4e-5), TRECE. Teste: `kronos-gpu-antrenare-513-mm-placi` (nou, 20 verificări), `ghpush` (122), `boot`.
 - [x] **P6-194** PREDARE Cyber-GPU sesiunea 216 (`edc3ae3`, nota `C-165_os413_64x64k8.md`) + cererea centrului după os-413: **cursa fără `mm_tv_64x64k8`** (`race_list()`) și **o pagină de pază după fiecare program** (`qmd::program_map_bytes`); nimic nou pentru placă. Plan: `docs/plans/P6-194.md`.
   Gata (2026-11-25 ~00:55 RO): cyber-gpu `2289b2e` → `edc3ae3` (strămoș verificat); teste locale `kronos-gpu-antrenare-513-cursa` (31 verificări: 4 variante, 64x64k8 nelansată, 0 diferite), `kronos-gpu-antrenare-513-tablou` (39), `kronos-gpu` (59), `boot`.
+- [~] **P6-195** Propunerea 3 Cyber-GPU (sesiunea 216, nota `C-165_os413_64x64k8.md`): **proba `mm_tv_64x64k8` singură pe forma qkv, cu pagina de pază** — `test-placa … --cursa-mm --proba-64k8`; lămurește dacă blocajul de la os-413 era citirea în avans după capătul codului. Nou pentru placă: programul `mm_tv_64x64k8` lansat din nou (după os-416). Plan: `docs/plans/P6-195.md`.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
