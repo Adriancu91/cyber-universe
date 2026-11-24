@@ -39,6 +39,7 @@ use nvidia_ga104::kronos_model::{self as km, ModelVas, OwnedModel};
 use nvidia_ga104::kronos_perf as kp;
 use nvidia_ga104::kronos_speed as ks;
 use nvidia_ga104::mmu::SysMapping;
+use nvidia_ga104::qmd::program_map_bytes;
 use nvidia_ga104::push::PushBuf;
 use nvidia_ga104::transfer;
 
@@ -832,7 +833,7 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
     }
     for prog in all_progs {
-        let pm = map_vram(st, prog.code().len() as u64)?;
+        let pm = map_vram(st, program_map_bytes(prog.code().len() as u64))?;
         put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
         progs.push((prog, pm));
     }
@@ -3186,7 +3187,7 @@ fn adam_ram_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // The programs in VRAM (page-aligned).
     let mut progs: Vec<(ts::Prog, Mapping)> = Vec::with_capacity(tiles0.programs().len());
     for &prog in tiles0.programs().iter() {
-        let pm = map_vram(st, prog.code().len() as u64)?;
+        let pm = map_vram(st, program_map_bytes(prog.code().len() as u64))?;
         put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
         progs.push((prog, pm));
     }
@@ -3502,7 +3503,7 @@ fn mma16_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         mp::SETS.len()
     ));
     // The program, then one VRAM page: the cbuf at +0 (0x800 bytes), the QMD at +0x800 (aligned to 256).
-    let prog = map_vram(st, mma16::MMA16_F16.len() as u64)?;
+    let prog = map_vram(st, program_map_bytes(mma16::MMA16_F16.len() as u64))?;
     let zone = map_vram(st, PAGE)?;
     put_bytes(st.mem.writer_mut(), prog.pa, mma16::MMA16_F16)?;
     let mut maps = ctx.maps.clone();
@@ -3620,7 +3621,7 @@ fn colsum_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         cp::SETS.len()
     ));
     // The program, then one VRAM page: the cbuf at +0 (0x100 bytes), the QMD at +0x800 (as P8); the buffer in host RAM.
-    let prog = map_vram(st, cs::COLSUM.len() as u64)?;
+    let prog = map_vram(st, program_map_bytes(cs::COLSUM.len() as u64))?;
     let zone = map_vram(st, PAGE)?;
     put_bytes(st.mem.writer_mut(), prog.pa, cs::COLSUM)?;
     let buf = st.mem.alloc_sys_mapped(&arena_pages(0, (cp::BUF_BYTES as u64).div_ceil(PAGE))?)?;
@@ -3733,7 +3734,7 @@ fn mm_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         tp::QKV_SET
     ));
     // The program, then one VRAM page: the cbuf at +0 (0x800 bytes), the QMD at +0x800 (as P8).
-    let prog = map_vram(st, tc::MM_TC.len() as u64)?;
+    let prog = map_vram(st, program_map_bytes(tc::MM_TC.len() as u64))?;
     let zone = map_vram(st, PAGE)?;
     put_bytes(st.mem.writer_mut(), prog.pa, tc::MM_TC)?;
     let small = tp::SETS[..tp::QKV_SET].iter().map(|s| s.layout().bytes as u64).max().unwrap_or(PAGE);
@@ -4101,7 +4102,7 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let mut prog_va = [0u64; 3];
     let mut zones: Vec<Mapping> = Vec::with_capacity(3);
     for (k, prog) in ap::PROGS.iter().enumerate() {
-        let m = map_vram(st, prog.binary().len() as u64)?;
+        let m = map_vram(st, program_map_bytes(prog.binary().len() as u64))?;
         put_bytes(st.mem.writer_mut(), m.pa, prog.binary())?;
         prog_va[k] = m.va;
         maps.push(m);
@@ -4114,7 +4115,7 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     for &g in &gens {
         let mut gb = GenOnBoard { which: g, prog_va: [0; 3], zones: Vec::with_capacity(3) };
         for k in 0..3 {
-            let m = map_vram(st, g.binary(k).len() as u64)?;
+            let m = map_vram(st, program_map_bytes(g.binary(k).len() as u64))?;
             put_bytes(st.mem.writer_mut(), m.pa, g.binary(k))?;
             gb.prog_va[k] = m.va;
             maps.push(m);
@@ -4746,7 +4747,7 @@ fn golden_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let plan_programs = probe_plan.programs();
     let mut progs: Vec<(ts::Prog, Mapping)> = Vec::with_capacity(plan_programs.len());
     for &prog in plan_programs.iter() {
-        let pm = map_vram(st, prog.code().len() as u64)?;
+        let pm = map_vram(st, program_map_bytes(prog.code().len() as u64))?;
         put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
         progs.push((prog, pm));
     }
@@ -4973,13 +4974,13 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     ));
     let mut progs: Vec<(ts::Prog, Mapping)> = Vec::with_capacity(programs.len());
     for &prog in programs.iter() {
-        let pm = map_vram(st, prog.code().len() as u64)?;
+        let pm = map_vram(st, program_map_bytes(prog.code().len() as u64))?;
         put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
         progs.push((prog, pm));
     }
     // P6-167: `mm_tc` in VRAM beside the step's programs (its own mapping, 256-aligned like every program's).
     let tc_map = if mixed {
-        let pm = map_vram(st, nvidia_ga104::mm_tc::MM_TC.len() as u64)?;
+        let pm = map_vram(st, program_map_bytes(nvidia_ga104::mm_tc::MM_TC.len() as u64))?;
         put_bytes(st.mem.writer_mut(), pm.pa, nvidia_ga104::mm_tc::MM_TC)?;
         Some(pm)
     } else {
@@ -5299,7 +5300,7 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     ));
     let mut progs: Vec<(ts::Prog, Mapping)> = Vec::with_capacity(plan0.programs().len() + plan0.fused_programs().len());
     for &prog in plan0.programs().iter().chain(plan0.fused_programs().iter()) {
-        let pm = map_vram(st, prog.code().len() as u64)?;
+        let pm = map_vram(st, program_map_bytes(prog.code().len() as u64))?;
         put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
         progs.push((prog, pm));
     }
@@ -5937,7 +5938,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         if progs.iter().any(|(q, _)| *q == prog) {
             continue;
         }
-        let pm = map_vram(st, prog.code().len() as u64)?;
+        let pm = map_vram(st, program_map_bytes(prog.code().len() as u64))?;
         put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
         progs.push((prog, pm));
     }
@@ -5956,12 +5957,17 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     } else {
         None
     };
-    let mut race_progs: Vec<Mapping> = Vec::new();
+    // P6-194 (os-413): only the variants of `race_list()` (not `RACE_HOLD`), indexed as `VARIANTS`; each with the tail page.
+    let mut race_progs: Vec<Option<Mapping>> = Vec::new();
     if race {
-        for v in nvidia_ga104::mm_train_variants::VARIANTS.iter() {
-            let pm = map_vram(st, v.code.len() as u64)?;
+        for (vi, v) in nvidia_ga104::mm_train_variants::VARIANTS.iter().enumerate() {
+            if !nvidia_ga104::mm_train_variants::in_race(vi) {
+                race_progs.push(None);
+                continue;
+            }
+            let pm = map_vram(st, program_map_bytes(v.code.len() as u64))?;
             put_bytes(st.mem.writer_mut(), pm.pa, v.code)?;
-            race_progs.push(pm);
+            race_progs.push(Some(pm));
         }
     }
     let mut race_shapes: Vec<RaceForm> = Vec::new();
@@ -5969,7 +5975,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     maps.push(varena);
     maps.extend(progs.iter().map(|(_, pm)| *pm));
     maps.extend(race_c);
-    maps.extend(race_progs.iter().copied());
+    maps.extend(race_progs.iter().flatten().copied());
     let sys = [ctx.sys.clone(), stage.clone(), ctl.clone()];
     let prog_va = |want: ts::Prog| progs.iter().find(|(q, _)| *q == want).map_or(0, |(_, pm)| pm.va);
     // One launch of the copy program, as in `train_mini_resident`.
@@ -6263,17 +6269,22 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // what `Plan::with_mm_choice` (Cyber-GPU, next) will take.
     if let Some(c_map) = race_c.filter(|_| stopped.is_none()) {
         use nvidia_ga104::mm_train::Args as MmArgs;
-        use nvidia_ga104::mm_train_variants::{Variant, VARIANTS};
+        use nvidia_ga104::mm_train_variants::{race_list, Variant, RACE_HOLD, VARIANTS};
         use nvidia_ga104::qmd::ComputeQmd;
         const SENTINEL: [u8; 4] = (-12345.0f32).to_le_bytes();
         let reps = (if board { 8usize } else { 2 }).min(rec_cap).min((zone_bytes / ts::SLOT) as usize);
         let shas: Vec<bool> = VARIANTS.iter().map(|v| sha256_hex(v.code) == v.sha256).collect();
         lines.push(format!(
             "{}: kronos --gpu: {}: cursa mm (C-165, {}): {} forme ale lui mm_train din pas ({} lansari) x {} variante ({}); martorul {} (trecut pe placa la os-410); C pe o bucata de {} MiB in VRAM + 256 octeti de paza, umplute cu -12345.0; {} lansari pe varianta si forma (prima de incalzire), comparate bit cu bit cu martorul",
-            p, tag, label, race_shapes.len(), race_shapes.iter().map(|f| f.count).sum::<u32>(), VARIANTS.len(),
-            VARIANTS.iter().zip(&shas).map(|(v, ok)| if *ok { String::from(v.name) } else { format!("{} SHA-256 GRESIT", v.name) }).collect::<Vec<_>>().join(", "),
+            p, tag, label, race_shapes.len(), race_shapes.iter().map(|f| f.count).sum::<u32>(), race_list().count(),
+            race_list().map(|(i, v)| if shas[i] { String::from(v.name) } else { format!("{} SHA-256 GRESIT", v.name) }).collect::<Vec<_>>().join(", "),
             VARIANTS[0].name, c_map.size >> 20, reps
         ));
+        // P6-194: the held variants (os-413: `mm_tv_64x64k8` did not finish), named once, never launched.
+        for &i in RACE_HOLD.iter().filter(|&&i| i < VARIANTS.len()) {
+            lines.push(format!("{}: kronos --gpu: {}: cursa mm: {} scoasa din cursa (RACE_HOLD; os-413: nu a terminat), nelansata", p, tag, VARIANTS[i].name));
+        }
+        lines.push(format!("{}: kronos --gpu: {}: cursa mm: programele mapate cu o pagina de paza dupa cod (qmd::program_map_bytes, P6-194)", p, tag));
         // Sentinel → C piece by piece (the stage is refilled each time: the reads below overwrite it).
         let fill = |st: &mut GpuState, vbar: &mut V, clock: &mut K, journal: &mut Journal, l: &mut Launched, doorbell: &mut Bell<'_, V>, subs: &mut u32, len: u64| -> GpuResult<bool> {
             let mut off = 0u64;
@@ -6327,7 +6338,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             let mut witness: Option<u64> = None;
             let mut best: Option<(usize, u64)> = None;
             let mut witness_ns: Option<u64> = None;
-            for (vi, v) in VARIANTS.iter().enumerate() {
+            for (vi, v) in race_list() {
                 let skip = !shas[vi] || len > c_map.size || (vi > 0 && witness.is_none());
                 if skip {
                     lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, race_row(v.name, f, None, RaceBits::Skipped)));
@@ -6338,7 +6349,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                     break 'forms;
                 }
                 // `reps` copies of the same cbuf + QMD, one slot each (as the step's control zone).
-                let q = ComputeQmd { program_va: race_progs[vi].va, registers: v.registers, cbuf0_va: 0, cbuf0_size: 0x100, grid: v.grid(&args), block: v.block(), release: None };
+                let q = ComputeQmd { program_va: race_progs[vi].map_or(0, |m| m.va), registers: v.registers, cbuf0_va: 0, cbuf0_size: 0x100, grid: v.grid(&args), block: v.block(), release: None };
                 let mut zb = alloc::vec![0u8; reps * ts::SLOT as usize];
                 let mut qv = Vec::with_capacity(reps);
                 for r in 0..reps {

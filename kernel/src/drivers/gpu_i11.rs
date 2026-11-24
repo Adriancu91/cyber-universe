@@ -35,6 +35,7 @@ use nvidia_ga104::gsp::work_queue::ChannelMemory;
 use nvidia_ga104::gsp::HardwareWritePermit;
 use nvidia_ga104::launch_cost::RECORD;
 use nvidia_ga104::mmu::SysMapping;
+use nvidia_ga104::qmd::program_map_bytes;
 use nvidia_ga104::push::{PushBuf, DOORBELL};
 use nvidia_ga104::q8_matvec::{self as mv, Q8_MATVEC};
 use nvidia_ga104::transfer::{self, COPY_B128, ROUND_TRIP_WORDS};
@@ -339,7 +340,7 @@ pub(super) fn copy_step<V: Mmio + ?Sized, K: Clock + ?Sized>(
         drop(data);
         ram_write(&dst, &alloc::vec![0xee; bytes as usize]);
         let vbuf = map_vram(st, bytes)?;
-        let prog = map_vram(st, COPY_B128.len() as u64)?;
+        let prog = map_vram(st, program_map_bytes(COPY_B128.len() as u64))?;
         let mut m = || map_vram(st, PAGE);
         let (cb0, cb1, q0, q1, rec) = (m()?, m()?, m()?, m()?, m()?);
         let w = st.mem.writer_mut();
@@ -445,8 +446,8 @@ pub(super) fn matvec_step<V: Mmio + ?Sized, K: Clock + ?Sized>(
         ram_write(&host_y, &alloc::vec![0xee; y_bytes as usize]);
         let vin = map_vram(st, up_bytes)?;
         let vy = map_vram(st, y_bytes)?;
-        let pc = map_vram(st, COPY_B128.len() as u64)?;
-        let pm = map_vram(st, Q8_MATVEC.len() as u64)?; // 8 048 B: two pages
+        let pc = map_vram(st, program_map_bytes(COPY_B128.len() as u64))?;
+        let pm = map_vram(st, program_map_bytes(Q8_MATVEC.len() as u64))?; // 8 048 B: two pages + the tail page (P6-194)
         let mut m = || map_vram(st, PAGE);
         let (cb0, cb1, cb2, q0, q1, q2, rec) = (m()?, m()?, m()?, m()?, m()?, m()?, m()?);
         let wr = st.mem.writer_mut();
@@ -581,7 +582,7 @@ pub(super) fn layer_step<V: Mmio + ?Sized, K: Clock + ?Sized>(
         let vc = map_vram(st, kl::cache_bytes(e))?;
         let mut progs: Vec<(Prog, Mapping)> = Vec::new();
         for prog in [Prog::Copy, Prog::Q8Matvec, Prog::Vadd, Prog::LayerNorm, Prog::Attention, Prog::Gelu] {
-            let m = map_vram(st, prog.code().len() as u64)?;
+            let m = map_vram(st, program_map_bytes(prog.code().len() as u64))?;
             put_bytes(st.mem.writer_mut(), m.pa, prog.code())?;
             progs.push((prog, m));
         }
