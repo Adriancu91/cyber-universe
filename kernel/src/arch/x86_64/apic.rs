@@ -41,6 +41,8 @@ static X2APIC: AtomicBool = AtomicBool::new(false);
 static REF_CLOCK: AtomicU8 = AtomicU8::new(RefClock::Pit as u8);
 /// P6-79: TSC ticks per millisecond from the calibration (for the TSC reference clock).
 static TSC_PER_MS: AtomicU64 = AtomicU64::new(0);
+/// P6-191: the TSC rate the first 10 ms measurement gave (kept for the reports; [`TSC_PER_MS`] is the 3 × 50 ms median).
+static TSC_PER_MS_10: AtomicU64 = AtomicU64::new(0);
 
 const IA32_APIC_BASE: u32 = 0x1B;
 const APIC_BASE_EXTD: u64 = 1 << 10;
@@ -392,6 +394,7 @@ fn ref_wait_ms(ms: u64) -> bool {
 /// differences in per mille. Takes ~250 ms; reads only (the PIT/PM ports, CPUID, the TSC).
 pub fn clock_note() -> String {
     let boot = TSC_PER_MS.load(Ordering::Relaxed);
+    let boot10 = TSC_PER_MS_10.load(Ordering::Relaxed);
     let name = match REF_CLOCK.load(Ordering::Relaxed) {
         x if x == RefClock::PmTimer as u8 => RefClock::PmTimer.name(),
         x if x == RefClock::Tsc as u8 => RefClock::Tsc.name(),
@@ -416,9 +419,10 @@ pub fn clock_note() -> String {
     let now = again.get(again.len() / 2).copied();
     let cpuid = cpuid_tsc_hz().map(|hz| hz / 1000);
     alloc::format!(
-        "ceasul procesorului: referinta {}; TSC la pornire {} kHz (10 ms); acum {} (median din {} x 50 ms{}); CPUID {}",
+        "ceasul procesorului: referinta {}; TSC la pornire {} kHz (3 x 50 ms; in 10 ms {} kHz); acum {} (median din {} x 50 ms{}); CPUID {}",
         name,
         boot,
+        boot10,
         now.map_or(String::from("nemasurat"), |n| alloc::format!("{} kHz", n)),
         again.len(),
         now.map_or(String::new(), |n| alloc::format!(", pornire fata de acum {} la mie", permille(boot, n))),
@@ -428,6 +432,23 @@ pub fn clock_note() -> String {
             permille(boot, c)
         )),
     )
+}
+
+/// P6-191: the TSC rate (kHz) as the median of `n` waits of 50 ms on the reference clock in [`REF_CLOCK`] (`None` if a
+/// wait fails).
+fn tsc_rate_median(n: usize) -> Option<u64> {
+    // A fixed array: this runs at calibration, before anything else needs the heap.
+    let mut v = [0u64; 5];
+    let n = n.clamp(1, v.len());
+    for x in v.iter_mut().take(n) {
+        let t0 = super::rdtsc();
+        if !ref_wait_ms(50) {
+            return None;
+        }
+        *x = super::rdtsc().wrapping_sub(t0) / 50;
+    }
+    v[..n].sort_unstable();
+    Some(v[n / 2])
 }
 
 /// One calibration run against `clock`: APIC timer counts and TSC cycles in 10 ms (`None` if the clock does not count).
@@ -591,11 +612,27 @@ pub fn init() -> bool {
         return false;
     };
     REF_CLOCK.store(clock as u8, Ordering::Relaxed);
-    TSC_PER_MS.store(tsc_per_ms, Ordering::Relaxed);
-    crate::time::set_tsc_per_ms(tsc_per_ms);
+    TSC_PER_MS_10.store(tsc_per_ms, Ordering::Relaxed);
+    // P6-191 (cyber-gpu note C-157_P2y, os-407: the 10 ms rate was +34.9 per mille above the 5 x 50 ms median on the
+    // same reference clock, so every CPU-clock time came out ~3.4 % short): the TSC rate is measured again as the
+    // median of 3 x 50 ms on the chosen reference clock; kept only if sane and within 10 % of the 10 ms one. The TSC
+    // reference states its own rate, so it is not measured again.
+    let fine = if clock == RefClock::Tsc { None } else { tsc_rate_median(3) };
+    let rate = match fine {
+        Some(r) if (200_000..=10_000_000).contains(&r) && r.abs_diff(tsc_per_ms) * 10 <= tsc_per_ms => r,
+        _ => tsc_per_ms,
+    };
+    TSC_PER_MS.store(rate, Ordering::Relaxed);
+    crate::time::set_tsc_per_ms(rate);
     let per_tick = per_10ms * 100 / HZ;
     PER_TICK.store(per_tick, Ordering::Relaxed);
-    crate::info!("apic: ceasul de referinta: {}; TSC {} kHz", clock.name(), tsc_per_ms);
+    crate::info!(
+        "apic: ceasul de referinta: {}; TSC {} kHz ({}; in 10 ms {} kHz)",
+        clock.name(),
+        rate,
+        if rate == tsc_per_ms && fine != Some(rate) { "din 10 ms" } else { "median 3 x 50 ms" },
+        tsc_per_ms
+    );
 
     lapic_write(LAPIC_LVT_TIMER, TIMER_VECTOR as u32 | (1 << 17)); // periodic
     lapic_write(LAPIC_TIMER_INIT, per_tick as u32);
