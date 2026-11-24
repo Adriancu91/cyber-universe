@@ -5656,6 +5656,7 @@ const KT_513_UP_MS: &str = "kt antrenare-513 urcarea arenei pe bucati (ms, placa
 const KT_513_LAUNCHES: &str = "kt antrenare-513 lansari pe pas";
 const KT_513_SUBS: &str = "kt antrenare-513 trimiteri pe pas";
 const KT_513_STEPS: &str = "kt antrenare-513 pasi";
+const KT_513_PROFILE: &str = "kt antrenare-513 profilul pasului (pasi cititi intregi)";
 const KT_513_US: &str = "kt antrenare-513 us pe pas placa (median, din inregistrari)";
 const KT_513_HOST_US: &str = "kt antrenare-513 us pe pas intreg (median)";
 const KT_513_TOK_S: &str = "kt antrenare-513 simboluri/s placa";
@@ -5890,6 +5891,9 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let (mut worst_loss, mut worst_norm) = (0.0f64, 0.0f64);
     let (mut board_ns, mut host_us, mut losses, mut norms): (Vec<u64>, Vec<u64>, Vec<f32>, Vec<f32>) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut stopped: Option<String> = None;
+    // P6-182 (os-395 report, Cyber-GPU's ask: "the time per kind of program for #513's step"): the P6-179 profile on
+    // #513's list, every step (each part's records are read whole).
+    let mut prof: Option<nvidia_ga104::train_profile::StepProfile> = None;
     journal.flush_live();
     let hold = super::gpu_i6::GenHold::start();
     journal.set_routine(Some(kf::gen_routine(&GEN_NOTES)));
@@ -5913,6 +5917,14 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 return Err(bad("antrenare-513: zona de control prea mare"));
             }
             ram_write(&ctl, &zb);
+            if prof.is_none() {
+                let pr = nvidia_ga104::train_profile::StepProfile::from_launches(&list)?;
+                if pr.launches() != qmds.len() {
+                    return Err(bad("antrenare-513: profilul pasului nu are cate lansari are lista"));
+                }
+                prof = Some(pr);
+            }
+            let mut step_ns: Vec<u64> = Vec::with_capacity(qmds.len());
             // The step in parts of at most `split` launches, each its own submission, in order.
             let mut busy = 0u64;
             for (j, part) in qmds.chunks(split).enumerate() {
@@ -5927,7 +5939,9 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, n as u64 + 1, last, &maps, &sys, doorbell)? {
                     Ok(b) => {
                         *subs += 1;
-                        busy += transfer::analyze_sequence(&b, n, first)?.iter().sum::<u64>();
+                        let ns = transfer::analyze_sequence(&b, n, first)?;
+                        busy += ns.iter().sum::<u64>();
+                        step_ns.extend_from_slice(&ns);
                     }
                     Err(got) => {
                         stopped = Some(format!("placa nu a terminat partea {} a pasului {} (ultima inregistrare {:#x}, asteptat {:#x})", j + 1, step, got, last));
@@ -5936,6 +5950,9 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 }
             }
             board_ns.push(busy);
+            if let Some(pr) = prof.as_mut() {
+                pr.add_step(&step_ns)?;
+            }
             let [(lr_va, lr_n), (res_va, res_n)] = plan.step_reads();
             let rows = read_vram_f32s(st, vbar, journal, lr_va, (lr_n / 4) as usize)?;
             let norm = read_vram_f32s(st, vbar, journal, res_va, (res_n / 4) as usize)?[0];
@@ -6030,6 +6047,14 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         "{}: kronos --gpu: {}: timpul pe pas (median, {} pasi): placa {} us = {} simboluri/s la antrenare (lot {} x {}; Windows / PyTorch ~39 300); pasul intreg {} us = {} simboluri/s",
         p, tag, losses.len(), us, tok_s, bsz, tl, host_med, full_tok_s
     ));
+    // P6-182: once, at the end: the total, the stages, the 8 longest tags, the programs.
+    let prof_steps = prof.as_ref().map_or(0, |pr| pr.steps());
+    journal.push(Event::Value { what: KT_513_PROFILE, value: prof_steps as u32 });
+    if let Some(pr) = &prof {
+        for row in pr.lines(8) {
+            lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, row));
+        }
+    }
     let pass = if board {
         start_ok && falls && bad_w == 0 && losses.len() == steps
     } else {

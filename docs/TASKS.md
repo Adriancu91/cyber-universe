@@ -572,6 +572,8 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
   Gata (2026-11-24 ~11:25 RO, pe `wip/P6-180`, de adus în `main` după Release-ul lui P6-179): `kronos-kgr` (91 verificări: #513 / #651 au cele 5 rânduri `limitele din fisa (cu argmax pe placa)` = `of_lists` din forme = fișele de referință `card_k513/card_k651`; fișa #513 lângă tensorii modelului mic refuzată), `kronos-kgr-1`, `boot` trec.
 - [x] **P6-181** Verdictul antrenării în rândul „REZULTAT TEST PLACA” (rapoartele os-390 / os-392 / os-395: „niciun rezultat” deși blocul spunea TRECE / NU TRECE). Nimic nou pentru placă. Plan: `docs/plans/P6-181.md`.
   Gata (2026-11-24 ~11:40 RO, pe `wip/P6-180`): `ciclu::train_verdicts` (toate verdictele: mini cu arena în VRAM / lipit / prin RAM / mixt, #513); `ghpush` (122 verificări) trece.
+- [x] **P6-182** Profilul pasului #513 pe programe (raportul os-395: pasul ~1,12 s, cererea „timpul pe fel de program”): `StepProfile` din P6-179 și pe lista #513 (385 lansări în 2 trimiteri). Nimic nou pentru placă. Plan: `docs/plans/P6-182.md`.
+  Gata (2026-11-24 ~12:05 RO, pe `wip/P6-180`): `kronos-gpu-antrenare-513` (16 verificări; SIMULARE: profilul pe 2 pași) trece.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
