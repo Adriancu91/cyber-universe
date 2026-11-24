@@ -573,7 +573,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-181** Verdictul antrenării în rândul „REZULTAT TEST PLACA” (rapoartele os-390 / os-392 / os-395: „niciun rezultat” deși blocul spunea TRECE / NU TRECE). Nimic nou pentru placă. Plan: `docs/plans/P6-181.md`.
   Gata (2026-11-24 ~11:27 RO, pe `wip/P6-180`): `ciclu::train_verdicts` (toate verdictele: mini cu arena în VRAM / lipit / prin RAM / mixt, #513); `ghpush` (122 verificări) trece.
 - [x] **P6-182** Profilul pasului #513 pe programe (raportul os-395: pasul ~1,12 s, cererea „timpul pe fel de program”): `StepProfile` din P6-179 și pe lista #513 (385 lansări în 2 trimiteri). Nimic nou pentru placă. Plan: `docs/plans/P6-182.md`.
-- [~] **P6-183** Cele două ceasuri unul lângă altul (raportul os-395 punctul 3: „placa” > „pasul întreg” cu ~3 %): ritmul TSC la pornire / acum / CPUID lângă raportul placă / pas, la sfârșitul lui #513. Nimic nou pentru placă. Plan: `docs/plans/P6-183.md`.
+- [x] **P6-183** Cele două ceasuri unul lângă altul (raportul os-395 punctul 3: „placa” > „pasul întreg” cu ~3 %): ritmul TSC la pornire / acum / CPUID lângă raportul placă / pas, la sfârșitul lui #513. Nimic nou pentru placă. Plan: `docs/plans/P6-183.md`.
   Gata (2026-11-24 ~11:45 RO, pe `wip/P6-180`): `kronos-gpu-antrenare-513` (16 verificări; SIMULARE: profilul pe 2 pași) trece.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
