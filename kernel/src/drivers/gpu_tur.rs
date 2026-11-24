@@ -414,6 +414,12 @@ pub static TRAIN_MINI_VRAM_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync
 /// `gpu antrenare-mini-sim vram-lipit`. Off by default.
 pub static TRAIN_MINI_FUSED_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-172 (command-center note of 23 Nov 23:36, point 3): with [`TRAIN_MINI_VRAM_IN_CYCLE`] (and after it passed), the
+/// training step of Kronos #513 with the resident arena in VRAM (uploaded in 64 MiB pieces, the step in parts). Set only
+/// by the cycle (`test-placa … --antrenare-mini --vram --antrenare-513`) and, in the test build, by `gpu
+/// antrenare-mini-sim vram-513`. Off by default.
+pub static TRAIN_513_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-163: the copy object is needed (the RAM ↔ VRAM probe or the m, v in RAM step).
 pub fn copy_engine_wanted() -> bool {
     RAM_VRAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) || ADAM_RAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst)

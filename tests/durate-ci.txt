@@ -164,3 +164,4 @@ antrenare-mini-placa-lipit 900
 antrenare-mini-placa-mixt-lipit 1000
 antrenare-mini-placa-recalcul 900
 kronos-gpu-antrenare-mini-vram-lipit 1000
+kronos-gpu-antrenare-513 1700

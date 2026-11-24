@@ -157,7 +157,7 @@ pub fn target(command: &str) -> Result<(String, String), &'static str> {
 
 /// P6-96: `test-placa [--i9 …]` of the automatic list -> the I9.
 pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
-    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou` sau `--tablou-viteza`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi` sau `--ln-32`, apoi `--k651`, apoi `--argmax-placa` sau `--argmax-fara-copie`, apoi `--dieta2`, apoi `--lot`, apoi `--p8`, apoi `--colsum`, apoi `--pas-aur`, apoi `--mm-tc`, apoi `--atentie-placi`, apoi `--atentie2`, apoi `--atentie3`, apoi `--atentie4`, apoi `--ram-vram`, apoi `--adam-ram`, apoi `--antrenare-mini` la sfarsit, optional urmat de `--mixt` sau `--vram` (iar dupa `--vram` optional `--pas-lipit`) (in aceasta ordine; `--mixt` sau `--vram` doar imediat dupa `--antrenare-mini`, nu amandoua; `--pas-lipit` doar imediat dupa `--vram`; `--adam-ram` doar imediat dupa `--ram-vram`; `--atentie2` doar dupa `--atentie-placi`, `--atentie3` doar dupa `--atentie2`, `--atentie4` doar dupa `--atentie3`; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi`, `--ln-32`; `--k651` nu merge cu `--lipit` sau `--simplu`; `--argmax-fara-copie` nu merge cu `--lipit`, `--ln-nou`, `--sferturi` sau `--ln-32`; `--lot` doar cu `--argmax-fara-copie` si lista implicita lipita-ln-32, fara alta alegere de lista)";
+    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou` sau `--tablou-viteza`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi` sau `--ln-32`, apoi `--k651`, apoi `--argmax-placa` sau `--argmax-fara-copie`, apoi `--dieta2`, apoi `--lot`, apoi `--p8`, apoi `--colsum`, apoi `--pas-aur`, apoi `--mm-tc`, apoi `--atentie-placi`, apoi `--atentie2`, apoi `--atentie3`, apoi `--atentie4`, apoi `--ram-vram`, apoi `--adam-ram`, apoi `--antrenare-mini` la sfarsit, optional urmat de `--mixt` sau `--vram` (iar dupa `--vram` optional `--pas-lipit` sau `--antrenare-513`) (in aceasta ordine; `--mixt` sau `--vram` doar imediat dupa `--antrenare-mini`, nu amandoua; `--pas-lipit` sau `--antrenare-513` doar imediat dupa `--vram`; `--adam-ram` doar imediat dupa `--ram-vram`; `--atentie2` doar dupa `--atentie-placi`, `--atentie3` doar dupa `--atentie2`, `--atentie4` doar dupa `--atentie3`; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi`, `--ln-32`; `--k651` nu merge cu `--lipit` sau `--simplu`; `--argmax-fara-copie` nu merge cu `--lipit`, `--ln-nou`, `--sferturi` sau `--ln-32`; `--lot` doar cu `--argmax-fara-copie` si lista implicita lipita-ln-32, fara alta alegere de lista)";
     let words: Vec<&str> = command.split_whitespace().collect();
     let Some(("test-placa", rest)) = words.split_first().map(|(a, b)| (*a, b)) else { return None };
     let (i9, flags) = match rest {
@@ -201,7 +201,7 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
     // P6-128: `--ln-32` = `lipita-ln`, then `lipita-ln-32` (every product on quarters), compared; one more list choice.
     // P6-135 (note C-157_P2i, point 1): `--lipita-ln` = the default until now (`lipita-ln` alone); without any list
     // choice the cycle now runs `lipita-ln-32` alone. The checks below go by name, not by position.
-    let all = [FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, P8, COLSUM, PAS_AUR, MM_TC, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_VRAM, TRAIN_FUSED];
+    let all = [FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, P8, COLSUM, PAS_AUR, MM_TC, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_VRAM, TRAIN_FUSED, TRAIN_513];
     let pos = |x: &str| all.iter().position(|y| *y == x).unwrap_or(0);
     let lists = pos(LIPIT)..=pos(LN_32);
     // The two-run lists: the argmax without the copy reads no logits, they need both runs' logits.
@@ -247,6 +247,10 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
         }
         // P6-175: the glued step only right after the resident arena (it compares two resident runs).
         if all[at] == TRAIN_FUSED && !out.ends_with(TRAIN_VRAM) {
+            return Some(Err(FORM));
+        }
+        // P6-172: #513's step only right after the resident arena (the small model's resident run must pass first).
+        if all[at] == TRAIN_513 && !out.ends_with(TRAIN_VRAM) {
             return Some(Err(FORM));
         }
         out.push_str(all[at]);
@@ -771,6 +775,11 @@ pub const TRAIN_VRAM: &str = " --vram";
 /// lists).
 pub const TRAIN_FUSED: &str = " --pas-lipit";
 
+/// P6-172 (command-center note of 23 Nov 23:36, point 3): suffix of the I9 text when, after the resident run of `antrenare
+/// mini` passed, the training step of Kronos #513 runs with its arena in VRAM: `test-placa … --antrenare-mini --vram
+/// --antrenare-513`, always last, only right after `--vram`.
+pub const TRAIN_513: &str = " --antrenare-513";
+
 /// P6-139 (C-158 point 5): at most this many board tests in one power-on (the list, the live mode and the hub cycle
 /// together). The first one starts with `gpu recupereaza`; the next ones with the reset from inside (FLR) at the start of
 /// their chain, the path that passed on the board in os-323 (21 Nov 08:32).
@@ -831,6 +840,10 @@ pub fn board_runs() -> usize {
 /// `nth` (P6-139) = which board test of this power-on this is (1 = the first: `gpu recupereaza`; 2.. = the reset from
 /// inside at the start of the chain instead).
 pub fn board_test(i9: &str, nth: usize) -> (String, String) {
+    let (i9, train_513) = match i9.strip_suffix(TRAIN_513) {
+        Some(x) => (x, true),
+        None => (i9, false),
+    };
     let (i9, train_fused) = match i9.strip_suffix(TRAIN_FUSED) {
         Some(x) => (x, true),
         None => (i9, false),
@@ -1048,6 +1061,8 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::TRAIN_MINI_VRAM_IN_CYCLE.store(train_mini && train_vram, core::sync::atomic::Ordering::SeqCst);
     // P6-175: the resident run twice (plain, then glued) only when the list asked for it, right after `--vram`.
     crate::drivers::gpu_tur::TRAIN_MINI_FUSED_IN_CYCLE.store(train_mini && train_vram && train_fused, core::sync::atomic::Ordering::SeqCst);
+    // P6-172: #513's step after the resident run only when the list asked for it, right after `--vram`.
+    crate::drivers::gpu_tur::TRAIN_513_IN_CYCLE.store(train_mini && train_vram && train_513, core::sync::atomic::Ordering::SeqCst);
     // P6-119 (C-157 point 3): the second diet only when the list asked for it, only for this chain's #513.
     crate::drivers::gpu_tur::DIET2_IN_CYCLE.store(diet2, core::sync::atomic::Ordering::SeqCst);
     // P6-123 (C-155 point 3): the argmax on the board only when the list asked for it, only for this chain's model.
@@ -1089,6 +1104,9 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     }
     if ram_vram {
         text.push_str("\n(proba RAM <-> VRAM cu motorul de copiere: ceruta de lista (--ram-vram); imediat dupa canalul de lucru un mesaj RM aloca motorul de copiere (AMPERE_DMA_COPY_B) pe canal; dupa textele lui #513, o trimitere: copii RAM -> VRAM si VRAM -> RAM la M/64, M/16, M/4, M (M = 64 MiB: 192 MiB RAM fixata + 128 MiB VRAM), apoi 4 x M/4 in paralel, fiecare de 3 ori, cu timpul placii; B si A verificate octet cu octet; nou pentru placa: doar motorul de copiere (metodele pe subcanalul 4), niciun registru, niciun program; Cyber-GPU prezice sus 11-13 GB/s, jos 11-13,5 GB/s, in paralel +-5 %)\n");
+    }
+    if train_mini && train_vram && train_513 {
+        text.push_str("\n(pasul #513, cerut de lista (--antrenare-513): dupa ce antrenarea mini cu arena in VRAM a trecut, pasul de antrenare al lui Kronos #513 (12 straturi, E 768, 12 capete, vocabular 16 384; lot 2 x 512, AdamW, 10 pasi) facut de lista placii cu arena in VRAM (2 560 MiB, sub limita de 6 GiB): urcata o data in 40 de bucati de 64 MiB cu programul de copiere, pasul (385 de lansari) trimis in 2 parti (255 + 130); nou pentru placa: doar forma mare (arena de GiB, partile), niciun program nou, niciun registru nou; fara oracol pe procesor (prea lent pentru #513): trece = pierderea la pasul 1 ~ ln 16 384 = 9,70 (la 2 %), scade pana la ultimul pas, toate numerele finite; cifra de comparat: simbolurile/s ale placii fata de Windows / PyTorch ~39 300)\n");
     }
     if train_mini && train_vram && train_fused {
         text.push_str("\n(pasul lipit, cerut de lista (--pas-lipit): pasul cu arena in VRAM facut de doua ori din aceeasi stare — intai nelipit (75 de lansari), apoi cu cele doua programe lipite ale lui Cyber-GPU (ln_back_res: LayerNorm inapoi + adunarea reziduala; mm_train_gelu: GELU inapoi in produsul proj-dX; 69 de lansari); nou pentru placa: doar cele doua programe lipite (SHA-256 verificate), nicio scriere noua in registre; trece = ambele rulari = oracolul si lipit = nelipit bit cu bit (pierderea si norma la fiecare pas, toate greutatile la sfarsit); in SIMULARE: aceiasi biti)\n");
@@ -1213,6 +1231,7 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::TRAIN_MINI_MIXED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TRAIN_MINI_VRAM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TRAIN_MINI_FUSED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::TRAIN_513_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::DIET2_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::ARGMAX_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::ARGMAX_TOP_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
@@ -1583,6 +1602,11 @@ pub fn self_test() {
     assert!(board_command("test-placa --antrenare-mini --mixt --pas-lipit").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --pas-lipit").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --antrenare-mini --pas-lipit --vram").is_some_and(|r| r.is_err()));
+    // P6-172: `--antrenare-513` only right after `--vram`.
+    assert!(board_command("test-placa --antrenare-mini --vram --antrenare-513") == Some(Ok(String::from("c135 --antrenare-mini --vram --antrenare-513"))));
+    assert!(board_command("test-placa --antrenare-mini --antrenare-513").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --antrenare-mini --vram --pas-lipit --antrenare-513").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --antrenare-513").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --pas-aur --pas-aur").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --simplu --p8 --ln-nou").is_some_and(|r| r.is_err()));
     // P6-120: `--ln-vechi` in the same place as `--ln-nou`, alone among the four list choices.

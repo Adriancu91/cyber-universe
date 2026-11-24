@@ -4815,7 +4815,16 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // P6-169: the resident arena (in VRAM) is its own probe.
     if super::gpu_tur::TRAIN_MINI_VRAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
         if !super::gpu_tur::TRAIN_MINI_FUSED_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
-            return train_mini_resident(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, false).map(|_| ());
+            let mini = train_mini_resident(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, false)?;
+            // P6-172: #513's step only after the small model's resident run passed in the same power-on.
+            if super::gpu_tur::TRAIN_513_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+                if !mini.pass {
+                    lines.push(format!("{}: kronos --gpu: antrenare #513 pe placa: NU A RULAT: antrenarea mini cu arena in VRAM nu a trecut; nimic trimis", p));
+                } else {
+                    train_513_resident(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx)?;
+                }
+            }
+            return Ok(());
         }
         // P6-175: the same run twice from the same state — without gluing, then glued — compared bit for bit.
         let plain = train_mini_resident(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, false)?;
@@ -5533,6 +5542,408 @@ fn train_mini_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     ));
     lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, if pass { "TRECE (antrenarea cu arena in VRAM = oracolul)" } else { "NU TRECE (vezi randurile de mai sus)" }));
     Ok(ResidentRun { losses, norms, weights: final_w, launches: n_launch, pass, board_us: us })
+}
+
+/// P6-172 (command-center note of 23 Nov 23:36, point 3): the journal rows of the #513 training step on the board.
+const KT_513_ARENA_MIB: &str = "kt antrenare-513 arena in VRAM (MiB)";
+const KT_513_UP_MS: &str = "kt antrenare-513 urcarea arenei pe bucati (ms, placa)";
+const KT_513_LAUNCHES: &str = "kt antrenare-513 lansari pe pas";
+const KT_513_SUBS: &str = "kt antrenare-513 trimiteri pe pas";
+const KT_513_STEPS: &str = "kt antrenare-513 pasi";
+const KT_513_US: &str = "kt antrenare-513 us pe pas placa (median, din inregistrari)";
+const KT_513_HOST_US: &str = "kt antrenare-513 us pe pas intreg (median)";
+const KT_513_TOK_S: &str = "kt antrenare-513 simboluri/s placa";
+const KT_513_LOSS1_E4: &str = "kt antrenare-513 pierderea la pasul 1 (x1e4)";
+const KT_513_LOSSN_E4: &str = "kt antrenare-513 pierderea la ultimul pas (x1e4)";
+const KT_513_PASS: &str = "kt antrenare-513 verdict (1/0)";
+
+/// P6-172: the pieces of the arena that are not zero before the first step, written into one upload piece
+/// `[cva, cva + buf.len())` of the arena: the weights (tensor by tensor, straight from `params`, so the GiB of the
+/// weights are never copied into one buffer — the kernel heap is 1 GiB), then the small `pieces` (the batch, the
+/// segment lists, the result words). The gradient, m and v stay zero (`buf` comes in zeroed).
+fn fill_arena_piece(buf: &mut [u8], cva: u64, w_vas: &[u64], params: &[Vec<f32>], pieces: &[(u64, Vec<u8>)]) {
+    let end = cva + buf.len() as u64;
+    for (&va, t) in w_vas.iter().zip(params) {
+        let tend = va + 4 * t.len() as u64;
+        if tend <= cva || va >= end {
+            continue;
+        }
+        let first = (cva.saturating_sub(va) / 4) as usize;
+        let last = (((end.min(tend)) - va) / 4) as usize;
+        for (i, x) in t[first..last].iter().enumerate() {
+            let at = (va + 4 * (first + i) as u64 - cva) as usize;
+            buf[at..at + 4].copy_from_slice(&x.to_le_bytes());
+        }
+    }
+    for (va, bytes) in pieces {
+        let pend = va + bytes.len() as u64;
+        if pend <= cva || *va >= end {
+            continue;
+        }
+        let (from, to) = (cva.max(*va), end.min(pend));
+        buf[(from - cva) as usize..(to - cva) as usize].copy_from_slice(&bytes[(from - va) as usize..(to - va) as usize]);
+    }
+}
+
+/// P6-172 (command-center note of 23 Nov 23:36, point 3; plan `docs/plans/P6-172.md`): the training step of Kronos #513
+/// (`train::M513`: 12 layers, E 768, 12 heads, context 512, vocabulary 16 384) done by the board's own list with the
+/// resident arena in VRAM, for the speed comparison with Windows / PyTorch. The same road as `--antrenare-mini --vram`
+/// (os-386: the plan made once, the arena in VRAM, per step only the batch up and the losses + norm down), with what the
+/// large shape needs: (1) the arena (GiB) is uploaded in pieces of 64 MiB through one pinned host run (no GiB of
+/// contiguous RAM below 4 GiB) — each piece filled from the start weights and the batch, then one launch of the copy
+/// program; (2) a step longer than one submission's records (STRIDE) goes out in parts, each waited for before the next
+/// (the board runs them in order; the board time is their sum). The CPU cannot do #513's step in useful time, so on the
+/// board there is no oracle: the verdict is the loss at step 1 ≈ ln 16 384 (start weights ±0.0346), every loss and norm
+/// finite, the last loss below the first, and every weight finite at the end. In SIMULARE the same code runs on the
+/// small model (the board simulator is too slow for #513) with pieces of 1 MiB and parts of 32 launches, beside the
+/// oracle (≤ 1e-3) and with the pieces checked byte for byte against the plan's own uploads. New for the board: only the
+/// large shape (the GiB arena, the parts); no new program, no new register.
+#[allow(clippy::too_many_arguments)]
+fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    doorbell: &mut Bell<'_, V>,
+    subs: &mut u32,
+    ctx: &CopyCtx,
+) -> GpuResult<bool> {
+    use crate::shell::antrenare_mini as am;
+    use gpu_compute::layer::EmbSegments;
+    use gpu_compute::train::{self, AdamW, Batch, Recipe};
+    use nvidia_ga104::train_step::{self as ts, Outcome, Plan};
+    const TOL: f64 = 1e-3;
+    // The workstation's rule (CLAUDE.md of Kronos, 12 Oct): under ~7 GiB of VRAM; the generation's model is already there.
+    const ARENA_MAX: u64 = 6 << 30;
+    let board = permit.is_some();
+    let rec_cap = ((ctx.rec.size / 16) as usize).saturating_sub(1).min(STRIDE as usize - 1);
+    let (a, bsz, tl, steps, piece, split) = if board {
+        (train::M513, 2usize, 512usize, 10usize, 64u64 << 20, rec_cap)
+    } else {
+        (am::arch(am::VOCAB, 32), 2usize, 32usize, 2usize, 1u64 << 20, 32usize.min(rec_cap))
+    };
+    let label = if board { "placa" } else { "SIMULARE" };
+    let tag = if board { "antrenare #513 pe placa (arena in VRAM)" } else { "antrenare #513 pe placa (arena in VRAM; SIMULARE pe modelul mic)" };
+    journal.push(Event::Value { what: KT_513_PASS, value: 0 });
+    if split == 0 {
+        return Err(bad("antrenare-513: zona inregistrarilor prea mica"));
+    }
+    let data = match am::board_batches(bsz, tl, steps) {
+        Ok(d) => d,
+        Err(e) => {
+            lines.push(format!("{}: kronos --gpu: {}: NU A RULAT: {}; nimic trimis", p, tag, e));
+            return Err(bad("antrenare-513: datele"));
+        }
+    };
+    if ts::check_programs().is_err() {
+        lines.push(format!("{}: kronos --gpu: {}: SHA-256 al unui program nu e cel din nota: nimic trimis", p, tag));
+        return Err(bad("antrenare-513: SHA-256 gresit"));
+    }
+    let (x0, y0) = data.batches.first().ok_or(bad("antrenare-513: niciun pas"))?;
+    let probe0 = Plan::new(a, bsz, tl, x0, nvidia_ga104::mmu::VA_BASE)?.resident()?;
+    let mut n_launch = 0usize;
+    for (x, _) in &data.batches {
+        n_launch = n_launch.max(probe0.rebatch(x)?.launches_per_step(Recipe::AdamW513));
+    }
+    let arena_bytes = probe0.bytes().next_multiple_of(PAGE);
+    let zone_bytes = (n_launch as u64 * ts::SLOT).next_multiple_of(PAGE);
+    let (free, largest) = st.mem.vram_free();
+    if arena_bytes > ARENA_MAX || arena_bytes + VRAM_RESERVE > largest {
+        lines.push(format!(
+            "{}: kronos --gpu: {}: NU A RULAT: arena {} MiB (cel mult {} MiB; VRAM liber {} MiB, cea mai lunga bucata {} MiB, rezerva {} MiB); nimic trimis",
+            p, tag, arena_bytes >> 20, ARENA_MAX >> 20, free >> 20, largest >> 20, VRAM_RESERVE >> 20
+        ));
+        return Err(GpuError::OutOfMemory { requested: arena_bytes });
+    }
+    drop(probe0);
+    let varena = map_vram(st, arena_bytes)?;
+    let plan0 = Plan::new(a, bsz, tl, x0, varena.va)?.resident()?;
+    if plan0.bytes() > arena_bytes {
+        return Err(bad("antrenare-513: planul rezident difera intre adrese"));
+    }
+    let Some(host) = ram_vram_host((piece + zone_bytes) / PAGE) else {
+        lines.push(format!("{}: kronos --gpu: {}: NU A RULAT: nu am {} KiB RAM contigua sub 4 GiB; nimic trimis", p, tag, (piece + zone_bytes) >> 10));
+        return Err(GpuError::OutOfMemory { requested: piece + zone_bytes });
+    };
+    let count: usize = a.tensors().iter().map(|t| t.elements()).sum();
+    let n_parts = n_launch.div_ceil(split);
+    journal.push(Event::Value { what: KT_513_ARENA_MIB, value: (arena_bytes >> 20) as u32 });
+    journal.push(Event::Value { what: KT_513_LAUNCHES, value: n_launch as u32 });
+    journal.push(Event::Value { what: KT_513_SUBS, value: n_parts as u32 });
+    lines.push(format!(
+        "{}: kronos --gpu: {} ({}): modelul vocabular {}, context {}, E {}, {} capete, {} straturi ({} greutati), lot {} x {}, AdamW lr 1e-3, taiere 1,0; {}; {} programe (SHA-256 verificate), {} lansari pe pas in {} trimiteri (cel mult {} lansari pe trimitere); arena {} MiB in VRAM (VRAM liber {} MiB), urcata o data pe bucati de {} KiB; {} pasi{}",
+        p, tag, label, a.vocab, a.ctx, a.n_emb, a.heads, a.layers, count, bsz, tl, data.source,
+        plan0.programs().len(), n_launch, n_parts, split, arena_bytes >> 20, free >> 20, piece >> 10, steps,
+        if board { "; fara oracol (procesorul nu face pasul #513 in timp util): pierderea la pasul 1 ~ ln 16 384, apoi scade" } else { ", oracolul pe procesor la fiecare pas, greutatile la sfarsit" }
+    ));
+    let mut progs: Vec<(ts::Prog, Mapping)> = Vec::with_capacity(plan0.programs().len());
+    for &prog in plan0.programs() {
+        let pm = map_vram(st, prog.code().len() as u64)?;
+        put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
+        progs.push((prog, pm));
+    }
+    let pages = |first: u64, n: u64| (first..first + n).map(|i| host + i * PAGE).collect::<Vec<u64>>();
+    let stage = st.mem.alloc_sys_mapped(&pages(0, piece / PAGE))?;
+    let ctl = st.mem.alloc_sys_mapped(&pages(piece / PAGE, zone_bytes / PAGE))?;
+    if !stage.va.is_multiple_of(PAGE) || !ctl.va.is_multiple_of(PAGE) {
+        return Err(bad("antrenare-513: zona RAM nu e aliniata la 4 KiB"));
+    }
+    let mut maps = ctx.maps.clone();
+    maps.push(varena);
+    maps.extend(progs.iter().map(|(_, pm)| *pm));
+    let sys = [ctx.sys.clone(), stage.clone(), ctl.clone()];
+    let prog_va = |want: ts::Prog| progs.iter().find(|(q, _)| *q == want).map_or(0, |(_, pm)| pm.va);
+    // One launch of the copy program, as in `train_mini_resident`.
+    let copy = |st: &mut GpuState, vbar: &mut V, clock: &mut K, journal: &mut Journal, l: &mut Launched, doorbell: &mut Bell<'_, V>, subs: &mut u32, src: u64, dst: u64, len: u64| -> GpuResult<Option<u64>> {
+        let (cb_va, cb_pa) = (ctx.launches.va, ctx.launches.pa);
+        {
+            let w = st.mem.writer_mut();
+            put_bytes(w, cb_pa, &transfer::copy_cbuf(src, dst, len)?)?;
+            put_bytes(w, cb_pa + 256, &transfer::copy_qmd(ctx.copy_va, cb_va, len)?.to_bytes()?)?;
+            put_bytes(w, ctx.rec.pa, &[0; 32])?;
+        }
+        let first = TOKEN_FIRST + STRIDE * *subs;
+        let mut words = alloc::vec![0u32; transfer::sequence_words(1)];
+        let mut pb = PushBuf::new(&mut words);
+        transfer::encode_sequence(&mut pb, &[cb_va + 256], ctx.rec.va, first)?;
+        let nw = pb.len();
+        match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, 2, first + 1, &maps, &sys, doorbell)? {
+            Ok(b) => {
+                *subs += 1;
+                Ok(Some(transfer::analyze_sequence(&b, 1, first)?[0]))
+            }
+            Err(_) => Ok(None),
+        }
+    };
+    // 1. The arena, once, in pieces: the start weights, the first batch, the segment lists, the result words.
+    let params0 = am::initial(&a, 0);
+    let w_vas: Vec<u64> = (0..params0.len()).map(|i| plan0.t(plan0.w, i)).collect();
+    let u = |v: &[u32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+    let mut small = plan0.batch_uploads(x0, y0)?;
+    let sp = EmbSegments::positions(bsz, tl).ok_or(bad("antrenare-513: pozitii"))?;
+    small.push((plan0.seg_pos.off, u(&sp.off)));
+    small.push((plan0.seg_pos.dst, u(&sp.dst)));
+    small.push((plan0.seg_pos.rows, u(&sp.rows)));
+    small.push((plan0.res, [0.0f32, 1.0].iter().flat_map(|x| x.to_le_bytes()).collect()));
+    // SIMULARE: the pieces against the plan's own uploads (the whole arena image), byte for byte.
+    let reference: Option<Vec<u8>> = if board {
+        None
+    } else {
+        let mut img = alloc::vec![0u8; arena_bytes as usize];
+        for (va, bytes) in plan0.uploads(&params0, x0, y0)? {
+            let at = (va - varena.va) as usize;
+            img[at..at + bytes.len()].copy_from_slice(&bytes);
+        }
+        Some(img)
+    };
+    let (mut up_ns, mut n_pieces, mut same_pieces) = (0u64, 0usize, 0usize);
+    let mut off = 0u64;
+    while off < arena_bytes {
+        let len = piece.min(arena_bytes - off);
+        let buf = ram_vram_bytes(host, len);
+        buf.fill(0);
+        fill_arena_piece(buf, varena.va + off, &w_vas, &params0, &small);
+        if let Some(img) = &reference {
+            if img[off as usize..(off + len) as usize] == buf[..] {
+                same_pieces += 1;
+            }
+        }
+        let Some(ns) = copy(st, vbar, clock, journal, l, doorbell, subs, stage.va, varena.va + off, len)? else {
+            lines.push(format!("{}: kronos --gpu: {}: urcarea bucatii {} (RAM -> VRAM) nu s-a terminat; proba oprita, fara reincercare", p, tag, n_pieces + 1));
+            return Err(GpuError::Timeout { waited_us: WAIT_US });
+        };
+        up_ns += ns;
+        n_pieces += 1;
+        off += len;
+    }
+    drop(reference);
+    journal.push(Event::Value { what: KT_513_UP_MS, value: (up_ns / 1_000_000) as u32 });
+    lines.push(format!(
+        "{}: kronos --gpu: {}: arena urcata o data RAM -> VRAM: {} MiB in {} bucati, {} ms (placa){}",
+        p, tag, arena_bytes >> 20, n_pieces, up_ns / 1_000_000,
+        if board { String::new() } else { format!("; bucatile fata de urcarile planului: {} / {} identice octet cu octet", same_pieces, n_pieces) }
+    ));
+    let pieces_ok = board || same_pieces == n_pieces;
+    let read_vram_f32s = |st: &mut GpuState, vbar: &mut V, journal: &mut Journal, va: u64, n: usize| -> GpuResult<Vec<f32>> {
+        let GpuState { zone, .. } = &*st;
+        let mut vw = nvidia_ga104::vram_window::VramWindow::new(&mut *vbar, &mut *journal, permit, zone.vram_size, &zone.protected)?;
+        let pa = varena.pa + (va - varena.va);
+        let r = (0..n).map(|i| vw.read_u32(pa + 4 * i as u64).map(f32::from_bits)).collect::<GpuResult<Vec<f32>>>();
+        let back = vw.restore();
+        r.and_then(|v| back.map(|_| v))
+    };
+    // The optimizer's numbers only (the step's list does not read the CPU's m, v: they live in the arena) — on the
+    // board no GiB-sized m, v on the heap.
+    let adam = AdamW { lr: 1e-3, beta1: 0.9, beta2: 0.999, eps: 1e-8, weight_decay: 0.1, t: 0, m: Vec::new(), v: Vec::new() };
+    let mut oracle = (!board).then(|| (params0.clone(), AdamW::new(&params0, 1e-3, 0.9, 0.999, 1e-8, 0.1)));
+    drop(params0);
+    let (mut worst_loss, mut worst_norm) = (0.0f64, 0.0f64);
+    let (mut board_ns, mut host_us, mut losses, mut norms): (Vec<u64>, Vec<u64>, Vec<f32>, Vec<f32>) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut stopped: Option<String> = None;
+    journal.flush_live();
+    let hold = super::gpu_i6::GenHold::start();
+    journal.set_routine(Some(kf::gen_routine(&GEN_NOTES)));
+    let mut run_steps = || -> GpuResult<()> {
+        for (k, (x, y)) in data.batches.iter().enumerate() {
+            let step = k as u32 + 1;
+            let t0 = crate::time::since_boot_us();
+            let plan = plan0.rebatch(x)?;
+            if plan.w != plan0.w || plan.m != plan0.m || plan.v != plan0.v || plan.loss_rows != plan0.loss_rows || plan.res != plan0.res {
+                return Err(bad("antrenare-513: adresele planului rezident s-au mutat"));
+            }
+            if k > 0 {
+                let w = st.mem.writer_mut();
+                for (va, bytes) in plan.batch_uploads(x, y)? {
+                    put_bytes(w, varena.pa + (va - varena.va), &bytes)?;
+                }
+            }
+            let list = plan.step(Recipe::AdamW513, &adam, step)?;
+            let (zb, qmds) = ts::pack(&list, prog_va, ctl.va)?;
+            if zb.len() as u64 > zone_bytes {
+                return Err(bad("antrenare-513: zona de control prea mare"));
+            }
+            ram_write(&ctl, &zb);
+            // The step in parts of at most `split` launches, each its own submission, in order.
+            let mut busy = 0u64;
+            for (j, part) in qmds.chunks(split).enumerate() {
+                let n = part.len();
+                put_bytes(st.mem.writer_mut(), ctx.rec.pa, &alloc::vec![0u8; 16 * (n + 1)])?;
+                let first = TOKEN_FIRST + STRIDE * *subs;
+                let mut words = alloc::vec![0u32; transfer::sequence_words_fresh(n)];
+                let mut pb = PushBuf::new(&mut words);
+                transfer::encode_sequence_fresh(&mut pb, part, ctx.rec.va, first)?;
+                let nw = pb.len();
+                let last = first + n as u32;
+                match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, n as u64 + 1, last, &maps, &sys, doorbell)? {
+                    Ok(b) => {
+                        *subs += 1;
+                        busy += transfer::analyze_sequence(&b, n, first)?.iter().sum::<u64>();
+                    }
+                    Err(got) => {
+                        stopped = Some(format!("placa nu a terminat partea {} a pasului {} (ultima inregistrare {:#x}, asteptat {:#x})", j + 1, step, got, last));
+                        return Ok(());
+                    }
+                }
+            }
+            board_ns.push(busy);
+            let [(lr_va, lr_n), (res_va, res_n)] = plan.step_reads();
+            let rows = read_vram_f32s(st, vbar, journal, lr_va, (lr_n / 4) as usize)?;
+            let norm = read_vram_f32s(st, vbar, journal, res_va, (res_n / 4) as usize)?[0];
+            let loss = Outcome::mean_loss(&rows);
+            journal.flush_live();
+            if let Some(us) = t0.zip(crate::time::since_boot_us()).map(|(a0, a1)| a1.saturating_sub(a0)) {
+                host_us.push(us);
+            }
+            if !norm.is_finite() || !loss.is_finite() {
+                stopped = Some(format!("pasul {}: pierderea {:?} / norma gradientului {:?} nu e un numar", step, loss, norm));
+                return Ok(());
+            }
+            losses.push(loss);
+            norms.push(norm);
+            let oracle_part = match oracle.as_mut() {
+                Some((op, oa)) => {
+                    let batch = Batch { inputs: x, targets: y, batch: bsz, len: tl };
+                    let (ol, mut og) = train::loss_and_grad(&a, op, &batch)?;
+                    let onorm = train::clip_grad_norm(&mut og, 1.0);
+                    oa.step(op, &og)?;
+                    let dn = ((norm as f64 - onorm as f64) / (onorm as f64).abs().max(1e-12)).abs();
+                    let dl = ((loss as f64 - ol as f64) / (ol as f64).abs().max(1e-12)).abs();
+                    worst_norm = worst_norm.max(dn);
+                    worst_loss = worst_loss.max(dl);
+                    format!(" (oracolul: pierderea {:.4}, abaterea {:.1e}; norma {:.4}, abaterea {:.1e})", ol, dl, onorm, dn)
+                }
+                None => String::new(),
+            };
+            lines.push(format!(
+                "{}: kronos --gpu: {}: pasul {}: pierderea {:.4}, norma gradientului {:.4}{}; placa {} us ({} trimiteri), pasul intreg {} us",
+                p, tag, step, loss, norm, oracle_part, busy / 1000, n_parts, host_us.last().copied().unwrap_or(0)
+            ));
+        }
+        Ok(())
+    };
+    let steps_r = run_steps();
+    drop(hold);
+    journal.set_routine(None);
+    steps_r?;
+    // 2. At the end: the weights region back VRAM → RAM in pieces — every weight finite; in SIMULARE against the oracle.
+    let (mut bad_w, mut worst_w, mut read_w) = (0usize, 0.0f64, 0usize);
+    if stopped.is_none() {
+        let (w0, w_len) = (plan0.w, 4 * plan0.n_params as u64);
+        let mut board_w: Vec<f32> = Vec::new();
+        let mut off = 0u64;
+        while off < w_len {
+            let len = piece.min(w_len - off);
+            if copy(st, vbar, clock, journal, l, doorbell, subs, w0 + off, stage.va, len)?.is_none() {
+                stopped = Some(String::from("copia greutatilor VRAM -> RAM de la sfarsit nu s-a terminat"));
+                break;
+            }
+            let ws = ts::f32s(ram_vram_bytes(host, len));
+            bad_w += ws.iter().filter(|x| !x.is_finite()).count();
+            read_w += ws.len();
+            if !board {
+                board_w.extend_from_slice(&ws);
+            }
+            off += len;
+        }
+        if let (Some((op, _)), None) = (&oracle, &stopped) {
+            let flat: Vec<Vec<f32>> = plan0.unflat(&board_w)?;
+            worst_w = am::rel_dev(&flat, op);
+        }
+    }
+    let us = median_us(&board_ns);
+    let host_med = median_us(&host_us.iter().map(|u| u * 1000).collect::<Vec<u64>>());
+    let tok_s = if us > 0 { (bsz * tl) as u64 * 1_000_000 / us } else { 0 };
+    let full_tok_s = if host_med > 0 { (bsz * tl) as u64 * 1_000_000 / host_med } else { 0 };
+    journal.push(Event::Value { what: KT_513_STEPS, value: losses.len() as u32 });
+    journal.push(Event::Value { what: KT_513_US, value: us.min(u32::MAX as u64) as u32 });
+    journal.push(Event::Value { what: KT_513_HOST_US, value: host_med.min(u32::MAX as u64) as u32 });
+    journal.push(Event::Value { what: KT_513_TOK_S, value: tok_s as u32 });
+    if let (Some(f), Some(z)) = (losses.first(), losses.last()) {
+        journal.push(Event::Value { what: KT_513_LOSS1_E4, value: (*f as f64 * 1e4).clamp(0.0, u32::MAX as f64) as u32 });
+        journal.push(Event::Value { what: KT_513_LOSSN_E4, value: (*z as f64 * 1e4).clamp(0.0, u32::MAX as f64) as u32 });
+    }
+    if let Some(why) = &stopped {
+        lines.push(format!("{}: kronos --gpu: {}: {}; proba oprita, fara reincercare", p, tag, why));
+        lines.push(format!("{}: kronos --gpu: {}: NU A TERMINAT (vezi randul de mai sus)", p, tag));
+        return Err(GpuError::Timeout { waited_us: WAIT_US });
+    }
+    let ln_v = am::ln(a.vocab as f64);
+    let first = losses.first().copied().unwrap_or(f32::NAN) as f64;
+    let last = losses.last().copied().unwrap_or(f32::NAN) as f64;
+    let start_ok = ((first - ln_v) / ln_v).abs() <= 0.02;
+    let falls = steps < 2 || last < first;
+    lines.push(format!(
+        "{}: kronos --gpu: {}: pierderea la pornire {:.4} (ghicit la intamplare: ln {} = {:.4}), la ultimul pas {:.4}; greutatile la sfarsit: {} citite, {} care nu sunt numere",
+        p, tag, first, a.vocab, ln_v, last, read_w, bad_w
+    ));
+    lines.push(format!(
+        "{}: kronos --gpu: {}: timpul pe pas (median, {} pasi): placa {} us = {} simboluri/s la antrenare (lot {} x {}; Windows / PyTorch ~39 300); pasul intreg {} us = {} simboluri/s",
+        p, tag, losses.len(), us, tok_s, bsz, tl, host_med, full_tok_s
+    ));
+    let pass = if board {
+        start_ok && falls && bad_w == 0 && losses.len() == steps
+    } else {
+        lines.push(format!(
+            "{}: kronos --gpu: {}: lista placii pe bucati si parti fata de oracol: {} — abaterea pierderii {:.1e}, a normei {:.1e}, a greutatilor la sfarsit {:.1e} (toleranta 1e-3)",
+            p, tag, if worst_loss <= TOL && worst_norm <= TOL && worst_w <= TOL { "ACELEASI NUMERE" } else { "DIFERA" }, worst_loss, worst_norm, worst_w
+        ));
+        pieces_ok && worst_loss <= TOL && worst_norm <= TOL && worst_w <= TOL && bad_w == 0 && losses.len() == steps
+    };
+    journal.push(Event::Value { what: KT_513_PASS, value: u32::from(pass) });
+    lines.push(format!(
+        "{}: kronos --gpu: {}: {}",
+        p, tag,
+        match (pass, board) {
+            (true, true) => "TRECE (pasul #513 cu arena in VRAM: pierderea porneste de la ln V si scade, toate numerele finite)",
+            (true, false) => "TRECE (pasul #513 pe bucati si parti = oracolul, bucatile = urcarile planului)",
+            _ => "NU TRECE (vezi randurile de mai sus)",
+        }
+    ));
+    Ok(pass)
 }
 
 /// P6-175: what one resident run leaves for the comparison glued / not glued.
