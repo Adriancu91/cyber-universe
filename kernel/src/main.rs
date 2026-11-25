@@ -1914,8 +1914,15 @@ fn test_agent() {
     // P6-204 (C-166 step 3): `agent veghe 0 2` = two tours at once against the imitations of the API and of GitHub
     // (tools/ghpush-test-server.py, the hub = its test repository): the first sees the WARN line below (an alert),
     // the second nothing new; live/os-agent.md made, then rewritten; the day's log in rezultate/os-automat/.
-    put("/etc/github.conf", b"host = test.cyber.local\nport = 18447\naddress = 10.0.2.2\ntoken = /etc/github.token\nhub = Adriancu91/note-test\n");
+    put("/etc/github.conf", b"host = test.cyber.local\nport = 18447\naddress = 10.0.2.2\ntoken = /etc/github.token\nhub = Adriancu91/note-test\ncod = Adriancu91/note-test\n");
     put("/etc/github.token", b"tok-gh\n");
+    // P6-220 (C-166 step 5): the code tools against the GitHub imitation: read a file and a folder, three proposals
+    // refused (a CI workflow, a bad subject, the same branch again), one made on agent/<day>-proba.
+    assert_eq!(run(&["agent", "Fa", "testul", "propunerii"], "propuneri"), 0, "test: propunerile agentului");
+    let props = fs::read_all("/etc/agent/propuneri.txt").expect("test: /etc/agent/propuneri.txt lipseste");
+    let props = core::str::from_utf8(&props).expect("test: propuneri.txt nu e text");
+    info!("test: agent: propuneri: {} facute, {} refuzate", props.matches("-> FACUT").count(), props.matches("-> REFUZAT").count());
+    assert!(!props.contains("tok-gh"), "test: tokenul in propuneri.txt");
     warn!("test: abatere de proba pentru agent veghe (P6-204)");
     // P6-209: `0 2 0` = Claude's summary on every tour (2 requests); then `0 2` = the settings' 10 minutes: the first
     // tour with the summary, the second only the raw numbers (1 request more).

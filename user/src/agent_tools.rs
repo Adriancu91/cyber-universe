@@ -8,6 +8,12 @@
 //! stop of a long job (`lucrare opreste <nume>`: after the step in progress) and a few values of `agent.setari` within
 //! fixed bounds. Every other action or setting is refused; every repair, done or refused, goes into
 //! `<root>/agent/reparatii.txt`.
+//!
+//! P6-220 (C-166 step 5): `citeste_cod` reads the OS's code on GitHub (`main`, read only) and `propune` writes a change
+//! as a proposal on a new branch `agent/<day>-<subject>` of the code repository — never `main`, never over an existing
+//! branch, never the CI workflows or the project's rules — with the explanation and the proof in
+//! `docs/agent/propuneri/<branch>.md`. The OS session checks it, tests it in QEMU and decides. Every proposal, made or
+//! refused, goes into `<root>/agent/propuneri.txt`.
 
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -15,6 +21,13 @@ use alloc::vec::Vec;
 use cyber_json::Value;
 
 use crate::claude_tools;
+use crate::github;
+
+/// P6-220: GitHub for the code tools: the settings and the token (read once at the start of a question).
+pub struct Gh {
+    pub conf: github::Config,
+    pub token: Option<String>,
+}
 
 /// The largest piece of a file Claude gets at once.
 const READ_MAX: usize = 32 * 1024;
@@ -26,6 +39,8 @@ pub const DEFINITIONS: &str = r#"[
  {"name":"stare","description":"Starea calculatorului: de cand merge, memoria, lucrarile lungi (pasi, viteza, pierderi), placa de retea.","input_schema":{"type":"object","properties":{}}},
  {"name":"tablou","description":"Ultimele citiri ale tabloului placii video pe care OS-ul le-a scris deja in jurnal: ceasul nucleului si al memoriei, starea P, incarcarea, puterea fata de limita, motivele incetinirii, temperatura. Nu trimite nicio comanda placii.","input_schema":{"type":"object","properties":{"n":{"type":"integer","description":"cate citiri (implicit 12, cel mult 100)"}}}},
  {"name":"ruleaza","description":"Ruleaza o comanda de citire din lista alba a shell-ului: ls, mem, uptime, lspci, lsusb, discuri, net, cpu, hw, hw lista [--detalii], log ..., usb timp, lucrare stare, porneste (fara argumente), hub stare|comenzi|decizii [proiect]. Orice altceva e refuzat de OS.","input_schema":{"type":"object","properties":{"comanda":{"type":"string"}},"required":["comanda"]}},
+ {"name":"citeste_cod","description":"Citeste codul lui Cyber Universe OS de pe GitHub (ramura main, doar citire): un fisier (cel mult 32 KiB de la `de_la`) sau lista unui dosar (cale goala = radacina). De ex. user/src/agent_tools.rs, kernel/src/shell.","input_schema":{"type":"object","properties":{"cale":{"type":"string"},"de_la":{"type":"integer"}},"required":["cale"]}},
+ {"name":"propune","description":"Scrie o modificare de cod ca PROPUNERE pe o ramura noua agent/<zi>-<subiect> a depozitului OS-ului (niciodata main; sesiunea OS o verifica, o testeaza si decide). Fisierele se dau intregi (continutul nou complet). Cel mult 8 fisiere de cel mult 128 KiB; refuzate: .github/, LICENSE, CLAUDE.md, docs/DECISIONS.md. Explicatia si dovada (de ce, ce ai vazut, cum se poate verifica) sunt obligatorii.","input_schema":{"type":"object","properties":{"subiect":{"type":"string","description":"litere mici, cifre si -, cel mult 40"},"explicatie":{"type":"string"},"dovada":{"type":"string"},"fisiere":{"type":"array","items":{"type":"object","properties":{"cale":{"type":"string"},"continut":{"type":"string"}},"required":["cale","continut"]}}},"required":["subiect","explicatie","dovada","fisiere"]}},
  {"name":"repara","description":"Reparatii din lista alba a OS-ului (singurele schimbari permise): actiune `opreste_lucrarea` = oprirea sigura a unei lucrari lungi dupa pasul in lucru (`nume` = lucrarea, ca in `lucrare stare`); actiune `setare` = o valoare din agent.setari, doar live_minute (1-60), analiza_minute (2-120) sau max_tokens (256-8192), in `valoare`. Orice alta actiune sau setare e refuzata de OS. Fiecare reparatie se scrie in agent/reparatii.txt.","input_schema":{"type":"object","properties":{"actiune":{"type":"string","enum":["opreste_lucrarea","setare"]},"nume":{"type":"string"},"valoare":{"type":"string"}},"required":["actiune","nume"]}}
 ]"#;
 
@@ -129,6 +144,121 @@ fn repair(action: &str, name: &str, value: Option<&str>, root: &str, term: &mut 
     }
 }
 
+/// P6-220: the most files of one proposal and the largest one.
+pub const PROPOSAL_FILES: usize = 8;
+pub const PROPOSAL_FILE_MAX: usize = 128 * 1024;
+
+/// P6-220: a path a proposal may write: a valid repository path outside the CI workflows and the project's rules.
+pub fn proposal_path(path: &str) -> bool {
+    const KEPT: [&str; 3] = ["LICENSE", "CLAUDE.md", "docs/DECISIONS.md"];
+    github::valid_path(path) && !path.starts_with(".github/") && path != ".github" && !KEPT.contains(&path) && !path.starts_with("docs/agent/propuneri/")
+}
+
+/// P6-220: a proposal's subject: lowercase, digits, '-', 1..=40, not starting or ending with '-'.
+pub fn subject_ok(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 40 && !s.starts_with('-') && !s.ends_with('-') && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// P6-220: one line into `<root>/agent/propuneri.txt`.
+fn note_proposal(root: &str, line: &str) {
+    let dir = format!("{}/agent", root);
+    let _ = cyber_user::create(&dir, true);
+    let path = format!("{}/propuneri.txt", dir);
+    let mut text = read(&path, 0).unwrap_or_default();
+    if text.len() > 64 * 1024 {
+        let cut = text[text.len() / 2..].find('\n').map_or(text.len(), |i| text.len() / 2 + i + 1);
+        text = text[cut..].to_string();
+    }
+    text.push_str(line);
+    text.push('\n');
+    if write_whole(&path, text.as_bytes()).is_ok() {
+        let _ = cyber_user::sync(&dir);
+    }
+}
+
+/// P6-220: `citeste_cod`.
+fn read_code(gh: Option<&Gh>, path: &str, from: usize) -> Result<String, String> {
+    let gh = gh.ok_or("uneltele de cod nu sunt pornite aici")?;
+    let token = gh.token.as_deref().ok_or_else(|| format!("lipseste tokenul GitHub ({})", gh.conf.token))?;
+    let path = path.trim().trim_matches('/');
+    match github::get_file(&gh.conf, "agent", token, &gh.conf.code, path, "main")? {
+        github::Found::Dir(names) => Ok(format!("{}/ pe main ({}):\n{}\n", path, gh.conf.code, names.join("\n"))),
+        github::Found::File(data) => {
+            let total = data.len();
+            let start = from.min(total);
+            let mut end = (start + READ_MAX).min(total);
+            while end < total && end > start && (data[end] & 0xc0) == 0x80 {
+                end -= 1;
+            }
+            let mut text = String::from_utf8_lossy(&data[start..end]).into_owned();
+            if end < total {
+                text.push_str(&format!("\n(taiat: {} din {} octeti; continua cu de_la = {})", end - start, total, end));
+            }
+            Ok(text)
+        }
+    }
+}
+
+/// P6-220: `propune`; Ok = the branch and what was written, Err = refused (with why).
+fn propose(gh: Option<&Gh>, input: &Value) -> Result<String, String> {
+    let gh = gh.ok_or("uneltele de cod nu sunt pornite aici")?;
+    let text = |k: &str| input.get(k).and_then(Value::as_str).map(str::trim).unwrap_or("").to_string();
+    let subject = text("subiect");
+    if !subject_ok(&subject) {
+        return Err(format!("subiectul `{}` nu e permis (litere mici, cifre, -, cel mult 40); OS-ul a refuzat propunerea", subject));
+    }
+    let (why, proof) = (text("explicatie"), text("dovada"));
+    if why.is_empty() || proof.is_empty() {
+        return Err("lipseste explicatia sau dovada; OS-ul a refuzat propunerea".to_string());
+    }
+    let files = input.get("fisiere").and_then(Value::as_array).unwrap_or(&[]);
+    if files.is_empty() || files.len() > PROPOSAL_FILES {
+        return Err(format!("o propunere are intre 1 si {} fisiere (aici {}); OS-ul a refuzat-o", PROPOSAL_FILES, files.len()));
+    }
+    let mut list: Vec<(String, &str)> = Vec::new();
+    for f in files {
+        let path = f.get("cale").and_then(Value::as_str).unwrap_or("").trim().to_string();
+        let data = f.get("continut").and_then(Value::as_str).ok_or_else(|| format!("{}: lipseste continutul", path))?;
+        if !proposal_path(&path) {
+            return Err(format!("calea `{}` nu e permisa intr-o propunere (fara .github/, LICENSE, CLAUDE.md, docs/DECISIONS.md, fara ..); OS-ul a refuzat-o", path));
+        }
+        if data.len() > PROPOSAL_FILE_MAX {
+            return Err(format!("{}: {} octeti, peste {} KiB; OS-ul a refuzat-o", path, data.len(), PROPOSAL_FILE_MAX / 1024));
+        }
+        if list.iter().any(|(p, _)| *p == path) {
+            return Err(format!("{} apare de doua ori", path));
+        }
+        list.push((path, data));
+    }
+    let token = gh.token.as_deref().ok_or_else(|| format!("lipseste tokenul GitHub ({})", gh.conf.token))?;
+    let stamp = crate::now();
+    let branch = format!("agent/{}-{}", stamp[..10].replace('-', ""), subject);
+    let repo = &gh.conf.code;
+    github::create_branch(&gh.conf, "agent", token, repo, &branch)?;
+    let note_path = format!("docs/agent/propuneri/{}.md", branch.trim_start_matches("agent/"));
+    let note = format!(
+        "# Propunerea agentului de bord: {}\n\n**Ramura:** `{}` · **scrisa:** {} (ceasul OS-ului) · **stare:** de verificat de sesiunea OS (C-166 pasul 5)\n\n## Explicatia\n{}\n\n## Dovada\n{}\n\n## Fisierele\n{}",
+        subject,
+        branch,
+        stamp,
+        why,
+        proof,
+        list.iter().map(|(p, d)| format!("- `{}` ({} octeti)\n", p, d.len())).collect::<String>()
+    );
+    let mut out = format!("ramura {} facuta din main in {}\n", branch, repo);
+    let msg = format!("agent (propunere): {}", subject);
+    let r = github::put_contents_on(&gh.conf, "agent", token, repo, &note_path, note.as_bytes(), &msg, Some(&branch))?;
+    out.push_str(&format!("{} {}\n", note_path, r));
+    for (path, data) in &list {
+        match github::put_contents_on(&gh.conf, "agent", token, repo, path, data.as_bytes(), &msg, Some(&branch)) {
+            Ok(r) => out.push_str(&format!("{} {}\n", path, r)),
+            Err(e) => return Err(format!("{}{}: NU s-a scris: {} (propunerea e incompleta pe {})", out, path, e, branch)),
+        }
+    }
+    out.push_str("propunerea asteapta verificarea sesiunii OS; nimic nu ajunge pe main fara ea\n");
+    Ok(out)
+}
+
 /// Is `path` one the agent may read? /usb, /disk, /tmp and the agent's own root (the tests keep it in /etc).
 pub fn allowed(path: &str, root: &str) -> bool {
     let inside = ["/usb", "/disk", "/tmp", root].iter().any(|r| path == *r || path.starts_with(&format!("{}/", r)));
@@ -197,7 +327,7 @@ fn read(path: &str, from: usize) -> Result<String, String> {
 }
 
 /// Does one tool call. `log` = one line for the screen and the session file. Ok = result, Err = error for Claude.
-pub fn run(name: &str, input: &Value, root: &str, term: &mut Option<i64>, log: &mut String) -> Result<String, String> {
+pub fn run(name: &str, input: &Value, root: &str, gh: Option<&Gh>, term: &mut Option<i64>, log: &mut String) -> Result<String, String> {
     let text = |k: &str| input.get(k).and_then(Value::as_str).map(str::to_string);
     let number = |k: &str| input.get(k).and_then(Value::as_i64);
     match name {
@@ -256,6 +386,24 @@ pub fn run(name: &str, input: &Value, root: &str, term: &mut Option<i64>, log: &
             }
             *log = format!("ruleaza: {}", command);
             claude_tools::run_command(&command, term)
+        }
+        // P6-220 (C-166 step 5): the code, read only, and the proposals on `agent/…` branches.
+        "citeste_cod" => {
+            let path = text("cale").unwrap_or_default();
+            *log = format!("citeste_cod {}", path);
+            read_code(gh, &path, number("de_la").unwrap_or(0).max(0) as usize)
+        }
+        "propune" => {
+            let subject = text("subiect").unwrap_or_default();
+            let n = input.get("fisiere").and_then(Value::as_array).map_or(0, |a| a.len());
+            let r = propose(gh, input);
+            *log = format!("propune: {} ({} fisiere) -> {}", subject, n, if r.is_ok() { "FACUT" } else { "REFUZAT" });
+            let first = |t: &str| t.lines().next().unwrap_or("").to_string();
+            note_proposal(root, &format!("{} propune {} ({} fisiere) -> {}", crate::now(), subject, n, match &r {
+                Ok(t) => format!("FACUT: {}", first(t)),
+                Err(t) => format!("REFUZAT: {}", first(t)),
+            }));
+            r
         }
         // P6-219 (C-166 step 4): the white-listed repairs.
         "repara" => {

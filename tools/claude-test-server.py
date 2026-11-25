@@ -62,7 +62,10 @@ def check(head, body):
         return 200, tools_step(req, m)
     # P6-203 (C-166 step 2): the agent's read-only tools, each step checking the previous result.
     if m[0]["content"] == "Fa testul agentului":
-        return 200, agent_step(req, m)
+        return 200, agent_step(req, m, AGENT_STEPS, "agentului")
+    # P6-220 (C-166 step 5): the code tools against the GitHub imitation (code repository = its test repository).
+    if m[0]["content"] == "Fa testul propunerii":
+        return 200, agent_step(req, m, PROPOSAL_STEPS, "propunerii")
     # P6-202 (C-166): `agent ping` -> "pong", with cache tokens in `usage` (the agent prices them).
     if m[0]["content"] == "ping: raspunde doar cu cuvantul pong":
         return 200, ("pong", None)
@@ -104,20 +107,35 @@ AGENT_STEPS = [
 ]
 
 
-def agent_step(req, m):
+GOOD_FILES = [{"cale": "note/vechi.txt", "continut": "versiunea propusa\n"}, {"cale": "note/nou.txt", "continut": "fisier nou propus\n"}]
+GOOD = {"subiect": "proba", "explicatie": "o proba a propunerilor", "dovada": "testul agent in QEMU", "fisiere": GOOD_FILES}
+PROPOSAL_STEPS = [
+    ("citeste_cod", {"cale": "note/vechi.txt"}, None),
+    ("citeste_cod", {"cale": ""}, lambda r, e: not e and "versiunea veche" in r),
+    ("propune", dict(GOOD, fisiere=[{"cale": ".github/workflows/x.yml", "continut": "on: push"}]),
+     lambda r, e: not e and "note/" in r and "COMENZI.md" in r),
+    ("propune", dict(GOOD, subiect="Proba Mare"), lambda r, e: e and ".github/workflows/x.yml" in r and "nu e permisa" in r),
+    ("propune", GOOD, lambda r, e: e and "subiectul" in r),
+    ("propune", GOOD, lambda r, e: not e and "ramura agent/" in r and "note/vechi.txt actualizat" in r and "note/nou.txt creat" in r),
+    (None, None, lambda r, e: e and "exista deja" in r),
+]
+
+
+def agent_step(req, m, steps, what):
     names = {t.get("name") for t in req.get("tools") or []}
-    if names != {"fisiere", "citeste", "citeste_jurnal", "stare", "tablou", "ruleaza", "repara"} or "agentul de bord" not in str(req.get("system")):
-        return ("text", "Testul agentului a esuat: uneltele sau rolul lipsesc")
+    if names != {"fisiere", "citeste", "citeste_jurnal", "stare", "tablou", "ruleaza", "repara", "citeste_cod", "propune"} \
+            or "agentul de bord" not in str(req.get("system")):
+        return ("text", f"Testul {what} a esuat: uneltele sau rolul lipsesc")
     results = [x["content"][0] for x in m if x["role"] == "user" and isinstance(x["content"], list)]
     n = len(results)
     if n:
         r = results[-1]
         text = r.get("content") if isinstance(r.get("content"), str) else ""
-        if r.get("type") != "tool_result" or r.get("tool_use_id") != f"toolu_{n - 1}" or not AGENT_STEPS[n][2](text, bool(r.get("is_error"))):
-            return ("text", f"Testul agentului a esuat la pasul {n}: {text[:300]!r}")
-    name, inp, _ = AGENT_STEPS[n]
+        if r.get("type") != "tool_result" or r.get("tool_use_id") != f"toolu_{n - 1}" or not steps[n][2](text, bool(r.get("is_error"))):
+            return ("text", f"Testul {what} a esuat la pasul {n}: {text[:300]!r}")
+    name, inp, _ = steps[n]
     if name is None:
-        return ("text", "Gata: uneltele agentului au mers cum trebuie.")
+        return ("text", "Gata: uneltele agentului au mers cum trebuie." if what == "agentului" else "Gata: propunerile au mers cum trebuie.")
     return ("tool", {"type": "tool_use", "id": f"toolu_{n}", "name": name, "input": inp})
 
 
