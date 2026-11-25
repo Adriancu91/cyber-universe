@@ -3926,20 +3926,28 @@ fn mm_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // first, mapped with the guard page) and its own VRAM page for the same cbuf (+0) and its QMD (+0x800).
     // P6-207 (C-157 p.2, cyber-gpu `835c6c9`): or `mm_tc_pf` (the reads in advance), the same way; one companion per
     // probe (the cycle refuses both; `mm_tc128` wins if both are set by hand).
-    let comp = if super::gpu_tur::MM_TC128_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
-        Some(Comp::Tc128)
-    } else if super::gpu_tur::MM_TC_PF_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
-        Some(Comp::Pf)
+    // P6-210 (C-157 p.2, cyber-gpu `273a42b`): `mm_tc_v4` (128-bit reads) too, after `mm_tc_pf` when both are asked —
+    // every companion runs on every set it fits, each compared with `mm_tc`.
+    let ord = core::sync::atomic::Ordering::SeqCst;
+    let comps: Vec<Comp> = if super::gpu_tur::MM_TC128_IN_CYCLE.load(ord) {
+        alloc::vec![Comp::Tc128]
     } else {
-        None
+        let mut v = Vec::new();
+        if super::gpu_tur::MM_TC_PF_IN_CYCLE.load(ord) {
+            v.push(Comp::Pf);
+        }
+        if super::gpu_tur::MM_TC_V4_IN_CYCLE.load(ord) {
+            v.push(Comp::V4);
+        }
+        v
     };
-    let t128 = match comp {
-        Some(kind) => {
+    let mut t128: Vec<Tc128> = Vec::new();
+    for kind in comps {
+        {
             let n = kind.name();
             let sha2 = sha256_hex(kind.program());
             if sha2 != kind.sha() {
                 lines.push(format!("{}: kronos --gpu: proba {}: SHA-256 al programului {} nu e cel din nota ({}): {} nu se lanseaza", p, n, sha2, kind.sha(), n));
-                None
             } else {
                 let prog2 = map_vram(st, program_map_bytes(kind.program().len() as u64))?;
                 let zone2 = map_vram(st, PAGE)?;
@@ -3956,13 +3964,14 @@ fn mm_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
                     kind.block()[0],
                     kind.shared().bytes >> 10
                 ));
-                Some(Tc128 { kind, prog: prog2, zone: zone2 })
+                t128.push(Tc128 { kind, prog: prog2, zone: zone2 });
             }
         }
-        None => None,
-    };
-    let mut r128: Vec<Tc128Set> = Vec::new();
-    let mut stopped128: Option<usize> = None;
+    }
+    let mut r128: Vec<Vec<Tc128Set>> = t128.iter().map(|_| Vec::new()).collect();
+    let mut stopped128: Vec<Option<usize>> = t128.iter().map(|_| None).collect();
+    // P6-210: the sets a companion cannot take (`mm_tc_v4`: rows not a multiple of 4 or A/B not 16-byte aligned).
+    let mut unfit: Vec<Vec<usize>> = t128.iter().map(|_| Vec::new()).collect();
     let small = tp::SETS[..tp::QKV_SET].iter().map(|s| s.layout().bytes as u64).max().unwrap_or(PAGE);
     let buf = st.mem.alloc_sys_mapped(&arena_pages(0, small.div_ceil(PAGE))?)?;
     if !buf.va.is_multiple_of(PAGE) {
@@ -3971,7 +3980,7 @@ fn mm_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let mut maps = ctx.maps.clone();
     maps.push(prog);
     maps.push(zone);
-    if let Some(t) = &t128 {
+    for t in &t128 {
         maps.push(t.prog);
         maps.push(t.zone);
     }
@@ -3995,7 +4004,11 @@ fn mm_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 }
                 probe.add(tp::judge_set(i, &out, &[ns])?);
                 // P6-197: the same set with `mm_tc128` (C and the guard NaN again, the same cbuf, its QMD).
-                if let Some(t) = &t128 {
+                for (ci, t) in t128.iter().enumerate() {
+                    if !t.kind.fits(&set.args(buf.va)) {
+                        unfit[ci].push(i);
+                        continue;
+                    }
                     ram_write(&buf, &set.buffer());
                     let (cb2, q2) = tc128_launch_bytes(&set.args(buf.va), &cb, t)?;
                     {
@@ -4009,7 +4022,7 @@ fn mm_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
                             for (o, n) in set.read_ranges() {
                                 out2.extend_from_slice(&ram_read_at(&buf, o as u64, n as u64));
                             }
-                            r128.push(Tc128Set::new(i, &out, &out2, alloc::vec![ns], alloc::vec![ns2])?);
+                            r128[ci].push(Tc128Set::new(i, &out, &out2, alloc::vec![ns], alloc::vec![ns2])?);
                         }
                         Err(got) => {
                             lines.push(format!(
@@ -4020,11 +4033,14 @@ fn mm_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
                                 set.name,
                                 got
                             ));
-                            stopped128 = Some(i);
+                            stopped128[ci] = Some(i);
                             stopped = Some(i);
                             break;
                         }
                     }
+                }
+                if stopped.is_some() {
+                    break;
                 }
             }
             Err(got) => {
@@ -4038,17 +4054,22 @@ fn mm_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
     }
     if stopped.is_none() {
-        let mut q128 = Qkv128::default();
-        match mm_tc_qkv(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, &maps, prog.va, zone, t128.as_ref(), &mut q128)? {
+        let mut q128: Vec<Qkv128> = t128.iter().map(|_| Qkv128::default()).collect();
+        match mm_tc_qkv(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, &maps, prog.va, zone, &t128, &mut q128)? {
             QkvOutcome::Judged(r) => probe.add(r),
             QkvOutcome::Skipped => {}
             QkvOutcome::Stopped => stopped = Some(tp::QKV_SET),
         }
-        if q128.stopped {
-            stopped128 = Some(tp::QKV_SET);
-        }
-        if let Some(x) = q128.set {
-            r128.push(x);
+        for (ci, q) in q128.into_iter().enumerate() {
+            if q.stopped {
+                stopped128[ci] = Some(tp::QKV_SET);
+            }
+            if q.unfit {
+                unfit[ci].push(tp::QKV_SET);
+            }
+            if let Some(x) = q.set {
+                r128[ci].push(x);
+            }
         }
     }
     probe.journal(journal);
@@ -4075,8 +4096,8 @@ fn mm_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         probe.worst_permille(),
         qkv
     ));
-    if let Some(t) = &t128 {
-        tc128_report(p, label, t.kind, &r128, stopped128, journal, lines);
+    for (ci, t) in t128.iter().enumerate() {
+        tc128_report(p, label, t.kind, &r128[ci], stopped128[ci], &unfit[ci], journal, lines);
     }
     match stopped {
         Some(_) => Err(GpuError::Timeout { waited_us: WAIT_US }),
@@ -4100,55 +4121,72 @@ enum Comp {
     Tc128,
     /// P6-207: `mm_tc_pf`, `mm_tc` with the reads asked in advance (248 registers, the same block and grid).
     Pf,
+    /// P6-210: `mm_tc_v4`, `mm_tc_pf` with 128-bit reads (128 registers, the same block and grid); only aligned products.
+    V4,
 }
 
 impl Comp {
+    /// P6-210: `mm_tc_v4` only on aligned products (a misaligned 128-bit read would be a memory fault on the board).
+    fn fits(self, a: &nvidia_ga104::mm_tc::Args) -> bool {
+        match self {
+            Comp::V4 => nvidia_ga104::mm_tc_v4::fits(a),
+            Comp::Tc128 | Comp::Pf => true,
+        }
+    }
     fn name(self) -> &'static str {
         match self {
             Comp::Tc128 => "mm_tc128",
             Comp::Pf => "mm_tc_pf",
+            Comp::V4 => "mm_tc_v4",
         }
     }
     fn program(self) -> &'static [u8] {
         match self {
             Comp::Tc128 => nvidia_ga104::mm_tc128::MM_TC128,
             Comp::Pf => nvidia_ga104::mm_tc_pf::MM_TC_PF,
+            Comp::V4 => nvidia_ga104::mm_tc_v4::MM_TC_V4,
         }
     }
     fn sha(self) -> &'static str {
         match self {
             Comp::Tc128 => nvidia_ga104::mm_tc128::MM_TC128_SHA256,
             Comp::Pf => nvidia_ga104::mm_tc_pf::MM_TC_PF_SHA256,
+            Comp::V4 => nvidia_ga104::mm_tc_v4::MM_TC_V4_SHA256,
         }
     }
     fn registers(self) -> u32 {
         match self {
             Comp::Tc128 => nvidia_ga104::mm_tc128::REGISTERS,
             Comp::Pf => nvidia_ga104::mm_tc_pf::REGISTERS,
+            Comp::V4 => nvidia_ga104::mm_tc_v4::REGISTERS,
         }
     }
     fn block(self) -> [u32; 3] {
         match self {
             Comp::Tc128 => nvidia_ga104::mm_tc128::BLOCK,
             Comp::Pf => nvidia_ga104::mm_tc_pf::BLOCK,
+            Comp::V4 => nvidia_ga104::mm_tc_v4::BLOCK,
         }
     }
     fn shared(self) -> nvidia_ga104::qmd::SharedMemory {
         match self {
             Comp::Tc128 => nvidia_ga104::mm_tc128::SHARED,
             Comp::Pf => nvidia_ga104::mm_tc_pf::SHARED,
+            Comp::V4 => nvidia_ga104::mm_tc_v4::SHARED,
         }
     }
     fn grid(self, a: &nvidia_ga104::mm_tc::Args) -> [u32; 3] {
         match self {
             Comp::Tc128 => nvidia_ga104::mm_tc128::grid(a),
             Comp::Pf => nvidia_ga104::mm_tc_pf::grid(a),
+            Comp::V4 => nvidia_ga104::mm_tc_v4::grid(a),
         }
     }
     fn cbuf_bytes(self) -> usize {
         match self {
             Comp::Tc128 => nvidia_ga104::mm_tc128::CBUF_BYTES,
             Comp::Pf => nvidia_ga104::mm_tc_pf::CBUF_BYTES,
+            Comp::V4 => nvidia_ga104::mm_tc_v4::CBUF_BYTES,
         }
     }
     /// The journal names (`kt …`): same sets, sets run, qkv median, `mm_tc`'s qkv median beside it.
@@ -4165,6 +4203,12 @@ impl Comp {
                 "kt mm_tc_pf seturi rulate",
                 "kt mm_tc_pf qkv median ns",
                 "kt mm_tc qkv median ns (langa mm_tc_pf)",
+            ],
+            Comp::V4 => [
+                "kt mm_tc_v4 seturi cu aceiasi biti ca mm_tc",
+                "kt mm_tc_v4 seturi rulate",
+                "kt mm_tc_v4 qkv median ns",
+                "kt mm_tc qkv median ns (langa mm_tc_v4)",
             ],
         }
     }
@@ -4183,6 +4227,8 @@ struct Qkv128 {
     set: Option<Tc128Set>,
     /// A copy or a launch the board did not finish (the line is written).
     stopped: bool,
+    /// P6-210: the companion cannot take qkv-513 (`mm_tc_v4` and a misaligned product): not launched.
+    unfit: bool,
 }
 
 /// P6-197: one set, `mm_tc` then `mm_tc128`: the same bytes?, the first differing word, both judgments (times).
@@ -4237,10 +4283,15 @@ fn tc128_launch_bytes(
 }
 
 /// P6-197: the rows and the verdict of `mm_tc128` beside `mm_tc` (verdict = the same bits on every set run).
-fn tc128_report(p: &str, label: &str, kind: Comp, r: &[Tc128Set], stopped: Option<usize>, journal: &mut Journal, lines: &mut Vec<String>) {
+#[allow(clippy::too_many_arguments)]
+fn tc128_report(p: &str, label: &str, kind: Comp, r: &[Tc128Set], stopped: Option<usize>, unfit: &[usize], journal: &mut Journal, lines: &mut Vec<String>) {
     use nvidia_ga104::mm_tc_probe as tp;
     let n = kind.name();
     let kt = kind.kt();
+    // P6-210: the sets not launched because the product is not aligned for 128-bit reads.
+    for &i in unfit {
+        lines.push(format!("{}: kronos --gpu: {} set {} ({}): nealiniat (randuri nu multiplu de 4 sau adrese nu multiplu de 16 octeti), sarit", p, n, tp::SETS[i].name, label));
+    }
     for x in r {
         let name = tp::SETS[x.set].name;
         let t = match (x.old.median_ns(), x.new.median_ns()) {
@@ -4282,7 +4333,8 @@ fn tc128_report(p: &str, label: &str, kind: Comp, r: &[Tc128Set], stopped: Optio
         None if same == r.len() && !r.is_empty() => String::from("TRECE"),
         None => String::from("NU TRECE"),
     };
-    lines.push(format!("{}: kronos --gpu: proba {}: {}: {} / {} seturi cu aceiasi biti ca mm_tc, {}", p, n, verdict, same, r.len(), speed));
+    let skipped = if unfit.is_empty() { String::new() } else { format!(", {} sarite (nealiniate)", unfit.len()) };
+    lines.push(format!("{}: kronos --gpu: proba {}: {}: {} / {} seturi cu aceiasi biti ca mm_tc{}, {}", p, n, verdict, same, r.len(), skipped, speed));
 }
 
 /// P6-137: one submission of the QMD at `qmd_va` (records in `ctx.rec`); `Ok(ns)` = its time, `Err(last)` = the
@@ -4339,8 +4391,8 @@ fn mm_tc_qkv<V: Mmio + ?Sized, K: Clock + ?Sized>(
     maps: &[Mapping],
     prog_va: u64,
     zone: Mapping,
-    t128: Option<&Tc128>,
-    q128: &mut Qkv128,
+    t128: &[Tc128],
+    q128s: &mut [Qkv128],
 ) -> GpuResult<QkvOutcome> {
     use nvidia_ga104::{mm_tc as tc, mm_tc_probe as tp};
     let set = &tp::SETS[tp::QKV_SET];
@@ -4455,7 +4507,15 @@ fn mm_tc_qkv<V: Mmio + ?Sized, K: Clock + ?Sized>(
         out.extend_from_slice(&ram_read(&host, n as u64));
     }
     // 5. P6-197: `mm_tc128` on the same inputs (board only): the ranges NaN again, 5 launches, the ranges back, compared.
-    if let (Some(t), true) = (t128, permit.is_some()) {
+    // P6-210: every companion in turn (`mm_tc_pf`, then `mm_tc_v4`), each from NaN again.
+    for (t, q128) in t128.iter().zip(q128s.iter_mut()) {
+        if permit.is_none() {
+            break;
+        }
+        if !t.kind.fits(&set.args(big.va)) {
+            q128.unfit = true;
+            continue;
+        }
         for &(o, n) in &fill {
             let bytes: Vec<u8> = core::iter::repeat_n(tp::FILL.to_le_bytes(), n / 4).flatten().collect();
             ram_write(&host, &bytes);
