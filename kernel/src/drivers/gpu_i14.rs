@@ -5694,6 +5694,109 @@ const KT_513_PROBE_64K8: &str = "kt proba 64x64k8 terminata cu aceiasi biti (1/0
 /// P6-195: the variant held since os-413 (`RACE_HOLD`), probed alone with `--proba-64k8`.
 const PROBE_64K8_NAME: &str = "mm_tv_64x64k8";
 
+/// P6-196: 1 = #513's `mm_train` shapes on the os-416 race's pick (`--mm-alegere`), and how many shapes left the witness.
+const KT_513_MM_CHOICE: &str = "kt antrenare-513 inmultirile pe varianta aleasa de cursa (1/0)";
+const KT_513_MM_CHOICE_FORMS: &str = "kt antrenare-513 forme pe o varianta aleasa";
+/// P6-196 (C-165, centre note of 25 Nov 02:10): the 60 race rows of os-416 (hub
+/// `rezultate/os-automat/2026-11-25/ciclu-auto-20261125-0135.txt`), copied as the OS wrote them (`race_row`), behind a
+/// `os-416: ` prefix so `mm_train_variants::parse_race` reads them. All 60 with the witness's bits; `mm_tv_128x128`
+/// fastest on all 15 shapes.
+const OS416_RACE: &str = "\
+os-416: cursa: mm_train_tile | 1024x2304x768 f6 (x12 in pas) | 2839.4 us median | 1.27 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x64 | 1024x2304x768 f6 (x12 in pas) | 2717.2 us median | 1.33 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_64x128 | 1024x2304x768 f6 (x12 in pas) | 2710.5 us median | 1.33 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x128 | 1024x2304x768 f6 (x12 in pas) | 1890.2 us median | 1.91 TFLOP/s | biti =\n\
+os-416: cursa: mm_train_tile | 1024x768x768 f6 (x12 in pas) | 841.4 us median | 1.43 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x64 | 1024x768x768 f6 (x12 in pas) | 903.2 us median | 1.33 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_64x128 | 1024x768x768 f6 (x12 in pas) | 904.3 us median | 1.33 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x128 | 1024x768x768 f6 (x12 in pas) | 633.1 us median | 1.90 TFLOP/s | biti =\n\
+os-416: cursa: mm_train_tile | 1024x3072x768 f6 (x12 in pas) | 3801.5 us median | 1.27 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x64 | 1024x3072x768 f6 (x12 in pas) | 3640.8 us median | 1.32 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_64x128 | 1024x3072x768 f6 (x12 in pas) | 3616.8 us median | 1.33 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x128 | 1024x3072x768 f6 (x12 in pas) | 2534.0 us median | 1.90 TFLOP/s | biti =\n\
+os-416: cursa: mm_train_tile | 1024x768x3072 f6 (x12 in pas) | 3702.4 us median | 1.30 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x64 | 1024x768x3072 f6 (x12 in pas) | 3557.6 us median | 1.35 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_64x128 | 1024x768x3072 f6 (x12 in pas) | 3546.0 us median | 1.36 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x128 | 1024x768x3072 f6 (x12 in pas) | 2465.6 us median | 1.95 TFLOP/s | biti =\n\
+os-416: cursa: mm_train_tile | 1024x16384x768 f2 (x1 in pas) | 20312.7 us median | 1.26 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x64 | 1024x16384x768 f2 (x1 in pas) | 19461.2 us median | 1.32 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_64x128 | 1024x16384x768 f2 (x1 in pas) | 18111.9 us median | 1.42 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x128 | 1024x16384x768 f2 (x1 in pas) | 14096.8 us median | 1.82 TFLOP/s | biti =\n\
+os-416: cursa: mm_train_tile | 16384x768x1024 f1 (x1 in pas) | 19949.5 us median | 1.29 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x64 | 16384x768x1024 f1 (x1 in pas) | 17999.8 us median | 1.43 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_64x128 | 16384x768x1024 f1 (x1 in pas) | 17897.8 us median | 1.43 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x128 | 16384x768x1024 f1 (x1 in pas) | 12165.2 us median | 2.11 TFLOP/s | biti =\n\
+os-416: cursa: mm_train_tile | 1024x768x16384 f0 (x1 in pas) | 19692.5 us median | 1.30 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x64 | 1024x768x16384 f0 (x1 in pas) | 17595.5 us median | 1.46 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_64x128 | 1024x768x16384 f0 (x1 in pas) | 17589.8 us median | 1.46 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x128 | 1024x768x16384 f0 (x1 in pas) | 12920.0 us median | 1.99 TFLOP/s | biti =\n\
+os-416: cursa: mm_train_tile | 1024x3072x768 f0 (x12 in pas) | 3488.6 us median | 1.38 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x64 | 1024x3072x768 f0 (x12 in pas) | 3602.0 us median | 1.34 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_64x128 | 1024x3072x768 f0 (x12 in pas) | 3553.0 us median | 1.35 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x128 | 1024x3072x768 f0 (x12 in pas) | 2437.0 us median | 1.98 TFLOP/s | biti =\n\
+os-416: cursa: mm_train_tile | 768x3072x1024 f1 (x12 in pas) | 3775.8 us median | 1.27 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x64 | 768x3072x1024 f1 (x12 in pas) | 3609.2 us median | 1.33 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_64x128 | 768x3072x1024 f1 (x12 in pas) | 3555.3 us median | 1.35 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x128 | 768x3072x1024 f1 (x12 in pas) | 2429.5 us median | 1.98 TFLOP/s | biti =\n\
+os-416: cursa: mm_train_tile | 1024x768x3072 f0 (x12 in pas) | 3691.6 us median | 1.30 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x64 | 1024x768x3072 f0 (x12 in pas) | 3555.9 us median | 1.35 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_64x128 | 1024x768x3072 f0 (x12 in pas) | 3553.3 us median | 1.35 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x128 | 1024x768x3072 f0 (x12 in pas) | 2436.1 us median | 1.98 TFLOP/s | biti =\n\
+os-416: cursa: mm_train_tile | 3072x768x1024 f1 (x12 in pas) | 3596.6 us median | 1.34 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x64 | 3072x768x1024 f1 (x12 in pas) | 3579.4 us median | 1.34 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_64x128 | 3072x768x1024 f1 (x12 in pas) | 3576.0 us median | 1.35 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x128 | 3072x768x1024 f1 (x12 in pas) | 2429.5 us median | 1.98 TFLOP/s | biti =\n\
+os-416: cursa: mm_train_tile | 1024x768x768 f0 (x12 in pas) | 834.0 us median | 1.44 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x64 | 1024x768x768 f0 (x12 in pas) | 900.6 us median | 1.34 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_64x128 | 1024x768x768 f0 (x12 in pas) | 899.0 us median | 1.34 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x128 | 1024x768x768 f0 (x12 in pas) | 626.3 us median | 1.92 TFLOP/s | biti =\n\
+os-416: cursa: mm_train_tile | 768x768x1024 f1 (x12 in pas) | 921.5 us median | 1.31 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x64 | 768x768x1024 f1 (x12 in pas) | 1194.1 us median | 1.01 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_64x128 | 768x768x1024 f1 (x12 in pas) | 1188.4 us median | 1.01 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x128 | 768x768x1024 f1 (x12 in pas) | 818.6 us median | 1.47 TFLOP/s | biti =\n\
+os-416: cursa: mm_train_tile | 1024x768x2304 f0 (x12 in pas) | 2778.1 us median | 1.30 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x64 | 1024x768x2304 f0 (x12 in pas) | 2676.8 us median | 1.35 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_64x128 | 1024x768x2304 f0 (x12 in pas) | 2675.3 us median | 1.35 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x128 | 1024x768x2304 f0 (x12 in pas) | 1840.7 us median | 1.96 TFLOP/s | biti =\n\
+os-416: cursa: mm_train_tile | 2304x768x1024 f1 (x12 in pas) | 2748.7 us median | 1.31 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x64 | 2304x768x1024 f1 (x12 in pas) | 2975.4 us median | 1.21 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_64x128 | 2304x768x1024 f1 (x12 in pas) | 2971.4 us median | 1.21 TFLOP/s | biti =\n\
+os-416: cursa: mm_tv_128x128 | 2304x768x1024 f1 (x12 in pas) | 2427.7 us median | 1.49 TFLOP/s | biti =\n\
+";
+
+/// P6-196: the variant per `mm_train` shape of #513's step for `--mm-alegere`: the os-416 race read back with
+/// `parse_race` -> `MmChoice::from_race` (Cyber-GPU's rule: the fastest with the witness's bits, only at >= 3 % gain).
+/// A shape of `forms` the race never ran (none on the board; all of the small model in SIMULARE) gets the variant the
+/// race chose most often. Returns (the choice, shapes from the race, shapes filled in, that variant's index, the step
+/// saving the race deduces in ns).
+fn mm_choice_513(forms: &[nvidia_ga104::mm_train_variants::Form]) -> GpuResult<(nvidia_ga104::mm_train_variants::MmChoice, usize, usize, usize, u64)> {
+    use nvidia_ga104::mm_train_variants as mv;
+    let race = mv::parse_race(OS416_RACE);
+    let table = race.choice()?;
+    let mut votes = [0usize; mv::VARIANTS.len()];
+    for (_, v) in table.entries() {
+        votes[v] += 1;
+    }
+    // The most chosen variant (ties -> the lower index); 0 (the witness) when the race chose nothing.
+    let common = (1..votes.len()).fold(0usize, |best, i| if votes[i] > votes[best] || (best == 0 && votes[i] > 0) { i } else { best });
+    let mut choice = mv::MmChoice::new();
+    let (mut from_race, mut filled) = (0usize, 0usize);
+    for f in forms {
+        let in_race = race.counts.iter().any(|c| (c.m, c.n, c.k, c.flags) == (f.m, f.n, f.k, f.flags));
+        let v = if in_race { table.of(f.m, f.n, f.k, f.flags) } else { common };
+        if v == 0 {
+            continue;
+        }
+        choice.set(f.m, f.n, f.k, f.flags, v)?;
+        if in_race {
+            from_race += 1;
+        } else {
+            filled += 1;
+        }
+    }
+    Ok((choice, from_race, filled, common, race.saved_ns(&table)))
+}
+
 /// P6-172: the pieces of the arena that are not zero before the first step, written into one upload piece
 /// `[cva, cva + buf.len())` of the arena: the weights (tensor by tensor, straight from `params`, so the GiB of the
 /// weights are never copied into one buffer — the kernel heap is 1 GiB), then the small `pieces` (the batch, the
@@ -5870,10 +5973,26 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // (`ln_back_res`, GELU' written by "proj-dX") with the glued products on `mm_train_tile_gelu`: 385 -> 349 launches,
     // the same arena; the same bits as glued without tiles (SIMULARE), judged against the oracle as before.
     let fused_tile = mm_tile && super::gpu_tur::TRAIN_513_FUSED_TILE_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    // P6-196 (C-165, os-416 race; cyber-gpu note C-165_cursa-mm steps 2-3): with `--mm-alegere` (only after `--mm-placi`
+    // or `--colsum-impartit`, not with `--lipit-placi`), every `mm_train` shape of the step on the variant the os-416 race
+    // picked (`Plan::with_mm_choice`): the same arena, the same launches; only the programs of the chosen shapes change.
+    let mm_choice_on = mm_tile && !fused_tile && super::gpu_tur::TRAIN_513_MM_CHOICE_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    let mm_choice = if mm_choice_on {
+        // The step's shapes, from a probe of the `with_mm_tile` plan (the choice keeps the shapes and the order).
+        let pl = if tiles3 { Plan::new_tiles3(a, bsz, tl, x0, nvidia_ga104::mmu::VA_BASE)? } else { Plan::new(a, bsz, tl, x0, nvidia_ga104::mmu::VA_BASE)? };
+        let adam0 = AdamW { lr: 1e-3, beta1: 0.9, beta2: 0.999, eps: 1e-8, weight_decay: 0.1, t: 0, m: Vec::new(), v: Vec::new() };
+        let list = pl.with_mm_tile().resident()?.step(Recipe::AdamW513, &adam0, 1)?;
+        Some(mm_choice_513(&nvidia_ga104::mm_train_variants::forms(&list))?)
+    } else {
+        None
+    };
+    let choice = mm_choice.as_ref().map(|(c, ..)| *c);
     let build = |base: u64| -> GpuResult<Plan> {
         let pl = if tiles3 { Plan::new_tiles3(a, bsz, tl, x0, base)? } else { Plan::new(a, bsz, tl, x0, base)? };
         let pl = if fused_tile {
             pl.with_fused_back().with_fused_gelu().with_mm_tile_gelu()
+        } else if let Some(c) = choice {
+            pl.with_mm_choice(c)
         } else if mm_tile {
             pl.with_mm_tile()
         } else {
@@ -5885,6 +6004,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     journal.push(Event::Value { what: KT_513_MM_TILE, value: mm_tile as u32 });
     journal.push(Event::Value { what: KT_513_COLSUM_SPLIT, value: colsum_split as u32 });
     journal.push(Event::Value { what: KT_513_FUSED_TILE, value: fused_tile as u32 });
+    journal.push(Event::Value { what: KT_513_MM_CHOICE, value: mm_choice_on as u32 });
     // P6-190 (C-165, cyber-gpu note `C-165_cursa-mm.md`): with `--cursa-mm` (only after `--mm-placi`), after the steps,
     // every variant of `mm_train_variants::VARIANTS` on every `mm_train` shape of the step, against the witness.
     let race = mm_tile && super::gpu_tur::TRAIN_513_RACE_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
@@ -5909,12 +6029,15 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     }
     let probe_programs = probe0.programs();
     let probe_extra = (probe0.fused_programs(), probe0.mm_tile_gelu_programs());
+    let probe_choice = (probe0.mm_choice().copied(), probe0.mm_choice_programs().to_vec());
     drop(probe0);
     let varena = map_vram(st, arena_bytes)?;
     let plan0 = build(varena.va)?.resident()?;
     if plan0.bytes() > arena_bytes || plan0.mm_tile() != mm_tile || plan0.colsum_split() != colsum_split || plan0.programs() != probe_programs
         || plan0.fused_back() != fused_tile || plan0.fused_gelu() != fused_tile || plan0.mm_tile_gelu() != fused_tile
         || (plan0.fused_programs(), plan0.mm_tile_gelu_programs()) != probe_extra
+        || (plan0.mm_choice().copied(), plan0.mm_choice_programs().to_vec()) != probe_choice
+        || plan0.mm_choice().copied() != choice
     {
         return Err(bad("antrenare-513: planul rezident difera intre adrese"));
     }
@@ -5928,20 +6051,35 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     journal.push(Event::Value { what: KT_513_LAUNCHES, value: n_launch as u32 });
     journal.push(Event::Value { what: KT_513_SUBS, value: n_parts as u32 });
     lines.push(format!(
-        "{}: kronos --gpu: {} ({}): modelul vocabular {}, context {}, E {}, {} capete, {} straturi ({} greutati), lot {} x {}, AdamW lr 1e-3, taiere 1,0; {}; {}{}{}{}; {} programe (SHA-256 verificate), {} lansari pe pas in {} trimiteri (cel mult {} lansari pe trimitere); arena {} MiB in VRAM (VRAM liber {} MiB), urcata o data pe bucati de {} KiB; {} pasi{}",
+        "{}: kronos --gpu: {} ({}): modelul vocabular {}, context {}, E {}, {} capete, {} straturi ({} greutati), lot {} x {}, AdamW lr 1e-3, taiere 1,0; {}; {}{}{}{}{}; {} programe (SHA-256 verificate), {} lansari pe pas in {} trimiteri (cel mult {} lansari pe trimitere); arena {} MiB in VRAM (VRAM liber {} MiB), urcata o data pe bucati de {} KiB; {} pasi{}",
         p, tag, label, a.vocab, a.ctx, a.n_emb, a.heads, a.layers, count, bsz, tl, data.source,
         if tiles3 { "atentia pe placi gen 3 (attn_fwd_tile3, attn_back_tile0_3, attn_back_tile_3; --placi3)" } else { "atentia de baza (attn_fwd, attn_back)" },
         if mm_tile { "; inmultirile pe mm_train_tile (blocuri 256 x 64 x 64; --mm-placi)" } else { "" },
         if fused_tile { "; lipit (ln_back_res, GELU' in proj-dX) cu proj-dX+gelu pe mm_train_tile_gelu (--lipit-placi)" } else { "" },
+        if mm_choice_on { "; inmultirile pe varianta aleasa de cursa os-416 (Plan::with_mm_choice; --mm-alegere)" } else { "" },
         match plan0.colsum_scratch() {
             Some((_, _, words)) => format!("; colsum impartit pe randuri (colsum_part + colsum; zona de lucru {} KiB dupa arena; --colsum-impartit)", (2 * 4 * words as u64) >> 10),
             None => String::new(),
         },
-        plan0.programs().len() + plan0.fused_programs().len() + plan0.mm_tile_programs().len() + plan0.mm_tile_gelu_programs().len() + plan0.colsum_split_programs().len(), n_launch, n_parts, split, arena_bytes >> 20, free >> 20, piece >> 10, steps,
+        plan0.programs().len() + plan0.fused_programs().len() + plan0.mm_tile_programs().len() + plan0.mm_tile_gelu_programs().len() + plan0.mm_choice_programs().len() + plan0.colsum_split_programs().len(), n_launch, n_parts, split, arena_bytes >> 20, free >> 20, piece >> 10, steps,
         if board { "; fara oracol (procesorul nu face pasul #513 in timp util): pierderea la pasul 1 ~ ln 16 384, apoi scade" } else { ", oracolul pe procesor la fiecare pas, greutatile la sfarsit" }
     ));
     let mut progs: Vec<(ts::Prog, Mapping)> = Vec::new();
-    for &prog in plan0.programs().iter().chain(plan0.fused_programs()).chain(plan0.mm_tile_programs()).chain(plan0.mm_tile_gelu_programs()).chain(plan0.colsum_split_programs()) {
+    // P6-196: the chosen race variants (`mm_choice_programs`) too, each with the tail page like every program (P6-194).
+    let choice_progs: Vec<ts::Prog> = plan0.mm_choice_programs().to_vec();
+    if let Some((c, from_race, filled, common, saved_ns)) = &mm_choice {
+        use nvidia_ga104::mm_train_variants::VARIANTS;
+        let picks: Vec<String> = c.entries().map(|(f, v)| format!("{}x{}x{} f{} -> {}", f.m, f.n, f.k, f.flags, VARIANTS[v].name)).collect();
+        journal.push(Event::Value { what: KT_513_MM_CHOICE_FORMS, value: (from_race + filled) as u32 });
+        lines.push(format!(
+            "{}: kronos --gpu: {}: alegerea inmultirilor (--mm-alegere, din cursa os-416 citita cu parse_race; cea mai rapida cu aceiasi biti, la >= 3 % castig): {} forme pe o varianta ({} din cursa, {} fara rand in cursa -> varianta cea mai des aleasa, {}); programe in plus: {}; in cursa, pasul ar fi scazut cu ~{} us (DEDUS, timpi izolati); {}",
+            p, tag, from_race + filled, from_race, filled, VARIANTS[*common].name,
+            if choice_progs.is_empty() { String::from("niciunul") } else { choice_progs.iter().map(|q| q.name()).collect::<Vec<_>>().join(", ") },
+            saved_ns / 1000,
+            if picks.is_empty() { String::from("nicio forma schimbata (pasul = --mm-placi)") } else { picks.join("; ") }
+        ));
+    }
+    for &prog in plan0.programs().iter().chain(plan0.fused_programs()).chain(plan0.mm_tile_programs()).chain(plan0.mm_tile_gelu_programs()).chain(choice_progs.iter()).chain(plan0.colsum_split_programs()) {
         // `fused_programs` and `mm_tile_programs` never overlap `programs`, but a program loaded twice would only waste VRAM.
         if progs.iter().any(|(q, _)| *q == prog) {
             continue;
