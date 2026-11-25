@@ -482,6 +482,11 @@ pub static TRAIN_513_OCCUPANCY_IN_CYCLE: core::sync::atomic::AtomicBool = core::
 /// (`test-placa … --mm-alegere --treapta-pas`) and, in the test build, by `gpu antrenare-mini-sim vram-513-treapta`.
 pub static TRAIN_513_SM_STEP_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-208 (centre note 25 Nov 14:40, point 2: the big batch): #513's batch (sequences of 512 per step) asked by the
+/// cycle's `--lot-513 N` (1..=16); 0 = the default (2, as since os-386). Set only by the cycle and, in the test build,
+/// by `gpu antrenare-mini-sim lot513 <N>`. If the arena of N does not fit, the step falls back to 2 and says why.
+pub static TRAIN_513_BATCH: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
 /// P6-196 (cyber-gpu `214be67` + `0c74b3c`, note C-165_cursa-mm steps 2-3; os-416 race): with
 /// [`TRAIN_513_MM_TILE_IN_CYCLE`], #513's `mm_train` shapes on the variant the os-416 race picked
 /// (`Plan::with_mm_choice`). Set only by the cycle (`test-placa … --mm-placi [--colsum-impartit] --mm-alegere`) and, in

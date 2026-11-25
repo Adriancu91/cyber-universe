@@ -6290,6 +6290,13 @@ const KT_513_MM_CHOICE: &str = "kt antrenare-513 inmultirile pe varianta aleasa 
 /// P6-205: 1 = #513's step packed with one SM shared-memory step (`--treapta-pas`), and that step in KiB.
 const KT_513_SM_STEP: &str = "kt antrenare-513 o treapta a memoriei comune pe tot pasul (1/0)";
 const KT_513_SM_STEP_KIB: &str = "kt antrenare-513 treapta pasului KiB";
+/// P6-208: #513's batch (sequences of 512 per step) actually run: 2 by default, N after `--lot-513 N` if it fits.
+const KT_513_BATCH: &str = "kt antrenare-513 lot (secvente pe pas)";
+/// P6-208 (DECIZII 25 Nov 11:52/11:55): does #513's arena, with the launch zone, fit in the largest free VRAM piece
+/// while keeping `reserve` free? (No fixed ceiling: the board is ours alone in this OS.)
+fn batch_fits(arena: u64, zone: u64, reserve: u64, largest: u64) -> bool {
+    arena.saturating_add(zone).saturating_add(reserve) <= largest
+}
 /// P6-198: 1 = #513's mixed step (`--mixt-513`, every product on `mm_tc`, S = 2^14), 0 = the F32 step.
 const KT_513_MIXED: &str = "kt antrenare-513 pasul mixt (1/0)";
 /// P6-198: the `mm_tc` launches of one mixed #513 step (147 expected on the board).
@@ -6532,11 +6539,12 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     const TOL: f64 = 1e-3;
     // P6-198: the mixed step's tolerances against the F32 oracle (loss, norm), as `--antrenare-mini --mixt` (C-160_P7f).
     const TOL_MIXED: (f64, f64) = (1e-3, 2e-3);
-    // The workstation's rule (CLAUDE.md of Kronos, 12 Oct): under ~7 GiB of VRAM; the generation's model is already there.
-    const ARENA_MAX: u64 = 6 << 30;
+    // P6-208 (DECIZII 25 Nov 11:52 + 11:55): no fixed ceiling any more (it was 6 GiB, the Windows rule of Kronos); the
+    // arena takes what fits in the largest free VRAM piece after the driver's start, keeping at least this much free.
+    const ARENA_RESERVE: u64 = 256 << 20;
     let board = permit.is_some();
     let rec_cap = ((ctx.rec.size / 16) as usize).saturating_sub(1).min(STRIDE as usize - 1);
-    let (a, bsz, tl, steps, piece, split) = if board {
+    let (a, mut bsz, tl, steps, piece, split) = if board {
         (train::M513, 2usize, 512usize, 10usize, 64u64 << 20, rec_cap)
     } else {
         (am::arch(am::VOCAB, 32), 2usize, 32usize, 2usize, 1u64 << 20, 32usize.min(rec_cap))
@@ -6546,6 +6554,48 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     journal.push(Event::Value { what: KT_513_PASS, value: 0 });
     if split == 0 {
         return Err(bad("antrenare-513: zona inregistrarilor prea mica"));
+    }
+    // P6-208 (centre note 25 Nov 14:40, point 2): the batch asked by `--lot-513 N`; before anything is sent, the arena
+    // of N (the same plan options, a zero batch: the resident plan's addresses do not depend on the tokens) is checked
+    // against the largest free VRAM piece; if it does not fit, back to the old batch (2) with the reason in the report.
+    {
+        use core::sync::atomic::Ordering::SeqCst;
+        let want = super::gpu_tur::TRAIN_513_BATCH.load(SeqCst);
+        if want != 0 && want != bsz {
+            let t3 = super::gpu_tur::TRAIN_513_TILES3_IN_CYCLE.load(SeqCst);
+            let mt = t3 && super::gpu_tur::TRAIN_513_MM_TILE_IN_CYCLE.load(SeqCst);
+            let cs = mt && super::gpu_tur::TRAIN_513_COLSUM_SPLIT_IN_CYCLE.load(SeqCst);
+            let need = |b: usize| -> GpuResult<(u64, u64)> {
+                let x = alloc::vec![0u32; b * tl];
+                let base = nvidia_ga104::mmu::VA_BASE;
+                let pl = if t3 { Plan::new_tiles3(a, b, tl, &x, base)? } else { Plan::new(a, b, tl, &x, base)? };
+                let pl = if mt { pl.with_mm_tile() } else { pl };
+                let pl = if cs { pl.with_colsum_split() } else { pl };
+                let r = pl.resident()?;
+                let n = r.launches_per_step(Recipe::AdamW513);
+                Ok((r.bytes().next_multiple_of(PAGE), (n as u64 * ts::SLOT_TC.max(ts::SLOT)).next_multiple_of(PAGE)))
+            };
+            let (free, largest) = st.mem.vram_free();
+            let pick = need(want).map(|(arena, zone)| (arena, zone, batch_fits(arena, zone, ARENA_RESERVE, largest)));
+            match pick {
+                Ok((arena, zone, true)) => {
+                    lines.push(format!(
+                        "{}: kronos --gpu: {}: lot {} x {} (--lot-513 {}): arena {} MiB + zona lansarilor {} KiB + rezerva {} MiB incap in cea mai lunga bucata libera de VRAM ({} MiB; VRAM liber {} MiB)",
+                        p, tag, want, tl, want, arena >> 20, zone >> 10, ARENA_RESERVE >> 20, largest >> 20, free >> 20
+                    ));
+                    bsz = want;
+                }
+                Ok((arena, zone, false)) => lines.push(format!(
+                    "{}: kronos --gpu: {}: lot {} x {} (--lot-513 {}) NU INCAPE: arena {} MiB + zona {} KiB + rezerva {} MiB > cea mai lunga bucata libera {} MiB (VRAM liber {} MiB); revin la lotul vechi {} x {}",
+                    p, tag, want, tl, want, arena >> 20, zone >> 10, ARENA_RESERVE >> 20, largest >> 20, free >> 20, bsz, tl
+                )),
+                Err(e) => lines.push(format!(
+                    "{}: kronos --gpu: {}: lot {} x {} (--lot-513 {}): planul nu s-a putut face ({:?}); revin la lotul vechi {} x {}",
+                    p, tag, want, tl, want, e, bsz, tl
+                )),
+            }
+        }
+        journal.push(Event::Value { what: KT_513_BATCH, value: bsz as u32 });
     }
     let data = match am::board_batches(bsz, tl, steps) {
         Ok(d) => d,
@@ -6637,13 +6687,18 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // P6-198: an `mm_tc` launch takes `SLOT_TC` bytes of the zone (its larger cbuf), the others `SLOT`.
     let zone_bytes = (n_launch as u64 * if mixed { ts::SLOT_TC.max(ts::SLOT) } else { ts::SLOT }).next_multiple_of(PAGE);
     let (free, largest) = st.mem.vram_free();
-    if arena_bytes > ARENA_MAX || arena_bytes + VRAM_RESERVE > largest {
+    if !batch_fits(arena_bytes, zone_bytes, ARENA_RESERVE, largest) {
         lines.push(format!(
-            "{}: kronos --gpu: {}: NU A RULAT: arena {} MiB (cel mult {} MiB; VRAM liber {} MiB, cea mai lunga bucata {} MiB, rezerva {} MiB); nimic trimis",
-            p, tag, arena_bytes >> 20, ARENA_MAX >> 20, free >> 20, largest >> 20, VRAM_RESERVE >> 20
+            "{}: kronos --gpu: {}: NU A RULAT: arena {} MiB + zona lansarilor {} KiB + rezerva {} MiB nu incap (VRAM liber {} MiB, cea mai lunga bucata {} MiB); nimic trimis",
+            p, tag, arena_bytes >> 20, zone_bytes >> 10, ARENA_RESERVE >> 20, free >> 20, largest >> 20
         ));
         return Err(GpuError::OutOfMemory { requested: arena_bytes });
     }
+    // P6-208 (DECIZII 25 Nov 11:55): the arena chosen and the free VRAM, in the report.
+    lines.push(format!(
+        "{}: kronos --gpu: {}: arena aleasa {} MiB (lot {} x {}) + zona lansarilor {} KiB; VRAM liber {} MiB, cea mai lunga bucata {} MiB, rezerva pastrata >= {} MiB (fara plafon fix; DECIZII 25 nov 11:52/11:55)",
+        p, tag, arena_bytes >> 20, bsz, tl, zone_bytes >> 10, free >> 20, largest >> 20, ARENA_RESERVE >> 20
+    ));
     let probe_programs = probe0.programs();
     let probe_extra = (probe0.fused_programs(), probe0.mm_tile_gelu_programs());
     let probe_choice = (probe0.mm_choice().copied(), probe0.mm_choice_programs().to_vec());

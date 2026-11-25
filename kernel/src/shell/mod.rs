@@ -1051,6 +1051,20 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu tablou-pas-sim: exista doar in build-ul de test (pe stick: test-placa --tablou-viteza ...)\n");
         }
+        Some("lot513-sim") => {
+            // P6-208: test build only: #513's batch for the next `antrenare-mini-sim vram-513…` run (0 = the default 2);
+            // on the stick it is `test-placa … --antrenare-513 … --lot-513 N`.
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).and_then(|n| n.parse::<usize>().ok()) {
+                Some(n) if args.len() == 2 && n <= crate::shell::ciclu::TRAIN_513_BATCH_MAX => {
+                    crate::drivers::gpu_tur::TRAIN_513_BATCH.store(n, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu lot513-sim: lotul pasului #513 = {} (0 = implicit 2)\n", n);
+                }
+                _ => out!("folosire: gpu lot513-sim <0..16>\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu lot513-sim: exista doar in build-ul de test (pe stick: test-placa ... --antrenare-513 ... --lot-513 N)\n");
+        }
         Some("antrenare-mini-sim") => {
             // P6-164 (C-161): test build only: after the next `kronos --gpu-sim`'s texts (and every other probe that is
             // on), the whole training step of `antrenare mini` done by the board's list on the simulated board, beside the
