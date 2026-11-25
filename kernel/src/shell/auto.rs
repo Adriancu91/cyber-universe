@@ -38,6 +38,70 @@ const MAX_COMMANDS: usize = 100;
 /// Uptime (ms) after which the safety clock restarts the machine; 0 = not armed.
 static DEADLINE_MS: AtomicU64 = AtomicU64::new(0);
 
+/// P6-206 (C-166 step 3): the thread of `agent veghe` the list started in the background (0 = none). Its console text
+/// goes only to the serial port (`syscall::console_out`), never into the report of the command running beside it.
+static WATCH: AtomicU64 = AtomicU64::new(0);
+
+/// P6-206: the thread of the background `agent veghe` (0 = none).
+pub fn watch_thread() -> u64 {
+    WATCH.load(Ordering::Relaxed)
+}
+
+/// P6-206: where the agent looks for its secrets (the key, the GitHub token): the stick, then the disk.
+const WATCH_SECRETS: [&str; 4] = ["/usb/claude.cheie", "/usb/github.token", "/disk/claude.cheie", "/disk/github.token"];
+
+/// P6-206: before the first `test-placa` / `lucrare` of the list, `agent veghe` (every 10 minutes, sooner on a new
+/// error line) in the background — only when the key or the GitHub token is there (otherwise it has nowhere to write
+/// but the stick, and nothing to summarise with). Once per list.
+fn watch_start(out: &mut Report) {
+    if WATCH.load(Ordering::Relaxed) != 0 || fs::read_all("/bin/agent").is_err() {
+        return;
+    }
+    if !WATCH_SECRETS.iter().any(|p| fs::kind(p).is_ok()) {
+        return;
+    }
+    let line = match crate::proc::spawn_path("/bin/agent", &["agent", "veghe"]) {
+        Ok(id) => {
+            WATCH.store(id, Ordering::Relaxed);
+            format!("auto: agent veghe pornit in fundal (id {}): starea live in hub la ~10 min si la orice abatere\n", id)
+        }
+        Err(e) => format!("auto: agent veghe nu a pornit: {}\n", e.message()),
+    };
+    say(&line);
+    out.add(&line);
+}
+
+/// P6-206: at the end of the list the background agent is stopped (up to 30 s for it to end), then one last tour
+/// (`agent veghe 0 1`, its output in the report) so `live/os-agent.md` shows the state at the end.
+fn watch_stop(out: &mut Report) {
+    let id = WATCH.load(Ordering::Relaxed);
+    if id == 0 {
+        return;
+    }
+    crate::proc::kill(id);
+    let t0 = crate::time::uptime_ms().unwrap_or(0);
+    while crate::proc::running(id) && crate::time::uptime_ms().unwrap_or(0).saturating_sub(t0) < 30_000 {
+        crate::sched::sleep_ms(100);
+    }
+    let ended = !crate::proc::running(id);
+    WATCH.store(0, Ordering::Relaxed);
+    let line = format!("auto: agent veghe oprit (id {}{}); tura finala:\n", id, if ended { "" } else { ", NU s-a oprit in 30 s" });
+    say(&line);
+    out.add(&line);
+    if !ended {
+        return;
+    }
+    super::emit_capture_begin();
+    super::program_capture_begin();
+    super::dispatch("agent veghe 0 1");
+    // The program's own lines were already printed as they came; only the shell's are printed here.
+    let shell = super::emit_capture_end();
+    crate::print!("{}", shell);
+    crate::serial_print!("{}", shell);
+    out.add(&shell);
+    out.add(&super::program_capture_end());
+}
+
 /// Runs the list if there is one (never returns then: the machine restarts). Without a list: returns at once.
 pub fn run_if_present() {
     let list = format!("{}/teste.txt", DIR);
@@ -75,6 +139,11 @@ pub fn run_if_present() {
     let total = plan.commands.len();
     for (i, cmd) in plan.commands.iter().enumerate() {
         out.add(&format!("\n== [{}/{}] {} ==\n", i + 1, total, cmd));
+        // P6-206 (C-166 step 3): `agent veghe` in the background from the first board test or long job on.
+        let first = cmd.split_whitespace().next().unwrap_or("");
+        if first.starts_with("test-placa") || first == "lucrare" {
+            watch_start(&mut out);
+        }
         // P6-96 (C-143): the board test, with Adrian's keys instead of the allow-list. P6-139 (C-158 point 5): up to
         // `MAX_BOARD_TESTS` of them in one power-on, each with its own report.
         #[cfg(feature = "test-auto")]
@@ -139,6 +208,7 @@ pub fn run_if_present() {
         out.add(&format!("-- gata in {} ms\n", ms));
         ran += 1;
     }
+    watch_stop(&mut out);
     let secs = crate::time::uptime_ms().unwrap_or(0).saturating_sub(start) / 1000;
     let summary = format!("REZULTAT: {} rulate, {} refuzate, {} s; teste pe placa pornite: {}", ran, refused, secs, super::ciclu::board_runs());
     out.add(&format!("\n== {} ==\n", summary));
@@ -231,7 +301,7 @@ pub fn allowed(line: &str) -> Result<(), &'static str> {
         ["reboot", ..] => Err("repornirea o face bucla, la final"),
         ["test-placa", ..] => Err("test-placa scrie in placa video: doar cu cheile lui Adrian (verificate cand vine comanda)"),
         #[cfg(feature = "test-auto")]
-        ["test-blocheaza" | "test-jurnal", ..] => Ok(()),
+        ["test-blocheaza" | "test-jurnal" | "test-asteapta", ..] => Ok(()),
         _ => Err("comanda nu e pe lista alba"),
     }
 }

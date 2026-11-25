@@ -405,6 +405,8 @@ fn run_tests() -> ! {
             shell::hubcmd::self_test();
             shell::lucrare::self_test();
             shell::lucrare::resume_if_present();
+            #[cfg(feature = "test-auto-agent")]
+            test_auto_agent_setup();
             shell::auto::run_if_present();
         }
         serial_println!("TASTATURA: astept taste");
@@ -1821,7 +1823,7 @@ fn test_web() {
 
 /// Adds the test root (tls/tests/data, its private key is public) to /etc/certs, under the name the programs look
 /// for (its subject id). Only test builds do this.
-#[cfg(any(feature = "test-https", feature = "test-web", feature = "test-claude", feature = "test-claude-app", feature = "test-claude-tools", feature = "test-update", feature = "test-ghpush", feature = "test-agent"))]
+#[cfg(any(feature = "test-https", feature = "test-web", feature = "test-claude", feature = "test-claude-app", feature = "test-claude-tools", feature = "test-update", feature = "test-ghpush", feature = "test-agent", feature = "test-auto-agent"))]
 fn add_test_root() {
     let root: &[u8] = include_bytes!("../../tls/tests/data/root.der");
     let subject = cyber_crypto::x509::Cert::parse(root).expect("test: radacina de test").subject;
@@ -1922,6 +1924,19 @@ fn test_agent() {
     let _ = fs::remove("/etc/claude.cheie");
     assert_eq!(run(&["agent", "ping"], "fara cheie"), 1, "test: agent fara cheie");
     info!("test: agentul de bord OK (ping, intrebare, cheltuieli, plafon, unelte de citire, fara cheie)");
+}
+
+/// P6-206 (C-166 step 3): before the list of scenario `auto-agent` runs: the network, the test root, and GitHub pointed
+/// at its imitation (tools/ghpush-test-server.py). The key, the token and agent.setari (the API imitation) are on the
+/// test disk (tests/disk/auto-agent/), as they would be on the stick.
+#[cfg(feature = "test-auto-agent")]
+fn test_auto_agent_setup() {
+    assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
+    add_test_root();
+    let conf = b"host = test.cyber.local\nport = 18447\naddress = 10.0.2.2\ntoken = /disk/github.token\nhub = Adriancu91/note-test\n";
+    let _ = fs::create("/etc/github.conf", fs::Kind::File);
+    fs::write("/etc/github.conf", 0, conf).expect("test: /etc/github.conf");
+    info!("test: auto-agent: retea, radacina de test, GitHub = imitatia");
 }
 
 /// The Claude chat window (P6-05): typed messages go to the imitation of the API (as in `test_claude`), the answers

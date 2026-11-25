@@ -1,0 +1,7 @@
+# test P6-206: imitatia API-ului (tools/claude-test-server.py)
+host = test.cyber.local
+port = 18444
+address = 10.0.2.2
+plafon_zi = 40
+pret_intrare = 5
+pret_iesire = 25

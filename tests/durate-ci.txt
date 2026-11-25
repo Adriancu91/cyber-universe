@@ -14,6 +14,7 @@ auto 26
 auto-ceas 29
 auto-intrerupt 32
 auto-placa 24
+auto-agent 60
 boot 55
 claude-app 32
 claude-cli 25

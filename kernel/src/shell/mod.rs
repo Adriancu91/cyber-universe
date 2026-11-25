@@ -296,6 +296,24 @@ fn dispatch(line: &str) -> bool {
                 core::hint::spin_loop();
             }
         }
+        // Test builds: waits up to <seconds> for a file (scenario `auto-agent`: the background agent's first tour).
+        #[cfg(feature = "test-auto")]
+        "test-asteapta" => match args {
+            [path, secs] => {
+                let limit = secs.parse::<u64>().unwrap_or(10) * 1000;
+                let t0 = crate::time::uptime_ms().unwrap_or(0);
+                let mut ms = 0;
+                while crate::fs::kind(path).is_err() && ms < limit {
+                    crate::sched::sleep_ms(200);
+                    ms = crate::time::uptime_ms().unwrap_or(0).saturating_sub(t0);
+                }
+                match crate::fs::kind(path) {
+                    Ok(_) => out!("test-asteapta: {} exista dupa {} ms\n", path, ms),
+                    Err(_) => out!("test-asteapta: {} NU exista dupa {} ms\n", path, ms),
+                }
+            }
+            _ => out!("folosire: test-asteapta <fisier> <secunde>\n"),
+        },
         _ => {
             LAST_EXIT.store(127, core::sync::atomic::Ordering::Relaxed);
             out!("comanda necunoscuta: {} (scrie help)\n", cmd)

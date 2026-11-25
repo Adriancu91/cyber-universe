@@ -442,6 +442,13 @@ fn console_out(bytes: &[u8]) {
         return;
     }
     let text = core::str::from_utf8(bytes).unwrap_or("<text invalid>");
+    // P6-206: the list's background `agent veghe` writes only to the serial port: its lines must not land in the report
+    // (or the parsed output) of the command running beside it, nor on the screen.
+    let watch = crate::shell::auto::watch_thread();
+    if watch != 0 && crate::sched::current_id() == watch {
+        crate::serial_print!("{}", text);
+        return;
+    }
     crate::shell::program_output(text); // the automatic mode's report (P6-41)
     crate::serial_print!("{}", text);
     crate::print!("{}", text);

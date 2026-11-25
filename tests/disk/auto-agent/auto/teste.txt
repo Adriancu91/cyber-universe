@@ -1,0 +1,6 @@
+# lista de test P6-206 (scenariul auto-agent): agent veghe pornit in fundal inaintea primului test-placa, oprit la final
+ceas 5
+uptime
+test-placa-sim
+test-asteapta /disk/agent/live/os-agent.md 60
+uptime
