@@ -39,33 +39,35 @@ jobs:
       matrix:
         include:
           - parte: teste-1
-            shard: 1/14
+            shard: 1/15
           - parte: teste-2
-            shard: 2/14
+            shard: 2/15
           - parte: teste-3
-            shard: 3/14
+            shard: 3/15
           - parte: teste-4
-            shard: 4/14
+            shard: 4/15
           - parte: teste-5
-            shard: 5/14
+            shard: 5/15
           - parte: teste-6
-            shard: 6/14
+            shard: 6/15
           - parte: teste-7
-            shard: 7/14
+            shard: 7/15
           - parte: teste-8
-            shard: 8/14
+            shard: 8/15
           - parte: teste-9
-            shard: 9/14
+            shard: 9/15
           - parte: teste-10
-            shard: 10/14
+            shard: 10/15
           - parte: teste-11
-            shard: 11/14
+            shard: 11/15
           - parte: teste-12
-            shard: 12/14
+            shard: 12/15
           - parte: teste-13
-            shard: 13/14
+            shard: 13/15
           - parte: teste-14
-            shard: 14/14
+            shard: 14/15
+          - parte: teste-15
+            shard: 15/15
           - parte: stick
             shard: ""
     steps:
