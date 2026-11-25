@@ -5923,6 +5923,10 @@ const PROBE_64K8_NAME: &str = "mm_tv_64x64k8";
 
 /// P6-196: 1 = #513's `mm_train` shapes on the os-416 race's pick (`--mm-alegere`), and how many shapes left the witness.
 const KT_513_MM_CHOICE: &str = "kt antrenare-513 inmultirile pe varianta aleasa de cursa (1/0)";
+/// P6-198: 1 = #513's mixed step (`--mixt-513`, every product on `mm_tc`, S = 2^14), 0 = the F32 step.
+const KT_513_MIXED: &str = "kt antrenare-513 pasul mixt (1/0)";
+/// P6-198: the `mm_tc` launches of one mixed #513 step (147 expected on the board).
+const KT_513_MIXED_TC: &str = "kt antrenare-513 lansari mm_tc pe pas";
 const KT_513_MM_CHOICE_FORMS: &str = "kt antrenare-513 forme pe o varianta aleasa";
 /// P6-196 (C-165, centre note of 25 Nov 02:10): the 60 race rows of os-416 (hub
 /// `rezultate/os-automat/2026-11-25/ciclu-auto-20261125-0135.txt`), copied as the OS wrote them (`race_row`), behind a
@@ -6159,6 +6163,8 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     use gpu_compute::train::{self, AdamW, Batch, Recipe};
     use nvidia_ga104::train_step::{self as ts, Outcome, Plan};
     const TOL: f64 = 1e-3;
+    // P6-198: the mixed step's tolerances against the F32 oracle (loss, norm), as `--antrenare-mini --mixt` (C-160_P7f).
+    const TOL_MIXED: (f64, f64) = (1e-3, 2e-3);
     // The workstation's rule (CLAUDE.md of Kronos, 12 Oct): under ~7 GiB of VRAM; the generation's model is already there.
     const ARENA_MAX: u64 = 6 << 30;
     let board = permit.is_some();
@@ -6239,13 +6245,21 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // of the big race only the witness and `mm_tv_64x64k8` (held since os-413) on the qkv shape, with the tail page.
     let probe64 = race && super::gpu_tur::TRAIN_513_PROBE_64K8_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     let probe64_vi = nvidia_ga104::mm_train_variants::VARIANTS.iter().position(|v| v.name == PROBE_64K8_NAME);
+    // P6-198 (cyber-gpu note C-165_pas-mixt-513): with `--mixt-513` (only after `--mm-placi` or `--colsum-impartit`, last),
+    // the mixed step: every product of the model on `mm_tc` (f16 inputs, f32 sums), the loss scale S = 2^14
+    // (`LOSS_SCALE_513`), 1/S written once at `res + 16`; `res[0]` is then S times the norm. The same arena.
+    let mixed = mm_tile && !fused_tile && !mm_choice_on && !race && super::gpu_tur::TRAIN_513_MIXED_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    let scale = ts::LOSS_SCALE_513;
+    journal.push(Event::Value { what: KT_513_MIXED, value: mixed as u32 });
     let probe0 = build(nvidia_ga104::mmu::VA_BASE)?.resident()?;
     let mut n_launch = 0usize;
     for (x, _) in &data.batches {
-        n_launch = n_launch.max(probe0.rebatch(x)?.launches_per_step(Recipe::AdamW513));
+        let pr = probe0.rebatch(x)?;
+        n_launch = n_launch.max(if mixed { pr.launches_per_step_mixed(Recipe::AdamW513) } else { pr.launches_per_step(Recipe::AdamW513) });
     }
     let arena_bytes = probe0.bytes().next_multiple_of(PAGE);
-    let zone_bytes = (n_launch as u64 * ts::SLOT).next_multiple_of(PAGE);
+    // P6-198: an `mm_tc` launch takes `SLOT_TC` bytes of the zone (its larger cbuf), the others `SLOT`.
+    let zone_bytes = (n_launch as u64 * if mixed { ts::SLOT_TC.max(ts::SLOT) } else { ts::SLOT }).next_multiple_of(PAGE);
     let (free, largest) = st.mem.vram_free();
     if arena_bytes > ARENA_MAX || arena_bytes + VRAM_RESERVE > largest {
         lines.push(format!(
@@ -6281,7 +6295,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         "{}: kronos --gpu: {} ({}): modelul vocabular {}, context {}, E {}, {} capete, {} straturi ({} greutati), lot {} x {}, AdamW lr 1e-3, taiere 1,0; {}; {}{}{}{}{}; {} programe (SHA-256 verificate), {} lansari pe pas in {} trimiteri (cel mult {} lansari pe trimitere); arena {} MiB in VRAM (VRAM liber {} MiB), urcata o data pe bucati de {} KiB; {} pasi{}",
         p, tag, label, a.vocab, a.ctx, a.n_emb, a.heads, a.layers, count, bsz, tl, data.source,
         if tiles3 { "atentia pe placi gen 3 (attn_fwd_tile3, attn_back_tile0_3, attn_back_tile_3; --placi3)" } else { "atentia de baza (attn_fwd, attn_back)" },
-        if mm_tile { "; inmultirile pe mm_train_tile (blocuri 256 x 64 x 64; --mm-placi)" } else { "" },
+        if mixed { "; inmultirile pe mm_tc (pasul mixt, S = 16384; --mixt-513 in locul lui mm_train_tile de la --mm-placi)" } else if mm_tile { "; inmultirile pe mm_train_tile (blocuri 256 x 64 x 64; --mm-placi)" } else { "" },
         if fused_tile { "; lipit (ln_back_res, GELU' in proj-dX) cu proj-dX+gelu pe mm_train_tile_gelu (--lipit-placi)" } else { "" },
         if mm_choice_on { "; inmultirile pe varianta aleasa de cursa os-416 (Plan::with_mm_choice; --mm-alegere)" } else { "" },
         match plan0.colsum_scratch() {
@@ -6315,6 +6329,18 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
         progs.push((prog, pm));
     }
+    // P6-198: `mm_tc` beside the step's programs, with the tail page like every program (P6-194); SHA-256 checked.
+    let tc_map: Option<Mapping> = if mixed {
+        if sha256_hex(nvidia_ga104::mm_tc::MM_TC) != nvidia_ga104::mm_tc::MM_TC_SHA256 {
+            lines.push(format!("{}: kronos --gpu: {}: SHA-256 al lui mm_tc nu e cel din nota: nimic trimis", p, tag));
+            return Err(bad("antrenare-513: SHA-256 mm_tc gresit"));
+        }
+        let pm = map_vram(st, program_map_bytes(nvidia_ga104::mm_tc::MM_TC.len() as u64))?;
+        put_bytes(st.mem.writer_mut(), pm.pa, nvidia_ga104::mm_tc::MM_TC)?;
+        Some(pm)
+    } else {
+        None
+    };
     let pages = |first: u64, n: u64| (first..first + n).map(|i| host + i * PAGE).collect::<Vec<u64>>();
     let stage = st.mem.alloc_sys_mapped(&pages(0, piece / PAGE))?;
     let ctl = st.mem.alloc_sys_mapped(&pages(piece / PAGE, zone_bytes / PAGE))?;
@@ -6357,6 +6383,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     maps.extend(progs.iter().map(|(_, pm)| *pm));
     maps.extend(race_c);
     maps.extend(race_progs.iter().flatten().copied());
+    maps.extend(tc_map);
     let sys = [ctx.sys.clone(), stage.clone(), ctl.clone()];
     let prog_va = |want: ts::Prog| progs.iter().find(|(q, _)| *q == want).map_or(0, |(_, pm)| pm.va);
     // One launch of the copy program, as in `train_mini_resident`.
@@ -6430,6 +6457,18 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         if board { String::new() } else { format!("; bucatile fata de urcarile planului: {} / {} identice octet cu octet", same_pieces, n_pieces) }
     ));
     let pieces_ok = board || same_pieces == n_pieces;
+    // P6-198: 1/S at `res + 16`, once (the steps' lists never write it; `batch_uploads` does not touch `res`).
+    let mut tc_per_step = 0usize;
+    if mixed {
+        let w = st.mem.writer_mut();
+        for (va, bytes) in plan0.mixed_uploads(scale)? {
+            put_bytes(w, varena.pa + (va - varena.va), &bytes)?;
+        }
+        lines.push(format!(
+            "{}: kronos --gpu: {}: pasul mixt (--mixt-513, nota Cyber-GPU C-165_pas-mixt-513): toate inmultirile modelului pe mm_tc (intrari f16, sume f32; SHA-256 verificat, mapat cu pagina de paza), scara erorii S = {} (LOSS_SCALE_513), 1/S scris o data la res + 16; norma citita = res[0] / S; m, v si greutatile raman f32",
+            p, tag, scale as u32
+        ));
+    }
     let read_vram_f32s = |st: &mut GpuState, vbar: &mut V, journal: &mut Journal, va: u64, n: usize| -> GpuResult<Vec<f32>> {
         let GpuState { zone, .. } = &*st;
         let mut vw = nvidia_ga104::vram_window::VramWindow::new(&mut *vbar, &mut *journal, permit, zone.vram_size, &zone.protected)?;
@@ -6468,17 +6507,29 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                     put_bytes(w, varena.pa + (va - varena.va), &bytes)?;
                 }
             }
-            let list = plan.step(Recipe::AdamW513, &adam, step)?;
-            let (zb, qmds) = ts::pack(&list, prog_va, ctl.va)?;
+            let (zb, qmds, list) = match tc_map {
+                // P6-198: the mixed list (the 1x1x1 c/S product included) and its zone; no profile (it reads F32 lists).
+                Some(tc) => {
+                    let ml = plan.step_mixed(Recipe::AdamW513, &adam, step, scale)?;
+                    tc_per_step = ml.iter().filter(|x| matches!(x, ts::MixedLaunch::Tc { .. })).count();
+                    let (zb, qmds) = ts::pack_mixed(&ml, prog_va, tc.va, ctl.va)?;
+                    (zb, qmds, None)
+                }
+                None => {
+                    let list = plan.step(Recipe::AdamW513, &adam, step)?;
+                    let (zb, qmds) = ts::pack(&list, prog_va, ctl.va)?;
+                    (zb, qmds, Some(list))
+                }
+            };
             if zb.len() as u64 > zone_bytes {
                 return Err(bad("antrenare-513: zona de control prea mare"));
             }
-            if race && race_shapes.is_empty() {
-                race_shapes = race_forms(&list);
+            if let (true, true, Some(list)) = (race, race_shapes.is_empty(), list.as_ref()) {
+                race_shapes = race_forms(list);
             }
             ram_write(&ctl, &zb);
-            if prof.is_none() {
-                let pr = nvidia_ga104::train_profile::StepProfile::from_launches(&list)?;
+            if let (None, Some(list)) = (prof.as_ref(), list.as_ref()) {
+                let pr = nvidia_ga104::train_profile::StepProfile::from_launches(list)?;
                 if pr.launches() != qmds.len() {
                     return Err(bad("antrenare-513: profilul pasului nu are cate lansari are lista"));
                 }
@@ -6516,13 +6567,15 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             let [(lr_va, lr_n), (res_va, res_n)] = plan.step_reads();
             let rows = read_vram_f32s(st, vbar, journal, lr_va, (lr_n / 4) as usize)?;
             let norm = read_vram_f32s(st, vbar, journal, res_va, (res_n / 4) as usize)?[0];
+            // P6-198: the mixed list's `res[0]` is S times the norm (S a power of two: the division is exact).
+            let norm = if mixed { norm / scale } else { norm };
             let loss = Outcome::mean_loss(&rows);
             journal.flush_live();
             if let Some(us) = t0.zip(crate::time::since_boot_us()).map(|(a0, a1)| a1.saturating_sub(a0)) {
                 host_us.push(us);
             }
             if !norm.is_finite() || !loss.is_finite() {
-                stopped = Some(format!("pasul {}: pierderea {:?} / norma gradientului {:?} nu e un numar", step, loss, norm));
+                stopped = Some(format!("pasul {}: pierderea {:?} / norma gradientului {:?} nu e un numar{}", step, loss, norm, if mixed { " (scara S prea mare?)" } else { "" }));
                 return Ok(());
             }
             losses.push(loss);
@@ -6618,6 +6671,10 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         "{}: kronos --gpu: {}: timpul pe pas (median, {} pasi): placa {} us = {} simboluri/s la antrenare (lot {} x {}; Windows / PyTorch ~39 300); pasul intreg {} us = {} simboluri/s",
         p, tag, losses.len(), us, tok_s, bsz, tl, host_med, full_tok_s
     ));
+    if mixed {
+        journal.push(Event::Value { what: KT_513_MIXED_TC, value: tc_per_step as u32 });
+        lines.push(format!("{}: kronos --gpu: {}: pasul mixt: {} lansari mm_tc pe pas (din {}), S = {}", p, tag, tc_per_step, n_launch, scale as u32));
+    }
     // P6-183 (os-395: "placa" > "pasul intreg" by ~3 %): the two clocks side by side, so the next report says which.
     lines.push(format!(
         "{}: kronos --gpu: {}: ceasurile: placa / pasul intreg = {} la mie (median; peste 1000 = un ceas gresit); {}",
@@ -6882,7 +6939,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             model: if board { "#513" } else { "modelul mic (SIMULARE)" },
             batch: bsz,
             context: tl,
-            precision: "F32",
+            precision: if mixed { "mixt (f16 pe mm_tc, sume f32)" } else { "F32" },
             data: if data.synthetic { String::from("sintetice MT19937 0x164") } else { data.source.clone() },
             attention: if tiles3 { "pe placi gen 3" } else { "de baza" },
             step_us: host_med,
@@ -6897,12 +6954,13 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // P6-184: on the synthetic batches with exactly the oracle's recipe, the verdict is the oracle (steps 1–9);
     // on Kronos's data the old one (the loss starts at ln V and falls).
     let oracle = (board && data.synthetic && bsz == 2 && tl == 512 && steps == gpu_compute::train::ORACLE_513_SYNTH.len())
-        .then(|| oracle_513_check(&losses, &norms));
+        .then(|| oracle_513_check(&losses, &norms, if mixed { TOL_MIXED } else { (TOL, TOL) }));
     if let Some(o) = &oracle {
         journal.push(Event::Value { what: KT_513_ORACLE, value: u32::from(o.pass) });
         lines.push(format!(
-            "{}: kronos --gpu: {}: fata de oracolul procesorului (ORACLE_513_SYNTH, loturile sintetice): {} — pasii 1-9: abaterea pierderii {:.1e}, a normei {:.1e} (toleranta 1e-3); pasul 10 doar afisat: {:.1e} / {:.1e}",
-            p, tag, if o.pass { "ACELEASI NUMERE" } else { "DIFERA" }, o.worst.0, o.worst.1, o.last.0, o.last.1
+            "{}: kronos --gpu: {}: fata de oracolul procesorului (ORACLE_513_SYNTH, loturile sintetice): {} — pasii 1-9: abaterea pierderii {:.1e}, a normei {:.1e} (toleranta {}); pasul 10 doar afisat: {:.1e} / {:.1e}",
+            p, tag, if o.pass { if mixed { "ACELEASI NUMERE (mixt)" } else { "ACELEASI NUMERE" } } else { "DIFERA" }, o.worst.0, o.worst.1,
+            if mixed { "1e-3 pierderea, 2e-3 norma: pasul mixt" } else { "1e-3" }, o.last.0, o.last.1
         ));
     }
     let pass = if let Some(o) = &oracle {
@@ -6910,9 +6968,17 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     } else if board {
         start_ok && falls && bad_w == 0 && losses.len() == steps
     } else {
+        // P6-198: the mixed step against the F32 oracle with the mixed step's tolerances (as `--antrenare-mini --mixt`):
+        // the loss 1e-3, the norm 2e-3; the weights only shown.
+        let same = if mixed {
+            worst_loss <= TOL_MIXED.0 && worst_norm <= TOL_MIXED.1
+        } else {
+            worst_loss <= TOL && worst_norm <= TOL && worst_w <= TOL
+        };
         lines.push(format!(
-            "{}: kronos --gpu: {}: lista placii pe bucati si parti fata de oracol: {} — abaterea pierderii {:.1e}, a normei {:.1e}, a greutatilor la sfarsit {:.1e} (toleranta 1e-3)",
-            p, tag, if worst_loss <= TOL && worst_norm <= TOL && worst_w <= TOL { "ACELEASI NUMERE" } else { "DIFERA" }, worst_loss, worst_norm, worst_w
+            "{}: kronos --gpu: {}: lista placii pe bucati si parti fata de oracol: {} — abaterea pierderii {:.1e}, a normei {:.1e}, a greutatilor la sfarsit {:.1e} ({})",
+            p, tag, if !same { "DIFERA" } else if mixed { "ACELEASI NUMERE (mixt)" } else { "ACELEASI NUMERE" }, worst_loss, worst_norm, worst_w,
+            if mixed { "toleranta pasului mixt: pierderea 1e-3, norma 2e-3; greutatile doar afisate" } else { "toleranta 1e-3" }
         ));
         // P6-184: the check of the oracle verdict (the small model cannot use the #513 oracle itself).
         let self_ok = oracle_513_self_test();
@@ -6926,7 +6992,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             "{}: kronos --gpu: {}: rezumatul tabloului (P6-192), verificat pe numerele lui: {}",
             p, tag, if dash_ok { "MERGE" } else { "GRESIT" }
         ));
-        self_ok && dash_ok && pieces_ok && worst_loss <= TOL && worst_norm <= TOL && worst_w <= TOL && bad_w == 0 && losses.len() == steps
+        self_ok && dash_ok && pieces_ok && same && bad_w == 0 && losses.len() == steps
     };
     journal.push(Event::Value { what: KT_513_PASS, value: u32::from(pass) });
     lines.push(format!(
@@ -6994,9 +7060,8 @@ struct Oracle513 {
     pass: bool,
 }
 
-fn oracle_513_check(losses: &[f32], norms: &[f32]) -> Oracle513 {
+fn oracle_513_check(losses: &[f32], norms: &[f32], tol: (f64, f64)) -> Oracle513 {
     use gpu_compute::train::ORACLE_513_SYNTH as O;
-    const TOL: f64 = 1e-3;
     let rel = |x: f32, o: f32| {
         let (x, o) = (x as f64, o as f64);
         if x.is_finite() { ((x - o) / o).abs() } else { f64::INFINITY }
@@ -7009,7 +7074,7 @@ fn oracle_513_check(losses: &[f32], norms: &[f32]) -> Oracle513 {
         worst.1 = worst.1.max(rel(norms[k], O[k].1));
     }
     let last = if complete { (rel(losses[n - 1], O[n - 1].0), rel(norms[n - 1], O[n - 1].1)) } else { (f64::INFINITY, f64::INFINITY) };
-    Oracle513 { worst, last, pass: complete && worst.0 <= TOL && worst.1 <= TOL }
+    Oracle513 { worst, last, pass: complete && worst.0 <= tol.0 && worst.1 <= tol.1 }
 }
 
 /// P6-184: the check of the check, run in SIMULARE (the small model cannot use the #513 oracle): the oracle's own
@@ -7027,7 +7092,8 @@ fn oracle_513_self_test() -> bool {
     nb[9] = 1.6549;
     let mut lw = l.clone();
     lw[4] *= 1.002;
-    oracle_513_check(&l, &n).pass && oracle_513_check(&lb, &nb).pass && !oracle_513_check(&lw, &n).pass && !oracle_513_check(&l[..9], &n[..9]).pass
+    const T: (f64, f64) = (1e-3, 1e-3);
+    oracle_513_check(&l, &n, T).pass && oracle_513_check(&lb, &nb, T).pass && !oracle_513_check(&lw, &n, T).pass && !oracle_513_check(&l[..9], &n[..9], T).pass
 }
 
 /// P6-175: what one resident run leaves for the comparison glued / not glued.

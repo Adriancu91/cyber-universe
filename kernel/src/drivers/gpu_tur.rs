@@ -466,6 +466,12 @@ pub static TRAIN_513_PROBE_64K8_IN_CYCLE: core::sync::atomic::AtomicBool = core:
 /// the test build, by `gpu antrenare-mini-sim vram-513-placi3-mm-alegere`. Off by default.
 pub static TRAIN_513_MM_CHOICE_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-198 (cyber-gpu `1617228`, note C-165_pas-mixt-513): with [`TRAIN_513_MM_TILE_IN_CYCLE`], #513's mixed step — every
+/// product of the model on `mm_tc`, the loss scale `LOSS_SCALE_513`. Set only by the cycle
+/// (`test-placa … --mm-placi [--colsum-impartit] --mixt-513`) and, in the test build, by
+/// `gpu antrenare-mini-sim vram-513-mixt`. Off by default.
+pub static TRAIN_513_MIXED_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-178 (cyber-gpu `d173a59`, note C-157_P2s): with [`TRAIN_MINI_VRAM_IN_CYCLE`], the resident run twice from the same
 /// state — the batch and the results through the VRAM window (os-390), then through pinned RAM with the copy program in
 /// the step's own list — compared bit for bit. Set only by the cycle (`test-placa … --antrenare-mini --vram --lot-ram`)

@@ -175,3 +175,4 @@ kronos-gpu-antrenare-513-mm-alegere 1700
 kronos-gpu-antrenare-513-cursa 2400
 kronos-gpu-antrenare-513-proba64 1800
 kronos-gpu-antrenare-513-tablou 2400
+kronos-gpu-antrenare-513-mixt 1700
