@@ -87,6 +87,7 @@ kronos-gpu-mm-tc 185
 kronos-gpu-mm-tc128 400
 kronos-gpu-mm-tc-pf 400
 kronos-gpu-mm-tc-v4 450
+kronos-gpu-mm-tc128-v4 450
 kronos-gpu-p8 186
 kronos-gpu-p8-s8 200
 kronos-gpu-pas-aur 330

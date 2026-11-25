@@ -3939,6 +3939,10 @@ fn mm_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         if super::gpu_tur::MM_TC_V4_IN_CYCLE.load(ord) {
             v.push(Comp::V4);
         }
+        // P6-212 (C-157 p.2, cyber-gpu `abb4f73`): `mm_tc128_v4` last.
+        if super::gpu_tur::MM_TC128_V4_IN_CYCLE.load(ord) {
+            v.push(Comp::Tc128V4);
+        }
         v
     };
     let mut t128: Vec<Tc128> = Vec::new();
@@ -4123,6 +4127,9 @@ enum Comp {
     Pf,
     /// P6-210: `mm_tc_v4`, `mm_tc_pf` with 128-bit reads (128 registers, the same block and grid); only aligned products.
     V4,
+    /// P6-212: `mm_tc128_v4`, `mm_tc128` with 128-bit reads in advance (168 registers, `mm_tc128`'s block and grid);
+    /// only aligned products.
+    Tc128V4,
 }
 
 impl Comp {
@@ -4130,6 +4137,7 @@ impl Comp {
     fn fits(self, a: &nvidia_ga104::mm_tc::Args) -> bool {
         match self {
             Comp::V4 => nvidia_ga104::mm_tc_v4::fits(a),
+            Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::fits(a),
             Comp::Tc128 | Comp::Pf => true,
         }
     }
@@ -4138,6 +4146,7 @@ impl Comp {
             Comp::Tc128 => "mm_tc128",
             Comp::Pf => "mm_tc_pf",
             Comp::V4 => "mm_tc_v4",
+            Comp::Tc128V4 => "mm_tc128_v4",
         }
     }
     fn program(self) -> &'static [u8] {
@@ -4145,6 +4154,7 @@ impl Comp {
             Comp::Tc128 => nvidia_ga104::mm_tc128::MM_TC128,
             Comp::Pf => nvidia_ga104::mm_tc_pf::MM_TC_PF,
             Comp::V4 => nvidia_ga104::mm_tc_v4::MM_TC_V4,
+            Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::MM_TC128_V4,
         }
     }
     fn sha(self) -> &'static str {
@@ -4152,6 +4162,7 @@ impl Comp {
             Comp::Tc128 => nvidia_ga104::mm_tc128::MM_TC128_SHA256,
             Comp::Pf => nvidia_ga104::mm_tc_pf::MM_TC_PF_SHA256,
             Comp::V4 => nvidia_ga104::mm_tc_v4::MM_TC_V4_SHA256,
+            Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::MM_TC128_V4_SHA256,
         }
     }
     fn registers(self) -> u32 {
@@ -4159,6 +4170,7 @@ impl Comp {
             Comp::Tc128 => nvidia_ga104::mm_tc128::REGISTERS,
             Comp::Pf => nvidia_ga104::mm_tc_pf::REGISTERS,
             Comp::V4 => nvidia_ga104::mm_tc_v4::REGISTERS,
+            Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::REGISTERS,
         }
     }
     fn block(self) -> [u32; 3] {
@@ -4166,6 +4178,7 @@ impl Comp {
             Comp::Tc128 => nvidia_ga104::mm_tc128::BLOCK,
             Comp::Pf => nvidia_ga104::mm_tc_pf::BLOCK,
             Comp::V4 => nvidia_ga104::mm_tc_v4::BLOCK,
+            Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::BLOCK,
         }
     }
     fn shared(self) -> nvidia_ga104::qmd::SharedMemory {
@@ -4173,6 +4186,7 @@ impl Comp {
             Comp::Tc128 => nvidia_ga104::mm_tc128::SHARED,
             Comp::Pf => nvidia_ga104::mm_tc_pf::SHARED,
             Comp::V4 => nvidia_ga104::mm_tc_v4::SHARED,
+            Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::SHARED,
         }
     }
     fn grid(self, a: &nvidia_ga104::mm_tc::Args) -> [u32; 3] {
@@ -4180,6 +4194,7 @@ impl Comp {
             Comp::Tc128 => nvidia_ga104::mm_tc128::grid(a),
             Comp::Pf => nvidia_ga104::mm_tc_pf::grid(a),
             Comp::V4 => nvidia_ga104::mm_tc_v4::grid(a),
+            Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::grid(a),
         }
     }
     fn cbuf_bytes(self) -> usize {
@@ -4187,6 +4202,7 @@ impl Comp {
             Comp::Tc128 => nvidia_ga104::mm_tc128::CBUF_BYTES,
             Comp::Pf => nvidia_ga104::mm_tc_pf::CBUF_BYTES,
             Comp::V4 => nvidia_ga104::mm_tc_v4::CBUF_BYTES,
+            Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::CBUF_BYTES,
         }
     }
     /// The journal names (`kt …`): same sets, sets run, qkv median, `mm_tc`'s qkv median beside it.
@@ -4209,6 +4225,12 @@ impl Comp {
                 "kt mm_tc_v4 seturi rulate",
                 "kt mm_tc_v4 qkv median ns",
                 "kt mm_tc qkv median ns (langa mm_tc_v4)",
+            ],
+            Comp::Tc128V4 => [
+                "kt mm_tc128_v4 seturi cu aceiasi biti ca mm_tc",
+                "kt mm_tc128_v4 seturi rulate",
+                "kt mm_tc128_v4 qkv median ns",
+                "kt mm_tc qkv median ns (langa mm_tc128_v4)",
             ],
         }
     }
