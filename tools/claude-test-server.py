@@ -92,14 +92,15 @@ AGENT_STEPS = [
     ("ruleaza", {"comanda": "reboot"}, lambda r, e: not e and len(r) > 0),
     ("citeste_jurnal", {"cuvant": "agent", "n": 5}, lambda r, e: e and "lista alba" in r),
     ("stare", {}, lambda r, e: not e),
-    ("citeste", {"cale": "/bin/hello"}, lambda r, e: not e and "$ uptime" in r and "$ mem" in r),
+    ("tablou", {"n": 5}, lambda r, e: not e and "$ uptime" in r and "$ mem" in r),
+    ("citeste", {"cale": "/bin/hello"}, lambda r, e: not e and "tabloului placii video" in r and "nu trimite nicio comanda" in r),
     (None, None, lambda r, e: e and "nu e permisa" in r),
 ]
 
 
 def agent_step(req, m):
     names = {t.get("name") for t in req.get("tools") or []}
-    if names != {"fisiere", "citeste", "citeste_jurnal", "stare", "ruleaza"} or "agentul de bord" not in str(req.get("system")):
+    if names != {"fisiere", "citeste", "citeste_jurnal", "stare", "tablou", "ruleaza"} or "agentul de bord" not in str(req.get("system")):
         return ("text", "Testul agentului a esuat: uneltele sau rolul lipsesc")
     results = [x["content"][0] for x in m if x["role"] == "user" and isinstance(x["content"], list)]
     n = len(results)

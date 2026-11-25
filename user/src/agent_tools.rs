@@ -19,6 +19,7 @@ pub const DEFINITIONS: &str = r#"[
  {"name":"citeste","description":"Citeste un fisier text (aceleasi dosare ca fisiere; cel mult 32 KiB de la `de_la`, in octeti). Cheile si tokenurile nu se vad.","input_schema":{"type":"object","properties":{"cale":{"type":"string"},"de_la":{"type":"integer","description":"octetul de inceput (implicit 0)"}},"required":["cale"]}},
  {"name":"citeste_jurnal","description":"Ultimele randuri din jurnalul OS-ului, optional doar cele cu un cuvant (de ex. gpu, usb, kt).","input_schema":{"type":"object","properties":{"cuvant":{"type":"string"},"n":{"type":"integer","description":"cate randuri (implicit 40, cel mult 400)"}}}},
  {"name":"stare","description":"Starea calculatorului: de cand merge, memoria, lucrarile lungi (pasi, viteza, pierderi), placa de retea.","input_schema":{"type":"object","properties":{}}},
+ {"name":"tablou","description":"Ultimele citiri ale tabloului placii video pe care OS-ul le-a scris deja in jurnal: ceasul nucleului si al memoriei, starea P, incarcarea, puterea fata de limita, motivele incetinirii, temperatura. Nu trimite nicio comanda placii.","input_schema":{"type":"object","properties":{"n":{"type":"integer","description":"cate citiri (implicit 12, cel mult 100)"}}}},
  {"name":"ruleaza","description":"Ruleaza o comanda de citire din lista alba a shell-ului: ls, mem, uptime, lspci, lsusb, discuri, net, cpu, hw, hw lista [--detalii], log ..., usb timp, lucrare stare, porneste (fara argumente), hub stare|comenzi|decizii [proiect]. Orice altceva e refuzat de OS.","input_schema":{"type":"object","properties":{"comanda":{"type":"string"}},"required":["comanda"]}}
 ]"#;
 
@@ -125,6 +126,20 @@ pub fn run(name: &str, input: &Value, root: &str, term: &mut Option<i64>, log: &
                 out.push('\n');
             }
             Ok(out)
+        }
+        // P6-211 (C-166 step 2): the dashboard as the OS already logged it (`kw tabloul …` rows); no new board command.
+        "tablou" => {
+            let n = number("n").unwrap_or(12).clamp(1, 100);
+            let command = format!("log tabloul {}", n);
+            *log = format!("tablou: {}", command);
+            let rows = claude_tools::run_command(&command, term)?;
+            let none = rows.trim().is_empty() || rows.contains("(niciun rand)");
+            Ok(format!(
+                "tablou: ultimele {} citiri ale tabloului placii video din jurnal (scrise de OS in timpul testelor; agentul nu trimite nicio comanda placii){}\n{}",
+                n,
+                if none { " — nicio citire inca de la pornire" } else { "" },
+                rows
+            ))
         }
         "ruleaza" => {
             let command = text("comanda").ok_or("lipseste campul comanda")?;
