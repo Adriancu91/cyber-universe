@@ -1897,9 +1897,13 @@ fn test_agent() {
     let ledger = fs::read_all("/etc/agent/cheltuieli.txt").expect("test: registrul");
     assert!(core::str::from_utf8(&ledger).unwrap_or("").contains(" PLAFON plafonul zilei atins"), "test: plafonul nu e in registru");
     put("/etc/agent.setari", settings("40").as_bytes());
+    // P6-203: the read-only tools, scripted by the imitation of the API (each step checks the previous result).
+    assert_eq!(run(&["agent", "Fa", "testul", "agentului"], "unelte"), 0, "test: uneltele agentului");
+    let sessions = fs::list("/etc/agent/sesiuni").expect("test: dosarul sesiunilor lipseste");
+    info!("test: agent: {} sesiuni pastrate", sessions.len());
     let _ = fs::remove("/etc/claude.cheie");
     assert_eq!(run(&["agent", "ping"], "fara cheie"), 1, "test: agent fara cheie");
-    info!("test: agentul de bord OK (ping, intrebare, cheltuieli, plafon, fara cheie)");
+    info!("test: agentul de bord OK (ping, intrebare, cheltuieli, plafon, unelte de citire, fara cheie)");
 }
 
 /// The Claude chat window (P6-05): typed messages go to the imitation of the API (as in `test_claude`), the answers

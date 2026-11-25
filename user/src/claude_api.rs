@@ -144,11 +144,19 @@ pub fn text_of(answer: &Value) -> String {
 /// text, tool_use, tool_result) and, when `tools` is given, the tools Claude may ask for. Returns the whole answer
 /// (its "content" list and "stop_reason"), or a message saying what went wrong.
 pub fn send(c: &Config, key: &str, messages: &[Value], tools: Option<&Value>) -> Result<Value, String> {
+    send_with(c, key, None, messages, tools)
+}
+
+/// `send` with a system prompt (P6-203: the on-board agent says who it is and what it may do).
+pub fn send_with(c: &Config, key: &str, system: Option<&str>, messages: &[Value], tools: Option<&Value>) -> Result<Value, String> {
     let mut fields = alloc::vec![
         (String::from("model"), Value::str(&c.model)),
         (String::from("max_tokens"), Value::int(c.max_tokens)),
-        (String::from("messages"), Value::Array(messages.to_vec())),
     ];
+    if let Some(sys) = system {
+        fields.push((String::from("system"), Value::str(sys)));
+    }
+    fields.push((String::from("messages"), Value::Array(messages.to_vec())));
     if let Some(t) = tools {
         fields.push((String::from("tools"), t.clone()));
     }

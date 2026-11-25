@@ -149,7 +149,7 @@ impl Request {
 }
 
 /// Runs `command` in the app's own shell (a terminal, as in /bin/terminal) and returns what it printed.
-fn run_command(command: &str, term: &mut Option<i64>) -> Result<String, String> {
+pub fn run_command(command: &str, term: &mut Option<i64>) -> Result<String, String> {
     const PROMPT: &str = "cyber> ";
     let mut buf = [0u8; 2048];
     let id = match *term {

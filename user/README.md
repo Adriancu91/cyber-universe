@@ -41,6 +41,10 @@
   apoi `/disk`, apoi `/etc`; dosarul agentului e `<acolo>/agent/`. Fiecare răspuns e socotit din `usage` (intrare +
   cache × prețul de intrare, ieșire × prețul de ieșire) și scris în `agent/cheltuieli.txt`; la plafonul zilei agentul
   refuză cererea fără s-o trimită și scrie rândul `PLAFON` în registru. Din shell (consolă și remote): `agent ...`.
+  **Uneltele (P6-203, pasul 2), doar citire, hotărâte de OS:** `fisiere`, `citeste` (în `/usb`, `/disk`, `/tmp` și
+  dosarul agentului; cheile nu se văd), `citeste_jurnal`, `stare`, `ruleaza` (doar lista albă din `src/agent_tools.rs`:
+  `ls`, `mem`, `uptime`, `lspci`, `lsusb`, `discuri`, `net`, `cpu`, `hw`, `log …`, `usb timp`, `lucrare stare`,
+  `porneste`, `hub stare|comenzi|decizii`). Fiecare întrebare e păstrată în `agent/sesiuni/<data-ora>.txt`.
   Test: scenariul `agent` (imitația API-ului `tools/claude-test-server.py`).
 - `kronos-calcul [n]` (P6-19, comanda C-16) — calculul lui Kronos pe procesor, cu operațiile bibliotecii `gpu-compute` din
   proiectul Cyber-GPU (backend CPU, fixat pe `41e44ba`): un bloc de tip Kronos (embedding, layernorm, QKV, atenție cauzală,

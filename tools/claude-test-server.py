@@ -44,6 +44,9 @@ def check(head, body):
         return 400, "corp JSON gresit: " + body.decode("utf-8", "replace")
     if m[0]["content"] == "Fa testul uneltelor":
         return 200, tools_step(req, m)
+    # P6-203 (C-166 step 2): the agent's read-only tools, each step checking the previous result.
+    if m[0]["content"] == "Fa testul agentului":
+        return 200, agent_step(req, m)
     # P6-202 (C-166): `agent ping` -> "pong", with cache tokens in `usage` (the agent prices them).
     if m[0]["content"] == "ping: raspunde doar cu cuvantul pong":
         return 200, ("pong", None)
@@ -63,6 +66,36 @@ STEPS = [
     ("write_file", {"path": "/etc/rau.txt", "content": "nu"}, lambda r, e: not e and "gh-trimite: lipseste tokenul GitHub" in r),
     (None, None, lambda r, e: e and "nu e permisa" in r),
 ]
+
+
+AGENT_STEPS = [
+    ("fisiere", {"cale": "/etc/agent"}, None),
+    ("citeste", {"cale": "/etc/agent.setari"}, lambda r, e: "cheltuieli.txt" in r and not e),
+    ("citeste", {"cale": "/etc/claude.cheie"}, lambda r, e: "plafon_zi" in r and not e),
+    ("ruleaza", {"comanda": "mem"}, lambda r, e: e and "sk-test" not in r),
+    ("ruleaza", {"comanda": "reboot"}, lambda r, e: not e and len(r) > 0),
+    ("citeste_jurnal", {"cuvant": "agent", "n": 5}, lambda r, e: e and "lista alba" in r),
+    ("stare", {}, lambda r, e: not e),
+    ("citeste", {"cale": "/bin/hello"}, lambda r, e: not e and "$ uptime" in r and "$ mem" in r),
+    (None, None, lambda r, e: e and "nu e permisa" in r),
+]
+
+
+def agent_step(req, m):
+    names = {t.get("name") for t in req.get("tools") or []}
+    if names != {"fisiere", "citeste", "citeste_jurnal", "stare", "ruleaza"} or "agentul de bord" not in str(req.get("system")):
+        return ("text", "Testul agentului a esuat: uneltele sau rolul lipsesc")
+    results = [x["content"][0] for x in m if x["role"] == "user" and isinstance(x["content"], list)]
+    n = len(results)
+    if n:
+        r = results[-1]
+        text = r.get("content") if isinstance(r.get("content"), str) else ""
+        if r.get("type") != "tool_result" or r.get("tool_use_id") != f"toolu_{n - 1}" or not AGENT_STEPS[n][2](text, bool(r.get("is_error"))):
+            return ("text", f"Testul agentului a esuat la pasul {n}: {text[:300]!r}")
+    name, inp, _ = AGENT_STEPS[n]
+    if name is None:
+        return ("text", "Gata: uneltele agentului au mers cum trebuie.")
+    return ("tool", {"type": "tool_use", "id": f"toolu_{n}", "name": name, "input": inp})
 
 
 def tools_step(req, m):
