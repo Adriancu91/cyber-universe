@@ -6330,12 +6330,18 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     } else {
         None
     };
-    // P6-194 (os-413): only the variants of `race_list()` (not `RACE_HOLD`), indexed as `VARIANTS`; each with the tail page.
+    // P6-194 (os-413): only the variants of the race list, indexed as `VARIANTS`; each with the tail page.
+    // P6-199 (os-417): the full list (`race_list_full()`: `RACE_HOLD` brought back by `RACE_CLEARED_OS417`) — the
+    // condition Cyber-GPU names for it (every program mapped with `program_map_bytes`) holds here.
     let mut race_progs: Vec<Option<Mapping>> = Vec::new();
     if race {
         for (vi, v) in nvidia_ga104::mm_train_variants::VARIANTS.iter().enumerate() {
             // P6-195: the probe maps only the witness and 64x64k8, in `VARIANTS`' order (64x64k8 last, as at os-413).
-            let wanted = if probe64 { vi == 0 || Some(vi) == probe64_vi } else { nvidia_ga104::mm_train_variants::in_race(vi) };
+            let wanted = if probe64 {
+                vi == 0 || Some(vi) == probe64_vi
+            } else {
+                nvidia_ga104::mm_train_variants::race_list_full().any(|(i, _)| i == vi)
+            };
             if !wanted {
                 race_progs.push(None);
                 continue;
@@ -6644,7 +6650,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // what `Plan::with_mm_choice` (Cyber-GPU, next) will take.
     if let Some(c_map) = race_c.filter(|_| stopped.is_none()) {
         use nvidia_ga104::mm_train::Args as MmArgs;
-        use nvidia_ga104::mm_train_variants::{race_list, Variant, RACE_HOLD, VARIANTS};
+        use nvidia_ga104::mm_train_variants::{race_list_full, Variant, RACE_CLEARED_OS417, RACE_HOLD, VARIANTS};
         use nvidia_ga104::qmd::ComputeQmd;
         const SENTINEL: [u8; 4] = (-12345.0f32).to_le_bytes();
         let reps = (if board { 8usize } else { 2 }).min(rec_cap).min((zone_bytes / ts::SLOT) as usize);
@@ -6654,7 +6660,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         let racers: Vec<(usize, &'static Variant)> = if probe64 {
             VARIANTS.iter().enumerate().filter(|(i, _)| *i == 0 || Some(*i) == probe64_vi).collect()
         } else {
-            race_list().collect()
+            race_list_full().collect()
         };
         if probe64 {
             race_shapes = race_shapes.iter().filter(|f| f.n == 3 * f.k).take(1).copied().collect();
@@ -6672,8 +6678,13 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             VARIANTS[0].name, c_map.size >> 20, reps
         ));
         // P6-194: the held variants (os-413: `mm_tv_64x64k8` did not finish), named once, never launched.
+        // P6-199: those cleared by os-417 (finished with the tail page, the witness's bits) race again, named once.
         for &i in RACE_HOLD.iter().filter(|&&i| i < VARIANTS.len() && !probe64) {
-            lines.push(format!("{}: kronos --gpu: {}: cursa mm: {} scoasa din cursa (RACE_HOLD; os-413: nu a terminat), nelansata", p, tag, VARIANTS[i].name));
+            if RACE_CLEARED_OS417.contains(&i) {
+                lines.push(format!("{}: kronos --gpu: {}: cursa mm: {} intoarsa in cursa (RACE_CLEARED_OS417; os-417: a terminat cu pagina de paza, aceiasi biti ca martorul; P6-199)", p, tag, VARIANTS[i].name));
+            } else {
+                lines.push(format!("{}: kronos --gpu: {}: cursa mm: {} scoasa din cursa (RACE_HOLD; os-413: nu a terminat), nelansata", p, tag, VARIANTS[i].name));
+            }
         }
         lines.push(format!("{}: kronos --gpu: {}: cursa mm: programele mapate cu o pagina de paza dupa cod (qmd::program_map_bytes, P6-194)", p, tag));
         // Sentinel → C piece by piece (the stage is refilled each time: the reads below overwrite it).
