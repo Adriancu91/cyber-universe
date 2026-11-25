@@ -94,13 +94,19 @@ AGENT_STEPS = [
     ("stare", {}, lambda r, e: not e),
     ("tablou", {"n": 5}, lambda r, e: not e and "$ uptime" in r and "$ mem" in r),
     ("citeste", {"cale": "/bin/hello"}, lambda r, e: not e and "tabloului placii video" in r and "nu trimite nicio comanda" in r),
-    (None, None, lambda r, e: e and "nu e permisa" in r),
+    # P6-219 (C-166 step 4): the white-listed repairs; everything else refused by the OS.
+    ("repara", {"actiune": "setare", "nume": "max_tokens", "valoare": "4096"}, lambda r, e: e and "nu e permisa" in r),
+    ("repara", {"actiune": "setare", "nume": "plafon_zi", "valoare": "1000"}, lambda r, e: not e and "max_tokens = 4096 scris in /etc/agent.setari" in r),
+    ("repara", {"actiune": "setare", "nume": "live_minute", "valoare": "0"}, lambda r, e: e and "nu e in lista aprobata" in r),
+    ("repara", {"actiune": "opreste_lucrarea", "nume": "proba-agent"}, lambda r, e: e and "iese din limite" in r),
+    ("repara", {"actiune": "formateaza", "nume": "/disk"}, lambda r, e: "lucrare proba-agent:" in r),
+    (None, None, lambda r, e: e and "nu e in lista alba a reparatiilor" in r),
 ]
 
 
 def agent_step(req, m):
     names = {t.get("name") for t in req.get("tools") or []}
-    if names != {"fisiere", "citeste", "citeste_jurnal", "stare", "tablou", "ruleaza"} or "agentul de bord" not in str(req.get("system")):
+    if names != {"fisiere", "citeste", "citeste_jurnal", "stare", "tablou", "ruleaza", "repara"} or "agentul de bord" not in str(req.get("system")):
         return ("text", "Testul agentului a esuat: uneltele sau rolul lipsesc")
     results = [x["content"][0] for x in m if x["role"] == "user" and isinstance(x["content"], list)]
     n = len(results)

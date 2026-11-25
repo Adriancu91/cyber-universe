@@ -1902,6 +1902,13 @@ fn test_agent() {
     put("/etc/agent.setari", settings("40").as_bytes());
     // P6-203: the read-only tools, scripted by the imitation of the API (each step checks the previous result).
     assert_eq!(run(&["agent", "Fa", "testul", "agentului"], "unelte"), 0, "test: uneltele agentului");
+    // P6-219 (C-166 step 4): the repairs the imitation asked for: max_tokens written, the cap untouched, all four noted.
+    let setari = fs::read_all("/etc/agent.setari").expect("test: agent.setari");
+    let setari = core::str::from_utf8(&setari).expect("test: agent.setari nu e text");
+    assert!(setari.contains("max_tokens = 4096") && setari.contains("plafon_zi = 40\n") && !setari.contains("1000"), "test: agent.setari dupa repara: {}", setari);
+    let repairs = fs::read_all("/etc/agent/reparatii.txt").expect("test: /etc/agent/reparatii.txt lipseste");
+    let repairs = core::str::from_utf8(&repairs).expect("test: reparatii.txt nu e text");
+    info!("test: agent: reparatii: {} facute, {} refuzate", repairs.matches("-> FACUT").count(), repairs.matches("-> REFUZAT").count());
     let sessions = fs::list("/etc/agent/sesiuni").expect("test: dosarul sesiunilor lipseste");
     info!("test: agent: {} sesiuni pastrate", sessions.len());
     // P6-204 (C-166 step 3): `agent veghe 0 2` = two tours at once against the imitations of the API and of GitHub
