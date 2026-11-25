@@ -632,6 +632,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-219** C-166 pasul 4 (Adrian, 25 nov): **reparațiile agentului de bord din lista albă** — unealta `repara`: `opreste_lucrarea` (oprirea sigură a unei lucrări) și `setare` (doar `live_minute`, `analiza_minute`, `max_tokens`, în limite); restul refuzat de OS; jurnalul `agent/reparatii.txt`. Plan: `docs/plans/P6-219.md`. Dep: P6-211.
 - [x] **P6-220** C-166 pasul 5 (Adrian, 25 nov): **propunerile de cod ale agentului de bord** — uneltele `citeste_cod` (codul OS-ului de pe `main`, doar citire) și `propune` (o ramură `agent/<zi>-<subiect>`, niciodată `main`, cu `docs/agent/propuneri/<ramura>.md` = explicația și dovada; fără `.github/`, `LICENSE`, `CLAUDE.md`, `docs/DECISIONS.md`); jurnalul `agent/propuneri.txt`. Plan: `docs/plans/P6-220.md`.
   Gata (2026-11-25 ~23:45 RO): test `agent` (46 verificări: 1 reparație făcută, 4 refuzate, plafonul neatins) TRECUT. Rămân pentru pasul 6: alegerea variantelor dovedite și reluarea unui pas.
+- [~] **P6-221** PREDARE Cyber-GPU `969a6b4` (nota C-157_P2zi_oracol-mixt, după os-445): **verdictul pasului mixt #513 față de oracolul mixt** (`ORACLE_513_MIXED_SYNTH`, pașii 1–6 cu toleranța pasului mixt; pașii 7–10 doar afișați; F32 neschimbat). Nimic nou pentru placă. Plan: `docs/plans/P6-221.md`.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
