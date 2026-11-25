@@ -29,9 +29,19 @@ O comandă = un rând, cu trei câmpuri despărțite de ` · ` (spațiu, punct m
   `net`, `hw`, `log …`, `lucrare stare`, `hub stare|comenzi|decizii` …);
 - `repara opreste_lucrarea <nume>` (oprirea sigură a unei lucrări după pasul în lucru) și `repara setare <nume> <valoare>`
   (doar `live_minute` 1–60, `analiza_minute` 2–120, `max_tokens` 256–8192).
-- Orice altceva: `refuzat` de OS, cu motivul. **`test-placa …` e refuzat până la partea 2.**
+- Orice altceva: `refuzat` de OS, cu motivul.
 
-## Partea 2 (urmează)
-Comenzile pe placă (`test-placa …`, o cursă, o probă) prin calea existentă a modului viu (`docs/LIVE.md`), cu aceleași păzi
-(temperatura, paza de timp, oprirea sigură) și **semnate cu aceeași cheie** ca acolo (`/usb/hub/live.cheie`, HMAC-SHA-256),
-ca un rând din hub să nu poată porni singur placa fără cheia centrului.
+## Comenzile pe placă (partea 2, P6-223)
+- Doar `test-placa …` (formele din `auto/teste.txt`), **doar semnate** de centru, cu un al patrulea câmp:
+  ```
+  - 8 · nou · test-placa --bariera · semn: <64 de cifre hex>
+  ```
+  semnătura = HMAC-SHA-256 cu cheia canalului viu (`/usb/hub/live.cheie`, aceeași la centru) peste
+  `cyber-agent-1\n<nr>\n<comanda>`. Unealta gata: `tools/agent-semneaza.py <cheie> 8 test-placa --bariera` scrie tot rândul.
+- Agentul nu vede cheia: dă rândul nucleului (`agent-placa <nr> <semn> test-placa …`), care verifică semnătura, cheia plăcii
+  `/usb/hub/permite-live-placa` (doar cu da-ul lui Adrian) și numărul: **mai mare decât orice număr semnat folosit înainte**
+  (jurnalul `/usb/hub/agent-placa.txt`, scris înainte de rulare, ascuns de programe). O linie semnată copiată sau pusă
+  înapoi pe `nou` nu mai rulează.
+- Testul rulează exact ca din listă sau din modul viu: cheile lui Adrian (`permite-test-placa` + DECIZII.md), locul pe placă,
+  paza de timp și de temperatură, oprirea sigură; raportul întreg merge în hub ca de obicei. Agentul așteaptă cel mult 120 min.
+- Fără semnătură, cu semnătură greșită, număr vechi sau fără cheia plăcii: `refuzat`, cu motivul; nimic nu se scrie în placă.

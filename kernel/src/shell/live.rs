@@ -184,7 +184,7 @@ pub fn writes_to_board(line: &str) -> bool {
     }
     match words.as_slice() {
         ["timp", rest @ ..] if !rest.is_empty() => writes_to_board(&rest.join(" ")),
-        ["test-placa", ..] | ["ciclu-test", ..] => true,
+        ["test-placa", ..] | ["ciclu-test", ..] | ["agent-placa", ..] => true,
         ["gpu", "tur", rest @ ..] => rest.contains(&"--trezire"),
         ["gpu", sub, ..] => !matches!(*sub, "identifica" | "gfw" | "vbios" | "fwsec" | "firmware" | "pregatire-i6" | "tur" | "plan" | "variante" | "stare"),
         _ => false,
@@ -781,7 +781,7 @@ fn run_captured(line: &str) -> String {
 /// `auto/teste.txt`, the same `board_test` (Adrian's keys: `permite-test-placa` + the line in DECIZII.md; the gate has
 /// already asked for `permite-live-placa`), no `DA` from the keyboard; the whole report in `iesire` and sent to the hub
 /// as from the list. A wrong form or a missing key = `REFUZAT: …` in `iesire` with code 1, nothing written to the board.
-fn board_command(parsed: Result<String, &'static str>) -> String {
+pub(super) fn board_command(parsed: Result<String, &'static str>) -> String {
     let outer = super::CAPTURE.lock().take();
     let outer_programs = super::PROGRAM_CAPTURE.lock().take();
     let text = match auto::board_test(parsed) {

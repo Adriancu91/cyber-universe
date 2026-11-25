@@ -12,8 +12,10 @@
 //! logs, pages, answers) ever is.
 //!
 //! What may run is decided here, by the OS (`agent_tools::channel_command`): in part 1 the read-only commands of the
-//! white list and the white-listed repairs; a command on the board (`test-placa …`) is refused until part 2 (signed with
-//! the live channel's key).
+//! white list and the white-listed repairs. P6-223 (part 2): a command on the board (`test-placa …`) runs only with the
+//! centre's signature as a fourth field, `- 8 · nou · test-placa --bariera · semn: <64 hex>` (HMAC-SHA-256 with the
+//! live channel's key over `cyber-agent-1\n<nr>\n<comanda>`); the agent never sees the key — the kernel checks the
+//! signature (`agent-placa`, `kernel/src/shell/agentplaca.rs`).
 
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -36,6 +38,8 @@ pub struct Cmd {
     pub nr: u32,
     pub state: String,
     pub text: String,
+    /// P6-223: the centre's signature (`semn: <hex>`, the fourth field), for a board command.
+    pub sig: Option<String>,
 }
 
 const SEP: &str = " · ";
@@ -52,7 +56,8 @@ pub fn parse(md: &str) -> Vec<Cmd> {
         if nr == 0 || text.is_empty() {
             continue;
         }
-        out.push(Cmd { line: i, nr, state: state.trim().to_string(), text: text.to_string() });
+        let sig = parts.next().and_then(|f| f.trim().strip_prefix("semn:")).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        out.push(Cmd { line: i, nr, state: state.trim().to_string(), text: text.to_string(), sig });
     }
     out
 }
@@ -131,5 +136,12 @@ pub fn self_test() -> bool {
     let ok_race = set_state(md, 2, "preluat", "gata", "x", Some("y")).is_none() && set_state(md, 9, "nou", "gata", "x", None).is_none();
     let long: String = core::iter::repeat('a').take(1000).collect();
     let ok_short = short(&long).len() <= RESULT_MAX + 4;
-    ok_parse && ok_set && ok_race && ok_short
+    // P6-223: the signature field (only `semn: …` counts; the time stamp of a done line is not one).
+    let signed = parse("- 8 · nou · test-placa --bariera · semn: ABCD\n- 9 · nou · mem · 2026-11-26 01:10\n- 10 · nou · hw · semn:\n");
+    let ok_sig = signed.len() == 3
+        && signed[0].sig.as_deref() == Some("ABCD")
+        && signed[0].text == "test-placa --bariera"
+        && signed[1].sig.is_none()
+        && signed[2].sig.is_none();
+    ok_parse && ok_set && ok_race && ok_short && ok_sig
 }

@@ -427,11 +427,14 @@ pub fn run(name: &str, input: &Value, root: &str, gh: Option<&Gh>, term: &mut Op
     }
 }
 
+/// P6-223: how long the agent waits for a signed board test (the longest board tests run tens of minutes).
+const BOARD_MS: u64 = 120 * 60 * 1000;
+
 /// P6-222 (C-166 step 6, part 1): one command of the centre's channel (`live/os-agent-comenzi.md`), decided here, by the
 /// OS: `stare`, `tablou [n]`, `jurnal [n] [cuvant]`, `repara opreste_lucrarea <nume>`, `repara setare <nume> <valoare>`
-/// and every read-only shell command of the white list. A command on the board (`test-placa …`) waits for part 2
-/// (signed with the live channel's key); everything else is refused.
-pub fn channel_command(text: &str, root: &str, term: &mut Option<i64>) -> Result<String, String> {
+/// and every read-only shell command of the white list. P6-223 (part 2): a command on the board (`test-placa …`) only
+/// with the centre's signature `sig`, checked by the kernel (`agent-placa`); everything else is refused.
+pub fn channel_command(nr: u32, text: &str, sig: Option<&str>, root: &str, term: &mut Option<i64>) -> Result<String, String> {
     let words: Vec<&str> = text.split_whitespace().collect();
     let num = |w: &str| Value::Number(w.to_string());
     let mut note = String::new();
@@ -455,9 +458,22 @@ pub fn channel_command(text: &str, root: &str, term: &mut Option<i64>) -> Result
             term,
             &mut note,
         ),
-        [first, ..] if *first == "test-placa" => {
-            Err("comenzile pe placa prin canal vin in pasul 6 partea 2 (comanda semnata cu cheia canalului viu); OS-ul a refuzat-o acum".to_string())
-        }
+        // P6-223 (C-166 step 6, part 2): a board command only with the centre's signature; the kernel checks it
+        // (the key is kernel-only) together with the number, the board key and the board test's own guards.
+        [first, ..] if *first == "test-placa" => match sig {
+            None => Err("comanda pe placa fara semnatura centrului (`· semn: <64 hex>`); OS-ul a refuzat-o".to_string()),
+            Some(sig) if sig.len() != 64 || !sig.bytes().all(|b| b.is_ascii_hexdigit()) => {
+                Err("semnatura trebuie sa aiba 64 de cifre hex; OS-ul a refuzat comanda".to_string())
+            }
+            Some(sig) => {
+                let out = claude_tools::run_command_for(&format!("agent-placa {} {} {}", nr, sig, text.trim()), term, BOARD_MS)?;
+                if out.trim_start().starts_with("REFUZAT:") || out.contains("\nREFUZAT:") {
+                    Err(out)
+                } else {
+                    Ok(out)
+                }
+            }
+        },
         _ if white_listed(text.trim()) => claude_tools::run_command(text.trim(), term),
         _ => Err(format!(
             "`{}` nu e in lista canalului (stare, tablou, jurnal, repara ..., comenzile de citire din lista alba); OS-ul a refuzat-o",

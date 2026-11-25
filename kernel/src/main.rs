@@ -1925,13 +1925,28 @@ fn test_agent() {
     assert!(!props.contains("tok-gh"), "test: tokenul in propuneri.txt");
     // P6-222 (C-166 step 6, part 1): the command channel in the GitHub imitation (live/os-agent-comenzi.md): the format
     // check offline, then one pass: `mem` and a white-listed repair done, `test-placa` and `rm` refused by the OS.
+    // P6-223 (part 2): the kernel's gate for signed board commands (pure checks), then the live key and the board key
+    // on the test stick (/etc/hub): pass 1 = `mem` and the repair done; unsigned `test-placa`, `rm` and the wrong
+    // signature refused (5 of the 6 new); pass 2 = the good signature passes the kernel's gate (journal `7 incepe`),
+    // then board_test refuses it (no permite-test-placa in QEMU): nothing is written to any board.
+    shell::agentplaca::self_test();
+    let _ = fs::create("/etc/hub", fs::Kind::Dir);
+    put("/etc/hub/live.cheie", b"cheie-de-proba-a-canalului-viu-P6-109-qemu");
+    put("/etc/hub/permite-live-placa", b"da\n");
     assert_eq!(run(&["agent", "comenzi", "--proba"], "comenzi proba"), 0, "test: agent comenzi --proba");
     assert_eq!(run(&["agent", "comenzi"], "comenzi"), 0, "test: agent comenzi");
+    assert_eq!(run(&["agent", "comenzi"], "comenzi a doua trecere"), 0, "test: agent comenzi (a doua trecere)");
     let cmds = fs::read_all("/etc/agent/comenzi.txt").expect("test: /etc/agent/comenzi.txt lipseste");
     let cmds = core::str::from_utf8(&cmds).expect("test: comenzi.txt nu e text");
     info!("test: agent: comenzi: {} gata, {} refuzate", cmds.matches("-> GATA").count(), cmds.matches("-> REFUZAT").count());
-    assert!(cmds.matches("-> GATA").count() == 2 && cmds.matches("-> REFUZAT").count() == 2, "test: comenzi.txt: {}", cmds);
-    assert!(!cmds.contains("tok-gh"), "test: tokenul in comenzi.txt");
+    assert!(cmds.matches("-> GATA").count() == 2 && cmds.matches("-> REFUZAT").count() == 4, "test: comenzi.txt: {}", cmds);
+    assert!(cmds.contains("REFUZAT: semnatura gresita") && cmds.contains("fara semnatura centrului"), "test: comenzi.txt (semnaturi): {}", cmds);
+    assert!(!cmds.contains("tok-gh") && !cmds.contains("cheie-de-proba"), "test: tokenul sau cheia in comenzi.txt");
+    let signed = fs::read_all("/etc/hub/agent-placa.txt").expect("test: /etc/hub/agent-placa.txt lipseste");
+    let signed = core::str::from_utf8(&signed).expect("test: agent-placa.txt nu e text");
+    assert!(signed.starts_with("7 incepe ") && signed.contains("\n7 refuz ") && !signed.contains("6 incepe"), "test: agent-placa.txt: {}", signed);
+    info!("test: agent: comanda semnata 7 a trecut poarta nucleului, board_test a refuzat-o (fara cheile lui Adrian)");
+    let _ = fs::remove("/etc/hub/permite-live-placa");
     warn!("test: abatere de proba pentru agent veghe (P6-204)");
     // P6-209: `0 2 0` = Claude's summary on every tour (2 requests); then `0 2` = the settings' 10 minutes: the first
     // tour with the summary, the second only the raw numbers (1 request more).

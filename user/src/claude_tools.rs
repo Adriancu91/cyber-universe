@@ -150,6 +150,11 @@ impl Request {
 
 /// Runs `command` in the app's own shell (a terminal, as in /bin/terminal) and returns what it printed.
 pub fn run_command(command: &str, term: &mut Option<i64>) -> Result<String, String> {
+    run_command_for(command, term, COMMAND_MS)
+}
+
+/// P6-223: [`run_command`] waiting up to `wait_ms` for the prompt (a signed board test from the agent's channel).
+pub fn run_command_for(command: &str, term: &mut Option<i64>, wait_ms: u64) -> Result<String, String> {
     const PROMPT: &str = "cyber> ";
     let mut buf = [0u8; 2048];
     let id = match *term {
@@ -197,8 +202,8 @@ pub fn run_command(command: &str, term: &mut Option<i64>) -> Result<String, Stri
             out.truncate(out.len() - PROMPT.len());
             break;
         }
-        if waited >= COMMAND_MS {
-            out.push_str("\n(comanda inca ruleaza dupa 10 s; nu mai astept)");
+        if waited >= wait_ms {
+            out.push_str(&alloc::format!("\n(comanda inca ruleaza dupa {} s; nu mai astept)", wait_ms / 1000));
             break;
         }
         cyber_user::sleep_ms(20);

@@ -37,7 +37,8 @@ pub const SECRET_NAMES: &[&str] = &["claude.key", "github.token", "remote.cheie"
 pub const SECRET_DIRS: &[&str] = &["/usb", "/disk", "/etc"];
 /// P6-113 (C-159 note of 21 Nov 13:00): the live channel's keys. Secret anywhere below the hub folders (at any depth),
 /// and kernel-only: no program may ask for them (the kernel's gate is the only reader).
-pub const KERNEL_ONLY_NAMES: &[&str] = &["live.cheie", "permite-live-placa"];
+/// P6-223: and the journal of the agent's signed board commands (`shell::agentplaca`), so no program can reset it.
+pub const KERNEL_ONLY_NAMES: &[&str] = &["live.cheie", "permite-live-placa", "agent-placa.txt"];
 pub const HUB_DIRS: &[&str] = &["/usb/hub", "/disk/hub", "/etc/hub"];
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -10,6 +10,7 @@ pub mod antrenare;
 pub mod antrenare_mini;
 #[cfg(feature = "test-gpu-sim")]
 pub mod antrenare_sim;
+pub mod agentplaca;
 pub mod auto;
 pub mod ciclu;
 pub mod compara;
@@ -272,6 +273,7 @@ fn dispatch(line: &str) -> bool {
         "uptime" => uptime(),
         "remote" => remote(args),
         "live" => live::command(args), // C-159 step 1 (P6-108, P6-109)
+        "agent-placa" => agentplaca::command(args), // C-166 step 6, part 2 (P6-223): signed board commands of the agent's channel
         "telefon" => out!("{}", live::phone()), // C-158 point 9 (P6-144): the state on the phone
         "lucrare" => lucrare::command(args), // C-158 point 8 (P6-140): long jobs
         "reboot" => reboot(args),
@@ -394,6 +396,7 @@ fn help() {
     out!("  hub asculta [--la N]   la fiecare N minute (implicit 2) ia si ruleaza comenzile noi din hub; Esc opreste\n");
     out!("  hub opreste      opreste bucla `hub asculta` pornita la pornire (/usb/hub/asculta)\n");
     out!("  live <minute>    canalul viu (C-159): comenzi semnate din hub, live/<sesiune>/ pe ramura os/live; cere /usb/hub/live.cheie\n");
+    out!("  agent-placa <nr> <semn> test-placa ...  doar agentul de bord: test pe placa semnat de centru (C-166 pasul 6)\n");
     out!("  lucrare <nume>   lucrare lunga din /usb/lucrari/<nume>.txt (ora, rapoarte, oprire, reluare); lucrare stare | opreste <nume>\n");
     out!("  telefon          starea pe telefon (C-158 p.9): rezumat + ecranul urcate in hub, live/telefon/ (ramura os/live)\n");
     out!("  trimite          rapoartele noi din /usb/raport -> hub (rezultate/os-automat/<data>/), doar cu /usb/github.token\n");

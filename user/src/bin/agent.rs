@@ -715,7 +715,7 @@ fn commands_pass(s: &Settings, gh: &github::Config, token: &str, term: &mut Opti
             skipped += 1;
             continue;
         }
-        let r = agent_tools::channel_command(&c.text, &s.root, term);
+        let r = agent_tools::channel_command(c.nr, &c.text, c.sig.as_deref(), &s.root, term);
         let stamp = now();
         let (state, out) = match &r {
             Ok(t) => ("gata", t.clone()),
