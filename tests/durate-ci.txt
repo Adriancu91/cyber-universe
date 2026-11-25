@@ -190,3 +190,4 @@ kronos-gpu-antrenare-513-mixt 1700
 kronos-gpu-antrenare-513-mixt-rapid 1800
 kronos-gpu-antrenare-513-ocupare 2000
 kronos-gpu-antrenare-513-lot-prin-ram 1800
+kronos-gpu-antrenare-513-doua-locuri 1800

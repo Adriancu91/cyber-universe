@@ -535,6 +535,13 @@ pub static TRAIN_MIXED_FAST_IN_CYCLE: core::sync::atomic::AtomicBool = core::syn
 /// and, in the test build, by `gpu antrenare-mini-sim vram-513-mixt rapid ram`. Off by default.
 pub static TRAIN_513_VIA_RAM_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-217 (C-157, cyber-gpu `1ddf092`, note `C-157_P2zg_lot-prin-ram-mixt.md`, step 2): with [`TRAIN_513_VIA_RAM_IN_CYCLE`],
+/// two batch slots (`Plan::with_batch_slots`), each with its own staging area, launch zone and records: the CPU prepares
+/// step N+1 in one slot while the board runs step N from the other, and step N+1's parts are submitted as step N's parts
+/// finish (never more than one step's pushbuffer in flight). Set only by the cycle (`test-placa … --lot-prin-ram
+/// --doua-locuri`) and, in the test build, by `gpu antrenare-mini-sim vram-513-mixt rapid ram doua`. Off by default.
+pub static TRAIN_513_SLOTS_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-178 (cyber-gpu `d173a59`, note C-157_P2s): with [`TRAIN_MINI_VRAM_IN_CYCLE`], the resident run twice from the same
 /// state — the batch and the results through the VRAM window (os-390), then through pinned RAM with the copy program in
 /// the step's own list — compared bit for bit. Set only by the cycle (`test-placa … --antrenare-mini --vram --lot-ram`)

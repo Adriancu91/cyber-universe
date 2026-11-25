@@ -210,7 +210,7 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
     // P6-128: `--ln-32` = `lipita-ln`, then `lipita-ln-32` (every product on quarters), compared; one more list choice.
     // P6-135 (note C-157_P2i, point 1): `--lipita-ln` = the default until now (`lipita-ln` alone); without any list
     // choice the cycle now runs `lipita-ln-32` alone. The checks below go by name, not by position.
-    let all = [FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, P8, P8_S8, COLSUM, PAS_AUR, MM_TC, MM_TC128, MM_TC_PF, MM_TC_V4, MM_TC128_V4, MM_TC_64K, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_MIXED_FAST, TRAIN_VRAM, TRAIN_FUSED, TRAIN_513, TRAIN_513_TILES3, TRAIN_513_MM_TILE, TRAIN_513_FUSED_TILE, TRAIN_513_COLSUM, TRAIN_513_MIXED, TRAIN_513_MIXED_FAST, TRAIN_513_VIA_RAM, TRAIN_513_MM_CHOICE, TRAIN_513_SM_STEP, TRAIN_513_MM_MODEL, TRAIN_513_RACE, TRAIN_513_PROBE_64K8, TRAIN_513_OCCUPANCY, TRAIN_RAM];
+    let all = [FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, P8, P8_S8, COLSUM, PAS_AUR, MM_TC, MM_TC128, MM_TC_PF, MM_TC_V4, MM_TC128_V4, MM_TC_64K, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_MIXED_FAST, TRAIN_VRAM, TRAIN_FUSED, TRAIN_513, TRAIN_513_TILES3, TRAIN_513_MM_TILE, TRAIN_513_FUSED_TILE, TRAIN_513_COLSUM, TRAIN_513_MIXED, TRAIN_513_MIXED_FAST, TRAIN_513_VIA_RAM, TRAIN_513_SLOTS, TRAIN_513_MM_CHOICE, TRAIN_513_SM_STEP, TRAIN_513_MM_MODEL, TRAIN_513_RACE, TRAIN_513_PROBE_64K8, TRAIN_513_OCCUPANCY, TRAIN_RAM];
     let pos = |x: &str| all.iter().position(|y| *y == x).unwrap_or(0);
     let lists = pos(LIPIT)..=pos(LN_32);
     // The two-run lists: the argmax without the copy reads no logits, they need both runs' logits.
@@ -318,6 +318,10 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
         }
         // P6-216: #513's batch and results through pinned RAM only right after `--mixt-513-rapid`, last.
         if all[at] == TRAIN_513_VIA_RAM && !out.ends_with(TRAIN_513_MIXED_FAST) {
+            return Some(Err(FORM));
+        }
+        // P6-217: two batch slots only right after `--lot-prin-ram`, last.
+        if all[at] == TRAIN_513_SLOTS && !out.ends_with(TRAIN_513_VIA_RAM) {
             return Some(Err(FORM));
         }
         // P6-196: #513's products on the variant the os-416 race picked only right after `--mm-placi` or
@@ -980,6 +984,11 @@ pub const TRAIN_513_MIXED_FAST: &str = " --mixt-513-rapid";
 /// `test-placa … --mixt-513 --mixt-513-rapid --lot-prin-ram`, last, only right after `--mixt-513-rapid`.
 pub const TRAIN_513_VIA_RAM: &str = " --lot-prin-ram";
 
+/// P6-217 (C-157, cyber-gpu `1ddf092`, note `C-157_P2zg_lot-prin-ram-mixt.md`, step 2): suffix of the I9 text when #513's
+/// steps through pinned RAM use two batch slots, the next step prepared while the board runs the current one:
+/// `test-placa … --mixt-513-rapid --lot-prin-ram --doua-locuri`, last, only right after `--lot-prin-ram`.
+pub const TRAIN_513_SLOTS: &str = " --doua-locuri";
+
 /// P6-190 (C-165, cyber-gpu `a98298e`, note C-165_cursa-mm): suffix of the I9 text when, after #513's steps, the night
 /// race of `mm_train_tile`'s variants runs on every `mm_train` shape of the step:
 /// `test-placa … --antrenare-513 --placi3 --mm-placi [--colsum-impartit] --cursa-mm`, last.
@@ -1087,6 +1096,10 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
         None => (i9, false),
     };
     let (i9, train_513_mm_choice) = match i9.strip_suffix(TRAIN_513_MM_CHOICE) {
+        Some(x) => (x, true),
+        None => (i9, false),
+    };
+    let (i9, train_513_slots) = match i9.strip_suffix(TRAIN_513_SLOTS) {
         Some(x) => (x, true),
         None => (i9, false),
     };
@@ -1403,6 +1416,8 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::TRAIN_MIXED_FAST_IN_CYCLE.store((train_mini && train_mixed && train_mixed_fast) || (train_mini && train_vram && train_513 && train_513_tiles3 && train_513_mm_tile && train_513_mixed && train_513_mixed_fast), core::sync::atomic::Ordering::SeqCst);
     // P6-216: #513's batch through pinned RAM only when the list asked for it, right after `--mixt-513-rapid`.
     crate::drivers::gpu_tur::TRAIN_513_VIA_RAM_IN_CYCLE.store(train_mini && train_vram && train_513 && train_513_tiles3 && train_513_mm_tile && train_513_mixed && train_513_mixed_fast && train_513_via_ram, core::sync::atomic::Ordering::SeqCst);
+    // P6-217: two batch slots only when the list asked for it, right after `--lot-prin-ram`.
+    crate::drivers::gpu_tur::TRAIN_513_SLOTS_IN_CYCLE.store(train_mini && train_vram && train_513 && train_513_tiles3 && train_513_mm_tile && train_513_mixed && train_513_mixed_fast && train_513_via_ram && train_513_slots, core::sync::atomic::Ordering::SeqCst);
     // P6-190: the night race only when the list asked for it, last, after `--mm-placi`.
     crate::drivers::gpu_tur::TRAIN_513_RACE_IN_CYCLE.store(train_mini && train_vram && train_513 && train_513_tiles3 && train_513_mm_tile && train_513_race, core::sync::atomic::Ordering::SeqCst);
     // P6-195: the lone `mm_tv_64x64k8` probe only when the list asked for it, right after `--cursa-mm`.
@@ -1480,6 +1495,9 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     }
     if train_mini && train_vram && train_513 && train_513_tiles3 && train_513_mm_tile && train_513_fused_tile {
         text.push_str("\n(pasul #513 lipit pe placile de 64 x 64, cerut de lista (--lipit-placi): planul facut cu Plan::new_tiles3(...).with_fused_back().with_fused_gelu().with_mm_tile_gelu() — aceeasi arena; cele doua adunari reziduale lipite in LayerNorm-ul inapoi (ln_back_res) si GELU' scris direct de inmultirea proj-dX (fara gelu_tr inapoi): 385 -> 349 de lansari; cele 12 inmultiri proj-dX+gelu pe programul nou mm_train_tile_gelu (34 registre, blocuri 256 pe 64 x 64, 8 KiB partajati, acelasi cbuf ca mm_train_gelu; SHA-256 verificat; inca neprobat pe placa), restul inmultirilor pe mm_train_tile; aceiasi biti ca lipit fara placi (SIMULARE); Cyber-GPU asteapta pierderile = oracolul procesorului in pasii 1-9 si pasul cu ~2-4 ms mai scurt decat --mm-placi nelipit)\n");
+    }
+    if train_mini && train_vram && train_513 && train_513_tiles3 && train_513_mm_tile && train_513_mixed && train_513_mixed_fast && train_513_via_ram && train_513_slots {
+        text.push_str("\n(doua locuri de lot pentru pasul #513 prin RAM fixata, cerut de lista (--doua-locuri; C-157, PREDARE Cyber-GPU 1ddf092, nota C-157_P2zg, pasul 2): Plan::with_batch_slots — al doilea loc de lot la capatul arenei, fiecare loc cu zona lui de tranzit, zona lui de lansari si inregistrarile lui; procesorul pregateste pasul N+1 cat placa lucreaza pasul N, iar partile pasului N+1 se trimit pe masura ce se termina partile pasului N (in bufferul de comenzi niciodata mai mult de un pas); nou pentru placa: niciun program, niciun registru, doar doua trimiteri in zbor in loc de una; trece = aceleasi verificari ca --lot-prin-ram; Cyber-GPU prezice pasul intreg ~ placa + < 0,5 ms (DEDUS))");
     }
     if train_mini && train_vram && train_513 && train_513_tiles3 && train_513_mm_tile && train_513_mixed && train_513_mixed_fast && train_513_via_ram {
         text.push_str("\n(lotul si rezultatele pasului mixt rapid #513 prin RAM fixata, cerut de lista (--lot-prin-ram; C-157, PREDARE Cyber-GPU 1ddf092, nota C-157_P2zg, pasul 1): lotul scris in RAM fixata si adus in arena de programul de copiere (5 copieri la inceputul trimiterii), pierderile + norma duse inapoi in RAM (2 copieri la sfarsit), in loc de fereastra VRAM; nou pentru placa: niciun program (copy_b128 din os-397), niciun registru, doar 7 copieri mici in pas, la treapta 64 KiB ca restul; trece = aceleasi verificari ca --mixt-513-rapid; randul nou `in afara placii` (pasul intreg - placa, pe bucati); Cyber-GPU prezice in afara placii -4-5 ms la lot 2 (os-431: 10,95 ms) si -11-15 ms la lot 6 (os-437: 18,5 ms), placa +20-40 us (DEDUS))");
@@ -1659,6 +1677,7 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::TRAIN_513_MIXED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TRAIN_MIXED_FAST_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TRAIN_513_VIA_RAM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::TRAIN_513_SLOTS_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TRAIN_513_MM_MODEL_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TRAIN_513_FUSED_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TRAIN_513_RACE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
@@ -2143,6 +2162,11 @@ pub fn self_test() {
     assert!(board_command("test-placa --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --lot-prin-ram").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --antrenare-mini --vram --lot-prin-ram").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --antrenare-mini --mixt --mixt-rapid --lot-prin-ram").is_some_and(|r| r.is_err()));
+    // P6-217: `--doua-locuri` only right after `--lot-prin-ram` (before `--lot-513 N`).
+    assert!(board_command("test-placa --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --lot-prin-ram --doua-locuri") == Some(Ok(String::from("c135 --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --lot-prin-ram --doua-locuri"))));
+    assert!(board_command("test-placa --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --lot-prin-ram --doua-locuri --lot-513 6") == Some(Ok(String::from("c135 --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --lot-prin-ram --doua-locuri --lot-513 6"))));
+    assert!(board_command("test-placa --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --doua-locuri").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --antrenare-mini --vram --doua-locuri").is_some_and(|r| r.is_err()));
     // P6-169: `--vram` only right after `--antrenare-mini`, not with `--mixt`.
     assert!(board_command("test-placa --antrenare-mini --vram") == Some(Ok(String::from("c135 --antrenare-mini --vram"))));
     assert!(board_command("test-placa --pas-aur --antrenare-mini --vram") == Some(Ok(String::from("c135 --pas-aur --antrenare-mini --vram"))));

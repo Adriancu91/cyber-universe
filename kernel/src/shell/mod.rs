@@ -1104,10 +1104,15 @@ fn gpu(args: &[&str]) {
             crate::drivers::gpu_tur::TRAIN_513_MM_MODEL_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
             // P6-215: a trailing `rapid` after `mixt` / `vram-513-mixt` = the mixed step on the fast `mm_tc` programs.
             #[cfg(feature = "test-gpu-sim")]
-            let rapid = (args.len() == 3 || args.len() == 4) && args[2] == "rapid" && matches!(args[1], "mixt" | "vram-513-mixt");
+            let rapid = (3..=5).contains(&args.len()) && args[2] == "rapid" && matches!(args[1], "mixt" | "vram-513-mixt");
             // P6-216: a further `ram` after `vram-513-mixt rapid` = #513's batch and results through pinned RAM.
             #[cfg(feature = "test-gpu-sim")]
-            let via_ram = rapid && args.len() == 4 && args[3] == "ram" && args[1] == "vram-513-mixt";
+            let via_ram = rapid && args.len() >= 4 && args[3] == "ram" && args[1] == "vram-513-mixt";
+            // P6-217: a further `doua` after `ram` = two batch slots (the next step prepared while the board works).
+            #[cfg(feature = "test-gpu-sim")]
+            let slots = via_ram && args.len() == 5 && args[4] == "doua";
+            #[cfg(feature = "test-gpu-sim")]
+            let via_ram = via_ram && (args.len() == 4 || slots);
             #[cfg(feature = "test-gpu-sim")]
             let rapid = rapid && (args.len() == 3 || via_ram);
             #[cfg(feature = "test-gpu-sim")]
@@ -1115,8 +1120,14 @@ fn gpu(args: &[&str]) {
             #[cfg(feature = "test-gpu-sim")]
             crate::drivers::gpu_tur::TRAIN_513_VIA_RAM_IN_CYCLE.store(via_ram, core::sync::atomic::Ordering::SeqCst);
             #[cfg(feature = "test-gpu-sim")]
+            crate::drivers::gpu_tur::TRAIN_513_SLOTS_IN_CYCLE.store(slots, core::sync::atomic::Ordering::SeqCst);
+            #[cfg(feature = "test-gpu-sim")]
             if via_ram {
                 out!("gpu antrenare-mini-sim: lotul si rezultatele #513 prin RAM fixata (pack_mixed_fast_via_ram)\n");
+            }
+            #[cfg(feature = "test-gpu-sim")]
+            if slots {
+                out!("gpu antrenare-mini-sim: doua locuri de lot #513 (Plan::with_batch_slots; pasul urmator pregatit cat lucreaza placa)\n");
             }
             #[cfg(feature = "test-gpu-sim")]
             let args = if rapid { &args[..2] } else { args };

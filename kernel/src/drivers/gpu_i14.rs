@@ -45,7 +45,7 @@ use nvidia_ga104::transfer;
 
 use super::gpu_golden::GpuState;
 use super::gpu_i10::{put_bytes, Launched, WAIT_US};
-use super::gpu_i11::{arena_pages, f32_bytes, map_vram, ram_read, ram_read_at, ram_write, ram_write_at, run_records, Bell, I11_BOARD_BYTES, PAGE};
+use super::gpu_i11::{arena_pages, f32_bytes, map_vram, ram_read, ram_read_at, ram_write, ram_write_at, run_records, submit_records, wait_records, Bell, Sent, I11_BOARD_BYTES, PAGE};
 
 /// Where I14 looks for the control model on the board's stick, and on the test disk in SIMULATION.
 pub(super) const MIC_BOARD: &str = "/usb/kronos/mic_q8_0.kgr";
@@ -6524,6 +6524,9 @@ const KT_513_MIXED_TC: &str = "kt antrenare-513 lansari mm_tc pe pas";
 /// P6-216 (note C-157_P2zg): #513's batch and results through pinned RAM (1/0), and the step outside the board (median).
 const KT_513_VIA_RAM: &str = "kt antrenare-513 lot prin RAM (1/0)";
 const KT_513_OUTSIDE_US: &str = "kt antrenare-513 us in afara placii pe pas (median)";
+/// P6-217 (note C-157_P2zg step 2): two batch slots (1/0), and the parts of steps 2..N sent while the step before ran.
+const KT_513_SLOTS: &str = "kt antrenare-513 doua locuri de lot (1/0)";
+const KT_513_AHEAD: &str = "kt antrenare-513 parti trimise in avans";
 const KT_513_MM_CHOICE_FORMS: &str = "kt antrenare-513 forme pe o varianta aleasa";
 /// P6-196 (C-165, centre note of 25 Nov 02:10): the 60 race rows of os-416 (hub
 /// `rezultate/os-automat/2026-11-25/ciclu-auto-20261125-0135.txt`), copied as the OS wrote them (`race_row`), behind a
@@ -6927,7 +6930,18 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         && super::gpu_tur::TRAIN_MIXED_FAST_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst)
         && super::gpu_tur::TRAIN_513_VIA_RAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     journal.push(Event::Value { what: KT_513_VIA_RAM, value: via_ram_on as u32 });
-    let probe0 = build(nvidia_ga104::mmu::VA_BASE)?.resident()?;
+    // P6-217 (note C-157_P2zg step 2): with `--doua-locuri` (only after `--lot-prin-ram`), a second batch slot at the end
+    // of the arena (`Plan::with_batch_slots`), and per slot its own half of the staging piece, launch zone and records.
+    let slots_on = via_ram_on && super::gpu_tur::TRAIN_513_SLOTS_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    journal.push(Event::Value { what: KT_513_SLOTS, value: slots_on as u32 });
+    let n_slots: u64 = if slots_on { 2 } else { 1 };
+    let stage_cap = piece / n_slots;
+    let stage_off = |slot: usize| slot as u64 * stage_cap;
+    let resident = |pl: Plan| -> GpuResult<Plan> {
+        let r = pl.resident()?;
+        if slots_on { r.with_batch_slots() } else { Ok(r) }
+    };
+    let probe0 = resident(build(nvidia_ga104::mmu::VA_BASE)?)?;
     let mut n_launch = 0usize;
     for (x, _) in &data.batches {
         let pr = probe0.rebatch(x)?;
@@ -6939,8 +6953,8 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         let v = nvidia_ga104::batch_ram::via_ram(&probe0, x0, y0, 0)?;
         n_launch += nvidia_ga104::batch_ram::extra_launches(&v);
         stage_need = v.staging.len() as u64;
-        if stage_need > piece {
-            lines.push(format!("{}: kronos --gpu: {}: NU A RULAT: zona de tranzit a lotului ({} B) nu incape in bucata RAM ({} KiB); nimic trimis", p, tag, stage_need, piece >> 10));
+        if stage_need > stage_cap {
+            lines.push(format!("{}: kronos --gpu: {}: NU A RULAT: zona de tranzit a lotului ({} B) nu incape in bucata RAM ({} KiB); nimic trimis", p, tag, stage_need, stage_cap >> 10));
             return Err(bad("antrenare-513: zona de tranzit prea mare"));
         }
     }
@@ -6965,7 +6979,10 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let probe_choice = (probe0.mm_choice().copied(), probe0.mm_choice_programs().to_vec());
     drop(probe0);
     let varena = map_vram(st, arena_bytes)?;
-    let plan0 = build(varena.va)?.resident()?;
+    let plan0 = resident(build(varena.va)?)?;
+    if slots_on && plan0.batch_slots() != 2 {
+        return Err(bad("antrenare-513: planul nu are doua locuri de lot"));
+    }
     if plan0.bytes() > arena_bytes || plan0.mm_tile() != mm_tile || plan0.colsum_split() != colsum_split || plan0.programs() != probe_programs
         || plan0.fused_back() != fused_tile || plan0.fused_gelu() != fused_tile || plan0.mm_tile_gelu() != fused_tile
         || (plan0.fused_programs(), plan0.mm_tile_gelu_programs()) != probe_extra
@@ -6974,9 +6991,9 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     {
         return Err(bad("antrenare-513: planul rezident difera intre adrese"));
     }
-    let Some(host) = ram_vram_host((piece + zone_bytes) / PAGE) else {
-        lines.push(format!("{}: kronos --gpu: {}: NU A RULAT: nu am {} KiB RAM contigua sub 4 GiB; nimic trimis", p, tag, (piece + zone_bytes) >> 10));
-        return Err(GpuError::OutOfMemory { requested: piece + zone_bytes });
+    let Some(host) = ram_vram_host((piece + n_slots * zone_bytes) / PAGE) else {
+        lines.push(format!("{}: kronos --gpu: {}: NU A RULAT: nu am {} KiB RAM contigua sub 4 GiB; nimic trimis", p, tag, (piece + n_slots * zone_bytes) >> 10));
+        return Err(GpuError::OutOfMemory { requested: piece + n_slots * zone_bytes });
     };
     let count: usize = a.tensors().iter().map(|t| t.elements()).sum();
     let n_parts = n_launch.div_ceil(split);
@@ -7069,6 +7086,18 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     if !stage.va.is_multiple_of(PAGE) || !ctl.va.is_multiple_of(PAGE) {
         return Err(bad("antrenare-513: zona RAM nu e aliniata la 4 KiB"));
     }
+    // P6-217: slot 1's launch zone right after slot 0's, and every (slot, part) its own records page(s), so that the
+    // next step's parts never touch the records or the zone of the step the board is running.
+    let mut ctls: Vec<SysMapping> = alloc::vec![ctl.clone()];
+    let mut recs: [Vec<Mapping>; 2] = Default::default();
+    if slots_on {
+        ctls.push(st.mem.alloc_sys_mapped(&pages((piece + zone_bytes) / PAGE, zone_bytes / PAGE))?);
+        for r in recs.iter_mut() {
+            for _ in 0..n_parts {
+                r.push(map_vram(st, (16 * (split as u64 + 1)).next_multiple_of(PAGE))?);
+            }
+        }
+    }
     // P6-190: the race's scratch C (the largest product the step can have + a 256-byte guard) and its 5 programs, mapped
     // before the step so they are in the submissions' map list.
     let race_c: Option<Mapping> = if race {
@@ -7109,7 +7138,9 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     maps.extend(race_progs.iter().flatten().copied());
     maps.extend(tc_map);
     maps.extend(fast_map.iter().flat_map(|(a, b)| [*a, *b]));
-    let sys = [ctx.sys.clone(), stage.clone(), ctl.clone()];
+    maps.extend(recs.iter().flatten().copied());
+    let mut sys = alloc::vec![ctx.sys.clone(), stage.clone()];
+    sys.extend(ctls.iter().cloned());
     let prog_va = |want: ts::Prog| progs.iter().find(|(q, _)| *q == want).map_or(0, |(_, pm)| pm.va);
     // One launch of the copy program, as in `train_mini_resident`.
     let copy = |st: &mut GpuState, vbar: &mut V, clock: &mut K, journal: &mut Journal, l: &mut Launched, doorbell: &mut Bell<'_, V>, subs: &mut u32, src: u64, dst: u64, len: u64| -> GpuResult<Option<u64>> {
@@ -7194,6 +7225,18 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             p, tag, scale as u32
         ));
     }
+    // P6-217: slot 1's `res = [0, 1]` and 1/S, once (slot 0's came with the arena and the mixed uploads above).
+    if slots_on {
+        let s1 = plan0.slot(1)?;
+        let w = st.mem.writer_mut();
+        for (va, bytes) in s1.slot_uploads().into_iter().chain(s1.mixed_uploads(scale)?) {
+            put_bytes(w, varena.pa + (va - varena.va), &bytes)?;
+        }
+        lines.push(format!(
+            "{}: kronos --gpu: {}: doua locuri de lot (--doua-locuri, nota Cyber-GPU C-157_P2zg pasul 2; Plan::with_batch_slots): locul 2 la capatul arenei (res = [0, 1] si 1/S scrise o data), fiecare loc cu jumatatea lui din bucata RAM pentru tranzit ({} KiB), zona lui de lansari ({} KiB) si inregistrarile lui ({} parti); pasul N+1 pregatit in celalalt loc cat placa lucreaza pasul N, partile lui trimise pe masura ce se termina partile pasului N (in bufferul de comenzi cel mult un pas)",
+            p, tag, stage_cap >> 10, zone_bytes >> 10, n_parts
+        ));
+    }
     if via_ram_on {
         lines.push(format!(
             "{}: kronos --gpu: {}: lotul si rezultatele prin RAM fixata (--lot-prin-ram, nota Cyber-GPU C-157_P2zg pasul 1): zona de tranzit {} B la inceputul bucatii RAM, la fiecare pas (si la pasul 1) lotul scris acolo si adus in arena de 5 copieri, pierderile + norma duse inapoi de 2 copieri, toate in aceeasi trimitere cu pasul, la treapta {} KiB (pack_mixed_fast_via_ram; programul de copiere din os-397); fereastra VRAM neatinsa in timpul pasilor",
@@ -7247,70 +7290,129 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     journal.flush_live();
     let hold = super::gpu_i6::GenHold::start();
     journal.set_routine(Some(kf::gen_routine(&GEN_NOTES)));
+    // P6-217: one step made ready on the CPU — its batch in place (staging area or VRAM window), its list packed into its
+    // slot's launch zone. Nothing here touches the other slot, so it can run while the board works on that one.
+    struct Prep {
+        slot: usize,
+        plan: Plan,
+        via: Option<nvidia_ga104::batch_ram::ViaRam>,
+        qmds: Vec<u64>,
+        list: Option<Vec<ts::Launch>>,
+        tc: Option<usize>,
+        picks: Option<String>,
+        t0: Option<u64>,
+        t_batch: Option<u64>,
+        t_list: Option<u64>,
+    }
+    let prepare = |st: &mut GpuState, k: usize| -> GpuResult<Prep> {
+        let (x, y) = data.batches.get(k).ok_or(bad("antrenare-513: pasul nu exista"))?;
+        let step = k as u32 + 1;
+        let slot = if slots_on { k % 2 } else { 0 };
+        let ctl = &ctls[slot];
+        let t0 = crate::time::since_boot_us();
+        let base = if slots_on { plan0.slot(slot)? } else { plan0.clone() };
+        let plan = base.rebatch(x)?;
+        if plan.w != base.w || plan.m != base.m || plan.v != base.v || plan.loss_rows != base.loss_rows || plan.res != base.res {
+            return Err(bad("antrenare-513: adresele planului rezident s-au mutat"));
+        }
+        // P6-216: through RAM every step (step 1 too, so all steps are alike); otherwise through the VRAM window.
+        let via = if via_ram_on { Some(nvidia_ga104::batch_ram::via_ram(&plan, x, y, stage.va + stage_off(slot))?) } else { None };
+        if let Some(v) = &via {
+            if v.staging.len() as u64 > stage_cap {
+                return Err(bad("antrenare-513: zona de tranzit prea mare"));
+            }
+            // P6-217: only this slot's half of the piece; the board reads the other half (the other slot) meanwhile.
+            ram_vram_bytes(host + stage_off(slot), v.staging.len() as u64).copy_from_slice(&v.staging);
+        } else if k > 0 {
+            let w = st.mem.writer_mut();
+            for (va, bytes) in plan.batch_uploads(x, y)? {
+                put_bytes(w, varena.pa + (va - varena.va), &bytes)?;
+            }
+        }
+        let t_batch = crate::time::since_boot_us();
+        let (mut tc, mut picks) = (None, None);
+        let (zb, qmds, list) = match tc_map {
+            // P6-198: the mixed list (the 1x1x1 c/S product included) and its zone; no profile (it reads F32 lists).
+            Some(tcm) => {
+                let ml = plan.step_mixed(Recipe::AdamW513, &adam, step, scale)?;
+                tc = Some(ml.iter().filter(|x| matches!(x, ts::MixedLaunch::Tc { .. })).count());
+                let (zb, qmds) = match fast_map {
+                    Some((pf, v4)) => {
+                        let progs = ts::TcPrograms { tc: tcm.va, pf: pf.va, v4: v4.va, gelu: 0 };
+                        let (zb, qmds, pk) = match &via {
+                            Some(v) => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram(&ml, prog_va, &progs, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
+                            None => ts::pack_mixed_fast(&ml, prog_va, &progs, Some(MIXED_FAST_STEP), ctl.va)?,
+                        };
+                        picks = Some(fast_picks_text(&pk));
+                        (zb, qmds)
+                    }
+                    None => ts::pack_mixed(&ml, prog_va, tcm.va, ctl.va)?,
+                };
+                (zb, qmds, None)
+            }
+            None => {
+                let list = plan.step(Recipe::AdamW513, &adam, step)?;
+                let (zb, qmds) = match sm_step {
+                    // P6-205: the same step on every step's list (the programs never change between steps).
+                    Some(sm) => {
+                        if ts::step_best_sm_step(&list, nvidia_ga104::occupancy::Reserve::OneKib) != sm {
+                            return Err(bad("antrenare-513: treapta memoriei comune difera intre pasi"));
+                        }
+                        ts::pack_with_sm_step(&list, prog_va, ctl.va, sm)?
+                    }
+                    None => ts::pack(&list, prog_va, ctl.va)?,
+                };
+                (zb, qmds, Some(list))
+            }
+        };
+        if zb.len() as u64 > zone_bytes {
+            return Err(bad("antrenare-513: zona de control prea mare"));
+        }
+        ram_write(ctl, &zb);
+        let t_list = crate::time::since_boot_us();
+        Ok(Prep { slot, plan, via, qmds, list, tc, picks, t0, t_batch, t_list })
+    };
+    // P6-217: one part of a step submitted and rung, not waited for: (what to wait for, first payload, launches).
+    // `None` = the pushbuffer has no room for it until an earlier part is retired (nothing was submitted).
+    let send_part = |st: &mut GpuState, vbar: &mut V, clock: &mut K, journal: &mut Journal, l: &mut Launched, doorbell: &mut Bell<'_, V>, subs: &mut u32, rec: Mapping, part: &[u64]| -> GpuResult<Option<(Sent, u32, usize)>> {
+        let n = part.len();
+        put_bytes(st.mem.writer_mut(), rec.pa, &alloc::vec![0u8; 16 * (n + 1)])?;
+        let first = TOKEN_FIRST + STRIDE * *subs;
+        let mut words = alloc::vec![0u32; transfer::sequence_words_fresh(n)];
+        let mut pb = PushBuf::new(&mut words);
+        transfer::encode_sequence_fresh(&mut pb, part, rec.va, first)?;
+        let nw = pb.len();
+        match submit_records(vbar, clock, journal, st, l, permit, &words[..nw], rec, n as u64 + 1, first + n as u32, &maps, &sys, doorbell) {
+            Ok(sent) => {
+                *subs += 1;
+                Ok(Some((sent, first, n)))
+            }
+            Err(GpuError::OutOfMemory { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    };
+    // P6-217: the next step's parts already submitted (in order), and how many went while the step before still ran.
+    let mut ahead: Vec<(Sent, u32, usize)> = Vec::new();
+    let (mut sent_ahead, mut held_back, mut timed_out) = (0usize, 0usize, false);
     let mut run_steps = || -> GpuResult<()> {
+        let mut next_prep: Option<Prep> = None;
+        let mut prev_done: Option<u64> = None;
         for (k, (x, y)) in data.batches.iter().enumerate() {
             let step = k as u32 + 1;
-            let t0 = crate::time::since_boot_us();
-            let plan = plan0.rebatch(x)?;
-            if plan.w != plan0.w || plan.m != plan0.m || plan.v != plan0.v || plan.loss_rows != plan0.loss_rows || plan.res != plan0.res {
-                return Err(bad("antrenare-513: adresele planului rezident s-au mutat"));
-            }
-            // P6-216: through RAM every step (step 1 too, so all steps are alike); otherwise through the VRAM window.
-            let via = if via_ram_on { Some(nvidia_ga104::batch_ram::via_ram(&plan, x, y, stage.va)?) } else { None };
-            if let Some(v) = &via {
-                if v.staging.len() as u64 > piece {
-                    return Err(bad("antrenare-513: zona de tranzit prea mare"));
-                }
-                ram_vram_bytes(host, v.staging.len() as u64).copy_from_slice(&v.staging);
-            } else if k > 0 {
-                let w = st.mem.writer_mut();
-                for (va, bytes) in plan.batch_uploads(x, y)? {
-                    put_bytes(w, varena.pa + (va - varena.va), &bytes)?;
-                }
-            }
-            let t_batch = crate::time::since_boot_us();
-            let (zb, qmds, list) = match tc_map {
-                // P6-198: the mixed list (the 1x1x1 c/S product included) and its zone; no profile (it reads F32 lists).
-                Some(tc) => {
-                    let ml = plan.step_mixed(Recipe::AdamW513, &adam, step, scale)?;
-                    tc_per_step = ml.iter().filter(|x| matches!(x, ts::MixedLaunch::Tc { .. })).count();
-                    let (zb, qmds) = match fast_map {
-                        Some((pf, v4)) => {
-                            let progs = ts::TcPrograms { tc: tc.va, pf: pf.va, v4: v4.va, gelu: 0 };
-                            let (zb, qmds, picks) = match &via {
-                                Some(v) => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram(&ml, prog_va, &progs, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
-                                None => ts::pack_mixed_fast(&ml, prog_va, &progs, Some(MIXED_FAST_STEP), ctl.va)?,
-                            };
-                            fast_picks = fast_picks_text(&picks);
-                            (zb, qmds)
-                        }
-                        None => ts::pack_mixed(&ml, prog_va, tc.va, ctl.va)?,
-                    };
-                    (zb, qmds, None)
-                }
-                None => {
-                    let list = plan.step(Recipe::AdamW513, &adam, step)?;
-                    let (zb, qmds) = match sm_step {
-                        // P6-205: the same step on every step's list (the programs never change between steps).
-                        Some(sm) => {
-                            if ts::step_best_sm_step(&list, nvidia_ga104::occupancy::Reserve::OneKib) != sm {
-                                return Err(bad("antrenare-513: treapta memoriei comune difera intre pasi"));
-                            }
-                            ts::pack_with_sm_step(&list, prog_va, ctl.va, sm)?
-                        }
-                        None => ts::pack(&list, prog_va, ctl.va)?,
-                    };
-                    (zb, qmds, Some(list))
-                }
+            let prep = match next_prep.take() {
+                Some(pr) => pr,
+                None => prepare(st, k)?,
             };
-            if zb.len() as u64 > zone_bytes {
-                return Err(bad("antrenare-513: zona de control prea mare"));
+            let Prep { slot, plan, via, qmds, list, tc, picks, t0, t_batch, t_list } = prep;
+            if let Some(t) = tc {
+                tc_per_step = t;
+            }
+            if let Some(t) = picks {
+                fast_picks = t;
             }
             if let (true, true, Some(list)) = (race, race_shapes.is_empty(), list.as_ref()) {
                 race_shapes = race_forms(list);
             }
-            ram_write(&ctl, &zb);
-            let t_list = crate::time::since_boot_us();
             if let (None, Some(list)) = (prof.as_ref(), list.as_ref()) {
                 let pr = nvidia_ga104::train_profile::StepProfile::from_launches(list)?;
                 if pr.launches() != qmds.len() {
@@ -7319,27 +7421,76 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 prof = Some(pr);
             }
             let mut step_ns: Vec<u64> = Vec::with_capacity(qmds.len());
-            // The step in parts of at most `split` launches, each its own submission, in order.
             let mut busy = 0u64;
-            for (j, part) in qmds.chunks(split).enumerate() {
-                let n = part.len();
-                put_bytes(st.mem.writer_mut(), ctx.rec.pa, &alloc::vec![0u8; 16 * (n + 1)])?;
-                let first = TOKEN_FIRST + STRIDE * *subs;
-                let mut words = alloc::vec![0u32; transfer::sequence_words_fresh(n)];
-                let mut pb = PushBuf::new(&mut words);
-                transfer::encode_sequence_fresh(&mut pb, part, ctx.rec.va, first)?;
-                let nw = pb.len();
-                let last = first + n as u32;
-                match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, n as u64 + 1, last, &maps, &sys, doorbell)? {
-                    Ok(b) => {
-                        *subs += 1;
-                        let ns = transfer::analyze_sequence(&b, n, first)?;
-                        busy += ns.iter().sum::<u64>();
-                        step_ns.extend_from_slice(&ns);
+            let mut t_wait0 = t_list;
+            if slots_on {
+                // P6-217: this step's parts not yet sent (all of step 1; any the pushbuffer had no room for), then the
+                // next step made ready in the other slot while the board runs this one; each next part is sent as soon
+                // as the same part of this step is done (never more than one step's pushbuffer in flight).
+                let parts: Vec<&[u64]> = qmds.chunks(split).collect();
+                if parts.len() > recs[slot].len() {
+                    return Err(bad("antrenare-513: mai multe parti decat zone de inregistrari"));
+                }
+                while ahead.len() < parts.len() {
+                    let j = ahead.len();
+                    match send_part(st, vbar, clock, journal, l, doorbell, subs, recs[slot][j], parts[j])? {
+                        Some(sn) => ahead.push(sn),
+                        None => return Err(bad("antrenare-513: bufferul de comenzi nu are loc pentru o parte a pasului")),
                     }
-                    Err(got) => {
-                        stopped = Some(format!("placa nu a terminat partea {} a pasului {} (ultima inregistrare {:#x}, asteptat {:#x})", j + 1, step, got, last));
-                        return Ok(());
+                }
+                let mine = core::mem::take(&mut ahead);
+                if k + 1 < data.batches.len() {
+                    next_prep = Some(prepare(st, k + 1)?);
+                }
+                t_wait0 = crate::time::since_boot_us();
+                for (j, (sn, first, n)) in mine.into_iter().enumerate() {
+                    match wait_records(vbar, clock, journal, st, l, permit, &sn)? {
+                        Ok(b) => {
+                            let ns = transfer::analyze_sequence(&b, n, first)?;
+                            busy += ns.iter().sum::<u64>();
+                            step_ns.extend_from_slice(&ns);
+                        }
+                        Err(got) => {
+                            timed_out = true;
+                            stopped = Some(format!("placa nu a terminat partea {} a pasului {} (ultima inregistrare {:#x}, asteptat {:#x}; doua locuri)", j + 1, step, got, first + n as u32));
+                            return Ok(());
+                        }
+                    }
+                    if let Some(np) = next_prep.as_ref() {
+                        let np_parts: Vec<&[u64]> = np.qmds.chunks(split).collect();
+                        if ahead.len() == j && j < np_parts.len() && j < recs[np.slot].len() {
+                            match send_part(st, vbar, clock, journal, l, doorbell, subs, recs[np.slot][j], np_parts[j])? {
+                                Some(sn) => {
+                                    ahead.push(sn);
+                                    sent_ahead += 1;
+                                }
+                                None => held_back += 1,
+                            }
+                        }
+                    }
+                }
+            } else {
+                // The step in parts of at most `split` launches, each its own submission, in order.
+                for (j, part) in qmds.chunks(split).enumerate() {
+                    let n = part.len();
+                    put_bytes(st.mem.writer_mut(), ctx.rec.pa, &alloc::vec![0u8; 16 * (n + 1)])?;
+                    let first = TOKEN_FIRST + STRIDE * *subs;
+                    let mut words = alloc::vec![0u32; transfer::sequence_words_fresh(n)];
+                    let mut pb = PushBuf::new(&mut words);
+                    transfer::encode_sequence_fresh(&mut pb, part, ctx.rec.va, first)?;
+                    let nw = pb.len();
+                    let last = first + n as u32;
+                    match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, n as u64 + 1, last, &maps, &sys, doorbell)? {
+                        Ok(b) => {
+                            *subs += 1;
+                            let ns = transfer::analyze_sequence(&b, n, first)?;
+                            busy += ns.iter().sum::<u64>();
+                            step_ns.extend_from_slice(&ns);
+                        }
+                        Err(got) => {
+                            stopped = Some(format!("placa nu a terminat partea {} a pasului {} (ultima inregistrare {:#x}, asteptat {:#x})", j + 1, step, got, last));
+                            return Ok(());
+                        }
                     }
                 }
             }
@@ -7352,7 +7503,8 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             let (rows, norm) = match &via {
                 // P6-216: the two copies at the end of the submission brought them into the staging area (written with
                 // zeros with the batch: a copy that did not arrive leaves 0, and the oracle / the loss check catch it).
-                Some(v) => nvidia_ga104::batch_ram::results(ram_vram_bytes(host, v.staging.len() as u64), v)?,
+                // P6-217: this step's slot's half (the next step's half was written meanwhile, not this one).
+                Some(v) => nvidia_ga104::batch_ram::results(ram_vram_bytes(host + stage_off(slot), v.staging.len() as u64), v)?,
                 None => {
                     let rows = read_vram_f32s(st, vbar, journal, lr_va, (lr_n / 4) as usize)?;
                     let norm = read_vram_f32s(st, vbar, journal, res_va, (res_n / 4) as usize)?[0];
@@ -7361,10 +7513,11 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             };
             let t_res = crate::time::since_boot_us();
             // P6-216 (note C-157_P2zg: "outside the board" split): batch, list + packing, submissions minus the board,
-            // results (µs; a mark the clock did not give leaves the step out).
-            if let (Some(a0), Some(a1), Some(a2), Some(a3), Some(a4)) = (t0, t_batch, t_list, t_subs, t_res) {
+            // results (µs; a mark the clock did not give leaves the step out). P6-217: with two slots the batch and the
+            // list were made while the step before ran, and "submissions" is the wait for this step minus its board time.
+            if let (Some(a0), Some(a1), Some(a2), Some(a3), Some(a4)) = (t0, t_batch, t_wait0, t_subs, t_res) {
                 outside[0].push(a1.saturating_sub(a0));
-                outside[1].push(a2.saturating_sub(a1));
+                outside[1].push(t_list.unwrap_or(a1).saturating_sub(a1));
                 outside[2].push(a3.saturating_sub(a2).saturating_sub(busy / 1000));
                 outside[3].push(a4.saturating_sub(a3));
             }
@@ -7372,9 +7525,14 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             let norm = if mixed { norm / scale } else { norm };
             let loss = Outcome::mean_loss(&rows);
             journal.flush_live();
-            if let Some(us) = t0.zip(crate::time::since_boot_us()).map(|(a0, a1)| a1.saturating_sub(a0)) {
+            // P6-217: with two slots, the whole step = from the previous step's results to this one's (step 1: from its
+            // preparation), since each step was made ready while the one before ran.
+            let now = crate::time::since_boot_us();
+            let start = if slots_on { prev_done.or(t0) } else { t0 };
+            if let Some(us) = start.zip(now).map(|(a0, a1)| a1.saturating_sub(a0)) {
                 host_us.push(us);
             }
+            prev_done = now;
             if !norm.is_finite() || !loss.is_finite() {
                 stopped = Some(format!("pasul {}: pierderea {:?} / norma gradientului {:?} nu e un numar{}", step, loss, norm, if mixed { " (scara S prea mare?)" } else { "" }));
                 return Ok(());
@@ -7414,9 +7572,26 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         Ok(())
     };
     let steps_r = run_steps();
+    // P6-217: a step stopped early (a number that is not one, the thermal watch) may leave the next step's parts in
+    // flight: they are waited for (and retired) before anything else goes on the channel; after a part that did not
+    // finish, the rest will not either, so they are left as today.
+    if !timed_out {
+        for (sn, ..) in core::mem::take(&mut ahead) {
+            if wait_records(vbar, clock, journal, st, l, permit, &sn)?.is_err() {
+                break;
+            }
+        }
+    }
     drop(hold);
     journal.set_routine(None);
     steps_r?;
+    if slots_on {
+        journal.push(Event::Value { what: KT_513_AHEAD, value: sent_ahead as u32 });
+        lines.push(format!(
+            "{}: kronos --gpu: {}: doua locuri: {} parti ale pasilor 2..{} trimise cat placa lucra pasul dinainte ({} parti pe pas), {} amanate (fara loc in bufferul de comenzi; trimise dupa pasul dinainte)",
+            p, tag, sent_ahead, data.batches.len(), n_parts, held_back
+        ));
+    }
     // 2. At the end: the weights region back VRAM → RAM in pieces — every weight finite; in SIMULARE against the oracle.
     let (mut bad_w, mut worst_w, mut read_w) = (0usize, 0.0f64, 0usize);
     if stopped.is_none() {

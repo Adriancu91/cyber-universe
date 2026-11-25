@@ -194,6 +194,26 @@ pub(super) fn kick_and_wait<V: Mmio + ?Sized, K: Clock + ?Sized, T>(
     doorbell: &mut dyn FnMut(&mut V, &mut Journal, u64, u32, &Ring<'_>) -> GpuResult<()>,
     wait: impl FnOnce(&mut Reader<'_, '_, V>, &mut K) -> GpuResult<T>,
 ) -> GpuResult<T> {
+    kick(vbar, clock, journal, permit, zone, pending, words, root, bell, ring, doorbell)?;
+    wait_window(vbar, clock, journal, permit, zone, wait)
+}
+
+/// P6-217 (cyber-gpu note C-157_P2zg step 2): the first half of [`kick_and_wait`] — the pending VRAM writes flushed, the
+/// TLB invalidated, the doorbell rung — with no wait, so the CPU can prepare the next submission while the board works.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn kick<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    permit: Option<&HardwareWritePermit>,
+    zone: &VramZone,
+    pending: &Pending,
+    words: &mut u64,
+    root: u64,
+    bell: (u64, u32),
+    ring: &Ring<'_>,
+    doorbell: &mut dyn FnMut(&mut V, &mut Journal, u64, u32, &Ring<'_>) -> GpuResult<()>,
+) -> GpuResult<()> {
     flush(&mut *vbar, &mut *journal, permit, zone, pending, words)?;
     kick_mark(2);
     {
@@ -205,6 +225,18 @@ pub(super) fn kick_and_wait<V: Mmio + ?Sized, K: Clock + ?Sized, T>(
     kick_mark(3);
     doorbell(&mut *vbar, &mut *journal, bell.0, bell.1, ring)?;
     kick_mark(4);
+    Ok(())
+}
+
+/// P6-217: the second half of [`kick_and_wait`] — `wait` run with a reader over the VRAM window, the window restored.
+pub(super) fn wait_window<V: Mmio + ?Sized, K: Clock + ?Sized, T>(
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    permit: Option<&HardwareWritePermit>,
+    zone: &VramZone,
+    wait: impl FnOnce(&mut Reader<'_, '_, V>, &mut K) -> GpuResult<T>,
+) -> GpuResult<T> {
     let mut vw = VramWindow::new(&mut *vbar, &mut *journal, permit, zone.vram_size, &zone.protected)?;
     let r = wait(&mut Reader(&mut vw), clock);
     let back = vw.restore();

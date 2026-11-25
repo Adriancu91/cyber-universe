@@ -41,7 +41,7 @@ use nvidia_ga104::q8_matvec::{self as mv, Q8_MATVEC};
 use nvidia_ga104::transfer::{self, COPY_B128, ROUND_TRIP_WORDS};
 
 use super::gpu_golden::GpuState;
-use super::gpu_i10::{kick_and_wait, put_bytes, Launched, Ring, WAIT_US};
+use super::gpu_i10::{put_bytes, Launched, Ring, WAIT_US};
 
 /// The copy size of I11 on the board (Cyber-GPU's default, 8 MiB).
 pub(super) const I11_BOARD_BYTES: u64 = transfer::I11_DEFAULT_BYTES;
@@ -248,9 +248,77 @@ fn run_records_inner<V: Mmio + ?Sized, K: Clock + ?Sized>(
     push_shadow: Option<&mut nvidia_ga104::kronos_fast::WriteShadow>,
     d2: Option<Diet2Wait<'_>>,
 ) -> GpuResult<Result<Vec<u8>, u32>> {
+    let sent = submit_records_inner(vbar, clock, journal, st, l, permit, words, rec, n_rec, last_payload, maps, sys, doorbell, push_shadow)?;
+    wait_records_inner(vbar, clock, journal, st, l, permit, &sent, d2)
+}
+
+/// P6-217 (cyber-gpu note C-157_P2zg step 2): one submission rung on the board and not yet waited for — what
+/// [`wait_records`] needs to find its last record.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Sent {
+    pub rec: Mapping,
+    pub n_rec: u64,
+    pub last_payload: u32,
+}
+
+/// P6-217: the first half of [`run_records`] — `words` fenced on the last record, submitted and rung, no wait. Several
+/// submissions may be in flight on the channel (the work queue keeps their pushbuffer stretches apart); each must use
+/// its own record area and be waited for in order with [`wait_records`].
+#[allow(clippy::too_many_arguments)]
+pub(super) fn submit_records<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    words: &[u32],
+    rec: Mapping,
+    n_rec: u64,
+    last_payload: u32,
+    maps: &[Mapping],
+    sys: &[SysMapping],
+    doorbell: &mut Bell<'_, V>,
+) -> GpuResult<Sent> {
+    submit_records_inner(vbar, clock, journal, st, l, permit, words, rec, n_rec, last_payload, maps, sys, doorbell, None)
+}
+
+/// P6-217: the second half of [`run_records`] — waits for the last record of `sent`, returns all its records (or the
+/// last payload seen, if the board did not finish in time) and retires the submission.
+pub(super) fn wait_records<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    sent: &Sent,
+) -> GpuResult<Result<Vec<u8>, u32>> {
+    wait_records_inner(vbar, clock, journal, st, l, permit, sent, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn submit_records_inner<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    words: &[u32],
+    rec: Mapping,
+    n_rec: u64,
+    last_payload: u32,
+    maps: &[Mapping],
+    sys: &[SysMapping],
+    doorbell: &mut Bell<'_, V>,
+    push_shadow: Option<&mut nvidia_ga104::kronos_fast::WriteShadow>,
+) -> GpuResult<Sent> {
+    if n_rec == 0 {
+        return Err(GpuError::InvalidArgument("I11: o trimitere fara inregistrari"));
+    }
     let w = st.space.as_ref().map(|(_, w)| w.clone()).ok_or(GpuError::InvalidArgument("I11: lipseste canalul de lucru"))?;
     let last_va = rec.va + RECORD * (n_rec - 1);
-    let last_pa = rec.pa + RECORD * (n_rec - 1);
     for i in 0..7 {
         super::gpu_i10::KICK_MARKS[i].store(0, core::sync::atomic::Ordering::Relaxed);
     }
@@ -271,9 +339,28 @@ fn run_records_inner<V: Mmio + ?Sized, K: Clock + ?Sized>(
     all.extend_from_slice(maps);
     all.push(rec);
     let ring = Ring { root, ring_va: w.ring.va, entries: w.entries, userd_va: w.ring.va + w.userd_offset, maps: &all, sys };
-    let wq = &mut l.wq;
     let GpuState { pending, zone, vram_words, .. } = &mut *st;
-    kick_and_wait(vbar, clock, journal, permit, zone, pending, vram_words, root, (bell.bar0_offset, bell.value), &ring, doorbell, |rd, clock| {
+    super::gpu_i10::kick(vbar, clock, journal, permit, zone, pending, vram_words, root, (bell.bar0_offset, bell.value), &ring, doorbell)?;
+    Ok(Sent { rec, n_rec, last_payload })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn wait_records_inner<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    sent: &Sent,
+    d2: Option<Diet2Wait<'_>>,
+) -> GpuResult<Result<Vec<u8>, u32>> {
+    let Sent { rec, n_rec, last_payload } = *sent;
+    let last_va = rec.va + RECORD * (n_rec - 1);
+    let last_pa = rec.pa + RECORD * (n_rec - 1);
+    let wq = &mut l.wq;
+    let GpuState { zone, .. } = &*st;
+    super::gpu_i10::wait_window(vbar, clock, journal, permit, zone, |rd, clock| {
         let mut last = 0;
         let mut cond = || {
             last = rd.read_u32(last_pa).ok()?;
