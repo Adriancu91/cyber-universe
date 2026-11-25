@@ -225,6 +225,13 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     3 margini; aceeași pagină de RAM și aceeași cale ca `mma16_f16`, `cbuf_s8` / `qmd_s8`); D (umplut cu `0x7fff_fff7`) e judecat
     bit cu bit față de `gpu_compute::mma_s8::mma16_s8_ref` → `mma16_s8 set …: ACEIASI BITI / DIFERA …` și
     `proba mma16_s8: TRECE / NU TRECE / NU A TERMINAT`. Test: `kronos-gpu-p8-s8`.
+    **P6-201 (C-165, cyber-gpu `54f5ab8`): proba ocupării.** Cu `test-placa … --cursa-mm --ocupare` (doar imediat după
+    `--cursa-mm`, nu cu `--proba-64k8`; `gpu_tur::TRAIN_513_OCCUPANCY_IN_CYCLE`; în build-ul de test
+    `gpu antrenare-mini-sim vram-513-ocupare`): în locul cursei mari, pe forma qkv, cele 10 rulări din `occupancy::PROBE`
+    (`mm_train_tile` 8/16/32/64 KiB, `mm_tv_64x64k8` 8/16/32, `mm_tv_128x128` 8/16/32), fiecare cu QMD-ul
+    `to_bytes_with_sm_config` (treapta memoriei comune a unității = `MIN = TARGET`); C comparat bit cu bit cu prima rulare;
+    după fiecare rulare puterea din tablou → `ocupare <program> <N> KiB: … us, … TFLOP/s, … W, ACEIASI BITI`,
+    `proba ocuparii: k / 10 aceiasi biti` și verdictul H1 / H2. Test: `kronos-gpu-antrenare-513-ocupare`.
     **P6-134 (C-161 punctul 4, C-160 punctul 6, cyber-gpu `3b4ca77`): primul program „înapoi” al antrenării pe placă — proba
     `colsum`.** Doar în ciclu cu `test-placa … --colsum` (ultima opțiune, după `--p8`; `gpu_tur::COLSUM_IN_CYCLE`; în build-ul de test
     `gpu colsum-sim on|off`): după textele lui #513 (și după P8, dacă e cerut), `gpu_i14::colsum_probe` verifică SHA-256 al lui `colsum`

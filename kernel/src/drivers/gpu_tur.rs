@@ -465,6 +465,11 @@ pub static TRAIN_513_RACE_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync:
 /// (`test-placa … --cursa-mm --proba-64k8`) and, in the test build, by `gpu antrenare-mini-sim vram-513-proba64`.
 pub static TRAIN_513_PROBE_64K8_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-201 (cyber-gpu `54f5ab8`, note C-165_proba-ocuparii): with [`TRAIN_513_RACE_IN_CYCLE`], instead of the big race,
+/// the occupancy probe on the qkv shape (`occupancy::PROBE`: 10 runs with the QMD's SM shared-memory step chosen). Set
+/// only by the cycle (`test-placa … --cursa-mm --ocupare`) and, in the test build, by `gpu antrenare-mini-sim vram-513-ocupare`.
+pub static TRAIN_513_OCCUPANCY_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-196 (cyber-gpu `214be67` + `0c74b3c`, note C-165_cursa-mm steps 2-3; os-416 race): with
 /// [`TRAIN_513_MM_TILE_IN_CYCLE`], #513's `mm_train` shapes on the variant the os-416 race picked
 /// (`Plan::with_mm_choice`). Set only by the cycle (`test-placa … --mm-placi [--colsum-impartit] --mm-alegere`) and, in

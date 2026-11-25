@@ -6105,6 +6105,83 @@ const KT_513_RACE_SAVED_US: &str = "kt cursa mm pasul ar scadea cu (us, DEDUS)";
 const KT_513_PROBE_64K8: &str = "kt proba 64x64k8 terminata cu aceiasi biti (1/0)";
 /// P6-195: the variant held since os-413 (`RACE_HOLD`), probed alone with `--proba-64k8`.
 const PROBE_64K8_NAME: &str = "mm_tv_64x64k8";
+/// P6-201: the occupancy probe's journal rows.
+const KT_513_OCC_SAME: &str = "kt proba ocuparii rulari cu aceiasi biti (din 10)";
+const KT_513_OCC_RATIO: &str = "kt proba ocuparii mm_train_tile 64 / 8 KiB (la mie)";
+
+/// P6-201: one occupancy row: `ocupare <program> <N> KiB: <us> us, <TFLOP/s>, <W> W, ACEIASI BITI` (the note's format).
+fn occ_row(name: &str, step_bytes: u32, f: &RaceForm, ns: Option<u64>, mw: Option<u32>, bits: RaceBits) -> String {
+    let flops = 2 * u64::from(f.m) * u64::from(f.n) * u64::from(f.k);
+    let (us, tf) = match ns {
+        Some(n) if n > 0 => (format!("{}.{} us", n / 1000, (n % 1000) / 100), format!("{}.{:02} TFLOP/s", flops / n / 1000, (flops * 100 / n / 1000) % 100)),
+        _ => (String::from("- us"), String::from("- TFLOP/s")),
+    };
+    let w = mw.map_or(String::from("- W"), |m| format!("{}.{} W", m / 1000, (m % 1000) / 100));
+    let b = match bits {
+        RaceBits::Same => "ACEIASI BITI",
+        RaceBits::Differ => "DIFERA",
+        RaceBits::Unfinished => "NETERMINATA",
+        RaceBits::Skipped => "SARITA",
+    };
+    format!("ocupare {} {} KiB: {}, {}, {}, {}", name, step_bytes >> 10, us, tf, w, b)
+}
+
+/// P6-201: the witness (`mm_train_tile`, variant 0) at 64 KiB over 8 KiB, per mille (both runs with the same bits).
+fn occ_witness_ratio(rows: &[(usize, u32, Option<u64>, RaceBits, Option<u32>)]) -> Option<u32> {
+    let t = |kib: u32| rows.iter().find(|r| r.0 == 0 && r.1 == kib << 10 && r.3 == RaceBits::Same).and_then(|r| r.2);
+    let (a, b) = (t(8)?, t(64)?);
+    (a > 0).then(|| (b * 1000 / a).min(u64::from(u32::MAX)) as u32)
+}
+
+/// P6-201: the verdict rows of the occupancy probe — `proba ocuparii: k / 10 aceiasi biti`, the witness's ratio and
+/// H1 / H2 by the note's thresholds (H1: 64 KiB <= 0.85 of 8 KiB; H2: every step within +-3 %), and per program the
+/// time at each step relative to its 8 KiB run.
+fn occ_verdict(rows: &[(usize, u32, Option<u64>, RaceBits, Option<u32>)], planned: usize, stopped: bool) -> Vec<String> {
+    use nvidia_ga104::mm_train_variants::VARIANTS;
+    let mut out = Vec::new();
+    let same = rows.iter().filter(|r| r.3 == RaceBits::Same).count();
+    out.push(format!(
+        "proba ocuparii: {} / {} aceiasi biti{}",
+        same,
+        planned,
+        if stopped { " (NU A TERMINAT: proba oprita la prima rulare neterminata)" } else if same < rows.len() { " (DIFERA sau SARITA: STOP, nu se leaga nimic)" } else { "" }
+    ));
+    let mut seen: Vec<usize> = Vec::new();
+    for r in rows {
+        if seen.contains(&r.0) {
+            continue;
+        }
+        seen.push(r.0);
+        let base = rows.iter().find(|x| x.0 == r.0 && x.1 == 8 << 10 && x.3 == RaceBits::Same).and_then(|x| x.2);
+        let parts: Vec<String> = rows
+            .iter()
+            .filter(|x| x.0 == r.0)
+            .map(|x| match (x.2, base, x.3) {
+                (Some(t), Some(b), RaceBits::Same) if b > 0 => format!("{} KiB {} la mie", x.1 >> 10, t * 1000 / b),
+                _ => format!("{} KiB -", x.1 >> 10),
+            })
+            .collect();
+        let name = VARIANTS.get(r.0).map_or("?", |v| v.name);
+        out.push(format!("proba ocuparii: {}: timpul fata de 8 KiB: {}", name, parts.join(", ")));
+    }
+    let all_same = same == planned && !stopped;
+    let witness: Vec<u64> = rows.iter().filter(|r| r.0 == 0 && r.3 == RaceBits::Same).filter_map(|r| r.2).collect();
+    let verdict = match occ_witness_ratio(rows) {
+        _ if !all_same => String::from("fara verdict H1 / H2 (bitii nu sunt aceiasi la toate rularile)"),
+        Some(q) if q <= 850 => format!("H1: mm_train_tile la 64 KiB = {} la mie din 8 KiB (<= 850): treapta mai mare ajuta, ocuparea era o frana", q),
+        Some(q) => {
+            let (lo, hi) = (witness.iter().copied().min().unwrap_or(0), witness.iter().copied().max().unwrap_or(0));
+            if lo > 0 && hi * 1000 <= lo * 1030 {
+                format!("H2: mm_train_tile la toate treptele in +-3 % (64 / 8 KiB = {} la mie): placa urca deja singura treapta, ocuparea nu e buba", q)
+            } else {
+                format!("intre H1 si H2: mm_train_tile 64 / 8 KiB = {} la mie (peste 850, dar treptele nu sunt in +-3 %)", q)
+            }
+        }
+        None => String::from("fara verdict H1 / H2 (lipseste timpul la 8 sau 64 KiB)"),
+    };
+    out.push(format!("proba ocuparii: {}", verdict));
+    out
+}
 
 /// P6-196: 1 = #513's `mm_train` shapes on the os-416 race's pick (`--mm-alegere`), and how many shapes left the witness.
 const KT_513_MM_CHOICE: &str = "kt antrenare-513 inmultirile pe varianta aleasa de cursa (1/0)";
@@ -6430,6 +6507,10 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // of the big race only the witness and `mm_tv_64x64k8` (held since os-413) on the qkv shape, with the tail page.
     let probe64 = race && super::gpu_tur::TRAIN_513_PROBE_64K8_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     let probe64_vi = nvidia_ga104::mm_train_variants::VARIANTS.iter().position(|v| v.name == PROBE_64K8_NAME);
+    // P6-201 (cyber-gpu note `C-165_proba-ocuparii.md`): with `--ocupare` (only after `--cursa-mm`), instead of the big
+    // race the occupancy probe on the qkv shape: `occupancy::PROBE`'s 10 runs, each with the QMD's SM shared-memory step
+    // chosen (`to_bytes_with_sm_config`), the bits against the first run (today's launch).
+    let occ = race && !probe64 && super::gpu_tur::TRAIN_513_OCCUPANCY_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     // P6-198 (cyber-gpu note C-165_pas-mixt-513): with `--mixt-513` (only after `--mm-placi` or `--colsum-impartit`, last),
     // the mixed step: every product of the model on `mm_tc` (f16 inputs, f32 sums), the loss scale S = 2^14
     // (`LOSS_SCALE_513`), 1/S written once at `res + 16`; `res[0]` is then S times the norm. The same arena.
@@ -6550,6 +6631,8 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             // P6-195: the probe maps only the witness and 64x64k8, in `VARIANTS`' order (64x64k8 last, as at os-413).
             let wanted = if probe64 {
                 vi == 0 || Some(vi) == probe64_vi
+            } else if occ {
+                nvidia_ga104::occupancy::PROBE.iter().any(|r| r.variant == vi)
             } else {
                 nvidia_ga104::mm_train_variants::race_list_full().any(|(i, _)| i == vi)
             };
@@ -6899,11 +6982,24 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         let shas: Vec<bool> = VARIANTS.iter().map(|v| sha256_hex(v.code) == v.sha256).collect();
         // P6-195: who runs and on which shapes — the race list on every shape, or (the probe) the witness and 64x64k8 on
         // the qkv shape only (the first with N = 3 K: 1024 x 2304 x 768 on the board, where os-413 stopped).
-        let racers: Vec<(usize, &'static Variant)> = if probe64 {
-            VARIANTS.iter().enumerate().filter(|(i, _)| *i == 0 || Some(*i) == probe64_vi).collect()
+        // P6-201: each racer with its SM shared-memory step (`None` = today's QMD, the step of one block).
+        let racers: Vec<(usize, &'static Variant, Option<u32>)> = if probe64 {
+            VARIANTS.iter().enumerate().filter(|(i, _)| *i == 0 || Some(*i) == probe64_vi).map(|(i, v)| (i, v, None)).collect()
+        } else if occ {
+            nvidia_ga104::occupancy::PROBE.iter().filter(|r| r.variant < VARIANTS.len()).map(|r| (r.variant, &VARIANTS[r.variant], Some(r.step_bytes))).collect()
         } else {
-            race_list_full().collect()
+            race_list_full().map(|(i, v)| (i, v, None)).collect()
         };
+        if occ {
+            race_shapes = race_shapes.iter().filter(|f| f.n == 3 * f.k).take(1).copied().collect();
+            lines.push(format!(
+                "{}: kronos --gpu: {}: proba ocuparii (P6-201, C-165, PREDARE Cyber-GPU 54f5ab8): in locul cursei mari, pe forma qkv ({}), {} rulari din occupancy::PROBE ({}); treapta memoriei comune = MIN = TARGET_SM_CONFIG_SHARED_MEM_SIZE din QMD, MAX ca azi; martorul bitilor = prima rulare (lansarea de azi)",
+                p, tag,
+                race_shapes.first().map_or(String::from("negasita"), |f| format!("{}x{}x{} f{}", f.m, f.n, f.k, f.flags)),
+                racers.len(),
+                racers.iter().map(|&(_, v, sb)| format!("{} {} KiB", v.name, sb.unwrap_or(0) >> 10)).collect::<Vec<_>>().join(", ")
+            ));
+        }
         if probe64 {
             race_shapes = race_shapes.iter().filter(|f| f.n == 3 * f.k).take(1).copied().collect();
             lines.push(format!(
@@ -6916,12 +7012,12 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         lines.push(format!(
             "{}: kronos --gpu: {}: cursa mm (C-165, {}): {} forme ale lui mm_train din pas ({} lansari) x {} variante ({}); martorul {} (trecut pe placa la os-410); C pe o bucata de {} MiB in VRAM + 256 octeti de paza, umplute cu -12345.0; {} lansari pe varianta si forma (prima de incalzire), comparate bit cu bit cu martorul",
             p, tag, label, race_shapes.len(), race_shapes.iter().map(|f| f.count).sum::<u32>(), racers.len(),
-            racers.iter().map(|&(i, v)| if shas[i] { String::from(v.name) } else { format!("{} SHA-256 GRESIT", v.name) }).collect::<Vec<_>>().join(", "),
+            racers.iter().map(|&(i, v, _)| if shas[i] { String::from(v.name) } else { format!("{} SHA-256 GRESIT", v.name) }).collect::<Vec<_>>().join(", "),
             VARIANTS[0].name, c_map.size >> 20, reps
         ));
         // P6-194: the held variants (os-413: `mm_tv_64x64k8` did not finish), named once, never launched.
         // P6-199: those cleared by os-417 (finished with the tail page, the witness's bits) race again, named once.
-        for &i in RACE_HOLD.iter().filter(|&&i| i < VARIANTS.len() && !probe64) {
+        for &i in RACE_HOLD.iter().filter(|&&i| i < VARIANTS.len() && !probe64 && !occ) {
             if RACE_CLEARED_OS417.contains(&i) {
                 lines.push(format!("{}: kronos --gpu: {}: cursa mm: {} intoarsa in cursa (RACE_CLEARED_OS417; os-417: a terminat cu pagina de paza, aceiasi biti ca martorul; P6-199)", p, tag, VARIANTS[i].name));
             } else {
@@ -6963,6 +7059,8 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         };
         let (mut rows_same, mut rows_differ, mut saved_ns, mut race_stopped) = (0u32, 0u32, 0u64, None::<String>);
         let mut probe64_bits: Option<RaceBits> = None;
+        // P6-201: per occupancy run (variant, step, median ns, bits, board power mW).
+        let mut occ_rows: Vec<(usize, u32, Option<u64>, RaceBits, Option<u32>)> = Vec::new();
         let mut race_dash: Vec<super::gpu_golden::StepSample> = Vec::new();
         'forms: for (fi, f) in race_shapes.iter().enumerate() {
             let c_len = 4 * u64::from(f.m) * u64::from(f.n);
@@ -6983,10 +7081,21 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             let mut witness: Option<u64> = None;
             let mut best: Option<(usize, u64)> = None;
             let mut witness_ns: Option<u64> = None;
-            for &(vi, v) in &racers {
-                let skip = !shas[vi] || len > c_map.size || (vi > 0 && witness.is_none());
-                if skip {
-                    lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, race_row(v.name, f, None, RaceBits::Skipped)));
+            for (ri, &(vi, v, step)) in racers.iter().enumerate() {
+                let skip = !shas[vi] || len > c_map.size || (ri > 0 && witness.is_none());
+                // P6-201: a step the QMD refuses (smaller than the block's memory, above MAX) is not run.
+                let refused = step.is_some_and(|sb| {
+                    use nvidia_ga104::qmd::{sm_config_shared_units, SM_CONFIG_STEPS};
+                    let sh = Variant::shared(v);
+                    !SM_CONFIG_STEPS.contains(&sb) || sb < sh.bytes.next_multiple_of(0x100) || sm_config_shared_units(sb) > sm_config_shared_units(sh.max_bytes)
+                });
+                if skip || refused {
+                    if occ {
+                        lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, occ_row(v.name, step.unwrap_or(0), f, None, None, RaceBits::Skipped)));
+                        occ_rows.push((vi, step.unwrap_or(0), None, RaceBits::Skipped, None));
+                    } else {
+                        lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, race_row(v.name, f, None, RaceBits::Skipped)));
+                    }
                     continue;
                 }
                 if !fill(st, vbar, clock, journal, l, doorbell, subs, len)? {
@@ -7000,7 +7109,10 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 for r in 0..reps {
                     let at = r * ts::SLOT as usize;
                     let cb_va = ctl.va + at as u64;
-                    let qb = ComputeQmd { cbuf0_va: cb_va, ..q }.to_bytes_with_shared(&Variant::shared(v))?;
+                    let qb = match step {
+                        Some(sb) => ComputeQmd { cbuf0_va: cb_va, ..q }.to_bytes_with_sm_config(&Variant::shared(v), sb)?,
+                        None => ComputeQmd { cbuf0_va: cb_va, ..q }.to_bytes_with_shared(&Variant::shared(v))?,
+                    };
                     zb[at..at + 0x100].copy_from_slice(&cb);
                     zb[at + 0x100..at + 0x100 + qb.len()].copy_from_slice(&qb);
                     qv.push(cb_va + 0x100);
@@ -7019,7 +7131,12 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                         transfer::analyze_sequence(&b, reps, first)?
                     }
                     Err(got) => {
-                        lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, race_row(v.name, f, None, RaceBits::Unfinished)));
+                        if occ {
+                            lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, occ_row(v.name, step.unwrap_or(0), f, None, None, RaceBits::Unfinished)));
+                            occ_rows.push((vi, step.unwrap_or(0), None, RaceBits::Unfinished, None));
+                        } else {
+                            lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, race_row(v.name, f, None, RaceBits::Unfinished)));
+                        }
                         if Some(vi) == probe64_vi {
                             probe64_bits = Some(RaceBits::Unfinished);
                         }
@@ -7032,8 +7149,8 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                     race_stopped = Some(format!("citirea lui C nu s-a terminat (forma {}, {})", fi + 1, v.name));
                     break 'forms;
                 };
-                let bits = if vi == 0 {
-                    // The witness: every word written, the guard intact; otherwise the shape is not raced.
+                let bits = if ri == 0 {
+                    // The witness (the first racer: `mm_train_tile`, today's QMD in the race, the one-block step in the probe): every word written, the guard intact; otherwise the shape is not raced.
                     if guard_ok && unwritten == 0 {
                         witness = Some(h);
                         witness_ns = med;
@@ -7057,12 +7174,20 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                         }
                     }
                 }
+                if occ {
+                    // P6-201: the board's power right after the run (the page's ~500 ms average: only indicative).
+                    let what = format!("dupa proba ocuparii {} {} KiB", v.name, step.unwrap_or(0) >> 10);
+                    let mw = super::gpu_tur::step_dashboard(p, &what, journal, lines).and_then(|d| d.dash.avg_power_mw);
+                    lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, occ_row(v.name, step.unwrap_or(0), f, med, mw, bits)));
+                    occ_rows.push((vi, step.unwrap_or(0), med, bits, mw));
+                    continue;
+                }
                 lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, race_row(v.name, f, med, bits)));
                 if Some(vi) == probe64_vi {
                     probe64_bits = Some(bits);
                 }
             }
-            if let (Some((vi, t)), Some(w)) = (best, witness_ns) {
+            if let (Some((vi, t)), Some(w), false) = (best, witness_ns, occ) {
                 saved_ns += w.saturating_sub(t) * u64::from(f.count);
                 lines.push(format!(
                     "{}: kronos --gpu: {}: cursa: forma {}x{}x{} f{}: cea mai rapida cu aceiasi biti = {} ({}.{} us; martorul {}.{} us)",
@@ -7105,6 +7230,16 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             };
             journal.push(Event::Value { what: KT_513_PROBE_64K8, value: u32::from(probe64_bits == Some(RaceBits::Same)) });
             lines.push(format!("{}: kronos --gpu: {}: proba 64x64k8: {}: {}", p, tag, PROBE_64K8_NAME, verdict));
+        }
+        // P6-201: the occupancy probe's verdict (the note's rule: the bits first, then H1 / H2 on the witness's times).
+        if occ {
+            for row in occ_verdict(&occ_rows, racers.len(), race_stopped.is_some()) {
+                lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, row));
+            }
+            let same = occ_rows.iter().filter(|r| r.3 == RaceBits::Same).count() as u32;
+            journal.push(Event::Value { what: KT_513_OCC_SAME, value: same });
+            let ratio = occ_witness_ratio(&occ_rows);
+            journal.push(Event::Value { what: KT_513_OCC_RATIO, value: ratio.unwrap_or(0) });
         }
         if super::gpu_tur::step_dashboard_lent() {
             for row in super::gpu_golden::dash_summary(p, "in timpul cursei", "tablou cursa", &race_dash) {
