@@ -8160,15 +8160,35 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     }
     // P6-184: on the synthetic batches with exactly the oracle's recipe, the verdict is the oracle (steps 1–9);
     // on Kronos's data the old one (the loss starts at ln V and falls).
-    let oracle = (board && data.synthetic && bsz == 2 && tl == 512 && steps == gpu_compute::train::ORACLE_513_SYNTH.len())
-        .then(|| oracle_513_check(&losses, &norms, if mixed { TOL_MIXED } else { (TOL, TOL) }));
-    if let Some(o) = &oracle {
-        journal.push(Event::Value { what: KT_513_ORACLE, value: u32::from(o.pass) });
+    let recipe = board && data.synthetic && bsz == 2 && tl == 512 && steps == gpu_compute::train::ORACLE_513_SYNTH.len();
+    // P6-221 (PREDARE Cyber-GPU `969a6b4`, note C-157_P2zi): the mixed step is judged against the mixed oracle
+    // (f16 at the matmul inputs) on steps 1–6; the F32 oracle stays shown next to it (the price of f16), not judged.
+    let f32_check = recipe.then(|| oracle_513_check(&losses, &norms, &gpu_compute::train::ORACLE_513_SYNTH, F32_JUDGED, if mixed { TOL_MIXED } else { (TOL, TOL) }));
+    let mixed_check = (recipe && mixed)
+        .then(|| oracle_513_check(&losses, &norms, &gpu_compute::train::ORACLE_513_MIXED_SYNTH, MIXED_JUDGED, TOL_MIXED));
+    if let Some(o) = &f32_check {
+        let verdict = if mixed {
+            "doar afisat (pretul f16; verdictul pasului mixt e randul urmator)"
+        } else if o.pass {
+            "ACELEASI NUMERE"
+        } else {
+            "DIFERA"
+        };
         lines.push(format!(
             "{}: kronos --gpu: {}: fata de oracolul procesorului (ORACLE_513_SYNTH, loturile sintetice): {} — pasii 1-9: abaterea pierderii {:.1e}, a normei {:.1e} (toleranta {}); pasul 10 doar afisat: {:.1e} / {:.1e}",
-            p, tag, if o.pass { if mixed { "ACELEASI NUMERE (mixt)" } else { "ACELEASI NUMERE" } } else { "DIFERA" }, o.worst.0, o.worst.1,
+            p, tag, verdict, o.worst.0, o.worst.1,
             if mixed { "1e-3 pierderea, 2e-3 norma: pasul mixt" } else { "1e-3" }, o.last.0, o.last.1
         ));
+    }
+    if let Some(o) = &mixed_check {
+        lines.push(format!(
+            "{}: kronos --gpu: {}: fata de oracolul pasului mixt (ORACLE_513_MIXED_SYNTH, loturile sintetice): {} — pasii 1-6: abaterea pierderii {:.1e}, a normei {:.1e} (toleranta 1e-3 / 2e-3); pasii 7-10 doar afisati: {:.1e} / {:.1e}",
+            p, tag, if o.pass { "ACELEASI NUMERE (mixt)" } else { "DIFERA" }, o.worst.0, o.worst.1, o.last.0, o.last.1
+        ));
+    }
+    let oracle = if mixed { mixed_check } else { f32_check };
+    if let Some(o) = &oracle {
+        journal.push(Event::Value { what: KT_513_ORACLE, value: u32::from(o.pass) });
     }
     let pass = if let Some(o) = &oracle {
         start_ok && o.pass && bad_w == 0 && losses.len() == steps
@@ -8191,7 +8211,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         let self_ok = oracle_513_self_test();
         lines.push(format!(
             "{}: kronos --gpu: {}: verdictul fata de oracolul #513 (P6-184), verificat pe numerele lui: {}",
-            p, tag, if self_ok { "MERGE (oracolul si os-395 trec, o abatere de 2e-3 si 9 pasi nu)" } else { "GRESIT" }
+            p, tag, if self_ok { "MERGE (oracolul si os-395 trec, o abatere de 2e-3 si 9 pasi nu; mixt: os-445 trece pe pasii 1-6, nu si fata de F32)" } else { "GRESIT" }
         ));
         // P6-192: the dashboard's summary, checked on its own numbers.
         let dash_ok = super::gpu_golden::dash_summary_self_test();
@@ -8259,35 +8279,50 @@ impl Bench<'_> {
 /// against the CPU oracle measured in the cloud (`gpu_compute::train::ORACLE_513_SYNTH`, 4 decimals). Steps 1–9: loss and
 /// norm within 1e-3 relative; step 10 (where the run jumps, norm 0.93 → 1.65) only shown. Valid only for exactly that
 /// recipe (M513, batch 2 × 512, 10 steps, the synthetic batches with seed 0x164, AdamW lr 1e-3) — the caller checks.
+/// P6-221: the mixed step against `ORACLE_513_MIXED_SYNTH` on steps 1–6 only (from step 7 the synthetic run is unstable).
 struct Oracle513 {
-    /// Worst relative deviation over steps 1–9: (loss, norm).
+    /// Worst relative deviation over the judged steps: (loss, norm).
     worst: (f64, f64),
-    /// Step 10's relative deviation (loss, norm), shown only.
+    /// Worst relative deviation (loss, norm) over the remaining steps, shown only.
     last: (f64, f64),
     pass: bool,
 }
 
-fn oracle_513_check(losses: &[f32], norms: &[f32], tol: (f64, f64)) -> Oracle513 {
-    use gpu_compute::train::ORACLE_513_SYNTH as O;
+/// Steps judged against the F32 oracle (1–9) and against the mixed oracle (1–6).
+const F32_JUDGED: usize = 9;
+const MIXED_JUDGED: usize = 6;
+
+fn oracle_513_check(losses: &[f32], norms: &[f32], o: &[(f32, f32)], judged: usize, tol: (f64, f64)) -> Oracle513 {
     let rel = |x: f32, o: f32| {
         let (x, o) = (x as f64, o as f64);
         if x.is_finite() { ((x - o) / o).abs() } else { f64::INFINITY }
     };
-    let n = O.len();
+    let n = o.len();
+    let judged = judged.min(n);
     let complete = losses.len() == n && norms.len() == n;
     let mut worst = (0.0f64, 0.0f64);
-    for k in 0..(n - 1).min(losses.len()).min(norms.len()) {
-        worst.0 = worst.0.max(rel(losses[k], O[k].0));
-        worst.1 = worst.1.max(rel(norms[k], O[k].1));
+    for k in 0..judged.min(losses.len()).min(norms.len()) {
+        worst.0 = worst.0.max(rel(losses[k], o[k].0));
+        worst.1 = worst.1.max(rel(norms[k], o[k].1));
     }
-    let last = if complete { (rel(losses[n - 1], O[n - 1].0), rel(norms[n - 1], O[n - 1].1)) } else { (f64::INFINITY, f64::INFINITY) };
+    let mut last = (0.0f64, 0.0f64);
+    if complete {
+        for k in judged..n {
+            last.0 = last.0.max(rel(losses[k], o[k].0));
+            last.1 = last.1.max(rel(norms[k], o[k].1));
+        }
+    } else {
+        last = (f64::INFINITY, f64::INFINITY);
+    }
     Oracle513 { worst, last, pass: complete && worst.0 <= tol.0 && worst.1 <= tol.1 }
 }
 
 /// P6-184: the check of the check, run in SIMULARE (the small model cannot use the #513 oracle): the oracle's own
 /// numbers must pass, the os-395 board numbers must pass, one step-5 loss off by 2e-3 must fail, 9 steps must fail.
+/// P6-221: the mixed oracle passes itself, os-445 (the mixed step on the board) passes it on steps 1–6 but not the F32
+/// oracle, one step-3 loss off by 2e-3 fails.
 fn oracle_513_self_test() -> bool {
-    use gpu_compute::train::ORACLE_513_SYNTH as O;
+    use gpu_compute::train::{ORACLE_513_MIXED_SYNTH as M, ORACLE_513_SYNTH as O};
     let (l, n): (Vec<f32>, Vec<f32>) = O.iter().copied().unzip();
     // os-395 on the board (the note's table): steps 8–10 differ.
     let mut lb = l.clone();
@@ -8300,7 +8335,22 @@ fn oracle_513_self_test() -> bool {
     let mut lw = l.clone();
     lw[4] *= 1.002;
     const T: (f64, f64) = (1e-3, 1e-3);
-    oracle_513_check(&l, &n, T).pass && oracle_513_check(&lb, &nb, T).pass && !oracle_513_check(&lw, &n, T).pass && !oracle_513_check(&l[..9], &n[..9], T).pass
+    const TM: (f64, f64) = (1e-3, 2e-3);
+    let f32_ok = oracle_513_check(&l, &n, &O, F32_JUDGED, T).pass
+        && oracle_513_check(&lb, &nb, &O, F32_JUDGED, T).pass
+        && !oracle_513_check(&lw, &n, &O, F32_JUDGED, T).pass
+        && !oracle_513_check(&l[..9], &n[..9], &O, F32_JUDGED, T).pass;
+    // os-445 on the board (`--mixt-513 --mixt-513-rapid`, the rows copied by Cyber-GPU in `os445-mixt-rapid.txt`).
+    let l445 = [9.8493f32, 9.8749, 9.8293, 9.9085, 9.8648, 9.8816, 9.8498, 9.9936, 9.9207, 10.0178];
+    let n445 = [3.2731f32, 1.1021, 1.0246, 0.9175, 0.8956, 0.8954, 0.9028, 0.9309, 0.9357, 1.0812];
+    let (lm, nm): (Vec<f32>, Vec<f32>) = M.iter().copied().unzip();
+    let mut lmw = lm.clone();
+    lmw[2] *= 1.002;
+    let mixed_ok = oracle_513_check(&lm, &nm, &M, MIXED_JUDGED, TM).pass
+        && oracle_513_check(&l445, &n445, &M, MIXED_JUDGED, TM).pass
+        && !oracle_513_check(&l445, &n445, &O, F32_JUDGED, TM).pass
+        && !oracle_513_check(&lmw, &nm, &M, MIXED_JUDGED, TM).pass;
+    f32_ok && mixed_ok
 }
 
 /// P6-175: what one resident run leaves for the comparison glued / not glued.
