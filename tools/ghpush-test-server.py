@@ -23,6 +23,11 @@ FILES = {"note/vechi.txt": b"versiunea veche\n",
          "stare/cyber-universe.md": "# Stare: Cyber Universe OS\nTotul merge in QEMU (proba).\n".encode(),
          "DECIZII.md": "".join(f"- decizia {i}\n" for i in range(1, 51)).encode(),
          # P6-64 (C-87 item 2): Adrian's commands for the OS: one to run, one refused (writes to the card), one done by hand.
+         # P6-222 (C-166 step 6): the agent's command channel: one done before, two to run, two refused by the OS.
+         "live/os-agent-comenzi.md": ("# Comenzi pentru agentul de bord\n\nO linie = o comanda.\n\n"
+                                      "- 1 · gata · uptime · 2026-11-26 00:00 · rezultat: vechi\n- 2 · nou · mem\n"
+                                      "- 3 · nou · test-placa --bariera\n- 4 · nou · rm /etc/agent.setari\n"
+                                      "- 5 · nou · repara setare live_minute 7\n").encode(),
          "integrare/cyber-universe/os-comenzi.md": "# Comenzi pentru OS\n\n- [ ] K-1: uptime\n- [ ] K-2: `gpu lant`\n"
                                                    "- [x] K-3: hw\n- [ ] K-4: mem\n".encode()}
 # The same bytes as /etc/hub/live.cheie in the guest (kernel/src/main.rs, test_ghpush).

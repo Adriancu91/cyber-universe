@@ -1923,6 +1923,15 @@ fn test_agent() {
     let props = core::str::from_utf8(&props).expect("test: propuneri.txt nu e text");
     info!("test: agent: propuneri: {} facute, {} refuzate", props.matches("-> FACUT").count(), props.matches("-> REFUZAT").count());
     assert!(!props.contains("tok-gh"), "test: tokenul in propuneri.txt");
+    // P6-222 (C-166 step 6, part 1): the command channel in the GitHub imitation (live/os-agent-comenzi.md): the format
+    // check offline, then one pass: `mem` and a white-listed repair done, `test-placa` and `rm` refused by the OS.
+    assert_eq!(run(&["agent", "comenzi", "--proba"], "comenzi proba"), 0, "test: agent comenzi --proba");
+    assert_eq!(run(&["agent", "comenzi"], "comenzi"), 0, "test: agent comenzi");
+    let cmds = fs::read_all("/etc/agent/comenzi.txt").expect("test: /etc/agent/comenzi.txt lipseste");
+    let cmds = core::str::from_utf8(&cmds).expect("test: comenzi.txt nu e text");
+    info!("test: agent: comenzi: {} gata, {} refuzate", cmds.matches("-> GATA").count(), cmds.matches("-> REFUZAT").count());
+    assert!(cmds.matches("-> GATA").count() == 2 && cmds.matches("-> REFUZAT").count() == 2, "test: comenzi.txt: {}", cmds);
+    assert!(!cmds.contains("tok-gh"), "test: tokenul in comenzi.txt");
     warn!("test: abatere de proba pentru agent veghe (P6-204)");
     // P6-209: `0 2 0` = Claude's summary on every tour (2 requests); then `0 2` = the settings' 10 minutes: the first
     // tour with the summary, the second only the raw numbers (1 request more).

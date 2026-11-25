@@ -426,3 +426,42 @@ pub fn run(name: &str, input: &Value, root: &str, gh: Option<&Gh>, term: &mut Op
         }
     }
 }
+
+/// P6-222 (C-166 step 6, part 1): one command of the centre's channel (`live/os-agent-comenzi.md`), decided here, by the
+/// OS: `stare`, `tablou [n]`, `jurnal [n] [cuvant]`, `repara opreste_lucrarea <nume>`, `repara setare <nume> <valoare>`
+/// and every read-only shell command of the white list. A command on the board (`test-placa …`) waits for part 2
+/// (signed with the live channel's key); everything else is refused.
+pub fn channel_command(text: &str, root: &str, term: &mut Option<i64>) -> Result<String, String> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let num = |w: &str| Value::Number(w.to_string());
+    let mut note = String::new();
+    match words.as_slice() {
+        ["stare"] => run("stare", &Value::Null, root, None, term, &mut note),
+        ["tablou"] => run("tablou", &Value::Null, root, None, term, &mut note),
+        ["tablou", n] if n.parse::<u32>().is_ok() => run("tablou", &Value::object([("n", num(n))]), root, None, term, &mut note),
+        ["jurnal"] => run("citeste_jurnal", &Value::Null, root, None, term, &mut note),
+        ["jurnal", n] if n.parse::<u32>().is_ok() => run("citeste_jurnal", &Value::object([("n", num(n))]), root, None, term, &mut note),
+        ["jurnal", n, w] if n.parse::<u32>().is_ok() => {
+            run("citeste_jurnal", &Value::object([("n", num(n)), ("cuvant", Value::str(w))]), root, None, term, &mut note)
+        }
+        ["repara", "opreste_lucrarea", name] => {
+            run("repara", &Value::object([("actiune", Value::str("opreste_lucrarea")), ("nume", Value::str(name))]), root, None, term, &mut note)
+        }
+        ["repara", "setare", name, value] => run(
+            "repara",
+            &Value::object([("actiune", Value::str("setare")), ("nume", Value::str(name)), ("valoare", Value::str(value))]),
+            root,
+            None,
+            term,
+            &mut note,
+        ),
+        [first, ..] if *first == "test-placa" => {
+            Err("comenzile pe placa prin canal vin in pasul 6 partea 2 (comanda semnata cu cheia canalului viu); OS-ul a refuzat-o acum".to_string())
+        }
+        _ if white_listed(text.trim()) => claude_tools::run_command(text.trim(), term),
+        _ => Err(format!(
+            "`{}` nu e in lista canalului (stare, tablou, jurnal, repara ..., comenzile de citire din lista alba); OS-ul a refuzat-o",
+            text.trim()
+        )),
+    }
+}

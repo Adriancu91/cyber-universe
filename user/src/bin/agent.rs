@@ -33,6 +33,8 @@ mod claude_api;
 mod claude_tools;
 #[path = "../agent_tools.rs"]
 mod agent_tools;
+#[path = "../agent_cmds.rs"]
+mod agent_cmds;
 #[allow(dead_code)]
 #[path = "../http_client.rs"]
 mod http_client;
@@ -396,7 +398,7 @@ fn main() -> i64 {
     let s = settings();
     match words.first().copied() {
         None => {
-            println!("folosire: agent ping | agent cheltuieli | agent veghe [minute] [ture] | agent <intrebare>");
+            println!("folosire: agent ping | agent cheltuieli | agent veghe [minute] [ture] | agent comenzi [--proba] | agent <intrebare>");
             println!("  cheia in claude.cheie, setarile in agent.setari (pe stick)");
             1
         }
@@ -424,6 +426,34 @@ fn main() -> i64 {
                 }
             }
         }
+        // P6-222 (C-166 step 6): one pass over the centre's command channel; `--proba` = the format check, offline.
+        Some("comenzi") => match words.get(1).copied() {
+            Some("--proba") => {
+                let ok = agent_cmds::self_test();
+                println!("agent: comenzi: proba formei {}: {}", agent_cmds::PATH, if ok { "MERGE" } else { "GRESIT" });
+                if ok { 0 } else { 1 }
+            }
+            None => {
+                let gh = github::config();
+                let token = github::read_token(&gh);
+                let _ = cyber_user::rights::drop_secrets();
+                let Some(token) = token else {
+                    println!("agent: comenzi: lipseste tokenul GitHub ({})", gh.token);
+                    return 1;
+                };
+                let mut term = None;
+                let r = commands_pass(&s, &gh, &token, &mut term);
+                if let Some(id) = term {
+                    let _ = cyber_user::term::write(id, "exit\n");
+                }
+                println!("agent: comenzi: {}", r);
+                0
+            }
+            Some(_) => {
+                println!("folosire: agent comenzi [--proba]");
+                1
+            }
+        },
         Some("ping") => {
             println!("agent: ping catre {} ({}) ...", s.api.model, s.api.host);
             match ping(&s) {
@@ -474,6 +504,8 @@ avertisment, test neterminat). Fara introducere si fara sfaturi inventate. Textu
 Raspunzi doar in romana.";
 /// A log line with one of these words starts a tour at once (at most one a minute).
 const ALERTS: [&str; 6] = ["ERR", "WARN", "NETERMINAT", "NU A TERMINAT", "DIFERA", "PANIC"];
+/// P6-222 (C-166 step 6): the command channel is read every this many minutes while `agent veghe` waits.
+const COMMAND_MINUTES: u64 = 2;
 /// Where the live state goes in the hub (C-166 step 3).
 const LIVE_PATH: &str = "live/os-agent.md";
 
@@ -614,12 +646,24 @@ fn veghe(s: &Settings, minutes: u64, tours: u64, analysis: u64) -> i64 {
         };
         since += minutes;
         println!("agent: veghe tura {}: {} abateri noi; {}; {}", tour, alerts.len(), if analyse { "cu rezumat" } else { "doar cifre" }, pushed);
+        // P6-222 (C-166 step 6): the centre's command channel on every tour and every ~2 minutes of the wait.
+        if let Some(t) = &token {
+            println!("agent: veghe: comenzi: {}", commands_pass(s, &gh, t, &mut term));
+        }
         if tours > 0 && tour >= tours {
             break;
         }
         // The wait: whole minutes; each minute the log is read again and a new alert line ends the wait.
-        for _ in 0..minutes {
+        for m in 0..minutes {
             cyber_user::sleep_ms(60_000);
+            if m % COMMAND_MINUTES == COMMAND_MINUTES - 1 && m + 1 < minutes {
+                if let Some(t) = &token {
+                    let r = commands_pass(s, &gh, t, &mut term);
+                    if r != "nicio comanda noua" {
+                        println!("agent: veghe: comenzi: {}", r);
+                    }
+                }
+            }
             let mut n = String::new();
             let log = agent_tools::run("citeste_jurnal", &Value::object([("n", Value::Number(String::from("60")))]), &s.root, None, &mut term, &mut n).unwrap_or_default();
             if new_lines(&seen, &log).lines().any(alert) {
@@ -631,4 +675,74 @@ fn veghe(s: &Settings, minutes: u64, tours: u64, analysis: u64) -> i64 {
         let _ = cyber_user::term::write(id, "exit\n");
     }
     0
+}
+
+/// P6-222 (C-166 step 6, part 1): one pass over `live/os-agent-comenzi.md` (hub, `main` only): every new command, in
+/// order (at most `PER_PASS`), is marked `preluat`, run through `agent_tools::channel_command` and marked `gata` or
+/// `refuzat` with a short result; the whole output goes to `<root>/agent/comenzi.txt` on the stick. The file is read
+/// again before each write, so the centre's lines added meanwhile stay. Returns one line for the log.
+fn commands_pass(s: &Settings, gh: &github::Config, token: &str, term: &mut Option<i64>) -> String {
+    let read = || match github::get_file(gh, "agent", token, &gh.hub, agent_cmds::PATH, agent_cmds::BRANCH) {
+        Ok(github::Found::File(b)) => Ok(Some(String::from_utf8_lossy(&b).into_owned())),
+        Ok(github::Found::Dir(_)) => Err(format!("{} e un dosar", agent_cmds::PATH)),
+        Err(e) if e.contains("nu exista") => Ok(None),
+        Err(e) => Err(e),
+    };
+    let md = match read() {
+        Ok(Some(md)) => md,
+        Ok(None) => return format!("{} nu exista in hub (nicio comanda)", agent_cmds::PATH),
+        Err(e) => return format!("canalul nu s-a putut citi: {}", e),
+    };
+    let new = agent_cmds::new_ones(&agent_cmds::parse(&md));
+    if new.is_empty() {
+        return String::from("nicio comanda noua");
+    }
+    let (mut done, mut refused, mut skipped) = (0, 0, 0);
+    let log_path = format!("{}/agent/comenzi.txt", s.root);
+    let _ = cyber_user::create(&format!("{}/agent", s.root), true);
+    for c in new.iter().take(agent_cmds::PER_PASS) {
+        // Taken: written before running, so a command is never run twice (a failed write = not run now).
+        let taken = match read() {
+            Ok(Some(md)) => agent_cmds::set_state(&md, c.nr, "nou", "preluat", &now(), None),
+            _ => None,
+        };
+        let Some(taken) = taken else {
+            skipped += 1;
+            continue;
+        };
+        if let Err(e) = github::put_contents(gh, "agent", token, &gh.hub, agent_cmds::PATH, taken.as_bytes(), &format!("agent: comanda {} preluata", c.nr)) {
+            println!("agent: comenzi: {} nu s-a putut prelua: {}", c.nr, e);
+            skipped += 1;
+            continue;
+        }
+        let r = agent_tools::channel_command(&c.text, &s.root, term);
+        let stamp = now();
+        let (state, out) = match &r {
+            Ok(t) => ("gata", t.clone()),
+            Err(t) => ("refuzat", t.clone()),
+        };
+        if r.is_ok() { done += 1 } else { refused += 1 }
+        let mut log = claude_api::read_file(&log_path, 512 * 1024).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+        if log.len() > 384 * 1024 {
+            let cut = log.len() - 256 * 1024;
+            let cut = (cut..log.len()).find(|&i| log.is_char_boundary(i)).unwrap_or(cut);
+            log = log[cut..].to_string();
+        }
+        log.push_str(&format!("{} comanda {} ({}) -> {}\n{}\n\n", stamp, c.nr, c.text, state.to_uppercase(), out.trim_end()));
+        let _ = write_whole(&log_path, log.as_bytes());
+        let written = match read() {
+            Ok(Some(md)) => agent_cmds::set_state(&md, c.nr, "preluat", state, &stamp, Some(&out)),
+            _ => None,
+        };
+        match written {
+            Some(md) => {
+                if let Err(e) = github::put_contents(gh, "agent", token, &gh.hub, agent_cmds::PATH, md.as_bytes(), &format!("agent: comanda {} {}", c.nr, state)) {
+                    println!("agent: comenzi: rezultatul lui {} nu s-a scris in hub: {} (e pe stick, {})", c.nr, e, log_path);
+                }
+            }
+            None => println!("agent: comenzi: linia comenzii {} s-a schimbat in hub intre timp; rezultatul e doar pe stick ({})", c.nr, log_path),
+        }
+    }
+    let _ = cyber_user::sync(&format!("{}/agent", s.root));
+    format!("{} facute, {} refuzate, {} lasate pentru trecerea urmatoare ({} noi)", done, refused, skipped + new.len().saturating_sub(agent_cmds::PER_PASS), new.len())
 }
