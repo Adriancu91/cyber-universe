@@ -338,6 +338,11 @@ pub static BATCH_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::
 /// build, by `gpu p8-sim on`. Off by default: every other run sends exactly what os-332 sent.
 pub static P8_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-200 (pista B1, cyber-gpu `ebbb3af`): after P8's 6 sets, the int8 tensor-core probe `mma16_s8` (11 fixed sets,
+/// judged bit for bit on the CPU) — `test-placa … --p8 --p8-s8`; in the test build `gpu p8-sim s8`. Off by default;
+/// meaningful only with [`P8_IN_CYCLE`].
+pub static P8_S8_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-134 (C-161 point 4, cyber-gpu `3b4ca77`): the first backward program of the training on the board, the `colsum`
 /// probe (5 fixed sets), after `kronos --gpu`'s texts (and after P8 when asked). Set only by the cycle when the list
 /// asks for it (`test-placa … --colsum`) and, in the test build, by `gpu colsum-sim on`. Off by default.

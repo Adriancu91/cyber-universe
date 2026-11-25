@@ -418,6 +418,8 @@ impl SimGpu {
             cp.register_program_with_needs(nvidia_ga104::q8_matvec32::Q8_MATVEC32, c::q8_matvec32_on_cpu, c::Q8_MATVEC32_NEEDS);
             // P6-117 (C-161 point 2): P8's tensor-core program (`mma16_f16`).
             cp.register_program_with_needs(nvidia_ga104::mma16::MMA16_F16, c::mma16_f16_on_cpu, c::MMA16_F16_NEEDS);
+            // P6-200 (pista B1): the int8 probe (`mma16_s8`).
+            cp.register_program_with_needs(nvidia_ga104::mma16::MMA16_S8, c::mma16_s8_on_cpu, c::MMA16_S8_NEEDS);
             // P6-123 (C-155 point 3): the argmax on the board (256 threads, shfl + barrier, 16 bytes written).
             cp.register_program_with_needs(nvidia_ga104::argmax::ARGMAX, c::argmax_on_cpu, c::ARGMAX_NEEDS);
             // P6-145 (C-157 point 7): the embedding that reads its token from the argmax slot before it (`embed_dev`).

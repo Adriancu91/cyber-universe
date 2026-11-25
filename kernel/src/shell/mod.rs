@@ -1343,11 +1343,18 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::P8_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu p8-sim: pornita (SIMULARE: dupa texte, mma16_f16 de 6 ori, judecat pe procesor)\n");
                 }
+                // P6-200: `s8` = P8, then the int8 probe `mma16_s8` (11 sets, bit for bit).
+                Some("s8") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::P8_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::P8_S8_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu p8-sim: pornita cu mma16_s8 (SIMULARE: dupa texte, mma16_f16 de 6 ori, apoi mma16_s8 de 11 ori, judecat pe procesor)\n");
+                }
                 Some("off") if args.len() == 2 => {
                     crate::drivers::gpu_tur::P8_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::P8_S8_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu p8-sim: oprita\n");
                 }
-                _ => out!("folosire: gpu p8-sim on|off\n"),
+                _ => out!("folosire: gpu p8-sim on|s8|off\n"),
             }
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu p8-sim: exista doar in build-ul de test (pe stick P8 il porneste doar ciclul, test-placa --p8)\n");

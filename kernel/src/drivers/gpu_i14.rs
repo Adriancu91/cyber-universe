@@ -2858,8 +2858,17 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
         // list asks for it (`test-placa … --p8`), after everything of the generation (its rows are already written);
         // its failure is a line, not a failure of `kronos --gpu`.
         if super::gpu_tur::P8_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
-            if let Err(e) = mma16_probe(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, &ctx) {
+            let p8 = mma16_probe(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, &ctx);
+            if let Err(e) = &p8 {
                 lines.push(format!("{}: kronos --gpu: P8 (mma16): oprita: {}", p, e));
+            }
+            // P6-200 (pista B1, cyber-gpu `ebbb3af`): the int8 probe right after P8, only when asked, only if P8 finished.
+            if super::gpu_tur::P8_S8_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+                if p8.is_err() {
+                    lines.push(format!("{}: kronos --gpu: proba mma16_s8: NU A RULAT: P8 nu a terminat", p));
+                } else if let Err(e) = mma16_s8_probe(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, &ctx) {
+                    lines.push(format!("{}: kronos --gpu: proba mma16_s8: oprita: {}", p, e));
+                }
             }
         }
         // P6-134 (C-161 point 4, cyber-gpu `3b4ca77`): the first backward program of the training (`colsum`), only when
@@ -3580,6 +3589,182 @@ fn mma16_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     match stopped {
         Some(_) => Err(GpuError::Timeout { waited_us: WAIT_US }),
         None => Ok(()),
+    }
+}
+
+/// P6-200 (pista B1): one set of the int8 probe — A (16×32 i8), B (32×16 i8), C (16×16 i32), row-major.
+struct S8Set {
+    name: &'static str,
+    a: Vec<i8>,
+    b: Vec<i8>,
+    c: Vec<i32>,
+}
+
+/// P6-200: the 11 sets of the note `B1_mma16-s8.md` (the same as Cyber-GPU's T229): 8 random (the same LCG, seeds 1–8;
+/// C in ±2²⁰), then the edges: all −128 × −128 with C = −3 (524 285 everywhere), −128 × 127 with C = 11, and
+/// A = [I16 | 0] on the random set 99 (D = B's first 16 rows + C — catches a row/column mix-up). None leaves i32.
+fn s8_sets() -> Vec<S8Set> {
+    use gpu_compute::mma_s8 as s8;
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> u32 {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (self.0 >> 33) as u32
+        }
+    }
+    let random = |name: &'static str, seed: u64| {
+        let mut g = Lcg(seed);
+        let a = (0..s8::M * s8::K).map(|_| g.next() as u8 as i8).collect();
+        let b = (0..s8::K * s8::N).map(|_| g.next() as u8 as i8).collect();
+        let c = (0..s8::M * s8::N).map(|_| (g.next() % (1 << 21)) as i32 - (1 << 20)).collect();
+        S8Set { name, a, b, c }
+    };
+    let full = |name: &'static str, a: i8, b: i8, c: i32| S8Set { name, a: alloc::vec![a; s8::M * s8::K], b: alloc::vec![b; s8::K * s8::N], c: alloc::vec![c; s8::M * s8::N] };
+    const NAMES: [&str; 8] = ["aleator-1", "aleator-2", "aleator-3", "aleator-4", "aleator-5", "aleator-6", "aleator-7", "aleator-8"];
+    let mut v: Vec<S8Set> = NAMES.iter().enumerate().map(|(i, n)| random(n, i as u64 + 1)).collect();
+    v.push(full("minus128-minus128", -128, -128, -3));
+    v.push(full("minus128-127", -128, 127, 11));
+    let mut id = random("identitate", 99);
+    id.a = (0..s8::M * s8::K).map(|i| i8::from(i / s8::K == i % s8::K)).collect();
+    v.push(id);
+    v
+}
+
+/// P6-200 (pista B1, cyber-gpu `ebbb3af`, note `B1_mma16-s8.md`): the int8 tensor-core probe — `D = A·B + C` with
+/// `mma16_s8` (Mesa NAK 26.3.1, two `imma.m16n8k32.i8.i8`), once for each of the 11 sets of [`s8_sets`], one submission
+/// per set, on the same host page and the same launch path as P8 (`cbuf_s8` / `qmd_s8`, addresses at 0x700). D starts as
+/// `0x7fff_fff7` and is judged **bit for bit** against `gpu_compute::mma_s8::mma16_s8_ref` (integers: nothing rounds).
+/// New for the board: this program (its SHA-256 checked first), 32 registers, one warp, no shared memory, no barrier.
+/// A set the board does not finish stops the probe (no retry).
+#[allow(clippy::too_many_arguments)]
+fn mma16_s8_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    doorbell: &mut Bell<'_, V>,
+    subs: &mut u32,
+    ctx: &CopyCtx,
+) -> GpuResult<()> {
+    use gpu_compute::mma_s8 as s8;
+    use nvidia_ga104::{mma16, mma16_probe as mp};
+    const UNWRITTEN: i32 = 0x7fff_fff7;
+    let label = if permit.is_some() { "placa" } else { "SIMULARE" };
+    let sha = sha256_hex(mma16::MMA16_S8);
+    if sha != mma16::MMA16_S8_SHA256 {
+        lines.push(format!("{}: kronos --gpu: proba mma16_s8: SHA-256 al programului {} nu e cel din nota ({}): nimic trimis", p, sha, mma16::MMA16_S8_SHA256));
+        return Err(bad("mma16_s8: SHA-256 gresit"));
+    }
+    if ctx.sys.size < mp::PAGE_BYTES as u64 || !ctx.sys.va.is_multiple_of(mp::PAGE_BYTES as u64) {
+        return Err(bad("mma16_s8: pagina de RAM nu are 4 KiB aliniati"));
+    }
+    let sets = s8_sets();
+    lines.push(format!(
+        "{}: kronos --gpu: proba mma16_s8 ({}): programul mma16_s8 ({} octeti, SHA-256 {}..., {} registre, un warp), {} seturi, cate o trimitere, judecat bit cu bit",
+        p,
+        label,
+        mma16::MMA16_S8.len(),
+        &sha[..16],
+        mma16::MMA16_S8_REGISTERS,
+        sets.len()
+    ));
+    let prog = map_vram(st, program_map_bytes(mma16::MMA16_S8.len() as u64))?;
+    let zone = map_vram(st, PAGE)?;
+    put_bytes(st.mem.writer_mut(), prog.pa, mma16::MMA16_S8)?;
+    let mut maps = ctx.maps.clone();
+    maps.push(prog);
+    maps.push(zone);
+    let sys = [ctx.sys.clone()];
+    let qmd_va = zone.va + mma16::CBUF_SIZE as u64;
+    let page_va = ctx.sys.va;
+    let cb = mma16::cbuf_s8(page_va + mp::A_OFF, page_va + mp::B_OFF, page_va + mp::C_OFF, page_va + mp::D_OFF)?;
+    let q = mma16::qmd_s8(prog.va, zone.va)?;
+    let mut same = 0usize;
+    let mut times: Vec<u64> = Vec::new();
+    let mut stopped = false;
+    for (i, set) in sets.iter().enumerate() {
+        let want = s8::mma16_s8_ref(&set.a, &set.b, &set.c).ok_or_else(|| bad("mma16_s8: un set iese din i32 (nu se trimite)"))?;
+        let mut page = alloc::vec![0u8; mp::PAGE_BYTES];
+        for (k, v) in set.a.iter().enumerate() {
+            page[mp::A_OFF as usize + k] = *v as u8;
+        }
+        for (k, v) in set.b.iter().enumerate() {
+            page[mp::B_OFF as usize + k] = *v as u8;
+        }
+        for (k, v) in set.c.iter().enumerate() {
+            page[mp::C_OFF as usize + 4 * k..mp::C_OFF as usize + 4 * k + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        for k in 0..s8::M * s8::N {
+            page[mp::D_OFF as usize + 4 * k..mp::D_OFF as usize + 4 * k + 4].copy_from_slice(&UNWRITTEN.to_le_bytes());
+        }
+        ram_write(&ctx.sys, &page);
+        {
+            let w = st.mem.writer_mut();
+            put_bytes(w, zone.pa, &cb)?;
+            put_bytes(w, zone.pa + mma16::CBUF_SIZE as u64, &q)?;
+            put_bytes(w, ctx.rec.pa, &[0; 32])?;
+        }
+        let first = TOKEN_FIRST + STRIDE * *subs;
+        let mut words = alloc::vec![0u32; transfer::sequence_words(1)];
+        let mut pb = PushBuf::new(&mut words);
+        transfer::encode_sequence(&mut pb, &[qmd_va], ctx.rec.va, first)?;
+        let nw = pb.len();
+        let b = match run_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, 2, first + 1, &maps, &sys, doorbell)? {
+            Ok(b) => b,
+            Err(got) => {
+                lines.push(format!(
+                    "{}: kronos --gpu: proba mma16_s8: placa nu a terminat la setul {} ({}): ultima inregistrare = {:#x} (asteptat {:#x}); proba oprita, fara reincercare",
+                    p, i, set.name, got, first + 1
+                ));
+                stopped = true;
+                break;
+            }
+        };
+        *subs += 1;
+        times.push(transfer::analyze_sequence(&b, 1, first)?[0]);
+        let back = ram_read(&ctx.sys, mp::D_OFF + (4 * s8::M * s8::N) as u64);
+        let d: Vec<i32> = back[mp::D_OFF as usize..].chunks(4).map(|w| i32::from_le_bytes([w[0], w[1], w[2], w[3]])).collect();
+        let diff: Vec<usize> = (0..d.len()).filter(|k| d[*k] != want[*k]).collect();
+        match diff.first() {
+            None => {
+                same += 1;
+                lines.push(format!("{}: kronos --gpu: mma16_s8 set {} {} ({}): ACEIASI BITI", p, i, set.name, label));
+            }
+            Some(k) => lines.push(format!(
+                "{}: kronos --gpu: mma16_s8 set {} {} ({}): DIFERA la ({}, {}): placa {}, oracol {} ({} cuvinte diferite din 256{})",
+                p,
+                i,
+                set.name,
+                label,
+                k / s8::N,
+                k % s8::N,
+                d[*k],
+                want[*k],
+                diff.len(),
+                if d.contains(&UNWRITTEN) { "; unele nescrise" } else { "" }
+            )),
+        }
+    }
+    times.sort_unstable();
+    let median = times.get(times.len() / 2).copied();
+    let verdict = if stopped {
+        "NU A TERMINAT"
+    } else if same == sets.len() {
+        "TRECE"
+    } else {
+        "NU TRECE"
+    };
+    let ns = median.map_or(String::from("?"), |n| format!("{}", n));
+    lines.push(format!("{}: kronos --gpu: proba mma16_s8: {}: {} / {} seturi cu aceiasi biti ca oracolul, timp median {} ns", p, verdict, same, sets.len(), ns));
+    lines.push(format!("{}: kronos --gpu: kt mma16_s8 {} {}/{} median {} ns", p, verdict, same, sets.len(), ns));
+    if stopped {
+        Err(GpuError::Timeout { waited_us: WAIT_US })
+    } else {
+        Ok(())
     }
 }
 

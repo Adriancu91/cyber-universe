@@ -84,6 +84,7 @@ kronos-gpu-lot 196
 kronos-gpu-mm-tc 185
 kronos-gpu-mm-tc128 400
 kronos-gpu-p8 186
+kronos-gpu-p8-s8 200
 kronos-gpu-pas-aur 330
 kronos-gpu-antrenare-mini 720
 kronos-gpu-antrenare-mini-mixt 600

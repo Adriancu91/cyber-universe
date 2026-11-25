@@ -219,6 +219,12 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     logit-urilor (A, B, C, D = NaN); D citit înapoi e judecat pe procesor (`judge_set`, toleranța scrisă) → rândurile `kt mma16 …` în
     jurnal și `mma16 …` + `P8 (mma16): TRECE / NU TRECE / NU A TERMINAT` în ieșire și în răspunsul ciclului. Placa care nu termină un
     set oprește proba (fără reîncercare); o eroare aici nu strică rezultatul lui #513. Test: `kronos-gpu-p8`.
+    **P6-200 (pista B1, cyber-gpu `ebbb3af`): proba int8 pe circuitele speciale.** Cu `test-placa … --p8 --p8-s8` (doar imediat
+    după `--p8`; `gpu_tur::P8_S8_IN_CYCLE`; în build-ul de test `gpu p8-sim s8`): după P8, dacă P8 a terminat,
+    `gpu_i14::mma16_s8_probe` verifică SHA-256 al lui `mma16_s8`, îl mapează cu pagina de pază și trimite 11 seturi (8 aleatoare,
+    3 margini; aceeași pagină de RAM și aceeași cale ca `mma16_f16`, `cbuf_s8` / `qmd_s8`); D (umplut cu `0x7fff_fff7`) e judecat
+    bit cu bit față de `gpu_compute::mma_s8::mma16_s8_ref` → `mma16_s8 set …: ACEIASI BITI / DIFERA …` și
+    `proba mma16_s8: TRECE / NU TRECE / NU A TERMINAT`. Test: `kronos-gpu-p8-s8`.
     **P6-134 (C-161 punctul 4, C-160 punctul 6, cyber-gpu `3b4ca77`): primul program „înapoi” al antrenării pe placă — proba
     `colsum`.** Doar în ciclu cu `test-placa … --colsum` (ultima opțiune, după `--p8`; `gpu_tur::COLSUM_IN_CYCLE`; în build-ul de test
     `gpu colsum-sim on|off`): după textele lui #513 (și după P8, dacă e cerut), `gpu_i14::colsum_probe` verifică SHA-256 al lui `colsum`
