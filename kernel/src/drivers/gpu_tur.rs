@@ -365,6 +365,12 @@ pub static MM_TC_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::
 /// Off by default; meaningful only with [`MM_TC_IN_CYCLE`].
 pub static MM_TC128_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-207 (C-157 p.2, cyber-gpu `835c6c9`): inside the `mm_tc` probe, `mm_tc_pf` (the same job, the reads asked in
+/// advance, 248 registers) right after `mm_tc` on every set, compared bit for bit (`test-placa … --mm-tc --mm-tc-pf`; in
+/// the test build `gpu mm-tc-sim onpf`). Off by default; meaningful only with [`MM_TC_IN_CYCLE`]; never with
+/// [`MM_TC128_IN_CYCLE`] (the cycle refuses both, `mm_tc128` wins if set by hand).
+pub static MM_TC_PF_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-141 (C-161 point 4, cyber-gpu `44a4d16`): the tiled training attention probe (`attn_fwd_tile` → `attn_back_tile0`
 /// → `attn_back_tile` on 5 small sets + `atentie-513-b4` for the time), after `kronos --gpu`'s texts (and after the other
 /// probes when asked). Set only by the cycle when the list asks for it (`test-placa … --atentie-placi`) and, in the test
