@@ -343,6 +343,10 @@ pub static P8_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::Ato
 /// meaningful only with [`P8_IN_CYCLE`].
 pub static P8_S8_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-218 (cyber-gpu `adc783c`, note `C-157_P2zh_proba-barierei.md`): after P8, the grid-barrier probe (`grid_barrier`,
+/// G = SMs × 1, then × 2 if it held) — `test-placa … --bariera`; in the test build `gpu bariera-sim on`. Off by default.
+pub static BARRIER_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-134 (C-161 point 4, cyber-gpu `3b4ca77`): the first backward program of the training on the board, the `colsum`
 /// probe (5 fixed sets), after `kronos --gpu`'s texts (and after P8 when asked). Set only by the cycle when the list
 /// asks for it (`test-placa … --colsum`) and, in the test build, by `gpu colsum-sim on`. Off by default.

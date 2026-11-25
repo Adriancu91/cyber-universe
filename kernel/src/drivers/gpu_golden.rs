@@ -143,6 +143,9 @@ pub(super) struct GpuState {
     /// P6-161 (C-157, cyber-gpu `9359f21`): the copy engine object on the work channel (`AMPERE_DMA_COPY_B`), allocated
     /// only when the cycle asks for the RAM ↔ VRAM probe (`copy_object_step`).
     pub copy_obj: Option<u32>,
+    /// P6-218 (cyber-gpu `adc783c`): GR0's shape as GSP-RM reported it in I9 (`query_gr_info`), for the grid-barrier
+    /// probe's group count; `None` before I9.
+    pub gr: Option<nvidia_ga104::gsp::work_queue::GrShape>,
 }
 
 impl GpuState {
@@ -150,7 +153,7 @@ impl GpuState {
         let pending: Pending = Rc::new(RefCell::new(Vec::new()));
         // The root table is allocated and cleared here (collected, written before the first RM message).
         let mem = GpuMemory::new(zone.start, zone.end, PendingVram(pending.clone()))?;
-        Ok(GpuState { mem, pending, zone, golden: None, space: None, rm_calls: 0, vram_words: 0, copy_obj: None })
+        Ok(GpuState { mem, pending, zone, golden: None, space: None, rm_calls: 0, vram_words: 0, copy_obj: None, gr: None })
     }
 }
 
@@ -303,8 +306,9 @@ pub(super) fn channel_step<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized
                 // computed token (only if GSP-RM refuses N's token). Makes its own channel group, like C133.
                 I9Choice::C135 => user_space::open_work_channel_c135(&mut t, &mut *mem, &u, gi, &mut rep135)?.1,
             };
-            user_space::query_gr_info(&mut t, &u)?.check_sm86()?;
-            Ok::<_, GpuError>((u, w))
+            let info = user_space::query_gr_info(&mut t, &u)?;
+            info.check_sm86()?;
+            Ok::<_, GpuError>((u, w, info.shape))
         })()
     }
     .and_then(|x| flush(vbar, journal, permit, zone, pending, vram_words).map(|_| x));
@@ -325,9 +329,10 @@ pub(super) fn channel_step<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized
         }
     }
     match r {
-        Ok(x) => {
+        Ok((u, w, gr)) => {
             lines.push(format!("{}: pas I9 canal de lucru: ok (SM 8.6; {} mesaje RM)", p, st.rm_calls - calls0));
-            st.space = Some(x);
+            st.space = Some((u, w));
+            st.gr = Some(gr);
             Ok(())
         }
         Err(e) => {

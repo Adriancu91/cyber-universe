@@ -157,7 +157,7 @@ pub fn target(command: &str) -> Result<(String, String), &'static str> {
 
 /// P6-96: `test-placa [--i9 …]` of the automatic list -> the I9.
 pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
-    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou` sau `--tablou-viteza`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi` sau `--ln-32`, apoi `--k651`, apoi `--argmax-placa` sau `--argmax-fara-copie`, apoi `--dieta2`, apoi `--lot`, apoi `--p8` (urmat optional de `--p8-s8`), apoi `--colsum`, apoi `--pas-aur`, apoi `--mm-tc` (urmat optional de `--mm-tc128`), apoi `--atentie-placi`, apoi `--atentie2`, apoi `--atentie3`, apoi `--atentie4`, apoi `--ram-vram`, apoi `--adam-ram`, apoi `--antrenare-mini` la sfarsit, optional urmat de `--mixt` sau `--vram` (iar dupa `--vram` optional `--pas-lipit`, `--antrenare-513` sau `--lot-ram`; dupa `--antrenare-513` optional `--placi3`, dupa el optional `--mm-placi`, dupa el optional `--lipit-placi` (ultimul) sau `--colsum-impartit`, la sfarsit optional `--mixt-513` (ultimul), `--mm-alegere` (ultimul, urmat optional de `--treapta-pas`) sau `--cursa-mm` dupa `--mm-placi` sau `--colsum-impartit`, `--cursa-mm` urmat optional de `--proba-64k8` sau `--ocupare`) (in aceasta ordine; `--mixt` sau `--vram` doar imediat dupa `--antrenare-mini`, nu amandoua; `--pas-lipit`, `--antrenare-513` sau `--lot-ram` doar imediat dupa `--vram`; `--adam-ram` doar imediat dupa `--ram-vram`; `--atentie2` doar dupa `--atentie-placi`, `--atentie3` doar dupa `--atentie2`, `--atentie4` doar dupa `--atentie3`; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi`, `--ln-32`; `--k651` nu merge cu `--lipit` sau `--simplu`; `--argmax-fara-copie` nu merge cu `--lipit`, `--ln-nou`, `--sferturi` sau `--ln-32`; `--lot` doar cu `--argmax-fara-copie` si lista implicita lipita-ln-32, fara alta alegere de lista)";
+    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou` sau `--tablou-viteza`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi` sau `--ln-32`, apoi `--k651`, apoi `--argmax-placa` sau `--argmax-fara-copie`, apoi `--dieta2`, apoi `--lot`, apoi `--p8` (urmat optional de `--p8-s8`), apoi `--bariera`, apoi `--colsum`, apoi `--pas-aur`, apoi `--mm-tc` (urmat optional de `--mm-tc128`), apoi `--atentie-placi`, apoi `--atentie2`, apoi `--atentie3`, apoi `--atentie4`, apoi `--ram-vram`, apoi `--adam-ram`, apoi `--antrenare-mini` la sfarsit, optional urmat de `--mixt` sau `--vram` (iar dupa `--vram` optional `--pas-lipit`, `--antrenare-513` sau `--lot-ram`; dupa `--antrenare-513` optional `--placi3`, dupa el optional `--mm-placi`, dupa el optional `--lipit-placi` (ultimul) sau `--colsum-impartit`, la sfarsit optional `--mixt-513` (ultimul), `--mm-alegere` (ultimul, urmat optional de `--treapta-pas`) sau `--cursa-mm` dupa `--mm-placi` sau `--colsum-impartit`, `--cursa-mm` urmat optional de `--proba-64k8` sau `--ocupare`) (in aceasta ordine; `--mixt` sau `--vram` doar imediat dupa `--antrenare-mini`, nu amandoua; `--pas-lipit`, `--antrenare-513` sau `--lot-ram` doar imediat dupa `--vram`; `--adam-ram` doar imediat dupa `--ram-vram`; `--atentie2` doar dupa `--atentie-placi`, `--atentie3` doar dupa `--atentie2`, `--atentie4` doar dupa `--atentie3`; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi`, `--ln-32`; `--k651` nu merge cu `--lipit` sau `--simplu`; `--argmax-fara-copie` nu merge cu `--lipit`, `--ln-nou`, `--sferturi` sau `--ln-32`; `--lot` doar cu `--argmax-fara-copie` si lista implicita lipita-ln-32, fara alta alegere de lista)";
     let words: Vec<&str> = command.split_whitespace().collect();
     let Some(("test-placa", rest)) = words.split_first().map(|(a, b)| (*a, b)) else { return None };
     let (i9, flags) = match rest {
@@ -210,7 +210,7 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
     // P6-128: `--ln-32` = `lipita-ln`, then `lipita-ln-32` (every product on quarters), compared; one more list choice.
     // P6-135 (note C-157_P2i, point 1): `--lipita-ln` = the default until now (`lipita-ln` alone); without any list
     // choice the cycle now runs `lipita-ln-32` alone. The checks below go by name, not by position.
-    let all = [FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, P8, P8_S8, COLSUM, PAS_AUR, MM_TC, MM_TC128, MM_TC_PF, MM_TC_V4, MM_TC128_V4, MM_TC_64K, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_MIXED_FAST, TRAIN_VRAM, TRAIN_FUSED, TRAIN_513, TRAIN_513_TILES3, TRAIN_513_MM_TILE, TRAIN_513_FUSED_TILE, TRAIN_513_COLSUM, TRAIN_513_MIXED, TRAIN_513_MIXED_FAST, TRAIN_513_VIA_RAM, TRAIN_513_SLOTS, TRAIN_513_MM_CHOICE, TRAIN_513_SM_STEP, TRAIN_513_MM_MODEL, TRAIN_513_RACE, TRAIN_513_PROBE_64K8, TRAIN_513_OCCUPANCY, TRAIN_RAM];
+    let all = [FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, P8, P8_S8, BARIERA, COLSUM, PAS_AUR, MM_TC, MM_TC128, MM_TC_PF, MM_TC_V4, MM_TC128_V4, MM_TC_64K, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_MIXED_FAST, TRAIN_VRAM, TRAIN_FUSED, TRAIN_513, TRAIN_513_TILES3, TRAIN_513_MM_TILE, TRAIN_513_FUSED_TILE, TRAIN_513_COLSUM, TRAIN_513_MIXED, TRAIN_513_MIXED_FAST, TRAIN_513_VIA_RAM, TRAIN_513_SLOTS, TRAIN_513_MM_CHOICE, TRAIN_513_SM_STEP, TRAIN_513_MM_MODEL, TRAIN_513_RACE, TRAIN_513_PROBE_64K8, TRAIN_513_OCCUPANCY, TRAIN_RAM];
     let pos = |x: &str| all.iter().position(|y| *y == x).unwrap_or(0);
     let lists = pos(LIPIT)..=pos(LN_32);
     // The two-run lists: the argmax without the copy reads no logits, they need both runs' logits.
@@ -833,6 +833,10 @@ pub const P8_S8: &str = " --p8-s8";
 /// P6-134 (C-161 point 4): suffix of the I9 text when the `colsum` probe is asked (`test-placa … --colsum`, always last).
 pub const COLSUM: &str = " --colsum";
 
+/// P6-218 (cyber-gpu `adc783c`, note `C-157_P2zh_proba-barierei.md`): suffix of the I9 text when the grid-barrier probe
+/// runs (`test-placa … --bariera`, after `--p8` / `--p8-s8`, before `--colsum`).
+pub const BARIERA: &str = " --bariera";
+
 /// P6-136 (C-161 point 4): suffix of the I9 text when the small golden step on the board is asked (`test-placa …
 /// --pas-aur`, always last).
 pub const PAS_AUR: &str = " --pas-aur";
@@ -1211,6 +1215,10 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
         Some(x) => (x, true),
         None => (i9, false),
     };
+    let (i9, barrier) = match i9.strip_suffix(BARIERA) {
+        Some(x) => (x, true),
+        None => (i9, false),
+    };
     let (i9, p8_s8) = match i9.strip_suffix(P8_S8) {
         Some(x) => (x, true),
         None => (i9, false),
@@ -1356,6 +1364,8 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::P8_IN_CYCLE.store(p8, core::sync::atomic::Ordering::SeqCst);
     // P6-200: `mma16_s8` after it only when the list asked for it.
     crate::drivers::gpu_tur::P8_S8_IN_CYCLE.store(p8 && p8_s8, core::sync::atomic::Ordering::SeqCst);
+    // P6-218: the grid-barrier probe only when the list asked for it, only after this chain's texts.
+    crate::drivers::gpu_tur::BARRIER_IN_CYCLE.store(barrier, core::sync::atomic::Ordering::SeqCst);
     // P6-134 (C-161 point 4): the `colsum` probe only when the list asked for it, only after this chain's texts.
     crate::drivers::gpu_tur::COLSUM_IN_CYCLE.store(colsum, core::sync::atomic::Ordering::SeqCst);
     // P6-136 (C-161 point 4): the small golden step only when the list asked for it, only after this chain's texts.
@@ -1455,6 +1465,9 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     }
     if p8 && p8_s8 {
         text.push_str("\n(proba int8 pe circuitele speciale: ceruta de lista (--p8-s8); dupa P8, programul mma16_s8 (nou pentru placa: 32 de registre, un warp, fara memorie partajata) de 11 ori cu 11 seturi fixe (8 aleatoare, 3 margini), judecat bit cu bit pe procesor; trece = 11 / 11 seturi cu aceiasi biti ca oracolul)\n");
+    }
+    if barrier {
+        text.push_str("\n(proba barierei pe toata placa: ceruta de lista (--bariera); dupa textele lui #513, programul grid_barrier (nou pentru placa: 19 registre, blocuri de 32, adunari atomice pe un contor in VRAM) cu G = SM-uri x 1, R = 1 apoi 1001, limita 100 ms pe lansare; doar daca trece, la fel cu G = SM-uri x 2; trece = contorul R x G si niciun cuvant vechi; o lansare care nu se termina = BLOCATA, nimic altceva trimis)\n");
     }
     if colsum {
         text.push_str("\n(primul program inapoi al antrenarii: cerut de lista (--colsum); dupa textele lui #513, programul colsum (sumele pe coloane ale unui gradient) de 5 ori cu 5 seturi fixe, judecat pe procesor cu marginea scrisa; trece = 5 seturi in margine, garzile neatinse; predictia Cyber-GPU: 3778 / 3778 elemente exacte fata de model)\n");
@@ -1649,6 +1662,7 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::LN32_ONLY_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::P8_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::P8_S8_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::BARRIER_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::COLSUM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::GOLDEN_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::MM_TC_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
@@ -1723,6 +1737,13 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     // P6-200: `mma16_s8`'s verdict too.
     let result = if p8 && p8_s8 {
         let verdict = text.lines().rev().find(|l| l.contains("proba mma16_s8: ")).map_or("proba mma16_s8: niciun rezultat (vezi raportul)", |l| l.trim());
+        format!("{}; {}", result, verdict)
+    } else {
+        result
+    };
+    // P6-218: the grid-barrier probe's verdict too.
+    let result = if barrier {
+        let verdict = text.lines().rev().find(|l| l.contains("proba barierei: ")).map_or("proba barierei: niciun rezultat (vezi raportul)", |l| l.trim());
         format!("{}; {}", result, verdict)
     } else {
         result
@@ -2054,6 +2075,12 @@ pub fn self_test() {
     assert!(board_command("test-placa --p8-s8").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --p8-s8 --p8").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --dieta2 --p8-s8").is_some_and(|r| r.is_err()));
+    // P6-218: `--bariera` after `--p8` / `--p8-s8`, before `--colsum`.
+    assert!(board_command("test-placa --bariera") == Some(Ok(String::from("c135 --bariera"))));
+    assert!(board_command("test-placa --p8 --p8-s8 --bariera --colsum") == Some(Ok(String::from("c135 --p8 --p8-s8 --bariera --colsum"))));
+    assert!(board_command("test-placa --colsum --bariera").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --bariera --p8").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --bariera --bariera").is_some_and(|r| r.is_err()));
     // P6-134: `--colsum` last, alone or after any other option (`--p8` included).
     assert!(board_command("test-placa --colsum") == Some(Ok(String::from("c135 --colsum"))));
     assert!(board_command("test-placa --tablou --p8 --colsum") == Some(Ok(String::from("c135 --tablou --p8 --colsum"))));

@@ -225,6 +225,13 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     3 margini; aceeași pagină de RAM și aceeași cale ca `mma16_f16`, `cbuf_s8` / `qmd_s8`); D (umplut cu `0x7fff_fff7`) e judecat
     bit cu bit față de `gpu_compute::mma_s8::mma16_s8_ref` → `mma16_s8 set …: ACEIASI BITI / DIFERA …` și
     `proba mma16_s8: TRECE / NU TRECE / NU A TERMINAT`. Test: `kronos-gpu-p8-s8`.
+
+    **P6-218 (cyber-gpu `adc783c`, nota `C-157_P2zh_proba-barierei.md`): proba barierei pe toată placa.** Cu `test-placa … --bariera`
+    (după `--p8`/`--p8-s8`, înainte de `--colsum`; `gpu_tur::BARRIER_IN_CYCLE`; în build-ul de test `gpu bariera-sim on`):
+    `gpu_i14::barrier_probe` verifică SHA-256 al lui `grid_barrier`, ia numărul de SM-uri din forma GR pe care I9 o păstrează acum
+    (`GpuState.gr`), golește contorul din VRAM înainte de fiecare lansare și rulează G = SM-uri × 1 cu R = 1 și 1 001 (limită
+    100 ms pe lansare pe placă, `gpu_i11::wait_records_within`), apoi, doar dacă a trecut, G = SM-uri × 2 → `bariera G=… R=…:
+    TRECE / CONTOR GRESIT / CUVINTE VECHI`, `o bariera = … ns`, `BLOCATA` (oprire, nimic altceva trimis). Test: `kronos-gpu-bariera`.
     **P6-201 (C-165, cyber-gpu `54f5ab8`): proba ocupării.** Cu `test-placa … --cursa-mm --ocupare` (doar imediat după
     `--cursa-mm`, nu cu `--proba-64k8`; `gpu_tur::TRAIN_513_OCCUPANCY_IN_CYCLE`; în build-ul de test
     `gpu antrenare-mini-sim vram-513-ocupare`): în locul cursei mari, pe forma qkv, cele 10 rulări din `occupancy::PROBE`

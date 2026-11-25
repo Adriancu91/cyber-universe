@@ -249,7 +249,7 @@ fn run_records_inner<V: Mmio + ?Sized, K: Clock + ?Sized>(
     d2: Option<Diet2Wait<'_>>,
 ) -> GpuResult<Result<Vec<u8>, u32>> {
     let sent = submit_records_inner(vbar, clock, journal, st, l, permit, words, rec, n_rec, last_payload, maps, sys, doorbell, push_shadow)?;
-    wait_records_inner(vbar, clock, journal, st, l, permit, &sent, d2)
+    wait_records_inner(vbar, clock, journal, st, l, permit, &sent, d2, WAIT_US)
 }
 
 /// P6-217 (cyber-gpu note C-157_P2zg step 2): one submission rung on the board and not yet waited for — what
@@ -294,7 +294,23 @@ pub(super) fn wait_records<V: Mmio + ?Sized, K: Clock + ?Sized>(
     permit: Option<&HardwareWritePermit>,
     sent: &Sent,
 ) -> GpuResult<Result<Vec<u8>, u32>> {
-    wait_records_inner(vbar, clock, journal, st, l, permit, sent, None)
+    wait_records_inner(vbar, clock, journal, st, l, permit, sent, None, WAIT_US)
+}
+
+/// P6-218 (cyber-gpu note C-157_P2zh): [`wait_records`] with its own time limit (`limit_us` instead of [`WAIT_US`]) —
+/// for a probe whose launch may never finish (a grid barrier that does not close).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn wait_records_within<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    sent: &Sent,
+    limit_us: u64,
+) -> GpuResult<Result<Vec<u8>, u32>> {
+    wait_records_inner(vbar, clock, journal, st, l, permit, sent, None, limit_us)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -354,6 +370,7 @@ fn wait_records_inner<V: Mmio + ?Sized, K: Clock + ?Sized>(
     permit: Option<&HardwareWritePermit>,
     sent: &Sent,
     d2: Option<Diet2Wait<'_>>,
+    limit_us: u64,
 ) -> GpuResult<Result<Vec<u8>, u32>> {
     let Sent { rec, n_rec, last_payload } = *sent;
     let last_va = rec.va + RECORD * (n_rec - 1);
@@ -368,14 +385,14 @@ fn wait_records_inner<V: Mmio + ?Sized, K: Clock + ?Sized>(
         };
         let (waited, all) = match d2 {
             // P6-119 (C-157 point 3 B): the planned wait (a timeout or Esc = as today: the last payload seen).
-            Some(d) => match nvidia_ga104::kronos_diet2::poll_planned(clock, WAIT_US, d.plan, &mut cond) {
+            Some(d) => match nvidia_ga104::kronos_diet2::poll_planned(clock, limit_us, d.plan, &mut cond) {
                 Ok((_, ws)) => {
                     *d.polls = ws.polls;
                     (true, d.all)
                 }
                 Err(_) => (false, true),
             },
-            None => (poll_until(clock, WAIT_US, 100, &mut cond).is_ok(), true),
+            None => (poll_until(clock, limit_us, 100, &mut cond).is_ok(), true),
         };
         if !waited {
             return Ok(Err(last));

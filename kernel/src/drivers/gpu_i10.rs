@@ -452,6 +452,8 @@ impl SimGpu {
             cp.register_program_with_needs(nvidia_ga104::mma16::MMA16_F16, c::mma16_f16_on_cpu, c::MMA16_F16_NEEDS);
             // P6-200 (pista B1): the int8 probe (`mma16_s8`).
             cp.register_program_with_needs(nvidia_ga104::mma16::MMA16_S8, c::mma16_s8_on_cpu, c::MMA16_S8_NEEDS);
+            // P6-218 (cyber-gpu `adc783c`): the grid-barrier probe's model.
+            cp.register_program_with_needs(nvidia_ga104::grid_barrier::PROGRAM, c::grid_barrier_on_cpu, c::GRID_BARRIER_NEEDS);
             // P6-123 (C-155 point 3): the argmax on the board (256 threads, shfl + barrier, 16 bytes written).
             cp.register_program_with_needs(nvidia_ga104::argmax::ARGMAX, c::argmax_on_cpu, c::ARGMAX_NEEDS);
             // P6-145 (C-157 point 7): the embedding that reads its token from the argmax slot before it (`embed_dev`).

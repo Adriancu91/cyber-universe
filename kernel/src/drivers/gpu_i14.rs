@@ -45,7 +45,7 @@ use nvidia_ga104::transfer;
 
 use super::gpu_golden::GpuState;
 use super::gpu_i10::{put_bytes, Launched, WAIT_US};
-use super::gpu_i11::{arena_pages, f32_bytes, map_vram, ram_read, ram_read_at, ram_write, ram_write_at, run_records, submit_records, wait_records, Bell, Sent, I11_BOARD_BYTES, PAGE};
+use super::gpu_i11::{arena_pages, f32_bytes, map_vram, ram_read, ram_read_at, ram_write, ram_write_at, run_records, submit_records, wait_records, wait_records_within, Bell, Sent, I11_BOARD_BYTES, PAGE};
 
 /// Where I14 looks for the control model on the board's stick, and on the test disk in SIMULATION.
 pub(super) const MIC_BOARD: &str = "/usb/kronos/mic_q8_0.kgr";
@@ -2871,6 +2871,13 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 }
             }
         }
+        // P6-218 (cyber-gpu `adc783c`): the grid-barrier probe, only when the cycle's list asks for it
+        // (`test-placa … --bariera`), after P8; its failure is a line.
+        if super::gpu_tur::BARRIER_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+            if let Err(e) = barrier_probe(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, &ctx) {
+                lines.push(format!("{}: kronos --gpu: proba barierei: oprita: {}", p, e));
+            }
+        }
         // P6-134 (C-161 point 4, cyber-gpu `3b4ca77`): the first backward program of the training (`colsum`), only when
         // the cycle's list asks for it (`test-placa … --colsum`), after everything else; its failure is a line.
         if super::gpu_tur::COLSUM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
@@ -3766,6 +3773,160 @@ fn mma16_s8_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     } else {
         Ok(())
     }
+}
+
+/// P6-218: SHA-256 of `grid_barrier.sm86.sass` as the note `C-157_P2zh_proba-barierei.md` gives it.
+const GRID_BARRIER_SHA256: &str = "535f353705579f16deea31c363755092e7b00a7ba1ac43764c32d6c72183b12d";
+
+/// P6-218: the time limit of one barrier launch on the board (the note's proposal; predicted ≤ 3 ms).
+const BARRIER_LIMIT_US: u64 = 100_000;
+
+/// P6-218 (cyber-gpu `adc783c`, note `C-157_P2zh_proba-barierei.md`): the grid-barrier probe — `grid_barrier` with G
+/// workgroups of 32 meeting R times at a barrier through a counter in VRAM. G = the SMs GSP-RM reported in I9 × 1, with
+/// R = 1 then R = 1 001 (the counter cleared before each launch, a 100 ms limit each on the board), judged with
+/// `grid_barrier::judge`; the cost of one barrier from the two board times. Only if G × 1 held: the same with G × 2. A
+/// launch that does not finish in time stops the probe (`BLOCATA`): nothing else is sent. New for the board: this
+/// program (its SHA-256 checked first), 19 registers, no shared memory, atomics on a VRAM word.
+#[allow(clippy::too_many_arguments)]
+fn barrier_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    doorbell: &mut Bell<'_, V>,
+    subs: &mut u32,
+    ctx: &CopyCtx,
+) -> GpuResult<()> {
+    use nvidia_ga104::grid_barrier as gb;
+    // The page: counter +0, data +0x100 (8·G ≤ 768 B), results +0x400 (4·G ≤ 384 B); cbuf +0x800, QMD +0xa00.
+    const SYNC: u64 = 0;
+    const DATA: u64 = 0x100;
+    const OUT: u64 = 0x400;
+    const CBUF: u64 = 0x800;
+    const QMD: u64 = 0xa00;
+    let label = if permit.is_some() { "placa" } else { "SIMULARE" };
+    let limit = if permit.is_some() { BARRIER_LIMIT_US } else { WAIT_US };
+    let sha = sha256_hex(gb::PROGRAM);
+    if sha != GRID_BARRIER_SHA256 {
+        lines.push(format!("{}: kronos --gpu: proba barierei: SHA-256 al programului {} nu e cel din nota ({}): nimic trimis", p, sha, GRID_BARRIER_SHA256));
+        return Err(bad("bariera: SHA-256 gresit"));
+    }
+    let gr = st.gr.ok_or_else(|| bad("bariera: forma GR lipseste (I9 nu a raportat-o)"))?;
+    let sms = gr.gpcs * gr.tpc_per_gpc * gr.sm_per_tpc;
+    lines.push(format!(
+        "{}: kronos --gpu: proba barierei ({}): programul grid_barrier ({} octeti, SHA-256 {}..., {} registre, blocuri de {}), {} SM-uri raportate ({} GPC x {} TPC x {} SM), R = {} apoi {}, limita {} ms pe lansare",
+        p,
+        label,
+        gb::PROGRAM.len(),
+        &sha[..16],
+        gb::REGISTERS,
+        gb::BLOCK,
+        sms,
+        gr.gpcs,
+        gr.tpc_per_gpc,
+        gr.sm_per_tpc,
+        gb::ROUNDS_SHORT,
+        gb::ROUNDS_LONG,
+        limit / 1000
+    ));
+    let prog = map_vram(st, program_map_bytes(gb::PROGRAM.len() as u64))?;
+    let zone = map_vram(st, PAGE)?;
+    put_bytes(st.mem.writer_mut(), prog.pa, gb::PROGRAM)?;
+    let mut maps = ctx.maps.clone();
+    maps.push(prog);
+    maps.push(zone);
+    let sys = [ctx.sys.clone()];
+    let mut verdicts: Vec<String> = Vec::new();
+    for per_sm in 1..=gb::MAX_PER_SM {
+        let g = gb::groups_for(&gr, per_sm)?;
+        let (_, d_bytes, o_bytes) = gb::buffer_bytes(g);
+        if DATA + d_bytes > OUT || OUT + o_bytes > CBUF {
+            return Err(bad("bariera: G prea mare pentru pagina probei"));
+        }
+        let mut times = [0u64; 2];
+        let mut held = true;
+        for (k, rounds) in [gb::ROUNDS_SHORT, gb::ROUNDS_LONG].into_iter().enumerate() {
+            let cb = gb::cbuf(zone.va + SYNC, zone.va + DATA, zone.va + OUT, rounds, g)?;
+            let q = gb::qmd(prog.va, gb::REGISTERS, zone.va + CBUF, g)?;
+            {
+                // the counter and the data cleared, the results filled with 0xff (the program writes every one)
+                let w = st.mem.writer_mut();
+                put_bytes(w, zone.pa + SYNC, &[0u8; 4])?;
+                put_bytes(w, zone.pa + DATA, &alloc::vec![0u8; d_bytes as usize])?;
+                put_bytes(w, zone.pa + OUT, &alloc::vec![0xffu8; o_bytes as usize])?;
+                put_bytes(w, zone.pa + CBUF, &cb)?;
+                put_bytes(w, zone.pa + QMD, &q)?;
+                put_bytes(w, ctx.rec.pa, &[0; 32])?;
+            }
+            let first = TOKEN_FIRST + STRIDE * *subs;
+            let mut words = alloc::vec![0u32; transfer::sequence_words(1)];
+            let mut pb = PushBuf::new(&mut words);
+            transfer::encode_sequence(&mut pb, &[zone.va + QMD], ctx.rec.va, first)?;
+            let nw = pb.len();
+            let sent = submit_records(vbar, clock, journal, st, l, permit, &words[..nw], ctx.rec, 2, first + 1, &maps, &sys, doorbell)?;
+            let b = match wait_records_within(vbar, clock, journal, st, l, permit, &sent, limit)? {
+                Ok(b) => b,
+                Err(got) => {
+                    lines.push(format!(
+                        "{}: kronos --gpu: bariera G={} R={}: BLOCATA (nu s-a terminat in {} ms; ultima inregistrare = {:#x}, asteptat {:#x}); proba oprita, nimic altceva trimis",
+                        p, g, rounds, limit / 1000, got, first + 1
+                    ));
+                    lines.push(format!("{}: kronos --gpu: kt bariera G={} BLOCATA", p, g));
+                    verdicts.push(format!("G={} BLOCATA", g));
+                    lines.push(format!("{}: kronos --gpu: proba barierei: {}", p, verdicts.join(", ")));
+                    return Err(GpuError::Timeout { waited_us: limit });
+                }
+            };
+            *subs += 1;
+            times[k] = transfer::analyze_sequence(&b, 1, first)?[0];
+            let (counter, out) = {
+                let GpuState { zone: z, .. } = &*st;
+                let mut vw = nvidia_ga104::vram_window::VramWindow::new(&mut *vbar, &mut *journal, permit, z.vram_size, &z.protected)?;
+                let r = (|| {
+                    let c = vw.read_u32(zone.pa + SYNC)?;
+                    let o = (0..g as u64).map(|i| vw.read_u32(zone.pa + OUT + 4 * i)).collect::<GpuResult<Vec<u32>>>()?;
+                    Ok::<_, GpuError>((c, o))
+                })();
+                let back = vw.restore();
+                r.and_then(|v| back.map(|_| v))?
+            };
+            let text = match gb::judge(g, rounds, counter, &out)? {
+                gb::Verdict::Holds => String::from("TRECE"),
+                gb::Verdict::BadCounter { got, want } => {
+                    held = false;
+                    format!("CONTOR GRESIT ({} in loc de {})", got, want)
+                }
+                gb::Verdict::StaleWords { groups, rounds: r } => {
+                    held = false;
+                    format!("CUVINTE VECHI ({} grupuri, {} runde gresite)", groups, r)
+                }
+            };
+            lines.push(format!("{}: kronos --gpu: bariera G={} R={} ({}): {}, contorul {}, timp {} ns", p, g, rounds, label, text, counter, times[k]));
+            if !held {
+                break;
+            }
+        }
+        if held {
+            match gb::barrier_ns(times[0], times[1]) {
+                Ok(ns) => {
+                    lines.push(format!("{}: kronos --gpu: bariera G={}: o bariera = {} ns", p, g, ns));
+                    lines.push(format!("{}: kronos --gpu: kt bariera G={} TRECE {} ns", p, g, ns));
+                }
+                Err(_) => lines.push(format!("{}: kronos --gpu: bariera G={}: costul nemasurat (rularea lunga nu e mai lunga: {} / {} ns)", p, g, times[0], times[1])),
+            }
+            verdicts.push(format!("G={} TRECE", g));
+        } else {
+            lines.push(format!("{}: kronos --gpu: kt bariera G={} NU TRECE", p, g));
+            verdicts.push(format!("G={} NU TRECE", g));
+            break; // G × 2 only after G × 1 held
+        }
+    }
+    lines.push(format!("{}: kronos --gpu: proba barierei: {}", p, verdicts.join(", ")));
+    Ok(())
 }
 
 /// P6-134 (C-161 point 4, C-160 point 6; cyber-gpu note `C-160_P6_primul-program-inapoi.md`, commit `3b4ca77`): the

@@ -887,6 +887,24 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu argmax-sim: exista doar in build-ul de test (pe stick argmax-ul pe placa il porneste doar ciclul, test-placa --argmax-placa)\n");
         }
+        Some("bariera-sim") => {
+            // P6-218 (cyber-gpu `adc783c`): test build only: the grid-barrier probe after the next `kronos --gpu-sim`'s
+            // texts (in the stick's system only the cycle turns it on, with `test-placa … --bariera`).
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::BARRIER_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu bariera-sim: pornita (SIMULARE: dupa texte, grid_barrier cu G = SM-uri x 1 si x 2, R = 1 si 1001)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::BARRIER_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu bariera-sim: oprita\n");
+                }
+                _ => out!("folosire: gpu bariera-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu bariera-sim: exista doar in build-ul de test (pe stick proba barierei o porneste doar ciclul, test-placa --bariera)\n");
+        }
         Some("colsum-sim") => {
             // P6-134 (C-161 point 4): test build only: the `colsum` probe (5 sets) after the next `kronos --gpu-sim`'s
             // texts (in the stick's system only the cycle turns it on, with `test-placa … --colsum`).
