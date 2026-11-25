@@ -37,6 +37,22 @@ def check(head, body):
     except Exception as e:
         return 400, "JSON invalid: " + str(e)
     m = req.get("messages")
+    # P6-209: prompt caching — the client marks the last block of the last message (a plain text turns into one text
+    # block); the system prompt is a list of blocks. Check the marks, then read text-only contents back as plain text.
+    if isinstance(m, list) and m:
+        last = m[-1].get("content")
+        if not (isinstance(last, list) and last and isinstance(last[-1], dict) and last[-1].get("cache_control") == {"type": "ephemeral"}):
+            return 400, "lipseste cache_control pe ultimul bloc al ultimului mesaj"
+        for x in m:
+            c = x.get("content")
+            if isinstance(c, list) and c and all(isinstance(b, dict) and b.get("type") == "text" for b in c):
+                x["content"] = "".join(b.get("text", "") for b in c)
+    sysp = req.get("system")
+    if sysp is not None and not (isinstance(sysp, list) and sysp and sysp[-1].get("cache_control") == {"type": "ephemeral"}):
+        return 400, "system fara cache_control"
+    tl = req.get("tools")
+    if tl is not None and not (isinstance(tl, list) and tl and tl[-1].get("cache_control") == {"type": "ephemeral"}):
+        return 400, "uneltele fara cache_control pe ultima"
     # A conversation: user, assistant, user, ... ending with the user (what the real API requires).
     if not isinstance(req.get("model"), str) or not isinstance(req.get("max_tokens"), int) or not isinstance(m, list) \
             or len(m) % 2 != 1 or any(x.get("role") != ("user", "assistant")[i % 2] or not isinstance(x.get("content"), (str, list))

@@ -1891,10 +1891,11 @@ fn test_agent() {
     let ledger = fs::read_all("/etc/agent/cheltuieli.txt").expect("test: registrul cheltuielii lipseste");
     let ledger = core::str::from_utf8(&ledger).expect("test: registrul nu e text");
     info!("test: agent: registrul are {} randuri", ledger.lines().count());
-    assert!(ledger.contains(" ping intrare=20 cache=100 iesire=3 cost_u=675 "), "test: randul ping: {}", ledger);
+    // P6-209: the cache read (100 tokens) priced at 1/10 of the input: 20 x 5 + 100 x 0.5 + 3 x 25 = 225 micro-dollars.
+    assert!(ledger.contains(" ping intrare=20 cache=100 iesire=3 cost_u=225 "), "test: randul ping: {}", ledger);
     assert!(!ledger.contains("sk-test"), "test: cheia a ajuns in registru");
-    // The cap: 0.000700 $ is below what the two requests cost (675 + 350 micro-dollars): refused, no request sent.
-    put("/etc/agent.setari", settings("0.0007").as_bytes());
+    // The cap: 0.000500 $ is below what the two requests cost (225 + 350 micro-dollars): refused, no request sent.
+    put("/etc/agent.setari", settings("0.0005").as_bytes());
     assert_eq!(run(&["agent", "ping"], "plafon"), 1, "test: plafonul nu a oprit agentul");
     let ledger = fs::read_all("/etc/agent/cheltuieli.txt").expect("test: registrul");
     assert!(core::str::from_utf8(&ledger).unwrap_or("").contains(" PLAFON plafonul zilei atins"), "test: plafonul nu e in registru");
@@ -1909,10 +1910,16 @@ fn test_agent() {
     put("/etc/github.conf", b"host = test.cyber.local\nport = 18447\naddress = 10.0.2.2\ntoken = /etc/github.token\nhub = Adriancu91/note-test\n");
     put("/etc/github.token", b"tok-gh\n");
     warn!("test: abatere de proba pentru agent veghe (P6-204)");
-    assert_eq!(run(&["agent", "veghe", "0", "2"], "veghe"), 0, "test: agent veghe");
+    // P6-209: `0 2 0` = Claude's summary on every tour (2 requests); then `0 2` = the settings' 10 minutes: the first
+    // tour with the summary, the second only the raw numbers (1 request more).
+    assert_eq!(run(&["agent", "veghe", "0", "2", "0"], "veghe"), 0, "test: agent veghe");
     let live = fs::read_all("/etc/agent/live/os-agent.md").expect("test: /etc/agent/live/os-agent.md lipseste");
     let live = core::str::from_utf8(&live).expect("test: os-agent.md nu e text");
     assert!(live.contains("tura 2 · fara abateri noi"), "test: os-agent.md: {}", live);
+    assert_eq!(run(&["agent", "veghe", "0", "2"], "veghe cifre"), 0, "test: agent veghe (doar cifre)");
+    let live = fs::read_all("/etc/agent/live/os-agent.md").expect("test: os-agent.md");
+    let live = core::str::from_utf8(&live).expect("test: os-agent.md nu e text");
+    assert!(live.contains("## Cifrele brute (la fiecare 0 min, fara Claude)") && live.contains("urmatorul la abatere"), "test: os-agent.md (cifre): {}", live);
     let days = fs::list("/etc/agent/live").expect("test: dosarul live");
     info!("test: agent veghe: {} fisiere in /etc/agent/live", days.len());
     for (name, _) in days.iter() {

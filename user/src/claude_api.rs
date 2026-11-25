@@ -147,18 +147,50 @@ pub fn send(c: &Config, key: &str, messages: &[Value], tools: Option<&Value>) ->
     send_with(c, key, None, messages, tools)
 }
 
+/// P6-209: `{"type": "ephemeral"}` (the 5-minute prompt cache).
+fn ephemeral() -> Value {
+    Value::object([("type", Value::str("ephemeral"))])
+}
+
 /// `send` with a system prompt (P6-203: the on-board agent says who it is and what it may do).
 pub fn send_with(c: &Config, key: &str, system: Option<&str>, messages: &[Value], tools: Option<&Value>) -> Result<Value, String> {
     let mut fields = alloc::vec![
         (String::from("model"), Value::str(&c.model)),
         (String::from("max_tokens"), Value::int(c.max_tokens)),
     ];
+    // P6-209 (C-166, centre note 25 Nov 14:30: "cache = 0"): prompt caching — a cache breakpoint on the system prompt,
+    // on the last tool and on the last block of the last message, so each round of a question re-reads what came before
+    // from the cache (read at 1/10 of the input price) instead of paying it again.
     if let Some(sys) = system {
-        fields.push((String::from("system"), Value::str(sys)));
+        let block = Value::object([("type", Value::str("text")), ("text", Value::str(sys)), ("cache_control", ephemeral())]);
+        fields.push((String::from("system"), Value::Array(alloc::vec![block])));
     }
-    fields.push((String::from("messages"), Value::Array(messages.to_vec())));
+    let mut messages = messages.to_vec();
+    if let Some(Value::Object(last)) = messages.last_mut() {
+        if let Some((_, content)) = last.iter_mut().find(|(k, _)| k == "content") {
+            match content {
+                Value::String(t) => {
+                    let text = core::mem::take(t);
+                    *content = Value::Array(alloc::vec![Value::object([("type", Value::str("text")), ("text", Value::String(text)), ("cache_control", ephemeral())])]);
+                }
+                Value::Array(blocks) => {
+                    if let Some(Value::Object(b)) = blocks.last_mut() {
+                        b.push((String::from("cache_control"), ephemeral()));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    fields.push((String::from("messages"), Value::Array(messages)));
     if let Some(t) = tools {
-        fields.push((String::from("tools"), t.clone()));
+        let mut t = t.clone();
+        if let Value::Array(list) = &mut t {
+            if let Some(Value::Object(last)) = list.last_mut() {
+                last.push((String::from("cache_control"), ephemeral()));
+            }
+        }
+        fields.push((String::from("tools"), t));
     }
     let body = Value::Object(fields).to_string();
 

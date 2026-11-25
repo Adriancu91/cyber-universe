@@ -63,7 +63,7 @@ fn watch_start(out: &mut Report) {
     let line = match crate::proc::spawn_path("/bin/agent", &["agent", "veghe"]) {
         Ok(id) => {
             WATCH.store(id, Ordering::Relaxed);
-            format!("auto: agent veghe pornit in fundal (id {}): starea live in hub la ~10 min si la orice abatere\n", id)
+            format!("auto: agent veghe pornit in fundal (id {}): cifrele in hub la ~2 min, rezumatul lui Claude la ~10 min si la orice abatere\n", id)
         }
         Err(e) => format!("auto: agent veghe nu a pornit: {}\n", e.message()),
     };
