@@ -528,6 +528,13 @@ pub static TRAIN_513_MIXED_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync
 /// `gpu antrenare-mini-sim mixt rapid` / `vram-513-mixt rapid`. Off by default.
 pub static TRAIN_MIXED_FAST_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-216 (C-157, cyber-gpu `1ddf092`, note `C-157_P2zg_lot-prin-ram-mixt.md`, step 1): with #513's fast mixed step
+/// ([`TRAIN_MIXED_FAST_IN_CYCLE`] + [`TRAIN_513_MIXED_IN_CYCLE`]), the batch written into pinned RAM and the losses + norm
+/// read from there (`batch_ram::pack_mixed_fast_via_ram`: 5 copies in, the list, 2 copies out, all at the 64 KiB step)
+/// instead of through the VRAM window. Set only by the cycle (`test-placa … --mixt-513 --mixt-513-rapid --lot-prin-ram`)
+/// and, in the test build, by `gpu antrenare-mini-sim vram-513-mixt rapid ram`. Off by default.
+pub static TRAIN_513_VIA_RAM_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-178 (cyber-gpu `d173a59`, note C-157_P2s): with [`TRAIN_MINI_VRAM_IN_CYCLE`], the resident run twice from the same
 /// state — the batch and the results through the VRAM window (os-390), then through pinned RAM with the copy program in
 /// the step's own list — compared bit for bit. Set only by the cycle (`test-placa … --antrenare-mini --vram --lot-ram`)

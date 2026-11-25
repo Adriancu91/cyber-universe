@@ -6521,6 +6521,9 @@ fn batch_fits(arena: u64, zone: u64, reserve: u64, largest: u64) -> bool {
 const KT_513_MIXED: &str = "kt antrenare-513 pasul mixt (1/0)";
 /// P6-198: the `mm_tc` launches of one mixed #513 step (147 expected on the board).
 const KT_513_MIXED_TC: &str = "kt antrenare-513 lansari mm_tc pe pas";
+/// P6-216 (note C-157_P2zg): #513's batch and results through pinned RAM (1/0), and the step outside the board (median).
+const KT_513_VIA_RAM: &str = "kt antrenare-513 lot prin RAM (1/0)";
+const KT_513_OUTSIDE_US: &str = "kt antrenare-513 us in afara placii pe pas (median)";
 const KT_513_MM_CHOICE_FORMS: &str = "kt antrenare-513 forme pe o varianta aleasa";
 /// P6-196 (C-165, centre note of 25 Nov 02:10): the 60 race rows of os-416 (hub
 /// `rezultate/os-automat/2026-11-25/ciclu-auto-20261125-0135.txt`), copied as the OS wrote them (`race_row`), behind a
@@ -6916,11 +6919,30 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let mixed = mm_tile && !fused_tile && !mm_choice_on && !race && super::gpu_tur::TRAIN_513_MIXED_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     let scale = ts::LOSS_SCALE_513;
     journal.push(Event::Value { what: KT_513_MIXED, value: mixed as u32 });
+    // P6-216 (cyber-gpu `1ddf092`, note C-157_P2zg step 1): with `--lot-prin-ram` (only after `--mixt-513-rapid`), the
+    // batch goes into pinned RAM (the start of `stage`, unused between the arena's big copies) and the losses + norm come
+    // back there: `batch_ram::pack_mixed_fast_via_ram` = 5 copies in + the fast mixed list + 2 copies out, one submission
+    // order, all at the 64 KiB step; nothing is written or read through the VRAM window during the steps.
+    let via_ram_on = mixed
+        && super::gpu_tur::TRAIN_MIXED_FAST_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst)
+        && super::gpu_tur::TRAIN_513_VIA_RAM_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    journal.push(Event::Value { what: KT_513_VIA_RAM, value: via_ram_on as u32 });
     let probe0 = build(nvidia_ga104::mmu::VA_BASE)?.resident()?;
     let mut n_launch = 0usize;
     for (x, _) in &data.batches {
         let pr = probe0.rebatch(x)?;
         n_launch = n_launch.max(if mixed { pr.launches_per_step_mixed(Recipe::AdamW513) } else { pr.launches_per_step(Recipe::AdamW513) });
+    }
+    // P6-216: the 7 copies take a slot each in the zone and a record each.
+    let mut stage_need = 0u64;
+    if via_ram_on {
+        let v = nvidia_ga104::batch_ram::via_ram(&probe0, x0, y0, 0)?;
+        n_launch += nvidia_ga104::batch_ram::extra_launches(&v);
+        stage_need = v.staging.len() as u64;
+        if stage_need > piece {
+            lines.push(format!("{}: kronos --gpu: {}: NU A RULAT: zona de tranzit a lotului ({} B) nu incape in bucata RAM ({} KiB); nimic trimis", p, tag, stage_need, piece >> 10));
+            return Err(bad("antrenare-513: zona de tranzit prea mare"));
+        }
     }
     let arena_bytes = probe0.bytes().next_multiple_of(PAGE);
     // P6-198: an `mm_tc` launch takes `SLOT_TC` bytes of the zone (its larger cbuf), the others `SLOT`.
@@ -7172,6 +7194,12 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             p, tag, scale as u32
         ));
     }
+    if via_ram_on {
+        lines.push(format!(
+            "{}: kronos --gpu: {}: lotul si rezultatele prin RAM fixata (--lot-prin-ram, nota Cyber-GPU C-157_P2zg pasul 1): zona de tranzit {} B la inceputul bucatii RAM, la fiecare pas (si la pasul 1) lotul scris acolo si adus in arena de 5 copieri, pierderile + norma duse inapoi de 2 copieri, toate in aceeasi trimitere cu pasul, la treapta {} KiB (pack_mixed_fast_via_ram; programul de copiere din os-397); fereastra VRAM neatinsa in timpul pasilor",
+            p, tag, stage_need, MIXED_FAST_STEP >> 10
+        ));
+    }
     let read_vram_f32s = |st: &mut GpuState, vbar: &mut V, journal: &mut Journal, va: u64, n: usize| -> GpuResult<Vec<f32>> {
         let GpuState { zone, .. } = &*st;
         let mut vw = nvidia_ga104::vram_window::VramWindow::new(&mut *vbar, &mut *journal, permit, zone.vram_size, &zone.protected)?;
@@ -7214,6 +7242,8 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let mut prof: Option<nvidia_ga104::train_profile::StepProfile> = None;
     // P6-192 (A4): the dashboard readings taken during the steps.
     let mut step_dash: Vec<super::gpu_golden::StepSample> = Vec::new();
+    // P6-216: the pieces of the step outside the board, per step (µs): batch, list, submissions - board, results.
+    let mut outside: [Vec<u64>; 4] = Default::default();
     journal.flush_live();
     let hold = super::gpu_i6::GenHold::start();
     journal.set_routine(Some(kf::gen_routine(&GEN_NOTES)));
@@ -7225,12 +7255,20 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             if plan.w != plan0.w || plan.m != plan0.m || plan.v != plan0.v || plan.loss_rows != plan0.loss_rows || plan.res != plan0.res {
                 return Err(bad("antrenare-513: adresele planului rezident s-au mutat"));
             }
-            if k > 0 {
+            // P6-216: through RAM every step (step 1 too, so all steps are alike); otherwise through the VRAM window.
+            let via = if via_ram_on { Some(nvidia_ga104::batch_ram::via_ram(&plan, x, y, stage.va)?) } else { None };
+            if let Some(v) = &via {
+                if v.staging.len() as u64 > piece {
+                    return Err(bad("antrenare-513: zona de tranzit prea mare"));
+                }
+                ram_vram_bytes(host, v.staging.len() as u64).copy_from_slice(&v.staging);
+            } else if k > 0 {
                 let w = st.mem.writer_mut();
                 for (va, bytes) in plan.batch_uploads(x, y)? {
                     put_bytes(w, varena.pa + (va - varena.va), &bytes)?;
                 }
             }
+            let t_batch = crate::time::since_boot_us();
             let (zb, qmds, list) = match tc_map {
                 // P6-198: the mixed list (the 1x1x1 c/S product included) and its zone; no profile (it reads F32 lists).
                 Some(tc) => {
@@ -7239,7 +7277,10 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                     let (zb, qmds) = match fast_map {
                         Some((pf, v4)) => {
                             let progs = ts::TcPrograms { tc: tc.va, pf: pf.va, v4: v4.va, gelu: 0 };
-                            let (zb, qmds, picks) = ts::pack_mixed_fast(&ml, prog_va, &progs, Some(MIXED_FAST_STEP), ctl.va)?;
+                            let (zb, qmds, picks) = match &via {
+                                Some(v) => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram(&ml, prog_va, &progs, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
+                                None => ts::pack_mixed_fast(&ml, prog_va, &progs, Some(MIXED_FAST_STEP), ctl.va)?,
+                            };
                             fast_picks = fast_picks_text(&picks);
                             (zb, qmds)
                         }
@@ -7269,6 +7310,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 race_shapes = race_forms(list);
             }
             ram_write(&ctl, &zb);
+            let t_list = crate::time::since_boot_us();
             if let (None, Some(list)) = (prof.as_ref(), list.as_ref()) {
                 let pr = nvidia_ga104::train_profile::StepProfile::from_launches(list)?;
                 if pr.launches() != qmds.len() {
@@ -7302,12 +7344,30 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 }
             }
             board_ns.push(busy);
+            let t_subs = crate::time::since_boot_us();
             if let Some(pr) = prof.as_mut() {
                 pr.add_step(&step_ns)?;
             }
             let [(lr_va, lr_n), (res_va, res_n)] = plan.step_reads();
-            let rows = read_vram_f32s(st, vbar, journal, lr_va, (lr_n / 4) as usize)?;
-            let norm = read_vram_f32s(st, vbar, journal, res_va, (res_n / 4) as usize)?[0];
+            let (rows, norm) = match &via {
+                // P6-216: the two copies at the end of the submission brought them into the staging area (written with
+                // zeros with the batch: a copy that did not arrive leaves 0, and the oracle / the loss check catch it).
+                Some(v) => nvidia_ga104::batch_ram::results(ram_vram_bytes(host, v.staging.len() as u64), v)?,
+                None => {
+                    let rows = read_vram_f32s(st, vbar, journal, lr_va, (lr_n / 4) as usize)?;
+                    let norm = read_vram_f32s(st, vbar, journal, res_va, (res_n / 4) as usize)?[0];
+                    (rows, norm)
+                }
+            };
+            let t_res = crate::time::since_boot_us();
+            // P6-216 (note C-157_P2zg: "outside the board" split): batch, list + packing, submissions minus the board,
+            // results (µs; a mark the clock did not give leaves the step out).
+            if let (Some(a0), Some(a1), Some(a2), Some(a3), Some(a4)) = (t0, t_batch, t_list, t_subs, t_res) {
+                outside[0].push(a1.saturating_sub(a0));
+                outside[1].push(a2.saturating_sub(a1));
+                outside[2].push(a3.saturating_sub(a2).saturating_sub(busy / 1000));
+                outside[3].push(a4.saturating_sub(a3));
+            }
             // P6-198: the mixed list's `res[0]` is S times the norm (S a power of two: the division is exact).
             let norm = if mixed { norm / scale } else { norm };
             let loss = Outcome::mean_loss(&rows);
@@ -7421,6 +7481,18 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 p, tag, MIXED_FAST_STEP >> 10, fast_picks
             ));
         }
+    }
+    // P6-216 (note C-157_P2zg): "outside the board" = the whole step - the board, and its pieces (medians, µs).
+    {
+        let out_us: Vec<u64> = host_us.iter().zip(&board_ns).map(|(h, b)| h.saturating_sub(b / 1000) * 1000).collect();
+        let out_med = median_us(&out_us);
+        journal.push(Event::Value { what: KT_513_OUTSIDE_US, value: out_med.min(u32::MAX as u64) as u32 });
+        let m = |v: &Vec<u64>| median_us(&v.iter().map(|u| u * 1000).collect::<Vec<u64>>());
+        lines.push(format!(
+            "{}: kronos --gpu: {}: in afara placii (pasul intreg - placa, median): {} us; pe bucati: lotul {} us, lista + impachetarea {} us, trimiterile (fara placa) {} us, rezultatele {} us; {}",
+            p, tag, out_med, m(&outside[0]), m(&outside[1]), m(&outside[2]), m(&outside[3]),
+            if via_ram_on { "lot + rezultate prin RAM fixata (--lot-prin-ram)" } else { "lot + rezultate prin fereastra VRAM" }
+        ));
     }
     // P6-183 (os-395: "placa" > "pasul intreg" by ~3 %): the two clocks side by side, so the next report says which.
     lines.push(format!(
