@@ -157,7 +157,7 @@ pub fn target(command: &str) -> Result<(String, String), &'static str> {
 
 /// P6-96: `test-placa [--i9 …]` of the automatic list -> the I9.
 pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
-    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou` sau `--tablou-viteza`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi` sau `--ln-32`, apoi `--k651`, apoi `--argmax-placa` sau `--argmax-fara-copie`, apoi `--dieta2`, apoi `--lot`, apoi `--p8`, apoi `--colsum`, apoi `--pas-aur`, apoi `--mm-tc`, apoi `--atentie-placi`, apoi `--atentie2`, apoi `--atentie3`, apoi `--atentie4`, apoi `--ram-vram`, apoi `--adam-ram`, apoi `--antrenare-mini` la sfarsit, optional urmat de `--mixt` sau `--vram` (iar dupa `--vram` optional `--pas-lipit`, `--antrenare-513` sau `--lot-ram`; dupa `--antrenare-513` optional `--placi3`, dupa el optional `--mm-placi`, dupa el optional `--lipit-placi` (ultimul) sau `--colsum-impartit`, la sfarsit optional `--mm-alegere` (ultimul) sau `--cursa-mm` dupa `--mm-placi` sau `--colsum-impartit`, `--cursa-mm` urmat optional de `--proba-64k8`) (in aceasta ordine; `--mixt` sau `--vram` doar imediat dupa `--antrenare-mini`, nu amandoua; `--pas-lipit`, `--antrenare-513` sau `--lot-ram` doar imediat dupa `--vram`; `--adam-ram` doar imediat dupa `--ram-vram`; `--atentie2` doar dupa `--atentie-placi`, `--atentie3` doar dupa `--atentie2`, `--atentie4` doar dupa `--atentie3`; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi`, `--ln-32`; `--k651` nu merge cu `--lipit` sau `--simplu`; `--argmax-fara-copie` nu merge cu `--lipit`, `--ln-nou`, `--sferturi` sau `--ln-32`; `--lot` doar cu `--argmax-fara-copie` si lista implicita lipita-ln-32, fara alta alegere de lista)";
+    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou` sau `--tablou-viteza`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi` sau `--ln-32`, apoi `--k651`, apoi `--argmax-placa` sau `--argmax-fara-copie`, apoi `--dieta2`, apoi `--lot`, apoi `--p8`, apoi `--colsum`, apoi `--pas-aur`, apoi `--mm-tc` (urmat optional de `--mm-tc128`), apoi `--atentie-placi`, apoi `--atentie2`, apoi `--atentie3`, apoi `--atentie4`, apoi `--ram-vram`, apoi `--adam-ram`, apoi `--antrenare-mini` la sfarsit, optional urmat de `--mixt` sau `--vram` (iar dupa `--vram` optional `--pas-lipit`, `--antrenare-513` sau `--lot-ram`; dupa `--antrenare-513` optional `--placi3`, dupa el optional `--mm-placi`, dupa el optional `--lipit-placi` (ultimul) sau `--colsum-impartit`, la sfarsit optional `--mm-alegere` (ultimul) sau `--cursa-mm` dupa `--mm-placi` sau `--colsum-impartit`, `--cursa-mm` urmat optional de `--proba-64k8`) (in aceasta ordine; `--mixt` sau `--vram` doar imediat dupa `--antrenare-mini`, nu amandoua; `--pas-lipit`, `--antrenare-513` sau `--lot-ram` doar imediat dupa `--vram`; `--adam-ram` doar imediat dupa `--ram-vram`; `--atentie2` doar dupa `--atentie-placi`, `--atentie3` doar dupa `--atentie2`, `--atentie4` doar dupa `--atentie3`; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi`, `--ln-32`; `--k651` nu merge cu `--lipit` sau `--simplu`; `--argmax-fara-copie` nu merge cu `--lipit`, `--ln-nou`, `--sferturi` sau `--ln-32`; `--lot` doar cu `--argmax-fara-copie` si lista implicita lipita-ln-32, fara alta alegere de lista)";
     let words: Vec<&str> = command.split_whitespace().collect();
     let Some(("test-placa", rest)) = words.split_first().map(|(a, b)| (*a, b)) else { return None };
     let (i9, flags) = match rest {
@@ -201,7 +201,7 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
     // P6-128: `--ln-32` = `lipita-ln`, then `lipita-ln-32` (every product on quarters), compared; one more list choice.
     // P6-135 (note C-157_P2i, point 1): `--lipita-ln` = the default until now (`lipita-ln` alone); without any list
     // choice the cycle now runs `lipita-ln-32` alone. The checks below go by name, not by position.
-    let all = [FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, P8, COLSUM, PAS_AUR, MM_TC, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_VRAM, TRAIN_FUSED, TRAIN_513, TRAIN_513_TILES3, TRAIN_513_MM_TILE, TRAIN_513_FUSED_TILE, TRAIN_513_COLSUM, TRAIN_513_MM_CHOICE, TRAIN_513_RACE, TRAIN_513_PROBE_64K8, TRAIN_RAM];
+    let all = [FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, P8, COLSUM, PAS_AUR, MM_TC, MM_TC128, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_VRAM, TRAIN_FUSED, TRAIN_513, TRAIN_513_TILES3, TRAIN_513_MM_TILE, TRAIN_513_FUSED_TILE, TRAIN_513_COLSUM, TRAIN_513_MM_CHOICE, TRAIN_513_RACE, TRAIN_513_PROBE_64K8, TRAIN_RAM];
     let pos = |x: &str| all.iter().position(|y| *y == x).unwrap_or(0);
     let lists = pos(LIPIT)..=pos(LN_32);
     // The two-run lists: the argmax without the copy reads no logits, they need both runs' logits.
@@ -219,6 +219,10 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
         }
         // P6-145: the batch needs the token chosen on the board and the default list (`lipita-ln-32` alone).
         if all[at] == LOT && (!out.split(' ').any(|w| w == ARGMAX_TOP.trim()) || all[lists.clone()].iter().any(|x| out.split(' ').any(|w| w == x.trim()))) {
+            return Some(Err(FORM));
+        }
+        // P6-197: `mm_tc128` only beside `mm_tc`, in its probe.
+        if all[at] == MM_TC128 && !out.ends_with(MM_TC) {
             return Some(Err(FORM));
         }
         // P6-149: the new chain only beside the old one.
@@ -764,6 +768,10 @@ pub const PAS_AUR: &str = " --pas-aur";
 /// P6-137 (C-161 point 4): suffix of the I9 text when the `mm_tc` probe is asked (`test-placa … --mm-tc`, always last).
 pub const MM_TC: &str = " --mm-tc";
 
+/// P6-197 (C-165): suffix of the I9 text when `mm_tc128` runs beside `mm_tc` in its probe (`test-placa … --mm-tc
+/// --mm-tc128`, only right after `--mm-tc`).
+pub const MM_TC128: &str = " --mm-tc128";
+
 /// P6-141 (C-161 point 4): suffix of the I9 text when the tiled attention probe is asked (`test-placa … --atentie-placi`,
 /// always last).
 pub const ATTN_TILE: &str = " --atentie-placi";
@@ -992,6 +1000,10 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
         Some(x) => (x, true),
         None => (i9, false),
     };
+    let (i9, mm_tc128) = match i9.strip_suffix(MM_TC128) {
+        Some(x) => (x, true),
+        None => (i9, false),
+    };
     let (i9, mm_tc) = match i9.strip_suffix(MM_TC) {
         Some(x) => (x, true),
         None => (i9, false),
@@ -1149,6 +1161,8 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::GOLDEN_IN_CYCLE.store(golden, core::sync::atomic::Ordering::SeqCst);
     // P6-137 (C-161 point 4): the `mm_tc` probe only when the list asked for it, only after this chain's texts.
     crate::drivers::gpu_tur::MM_TC_IN_CYCLE.store(mm_tc, core::sync::atomic::Ordering::SeqCst);
+    // P6-197: `mm_tc128` beside it only when the list asked for it.
+    crate::drivers::gpu_tur::MM_TC128_IN_CYCLE.store(mm_tc && mm_tc128, core::sync::atomic::Ordering::SeqCst);
     // P6-141 (C-161 point 4): the tiled attention probe only when the list asked for it, only after this chain's texts.
     crate::drivers::gpu_tur::ATTN_TILE_IN_CYCLE.store(attn_tile, core::sync::atomic::Ordering::SeqCst);
     // P6-149: the second generation beside the first only when the list asked for it.
@@ -1222,6 +1236,9 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     }
     if mm_tc {
         text.push_str("\n(proba mm_tc, inmultirea antrenarii pe circuitele speciale: ceruta de lista (--mm-tc); dupa textele lui #513, programul mm_tc (nou pentru placa: 64 de registre, blocuri de 128, 24 KiB de memorie partajata + o bariera, grila cu y > 1) de 5 ori cu 5 seturi fixe mici (judecate pe procesor cu marginea scrisa), apoi setul de timp qkv-513 (6144 x 2304 x 768, ~82,6 MB in VRAM, 5 lansari, judecat pe 3 benzi); trece = toate seturile rulate in margine, garzile neatinse; predictia Cyber-GPU: abaterea maxima sub 100 promile, qkv-513 la 8-17 TFLOP/s)\n");
+    }
+    if mm_tc && mm_tc128 {
+        text.push_str("\n(mm_tc128 langa mm_tc: cerut de lista (--mm-tc128); in proba mm_tc, dupa fiecare set, acelasi set cu programul mm_tc128 (aceeasi treaba pe placi de 128 x 128; nou pentru placa: 128 de registre, blocuri de 256, 24 KiB de memorie partajata + o bariera), iesirea comparata octet cu octet cu a lui mm_tc; la qkv-513 tot 5 lansari si timpul median al amandurora; trece = aceiasi biti ca mm_tc pe toate seturile; estimarea Cyber-GPU: x1,3-2 mai rapid pe qkv-513)\n");
     }
     if attn_tile {
         text.push_str("\n(proba atentiei pe placi: ceruta de lista (--atentie-placi); dupa textele lui #513, lantul atentiei de antrenare pe placi: attn_fwd_tile (P si att) -> attn_back_tile0 (randurile lui dS) -> attn_back_tile (dQ, dK, dV); 3 programe noi pentru placa (55 / 50 / 73 de registre, 37 / 32 / 32 KiB de memorie partajata + o bariera, blocuri de 256), pe 5 seturi mici (fiecare program judecat singur pe procesor: inainte in marginea MUFU, cele doua inapoi pe P si dS citite de pe placa, prezise bit cu bit), apoi setul atentie-513-b4 (4 texte x 512 pozitii, 12 capete; ~151 MB in VRAM, intrarile urcate si recitite inainte de orice lansare) de 5 ori fiecare program, pentru timp; trece = toate seturile in margine, garzile neatinse; Cyber-GPU estimeaza ~0,53 / ~0,49 / ~0,42-0,68 ms pe lansare)\n");
@@ -1368,6 +1385,7 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::COLSUM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::GOLDEN_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::MM_TC_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::MM_TC128_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::ATTN_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::ATTN_TILE2_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::ATTN_TILE3_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
@@ -1444,6 +1462,13 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     // P6-137: the `mm_tc` probe's verdict next to the chain's in the answer.
     let result = if mm_tc {
         let verdict = text.lines().rev().find(|l| l.contains("proba mm_tc: ")).map_or("proba mm_tc: niciun rezultat (vezi raportul)", |l| l.trim());
+        format!("{}; {}", result, verdict)
+    } else {
+        result
+    };
+    // P6-197: `mm_tc128`'s verdict too.
+    let result = if mm_tc && mm_tc128 {
+        let verdict = text.lines().rev().find(|l| l.contains("proba mm_tc128: ")).map_or("proba mm_tc128: niciun rezultat (vezi raportul)", |l| l.trim());
         format!("{}; {}", result, verdict)
     } else {
         result
@@ -1722,6 +1747,12 @@ pub fn self_test() {
     assert!(board_command("test-placa --tablou --p8 --colsum --pas-aur --mm-tc") == Some(Ok(String::from("c135 --tablou --p8 --colsum --pas-aur --mm-tc"))));
     assert!(board_command("test-placa --mm-tc --pas-aur").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --mm-tc --mm-tc").is_some_and(|r| r.is_err()));
+    // P6-197: `--mm-tc128` only right after `--mm-tc`.
+    assert!(board_command("test-placa --mm-tc --mm-tc128") == Some(Ok(String::from("c135 --mm-tc --mm-tc128"))));
+    assert!(board_command("test-placa --mm-tc --mm-tc128 --atentie-placi") == Some(Ok(String::from("c135 --mm-tc --mm-tc128 --atentie-placi"))));
+    assert!(board_command("test-placa --mm-tc128").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --pas-aur --mm-tc128").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --mm-tc128 --mm-tc").is_some_and(|r| r.is_err()));
     // P6-141: `--atentie-placi` last, alone or after any other option (`--mm-tc` included).
     assert!(board_command("test-placa --atentie-placi") == Some(Ok(String::from("c135 --atentie-placi"))));
     assert!(board_command("test-placa --mm-tc --atentie-placi") == Some(Ok(String::from("c135 --mm-tc --atentie-placi"))));

@@ -82,6 +82,7 @@ kronos-gpu-ln32 182
 kronos-gpu-ln32-singur 183
 kronos-gpu-lot 196
 kronos-gpu-mm-tc 185
+kronos-gpu-mm-tc128 400
 kronos-gpu-p8 186
 kronos-gpu-pas-aur 330
 kronos-gpu-antrenare-mini 720

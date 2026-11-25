@@ -895,11 +895,18 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::MM_TC_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu mm-tc-sim: pornita (SIMULARE: dupa texte, mm_tc pe 5 seturi, judecat pe procesor; qkv-513 doar urcat si recitit)\n");
                 }
+                // P6-197: `on128` = the same probe with `mm_tc128` beside `mm_tc` on every set.
+                Some("on128") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::MM_TC_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::MM_TC128_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu mm-tc-sim: pornita cu mm_tc128 (SIMULARE: dupa texte, mm_tc apoi mm_tc128 pe 5 seturi, comparate bit cu bit; qkv-513 doar urcat si recitit)\n");
+                }
                 Some("off") if args.len() == 2 => {
                     crate::drivers::gpu_tur::MM_TC_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::MM_TC128_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu mm-tc-sim: oprita\n");
                 }
-                _ => out!("folosire: gpu mm-tc-sim on|off\n"),
+                _ => out!("folosire: gpu mm-tc-sim on|on128|off\n"),
             }
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu mm-tc-sim: exista doar in build-ul de test (pe stick proba mm_tc o porneste doar ciclul, test-placa --mm-tc)\n");
