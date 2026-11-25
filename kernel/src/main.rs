@@ -1901,6 +1901,24 @@ fn test_agent() {
     assert_eq!(run(&["agent", "Fa", "testul", "agentului"], "unelte"), 0, "test: uneltele agentului");
     let sessions = fs::list("/etc/agent/sesiuni").expect("test: dosarul sesiunilor lipseste");
     info!("test: agent: {} sesiuni pastrate", sessions.len());
+    // P6-204 (C-166 step 3): `agent veghe 0 2` = two tours at once against the imitations of the API and of GitHub
+    // (tools/ghpush-test-server.py, the hub = its test repository): the first sees the WARN line below (an alert),
+    // the second nothing new; live/os-agent.md made, then rewritten; the day's log in rezultate/os-automat/.
+    put("/etc/github.conf", b"host = test.cyber.local\nport = 18447\naddress = 10.0.2.2\ntoken = /etc/github.token\nhub = Adriancu91/note-test\n");
+    put("/etc/github.token", b"tok-gh\n");
+    warn!("test: abatere de proba pentru agent veghe (P6-204)");
+    assert_eq!(run(&["agent", "veghe", "0", "2"], "veghe"), 0, "test: agent veghe");
+    let live = fs::read_all("/etc/agent/live/os-agent.md").expect("test: /etc/agent/live/os-agent.md lipseste");
+    let live = core::str::from_utf8(&live).expect("test: os-agent.md nu e text");
+    assert!(live.contains("tura 2 · fara abateri noi"), "test: os-agent.md: {}", live);
+    let days = fs::list("/etc/agent/live").expect("test: dosarul live");
+    info!("test: agent veghe: {} fisiere in /etc/agent/live", days.len());
+    for (name, _) in days.iter() {
+        let text = fs::read_all(&alloc::format!("/etc/agent/live/{}", name)).unwrap_or_default();
+        assert!(!text.windows(6).any(|w| w == b"tok-gh" || w == b"sk-tes"), "test: un secret in {}", name);
+    }
+    let ledger = fs::read_all("/etc/agent/cheltuieli.txt").expect("test: registrul");
+    info!("test: agent veghe: {} cereri veghe in registru", core::str::from_utf8(&ledger).unwrap_or("").matches(" veghe intrare=").count());
     let _ = fs::remove("/etc/claude.cheie");
     assert_eq!(run(&["agent", "ping"], "fara cheie"), 1, "test: agent fara cheie");
     info!("test: agentul de bord OK (ping, intrebare, cheltuieli, plafon, unelte de citire, fara cheie)");
