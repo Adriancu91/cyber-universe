@@ -314,6 +314,8 @@ fn run_tests() -> ! {
     test_claude_app();
     #[cfg(feature = "test-claude-tools")]
     test_claude_tools();
+    #[cfg(feature = "test-agent")]
+    test_agent();
     #[cfg(feature = "test-update")]
     test_update();
     #[cfg(feature = "test-revenire")]
@@ -1819,7 +1821,7 @@ fn test_web() {
 
 /// Adds the test root (tls/tests/data, its private key is public) to /etc/certs, under the name the programs look
 /// for (its subject id). Only test builds do this.
-#[cfg(any(feature = "test-https", feature = "test-web", feature = "test-claude", feature = "test-claude-app", feature = "test-claude-tools", feature = "test-update", feature = "test-ghpush"))]
+#[cfg(any(feature = "test-https", feature = "test-web", feature = "test-claude", feature = "test-claude-app", feature = "test-claude-tools", feature = "test-update", feature = "test-ghpush", feature = "test-agent"))]
 fn add_test_root() {
     let root: &[u8] = include_bytes!("../../tls/tests/data/root.der");
     let subject = cyber_crypto::x509::Cert::parse(root).expect("test: radacina de test").subject;
@@ -1853,6 +1855,51 @@ fn test_claude() {
     run(Some(b"sk-test-cyber\n"), "cheie buna");
     run(Some(b"sk-gresita"), "cheie gresita");
     run(None, "fara cheie");
+}
+
+/// The on-board agent (P6-202, C-166 step 1): /bin/agent against the imitation of the API (as `test_claude`):
+/// ping with the good key (the cost goes into the ledger), `cheltuieli`, a question, the daily cap reached (refused
+/// before any request, the ledger says why), no key. Settings and key in /etc, the agent's folder /etc/agent.
+#[cfg(feature = "test-agent")]
+fn test_agent() {
+    assert!(net::wait_ready(5000), "test: DHCP nu a dat nicio adresa");
+    add_test_root();
+    let put = |path: &str, data: &[u8]| {
+        let _ = fs::remove(path);
+        fs::create(path, fs::Kind::File).expect("test: fisier");
+        fs::write(path, 0, data).expect("test: fisier");
+    };
+    let settings = |cap: &str| {
+        alloc::format!(
+            "# test: the imitation of the API\nhost = test.cyber.local\nport = 18444\naddress = 10.0.2.2\nplafon_zi = {}\npret_intrare = 5\npret_iesire = 25\n",
+            cap
+        )
+    };
+    put("/etc/agent.setari", settings("40").as_bytes());
+    put("/etc/claude.cheie", b"sk-test-cyber\n");
+    let run = |args: &[&str], what: &str| -> i64 {
+        let id = proc::spawn_path("/bin/agent", args).expect("test: /bin/agent");
+        let code = proc::wait_child(id);
+        info!("test: agent ({}) a iesit cu codul {}", what, code);
+        code
+    };
+    assert_eq!(run(&["agent", "ping"], "ping"), 0, "test: agent ping");
+    assert_eq!(run(&["agent", "\"Ce", "faci?\""], "intrebare"), 0, "test: agent intrebare");
+    assert_eq!(run(&["agent", "cheltuieli"], "cheltuieli"), 0, "test: agent cheltuieli");
+    let ledger = fs::read_all("/etc/agent/cheltuieli.txt").expect("test: registrul cheltuielii lipseste");
+    let ledger = core::str::from_utf8(&ledger).expect("test: registrul nu e text");
+    info!("test: agent: registrul are {} randuri", ledger.lines().count());
+    assert!(ledger.contains(" ping intrare=20 cache=100 iesire=3 cost_u=675 "), "test: randul ping: {}", ledger);
+    assert!(!ledger.contains("sk-test"), "test: cheia a ajuns in registru");
+    // The cap: 0.000700 $ is below what the two requests cost (675 + 350 micro-dollars): refused, no request sent.
+    put("/etc/agent.setari", settings("0.0007").as_bytes());
+    assert_eq!(run(&["agent", "ping"], "plafon"), 1, "test: plafonul nu a oprit agentul");
+    let ledger = fs::read_all("/etc/agent/cheltuieli.txt").expect("test: registrul");
+    assert!(core::str::from_utf8(&ledger).unwrap_or("").contains(" PLAFON plafonul zilei atins"), "test: plafonul nu e in registru");
+    put("/etc/agent.setari", settings("40").as_bytes());
+    let _ = fs::remove("/etc/claude.cheie");
+    assert_eq!(run(&["agent", "ping"], "fara cheie"), 1, "test: agent fara cheie");
+    info!("test: agentul de bord OK (ping, intrebare, cheltuieli, plafon, fara cheie)");
 }
 
 /// The Claude chat window (P6-05): typed messages go to the imitation of the API (as in `test_claude`), the answers

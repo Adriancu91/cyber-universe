@@ -156,6 +156,7 @@ fn dispatch(line: &str) -> bool {
         "cat" => cat(args),
         "run" => run_program(args),
         "fetch" => run_program(&words), // same as `run fetch ...` (test 6 L: typed without `run`)
+        "agent" => run_program(&words), // P6-202 (C-166): the on-board agent, /bin/agent
         "desktop" => run_program(&["desktop"]),
         "mod" => module(args),
         "tastatura" => layout(args),
@@ -348,6 +349,7 @@ fn help() {
     out!("  ping <adresa>    trimite 4 ping-uri (ICMP); merge si cu un nume\n");
     out!("  host <nume>      afla adresa IPv4 a unui nume (DNS)\n");
     out!("  fetch <url>      descarca o pagina (HTTP/HTTPS), la fel ca `run fetch <url>`\n");
+    out!("  agent ping|cheltuieli|<intrebare>  agentul de bord (Claude prin API; cheia in claude.cheie, plafonul in agent.setari)\n");
     out!("  http <nume> [port] [cale]  cere o pagina web (HTTP prin TCP), arata inceputul\n");
     out!("  tastatura [ro|us]  aranjamentul tastaturii (romana standard sau engleza SUA)\n");
     out!("  mem              memoria libera si cea folosita\n");

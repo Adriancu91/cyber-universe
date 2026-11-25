@@ -33,7 +33,7 @@ pub const R_CREATE: u8 = 4;
 
 /// Files only programs that ask for them may see: these names in these folders (compared without regard to case:
 /// FAT). The real ones live on the stick; /disk and /etc are covered too (a copy there, and the QEMU tests).
-pub const SECRET_NAMES: &[&str] = &["claude.key", "github.token", "remote.cheie"];
+pub const SECRET_NAMES: &[&str] = &["claude.key", "github.token", "remote.cheie", "claude.cheie"];
 pub const SECRET_DIRS: &[&str] = &["/usb", "/disk", "/etc"];
 /// P6-113 (C-159 note of 21 Nov 13:00): the live channel's keys. Secret anywhere below the hub folders (at any depth),
 /// and kernel-only: no program may ask for them (the kernel's gate is the only reader).

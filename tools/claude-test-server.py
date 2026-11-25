@@ -44,6 +44,9 @@ def check(head, body):
         return 400, "corp JSON gresit: " + body.decode("utf-8", "replace")
     if m[0]["content"] == "Fa testul uneltelor":
         return 200, tools_step(req, m)
+    # P6-202 (C-166): `agent ping` -> "pong", with cache tokens in `usage` (the agent prices them).
+    if m[0]["content"] == "ping: raspunde doar cu cuvantul pong":
+        return 200, ("pong", None)
     return 200, m[-1]["content"] + ("" if len(m) == 1 else f" (mesaje in conversatie: {len(m)})")
 
 
@@ -104,7 +107,11 @@ while True:
                 break
             body += d
         status, text = check(head, body)
-        if status == 200 and isinstance(text, tuple):
+        if status == 200 and isinstance(text, tuple) and text[0] == "pong":
+            answer = {"id": "msg_test", "type": "message", "role": "assistant", "model": "test-opus", "content": [{"type": "text", "text": "pong"}],
+                      "stop_reason": "end_turn", "usage": {"input_tokens": 20, "output_tokens": 3, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 100}}
+            text = "pong"
+        elif status == 200 and isinstance(text, tuple):
             kind, value = text
             if kind == "tool":
                 content = [{"type": "text", "text": f"Folosesc {value['name']}."}, value]

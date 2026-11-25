@@ -20,6 +20,8 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 const SECRET_FILES: &[&str] =
     &["/usb/claude.key", "/usb/github.token", "/disk/claude.key", "/disk/github.token", "/etc/claude.key", "/etc/github.token",
       "/usb/remote.cheie", "/disk/remote.cheie", "/etc/remote.cheie",
+      // P6-202 (C-166): the on-board agent's API key.
+      "/usb/claude.cheie", "/disk/claude.cheie", "/etc/claude.cheie",
       // P6-113: the live channel's keys (the hub folder of the stick; /etc/hub in the QEMU tests).
       "/usb/hub/live.cheie", "/disk/hub/live.cheie", "/etc/hub/live.cheie",
       "/usb/hub/permite-live-placa", "/disk/hub/permite-live-placa", "/etc/hub/permite-live-placa"];

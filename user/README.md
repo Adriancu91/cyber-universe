@@ -33,6 +33,15 @@
   scriu tot acolo; `exit` sau închiderea ferestrei îl termină. Test: scenariul `terminal`.
 - `network` (P5-05) — aplicația „Rețea”: placa (MAC), adresa, masca, ruta, DNS-ul, cât mai ține adresa DHCP, pachetele;
   o căsuță pentru ping (adresă sau nume, Enter = 4 ping-uri). Test: scenariul `appnet` (captura `tests/screens/appnet.png`).
+- `agent ping | cheltuieli | <întrebare>` (P6-202, comanda C-166 pasul 1) — **agentul de bord**: Claude prin API
+  (clientul P6-04, `src/claude_api.rs`, peste TLS-ul nostru), pe creditul API lunar. Cheia doar în `claude.cheie`
+  (fișier secret: îl vede doar programul care îl cere, P6-23; ascuns și în rapoarte), setările în `agent.setari`
+  (rânduri `nume = valoare`: `model` — implicit `claude-opus-5-5`, `max_tokens`, `plafon_zi` în $ — implicit 40,
+  `pret_intrare` / `pret_iesire` în $ pe milion de simboluri — implicit prudent 15 / 75, `cheie`), căutate în `/usb`,
+  apoi `/disk`, apoi `/etc`; dosarul agentului e `<acolo>/agent/`. Fiecare răspuns e socotit din `usage` (intrare +
+  cache × prețul de intrare, ieșire × prețul de ieșire) și scris în `agent/cheltuieli.txt`; la plafonul zilei agentul
+  refuză cererea fără s-o trimită și scrie rândul `PLAFON` în registru. Din shell (consolă și remote): `agent ...`.
+  Test: scenariul `agent` (imitația API-ului `tools/claude-test-server.py`).
 - `kronos-calcul [n]` (P6-19, comanda C-16) — calculul lui Kronos pe procesor, cu operațiile bibliotecii `gpu-compute` din
   proiectul Cyber-GPU (backend CPU, fixat pe `41e44ba`): un bloc de tip Kronos (embedding, layernorm, QKV, atenție cauzală,
   MLP cu GELU, logit-uri, cross-entropy; greutăți bf16) calculat o dată cu referința bibliotecii pe un fir și o dată pe `n` fire

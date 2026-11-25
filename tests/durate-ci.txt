@@ -18,6 +18,7 @@ boot 55
 claude-app 32
 claude-cli 25
 claude-tools 42
+agent 40
 cpu 13
 crypto 26
 desktop 34
