@@ -200,6 +200,8 @@ pub fn allowed(line: &str) -> Result<(), &'static str> {
         [] => Err("rand gol"),
         ["hw" | "lspci" | "lsusb" | "net" | "mem" | "uptime" | "raport" | "analiza", ..] => Ok(()),
         ["telefon"] => Ok(()), // P6-144 (C-158 point 9): the state + the screen sent to the hub (reads only)
+        // P6-202/203 (C-166): the on-board agent: API questions with read-only tools, under the daily cap of agent.setari.
+        ["agent", _, ..] => Ok(()),
         ["log" | "ls" | "cat" | "compara", ..] => Ok(()),
         ["timp", "timp" | "exit", ..] => Err("timp masoara o singura comanda obisnuita"),
         ["timp", rest @ ..] if !rest.is_empty() => allowed(&rest.join(" ")),
@@ -502,10 +504,10 @@ pub(super) fn say(text: &str) {
 /// Boot-time self test of the allow-list (every `auto` test build).
 #[cfg(feature = "test-auto")]
 pub fn self_test() {
-    for ok in ["hw", "gpu", "gpu identifica", "gpu pregatire-i6", "gpu tur", "gpu plan", "gpu stare", "run kronos --profil --n 64 Buna", "run kronos-calcul --cauta", "cpu porneste", "raport", "log gpu 40", "compara /usb/a.txt /usb/b.txt", "log --sumar", "log --avertismente 50", "timp uptime", "timp run kronos --n 16 Buna"] {
+    for ok in ["hw", "gpu", "gpu identifica", "gpu pregatire-i6", "gpu tur", "gpu plan", "gpu stare", "run kronos --profil --n 64 Buna", "run kronos-calcul --cauta", "cpu porneste", "raport", "log gpu 40", "compara /usb/a.txt /usb/b.txt", "log --sumar", "log --avertismente 50", "timp uptime", "timp run kronos --n 16 Buna", "agent ping", "agent cheltuieli", "agent Ce memorie e libera?"] {
         assert!(allowed(ok).is_ok(), "auto: `{}` trebuia permis", ok);
     }
-    for bad in ["test-placa", "test-placa --i9 c135", "gpu i6 --scrie", "gpu i6", "gpu lant", "gpu recupereaza", "gpu recupereaza --sim", "gpu lant --sim", "gpu pregatire-i6 --scrie", "reboot", "run fetch https://x", "http get x", "rtl", "run editor", "mod incarca x", "exit", "test-gata", "timp", "timp reboot", "timp gpu i6 --scrie", "timp timp uptime", "timp run editor", "run kronos --gpu Ana", "run kronos --n 3 --gpu-sim x", "timp run kronos --gpu", "run kronos --conversatie", "gpu tur --trezire", "timp gpu tur --trezire", "gpu tur --trezire --sim"] {
+    for bad in ["test-placa", "test-placa --i9 c135", "gpu i6 --scrie", "gpu i6", "gpu lant", "gpu recupereaza", "gpu recupereaza --sim", "gpu lant --sim", "gpu pregatire-i6 --scrie", "reboot", "run fetch https://x", "http get x", "rtl", "run editor", "mod incarca x", "exit", "test-gata", "timp", "timp reboot", "timp gpu i6 --scrie", "timp timp uptime", "timp run editor", "run kronos --gpu Ana", "run kronos --n 3 --gpu-sim x", "timp run kronos --gpu", "run kronos --conversatie", "agent", "gpu tur --trezire", "timp gpu tur --trezire", "gpu tur --trezire --sim"] {
         assert!(allowed(bad).is_err(), "auto: `{}` trebuia refuzat", bad);
     }
     crate::info!("test: lista alba a modului automat OK");
