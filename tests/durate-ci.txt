@@ -94,6 +94,7 @@ kronos-gpu-p8-s8 200
 kronos-gpu-pas-aur 330
 kronos-gpu-antrenare-mini 720
 kronos-gpu-antrenare-mini-mixt 600
+kronos-gpu-antrenare-mini-mixt-rapid 650
 kronos-gpu-sferturi 185
 kronos-gpu-singur 184
 kronos-gpu-strica 117
@@ -186,4 +187,5 @@ kronos-gpu-antrenare-513-cursa 2400
 kronos-gpu-antrenare-513-proba64 1800
 kronos-gpu-antrenare-513-tablou 2400
 kronos-gpu-antrenare-513-mixt 1700
+kronos-gpu-antrenare-513-mixt-rapid 1800
 kronos-gpu-antrenare-513-ocupare 2000

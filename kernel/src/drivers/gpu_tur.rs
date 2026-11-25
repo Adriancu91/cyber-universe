@@ -521,6 +521,13 @@ pub static TRAIN_513_MM_MODEL_IN_CYCLE: core::sync::atomic::AtomicBool = core::s
 /// `gpu antrenare-mini-sim vram-513-mixt`. Off by default.
 pub static TRAIN_513_MIXED_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-215 (C-157 p.2, cyber-gpu note `C-157_P2zf_pas-mixt-rapid.md`, commit `a4c9db0`): with a mixed step (`--mixt` of
+/// `antrenare mini` or `--mixt-513` of #513), its products go to the fast `mm_tc` programs (`mm_tc_v4` where it fits,
+/// else `mm_tc_pf`) through `train_step::pack_mixed_fast`; #513's step also at the 64 KiB shared-memory step. Set only by
+/// the cycle (`test-placa … --mixt --mixt-rapid` / `… --mixt-513 --mixt-513-rapid`) and, in the test build, by
+/// `gpu antrenare-mini-sim mixt rapid` / `vram-513-mixt rapid`. Off by default.
+pub static TRAIN_MIXED_FAST_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-178 (cyber-gpu `d173a59`, note C-157_P2s): with [`TRAIN_MINI_VRAM_IN_CYCLE`], the resident run twice from the same
 /// state — the batch and the results through the VRAM window (os-390), then through pinned RAM with the copy program in
 /// the step's own list — compared bit for bit. Set only by the cycle (`test-placa … --antrenare-mini --vram --lot-ram`)

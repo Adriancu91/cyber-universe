@@ -5536,6 +5536,32 @@ fn golden_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
 /// shape of the step (the output layer with 16 384 symbols); no new program, no register. Nothing is written to any
 /// disk (the data is only read). A step the board does not finish, or a non-finite norm, stops the probe (no retry).
 #[allow(clippy::too_many_arguments)]
+/// P6-215 (cyber-gpu note `C-157_P2zf_pas-mixt-rapid.md`): `mm_tc_pf` and `mm_tc_v4` in VRAM beside `mm_tc` for
+/// `train_step::pack_mixed_fast` (SHA-256 checked first; each with the tail page, like every program).
+fn map_fast_tc(st: &mut GpuState) -> GpuResult<(Mapping, Mapping)> {
+    use nvidia_ga104::{mm_tc_pf as pf, mm_tc_v4 as v4};
+    if sha256_hex(pf::MM_TC_PF) != pf::MM_TC_PF_SHA256 || sha256_hex(v4::MM_TC_V4) != v4::MM_TC_V4_SHA256 {
+        return Err(bad("pasul mixt rapid: SHA-256 mm_tc_pf / mm_tc_v4 gresit"));
+    }
+    let pm = map_vram(st, program_map_bytes(pf::MM_TC_PF.len() as u64))?;
+    put_bytes(st.mem.writer_mut(), pm.pa, pf::MM_TC_PF)?;
+    let vm = map_vram(st, program_map_bytes(v4::MM_TC_V4.len() as u64))?;
+    put_bytes(st.mem.writer_mut(), vm.pa, v4::MM_TC_V4)?;
+    Ok((pm, vm))
+}
+
+/// P6-215: how many launches of one step got each `mm_tc` program (`mm_tc_v4 135, mm_tc_pf 12`).
+fn fast_picks_text(picks: &[Option<nvidia_ga104::train_step::TcPick>]) -> String {
+    use nvidia_ga104::train_step::TcPick;
+    let parts: Vec<String> = [TcPick::V4, TcPick::Pf, TcPick::Tc, TcPick::Gelu]
+        .iter()
+        .map(|k| (k, picks.iter().filter(|x| **x == Some(*k)).count()))
+        .filter(|(_, n)| *n > 0)
+        .map(|(k, n)| format!("{} {}", k.name(), n))
+        .collect();
+    if parts.is_empty() { String::from("niciuna") } else { parts.join(", ") }
+}
+
 fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     p: &str,
     vbar: &mut V,
@@ -5671,6 +5697,13 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     } else {
         None
     };
+    // P6-215 (`--mixt-rapid`): the fast `mm_tc` programs beside `mm_tc` (pack_mixed_fast picks per product).
+    let fast_map = if mixed && super::gpu_tur::TRAIN_MIXED_FAST_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+        Some(map_fast_tc(st)?)
+    } else {
+        None
+    };
+    let mut fast_picks = String::new();
     let pages = |first: u64, n: u64| (first..first + n).map(|i| host + i * PAGE).collect::<Vec<u64>>();
     let arena = st.mem.alloc_sys_mapped(&pages(0, arena_bytes / PAGE))?;
     let zone = st.mem.alloc_sys_mapped(&pages(arena_bytes / PAGE, zone_bytes / PAGE))?;
@@ -5680,6 +5713,7 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let mut maps = ctx.maps.clone();
     maps.extend(progs.iter().map(|(_, pm)| *pm));
     maps.extend(tc_map.iter().copied());
+    maps.extend(fast_map.iter().flat_map(|(a, b)| [*a, *b]));
     let sys = [ctx.sys.clone(), arena.clone(), zone.clone()];
     let prog_va = |want: ts::Prog| progs.iter().find(|(q, _)| *q == want).map_or(0, |(_, pm)| pm.va);
     let arena_va = arena.va;
@@ -5719,7 +5753,15 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 }
                 let list = plan.step_mixed(Recipe::AdamW513, &adam, t, ts::LOSS_SCALE)?;
                 tc_per_step = list.iter().filter(|x| matches!(x, ts::MixedLaunch::Tc { .. })).count();
-                let (zb, qmds) = ts::pack_mixed(&list, prog_va, tc.va, zone.va)?;
+                let (zb, qmds) = match fast_map {
+                    Some((pf, v4)) => {
+                        let progs = ts::TcPrograms { tc: tc.va, pf: pf.va, v4: v4.va, gelu: 0 };
+                        let (zb, qmds, picks) = ts::pack_mixed_fast(&list, prog_va, &progs, None, zone.va)?;
+                        fast_picks = fast_picks_text(&picks);
+                        (zb, qmds)
+                    }
+                    None => ts::pack_mixed(&list, prog_va, tc.va, zone.va)?,
+                };
                 (zb, qmds, list.len())
             }
             None => {
@@ -5843,6 +5885,9 @@ fn train_mini_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
             losses.len(),
             tc_per_step
         ));
+        if fast_map.is_some() {
+            lines.push(format!("{}: kronos --gpu: {}: alegerile mm_tc pe pas (--mixt-rapid, pack_mixed_fast): {}", p, tag, fast_picks));
+        }
     } else {
         lines.push(format!(
             "{}: kronos --gpu: {}: lista placii ({}) fata de oracol: {} — cea mai mare abatere a pierderii {:.1e}, a greutatilor {:.1e} in {} pasi (toleranta 1e-3)",
@@ -6694,6 +6739,9 @@ fn race_row(name: &str, f: &RaceForm, ns: Option<u64>, bits: RaceBits) -> String
 /// oracle (≤ 1e-3) and with the pieces checked byte for byte against the plan's own uploads. New for the board: only the
 /// large shape (the GiB arena, the parts); no new program, no new register.
 #[allow(clippy::too_many_arguments)]
+/// P6-215: the shared-memory step of every launch in #513's fast mixed step (the note C-157_P2zf: `Some(64 << 10)`).
+const MIXED_FAST_STEP: u32 = 64 << 10;
+
 fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     p: &str,
     vbar: &mut V,
@@ -6980,6 +7028,19 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     } else {
         None
     };
+    // P6-215 (`--mixt-513-rapid`): the fast `mm_tc` programs, every launch at the 64 KiB step.
+    let fast_map = if mixed && super::gpu_tur::TRAIN_MIXED_FAST_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+        match map_fast_tc(st) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                lines.push(format!("{}: kronos --gpu: {}: SHA-256 al lui mm_tc_pf / mm_tc_v4 nu e cel din nota: nimic trimis", p, tag));
+                return Err(e);
+            }
+        }
+    } else {
+        None
+    };
+    let mut fast_picks = String::new();
     let pages = |first: u64, n: u64| (first..first + n).map(|i| host + i * PAGE).collect::<Vec<u64>>();
     let stage = st.mem.alloc_sys_mapped(&pages(0, piece / PAGE))?;
     let ctl = st.mem.alloc_sys_mapped(&pages(piece / PAGE, zone_bytes / PAGE))?;
@@ -7025,6 +7086,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     maps.extend(race_c);
     maps.extend(race_progs.iter().flatten().copied());
     maps.extend(tc_map);
+    maps.extend(fast_map.iter().flat_map(|(a, b)| [*a, *b]));
     let sys = [ctx.sys.clone(), stage.clone(), ctl.clone()];
     let prog_va = |want: ts::Prog| progs.iter().find(|(q, _)| *q == want).map_or(0, |(_, pm)| pm.va);
     // One launch of the copy program, as in `train_mini_resident`.
@@ -7174,7 +7236,15 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 Some(tc) => {
                     let ml = plan.step_mixed(Recipe::AdamW513, &adam, step, scale)?;
                     tc_per_step = ml.iter().filter(|x| matches!(x, ts::MixedLaunch::Tc { .. })).count();
-                    let (zb, qmds) = ts::pack_mixed(&ml, prog_va, tc.va, ctl.va)?;
+                    let (zb, qmds) = match fast_map {
+                        Some((pf, v4)) => {
+                            let progs = ts::TcPrograms { tc: tc.va, pf: pf.va, v4: v4.va, gelu: 0 };
+                            let (zb, qmds, picks) = ts::pack_mixed_fast(&ml, prog_va, &progs, Some(MIXED_FAST_STEP), ctl.va)?;
+                            fast_picks = fast_picks_text(&picks);
+                            (zb, qmds)
+                        }
+                        None => ts::pack_mixed(&ml, prog_va, tc.va, ctl.va)?,
+                    };
                     (zb, qmds, None)
                 }
                 None => {
@@ -7345,6 +7415,12 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     if mixed {
         journal.push(Event::Value { what: KT_513_MIXED_TC, value: tc_per_step as u32 });
         lines.push(format!("{}: kronos --gpu: {}: pasul mixt: {} lansari mm_tc pe pas (din {}), S = {}", p, tag, tc_per_step, n_launch, scale as u32));
+        if fast_map.is_some() {
+            lines.push(format!(
+                "{}: kronos --gpu: {}: alegerile mm_tc pe pas (--mixt-513-rapid, pack_mixed_fast, treapta memoriei comune {} KiB pe toate lansarile): {} (Cyber-GPU: 147 pe mm_tc_v4, inmultirile ~115-136 ms, DEDUS)",
+                p, tag, MIXED_FAST_STEP >> 10, fast_picks
+            ));
+        }
     }
     // P6-183 (os-395: "placa" > "pasul intreg" by ~3 %): the two clocks side by side, so the next report says which.
     lines.push(format!(

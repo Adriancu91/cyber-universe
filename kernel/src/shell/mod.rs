@@ -1102,6 +1102,17 @@ fn gpu(args: &[&str]) {
             // P6-213: the waves model's choice is off for every choice but `vram-513-mm-model`.
             #[cfg(feature = "test-gpu-sim")]
             crate::drivers::gpu_tur::TRAIN_513_MM_MODEL_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+            // P6-215: a trailing `rapid` after `mixt` / `vram-513-mixt` = the mixed step on the fast `mm_tc` programs.
+            #[cfg(feature = "test-gpu-sim")]
+            let rapid = args.len() == 3 && args[2] == "rapid" && matches!(args[1], "mixt" | "vram-513-mixt");
+            #[cfg(feature = "test-gpu-sim")]
+            crate::drivers::gpu_tur::TRAIN_MIXED_FAST_IN_CYCLE.store(rapid, core::sync::atomic::Ordering::SeqCst);
+            #[cfg(feature = "test-gpu-sim")]
+            let args = if rapid { &args[..2] } else { args };
+            #[cfg(feature = "test-gpu-sim")]
+            if rapid {
+                out!("gpu antrenare-mini-sim: inmultirile pasului mixt pe mm_tc_v4 / mm_tc_pf (pack_mixed_fast)\n");
+            }
             #[cfg(feature = "test-gpu-sim")]
             match args.get(1).copied() {
                 Some("on") if args.len() == 2 => {
