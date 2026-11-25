@@ -3945,10 +3945,23 @@ fn mm_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
         v
     };
+    // P6-214 (C-157 p.2, cyber-gpu note `C-157_P2ze_os436.md` point 1): with `--mm-tc-64k`, `mm_tc` and every companion run
+    // once more with the shared-memory step at 64 KiB (`to_bytes_with_sm_config`, as `--treapta-pas` in os-431) — two
+    // blocks per unit instead of one — each compared bit for bit with `mm_tc` at today's step.
+    let comps: Vec<(Comp, Option<u32>)> = if super::gpu_tur::MM_TC_64K_IN_CYCLE.load(ord) {
+        let mut v = alloc::vec![(Comp::Tc, Some(STEP_64K))];
+        for c in comps {
+            v.push((c, None));
+            v.push((c, Some(STEP_64K)));
+        }
+        v
+    } else {
+        comps.into_iter().map(|c| (c, None)).collect()
+    };
     let mut t128: Vec<Tc128> = Vec::new();
-    for kind in comps {
+    for (kind, step) in comps {
         {
-            let n = kind.name();
+            let n = Tc128::label(kind, step);
             let sha2 = sha256_hex(kind.program());
             if sha2 != kind.sha() {
                 lines.push(format!("{}: kronos --gpu: proba {}: SHA-256 al programului {} nu e cel din nota ({}): {} nu se lanseaza", p, n, sha2, kind.sha(), n));
@@ -3957,18 +3970,19 @@ fn mm_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 let zone2 = map_vram(st, PAGE)?;
                 put_bytes(st.mem.writer_mut(), prog2.pa, kind.program())?;
                 lines.push(format!(
-                    "{}: kronos --gpu: proba {} ({}): programul {} ({} octeti, SHA-256 {}..., {} registre, blocuri de {}, {} KiB partajati) langa mm_tc pe fiecare set, comparat bit cu bit",
+                    "{}: kronos --gpu: proba {} ({}): programul {} ({} octeti, SHA-256 {}..., {} registre, blocuri de {}, {} KiB partajati{}) langa mm_tc pe fiecare set, comparat bit cu bit",
                     p,
                     n,
                     label,
-                    n,
+                    kind.name(),
                     kind.program().len(),
                     &sha2[..16],
                     kind.registers(),
                     kind.block()[0],
-                    kind.shared().bytes >> 10
+                    kind.shared().bytes >> 10,
+                    step.map_or(String::new(), |b| format!(", treapta memoriei comune {} KiB", b >> 10))
                 ));
-                t128.push(Tc128 { kind, prog: prog2, zone: zone2 });
+                t128.push(Tc128 { kind, step, prog: prog2, zone: zone2 });
             }
         }
     }
@@ -4032,7 +4046,7 @@ fn mm_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
                             lines.push(format!(
                                 "{}: kronos --gpu: proba {}: placa nu a terminat la setul {} ({}): ultima inregistrare = {:#x}; proba oprita, fara reincercare",
                                 p,
-                                t.kind.name(),
+                                t.name(),
                                 i,
                                 set.name,
                                 got
@@ -4101,7 +4115,7 @@ fn mm_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         qkv
     ));
     for (ci, t) in t128.iter().enumerate() {
-        tc128_report(p, label, t.kind, &r128[ci], stopped128[ci], &unfit[ci], journal, lines);
+        tc128_report(p, label, t, &r128[ci], stopped128[ci], &unfit[ci], journal, lines);
     }
     match stopped {
         Some(_) => Err(GpuError::Timeout { waited_us: WAIT_US }),
@@ -4130,7 +4144,12 @@ enum Comp {
     /// P6-212: `mm_tc128_v4`, `mm_tc128` with 128-bit reads in advance (168 registers, `mm_tc128`'s block and grid);
     /// only aligned products.
     Tc128V4,
+    /// P6-214: `mm_tc` itself, run as a companion only at the 64 KiB step (`--mm-tc-64k`).
+    Tc,
 }
+
+/// P6-214: the shared-memory step of `--mm-tc-64k` (two 24 KiB blocks per unit instead of one at 32 KiB).
+const STEP_64K: u32 = 64 << 10;
 
 impl Comp {
     /// P6-210: `mm_tc_v4` only on aligned products (a misaligned 128-bit read would be a memory fault on the board).
@@ -4138,7 +4157,7 @@ impl Comp {
         match self {
             Comp::V4 => nvidia_ga104::mm_tc_v4::fits(a),
             Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::fits(a),
-            Comp::Tc128 | Comp::Pf => true,
+            Comp::Tc128 | Comp::Pf | Comp::Tc => true,
         }
     }
     fn name(self) -> &'static str {
@@ -4147,6 +4166,7 @@ impl Comp {
             Comp::Pf => "mm_tc_pf",
             Comp::V4 => "mm_tc_v4",
             Comp::Tc128V4 => "mm_tc128_v4",
+            Comp::Tc => "mm_tc",
         }
     }
     fn program(self) -> &'static [u8] {
@@ -4155,6 +4175,7 @@ impl Comp {
             Comp::Pf => nvidia_ga104::mm_tc_pf::MM_TC_PF,
             Comp::V4 => nvidia_ga104::mm_tc_v4::MM_TC_V4,
             Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::MM_TC128_V4,
+            Comp::Tc => nvidia_ga104::mm_tc::MM_TC,
         }
     }
     fn sha(self) -> &'static str {
@@ -4163,6 +4184,7 @@ impl Comp {
             Comp::Pf => nvidia_ga104::mm_tc_pf::MM_TC_PF_SHA256,
             Comp::V4 => nvidia_ga104::mm_tc_v4::MM_TC_V4_SHA256,
             Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::MM_TC128_V4_SHA256,
+            Comp::Tc => nvidia_ga104::mm_tc::MM_TC_SHA256,
         }
     }
     fn registers(self) -> u32 {
@@ -4171,6 +4193,7 @@ impl Comp {
             Comp::Pf => nvidia_ga104::mm_tc_pf::REGISTERS,
             Comp::V4 => nvidia_ga104::mm_tc_v4::REGISTERS,
             Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::REGISTERS,
+            Comp::Tc => nvidia_ga104::mm_tc::REGISTERS,
         }
     }
     fn block(self) -> [u32; 3] {
@@ -4179,6 +4202,7 @@ impl Comp {
             Comp::Pf => nvidia_ga104::mm_tc_pf::BLOCK,
             Comp::V4 => nvidia_ga104::mm_tc_v4::BLOCK,
             Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::BLOCK,
+            Comp::Tc => nvidia_ga104::mm_tc::BLOCK,
         }
     }
     fn shared(self) -> nvidia_ga104::qmd::SharedMemory {
@@ -4187,6 +4211,7 @@ impl Comp {
             Comp::Pf => nvidia_ga104::mm_tc_pf::SHARED,
             Comp::V4 => nvidia_ga104::mm_tc_v4::SHARED,
             Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::SHARED,
+            Comp::Tc => nvidia_ga104::mm_tc::SHARED,
         }
     }
     fn grid(self, a: &nvidia_ga104::mm_tc::Args) -> [u32; 3] {
@@ -4195,6 +4220,7 @@ impl Comp {
             Comp::Pf => nvidia_ga104::mm_tc_pf::grid(a),
             Comp::V4 => nvidia_ga104::mm_tc_v4::grid(a),
             Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::grid(a),
+            Comp::Tc => a.grid(),
         }
     }
     fn cbuf_bytes(self) -> usize {
@@ -4203,11 +4229,54 @@ impl Comp {
             Comp::Pf => nvidia_ga104::mm_tc_pf::CBUF_BYTES,
             Comp::V4 => nvidia_ga104::mm_tc_v4::CBUF_BYTES,
             Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::CBUF_BYTES,
+            Comp::Tc => nvidia_ga104::mm_tc::CBUF_BYTES,
         }
     }
     /// The journal names (`kt …`): same sets, sets run, qkv median, `mm_tc`'s qkv median beside it.
-    fn kt(self) -> [&'static str; 4] {
+    /// P6-214: `at64` = the run at the 64 KiB step (its own names).
+    fn kt(self, at64: bool) -> [&'static str; 4] {
+        if at64 {
+            return match self {
+                Comp::Tc => [
+                    "kt mm_tc@64k seturi cu aceiasi biti ca mm_tc",
+                    "kt mm_tc@64k seturi rulate",
+                    "kt mm_tc@64k qkv median ns",
+                    "kt mm_tc qkv median ns (langa mm_tc@64k)",
+                ],
+                Comp::Tc128 => [
+                    "kt mm_tc128@64k seturi cu aceiasi biti ca mm_tc",
+                    "kt mm_tc128@64k seturi rulate",
+                    "kt mm_tc128@64k qkv median ns",
+                    "kt mm_tc qkv median ns (langa mm_tc128@64k)",
+                ],
+                Comp::Pf => [
+                    "kt mm_tc_pf@64k seturi cu aceiasi biti ca mm_tc",
+                    "kt mm_tc_pf@64k seturi rulate",
+                    "kt mm_tc_pf@64k qkv median ns",
+                    "kt mm_tc qkv median ns (langa mm_tc_pf@64k)",
+                ],
+                Comp::V4 => [
+                    "kt mm_tc_v4@64k seturi cu aceiasi biti ca mm_tc",
+                    "kt mm_tc_v4@64k seturi rulate",
+                    "kt mm_tc_v4@64k qkv median ns",
+                    "kt mm_tc qkv median ns (langa mm_tc_v4@64k)",
+                ],
+                Comp::Tc128V4 => [
+                    "kt mm_tc128_v4@64k seturi cu aceiasi biti ca mm_tc",
+                    "kt mm_tc128_v4@64k seturi rulate",
+                    "kt mm_tc128_v4@64k qkv median ns",
+                    "kt mm_tc qkv median ns (langa mm_tc128_v4@64k)",
+                ],
+            };
+        }
         match self {
+            // P6-214: `mm_tc` as a companion only at 64 KiB; never asked with `at64 == false`.
+            Comp::Tc => [
+                "kt mm_tc seturi cu aceiasi biti ca mm_tc",
+                "kt mm_tc seturi rulate (insotitor)",
+                "kt mm_tc qkv median ns (insotitor)",
+                "kt mm_tc qkv median ns (langa mm_tc)",
+            ],
             Comp::Tc128 => [
                 "kt mm_tc128 seturi cu aceiasi biti ca mm_tc",
                 "kt mm_tc128 seturi rulate",
@@ -4239,8 +4308,24 @@ impl Comp {
 /// P6-197: the companion's program and its VRAM page (the same cbuf at +0, its QMD at +0x800).
 struct Tc128 {
     kind: Comp,
+    /// P6-214: `Some(bytes)` = launched with this shared-memory step (`to_bytes_with_sm_config`); `None` = the smallest
+    /// step that fits (today's launch).
+    step: Option<u32>,
     prog: Mapping,
     zone: Mapping,
+}
+
+impl Tc128 {
+    /// P6-214: the name in the rows: the program's, `@64k` added for the run at the 64 KiB step.
+    fn label(kind: Comp, step: Option<u32>) -> String {
+        match step {
+            Some(b) => format!("{}@{}k", kind.name(), b >> 10),
+            None => String::from(kind.name()),
+        }
+    }
+    fn name(&self) -> String {
+        Self::label(self.kind, self.step)
+    }
 }
 
 /// P6-197: what `qkv-513` gave with `mm_tc128` (filled only on the board).
@@ -4299,17 +4384,21 @@ fn tc128_launch_bytes(
         grid: k.grid(a),
         block: k.block(),
         release: None,
-    }
-    .to_bytes_with_shared(&k.shared())?;
+    };
+    // P6-214: the 64 KiB step when asked (the same QMD fields as `--treapta-pas`, on the board since os-431).
+    let q = match t.step {
+        Some(b) => q.to_bytes_with_sm_config(&k.shared(), b)?,
+        None => q.to_bytes_with_shared(&k.shared())?,
+    };
     Ok((cb2, q.to_vec()))
 }
 
 /// P6-197: the rows and the verdict of `mm_tc128` beside `mm_tc` (verdict = the same bits on every set run).
 #[allow(clippy::too_many_arguments)]
-fn tc128_report(p: &str, label: &str, kind: Comp, r: &[Tc128Set], stopped: Option<usize>, unfit: &[usize], journal: &mut Journal, lines: &mut Vec<String>) {
+fn tc128_report(p: &str, label: &str, t: &Tc128, r: &[Tc128Set], stopped: Option<usize>, unfit: &[usize], journal: &mut Journal, lines: &mut Vec<String>) {
     use nvidia_ga104::mm_tc_probe as tp;
-    let n = kind.name();
-    let kt = kind.kt();
+    let n = t.name();
+    let kt = t.kind.kt(t.step.is_some());
     // P6-210: the sets not launched because the product is not aligned for 128-bit reads.
     for &i in unfit {
         lines.push(format!("{}: kronos --gpu: {} set {} ({}): nealiniat (randuri nu multiplu de 4 sau adrese nu multiplu de 16 octeti), sarit", p, n, tp::SETS[i].name, label));
@@ -4542,7 +4631,7 @@ fn mm_tc_qkv<V: Mmio + ?Sized, K: Clock + ?Sized>(
             let bytes: Vec<u8> = core::iter::repeat_n(tp::FILL.to_le_bytes(), n / 4).flatten().collect();
             ram_write(&host, &bytes);
             if !copy(vbar, clock, journal, st, l, doorbell, subs, host.va, big.va + o as u64, (n as u64).next_multiple_of(16))? {
-                lines.push(format!("{}: kronos --gpu: proba {}: qkv-513: umplerea cu NaN nu s-a terminat; proba oprita, fara reincercare", p, t.kind.name()));
+                lines.push(format!("{}: kronos --gpu: proba {}: qkv-513: umplerea cu NaN nu s-a terminat; proba oprita, fara reincercare", p, t.name()));
                 q128.stopped = true;
                 return Ok(QkvOutcome::Stopped);
             }
@@ -4562,7 +4651,7 @@ fn mm_tc_qkv<V: Mmio + ?Sized, K: Clock + ?Sized>(
                     lines.push(format!(
                         "{}: kronos --gpu: proba {}: placa nu a terminat la setul {} (qkv-513), lansarea {}: ultima inregistrare = {:#x}; proba oprita, fara reincercare",
                         p,
-                        t.kind.name(),
+                        t.name(),
                         tp::QKV_SET,
                         r,
                         got
@@ -4576,7 +4665,7 @@ fn mm_tc_qkv<V: Mmio + ?Sized, K: Clock + ?Sized>(
         for &(o, n) in &set.read_ranges() {
             let len = (n as u64).next_multiple_of(16);
             if !copy(vbar, clock, journal, st, l, doorbell, subs, big.va + o as u64, host.va, len)? {
-                lines.push(format!("{}: kronos --gpu: proba {}: qkv-513: citirea benzilor nu s-a terminat; proba oprita, fara reincercare", p, t.kind.name()));
+                lines.push(format!("{}: kronos --gpu: proba {}: qkv-513: citirea benzilor nu s-a terminat; proba oprita, fara reincercare", p, t.name()));
                 q128.stopped = true;
                 return Ok(QkvOutcome::Stopped);
             }

@@ -381,6 +381,12 @@ pub static MM_TC_V4_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomi
 /// for bit with `mm_tc` (`test-placa … --mm-tc … --mm-tc128-v4`; in the test build `gpu mm-tc-sim on128v4`). Off by default.
 pub static MM_TC128_V4_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-214 (C-157 p.2, cyber-gpu note `C-157_P2ze_os436.md` point 1, commit `2139892`): inside the `mm_tc` probe, `mm_tc`
+/// and every companion asked run once more with the shared-memory step at 64 KiB (two blocks per unit), each compared bit
+/// for bit with `mm_tc` at today's step (`test-placa … --mm-tc … --mm-tc-64k`; in the test build `gpu mm-tc-sim on64k`).
+/// Nothing new for the board (the same programs, the step fields of os-431). Off by default.
+pub static MM_TC_64K_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-141 (C-161 point 4, cyber-gpu `44a4d16`): the tiled training attention probe (`attn_fwd_tile` → `attn_back_tile0`
 /// → `attn_back_tile` on 5 small sets + `atentie-513-b4` for the time), after `kronos --gpu`'s texts (and after the other
 /// probes when asked). Set only by the cycle when the list asks for it (`test-placa … --atentie-placi`) and, in the test

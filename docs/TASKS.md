@@ -621,6 +621,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 
 - [x] **P6-212** PREDARE Cyber-GPU sesiunea 231 (`abb4f73`, nota `C-157_P2zd_mm-tc128-v4.md`): **`mm_tc128_v4` lângă `mm_tc`** (`mm_tc128` cu citiri în avans de 128 de biți, 168 registre) — `test-placa --mm-tc --mm-tc-pf --mm-tc-v4 --mm-tc128-v4`: aceleași seturi (doar cele aliniate) + qkv-513, comparat bit cu bit, timpii lângă `mm_tc`. Dep: P6-210. Plan: `docs/plans/P6-212.md`.
 - [x] **P6-213** PREDARE Cyber-GPU sesiunea 232 (`8fe7637`, nota `C-165_valuri-alegerea-64k.md`, drumul 2): **alegerea înmulțirilor #513 din modelul valurilor la 64 KiB** (`--mm-model`, după `--treapta-pas`): `wave_model::predicted_choice` → `Plan::with_mm_choice` (`mm_train_tile` / `mm_tv_64x64k8` / `mm_tv_128x128` pe formă), prezis pasul ~204 ms. Dep: P6-205. Plan: `docs/plans/P6-213.md`.
+- [x] **P6-214** PREDARE Cyber-GPU sesiunea 233 (`2139892`, nota `C-157_P2ze_os436.md`, punctul 1): **`mm_tc*` la treapta memoriei comune de 64 KiB** (`--mm-tc-64k`, după `--mm-tc` și însoțitori): fiecare program încă o dată cu `to_bytes_with_sm_config(…, 64 KiB)`, comparat bit cu bit cu `mm_tc`; nimic nou pentru placă. Dep: P6-205, P6-212. Plan: `docs/plans/P6-214.md`.
   Gata (2026-11-25 ~17:05 RO): unealta `tablou` (`n` implicit 12, ≤ 100) = `log tabloul n`, cu rândul „de unde vin cifrele / nicio comandă către placă”; promptul de sistem o numește; imitația API o cere și o verifică. Test `agent` verde (40 verificări).
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
