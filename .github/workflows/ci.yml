@@ -29,6 +29,7 @@ jobs:
   # P6-192: eleven QEMU parts (teste-1..11): with `kronos-gpu-antrenare-513-tablou` the table gave ~55.4 min per part out of 10.
   # P6-195: twelve QEMU parts (teste-1..12): with `kronos-gpu-antrenare-513-proba64` the table gave ~55.6 min per part out of 11.
   # P6-197: thirteen QEMU parts (teste-1..13): with `kronos-gpu-mm-tc128` the table gave ~53.9 min per part out of 12.
+  # P6-198: fourteen QEMU parts (teste-1..14): with `kronos-gpu-antrenare-513-mixt` the table gave ~52 min per part out of 13.
   build-and-test:
     name: ${{ matrix.parte }}
     runs-on: ubuntu-24.04
@@ -38,31 +39,33 @@ jobs:
       matrix:
         include:
           - parte: teste-1
-            shard: 1/13
+            shard: 1/14
           - parte: teste-2
-            shard: 2/13
+            shard: 2/14
           - parte: teste-3
-            shard: 3/13
+            shard: 3/14
           - parte: teste-4
-            shard: 4/13
+            shard: 4/14
           - parte: teste-5
-            shard: 5/13
+            shard: 5/14
           - parte: teste-6
-            shard: 6/13
+            shard: 6/14
           - parte: teste-7
-            shard: 7/13
+            shard: 7/14
           - parte: teste-8
-            shard: 8/13
+            shard: 8/14
           - parte: teste-9
-            shard: 9/13
+            shard: 9/14
           - parte: teste-10
-            shard: 10/13
+            shard: 10/14
           - parte: teste-11
-            shard: 11/13
+            shard: 11/14
           - parte: teste-12
-            shard: 12/13
+            shard: 12/14
           - parte: teste-13
-            shard: 13/13
+            shard: 13/14
+          - parte: teste-14
+            shard: 14/14
           - parte: stick
             shard: ""
     steps:
