@@ -6372,6 +6372,10 @@ const KT_513_MM_CHOICE: &str = "kt antrenare-513 inmultirile pe varianta aleasa 
 /// P6-205: 1 = #513's step packed with one SM shared-memory step (`--treapta-pas`), and that step in KiB.
 const KT_513_SM_STEP: &str = "kt antrenare-513 o treapta a memoriei comune pe tot pasul (1/0)";
 const KT_513_SM_STEP_KIB: &str = "kt antrenare-513 treapta pasului KiB";
+/// P6-213: `--mm-model` = the choice from the waves model (1) instead of the os-416 race.
+const KT_513_MM_MODEL: &str = "kt antrenare-513 alegerea din modelul valurilor (1/0)";
+/// P6-213: the SM shared-memory step the waves model judges at (64 KiB: what `--treapta-pas` picks for #513).
+const MM_MODEL_STEP: u32 = 64 << 10;
 /// P6-208: #513's batch (sequences of 512 per step) actually run: 2 by default, N after `--lot-513 N` if it fits.
 const KT_513_BATCH: &str = "kt antrenare-513 lot (secvente pe pas)";
 /// P6-208 (DECIZII 25 Nov 11:52/11:55): does #513's arena, with the launch zone, fit in the largest free VRAM piece
@@ -6709,12 +6713,27 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // or `--colsum-impartit`, not with `--lipit-placi`), every `mm_train` shape of the step on the variant the os-416 race
     // picked (`Plan::with_mm_choice`): the same arena, the same launches; only the programs of the chosen shapes change.
     let mm_choice_on = mm_tile && !fused_tile && super::gpu_tur::TRAIN_513_MM_CHOICE_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    // P6-213 (cyber-gpu `8fe7637`, note C-165_valuri-alegerea-64k, way 2): with `--mm-model` (only right after
+    // `--treapta-pas`), the choice comes from the waves model at 64 KiB (`wave_model::predicted_choice`) instead of the
+    // os-416 race: `mm_train_tile`, `mm_tv_64x64k8` or `mm_tv_128x128` per shape; the same programs, a new mix.
+    let mm_model_on = mm_choice_on
+        && super::gpu_tur::TRAIN_513_SM_STEP_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst)
+        && super::gpu_tur::TRAIN_513_MM_MODEL_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    let mut model_ns: Option<u64> = None;
     let mm_choice = if mm_choice_on {
         // The step's shapes, from a probe of the `with_mm_tile` plan (the choice keeps the shapes and the order).
         let pl = if tiles3 { Plan::new_tiles3(a, bsz, tl, x0, nvidia_ga104::mmu::VA_BASE)? } else { Plan::new(a, bsz, tl, x0, nvidia_ga104::mmu::VA_BASE)? };
         let adam0 = AdamW { lr: 1e-3, beta1: 0.9, beta2: 0.999, eps: 1e-8, weight_decay: 0.1, t: 0, m: Vec::new(), v: Vec::new() };
         let list = pl.with_mm_tile().resident()?.step(Recipe::AdamW513, &adam0, 1)?;
-        Some(mm_choice_513(&nvidia_ga104::mm_train_variants::forms(&list))?)
+        let forms = nvidia_ga104::mm_train_variants::forms(&list);
+        if mm_model_on {
+            let (c, ns) = nvidia_ga104::wave_model::predicted_choice(&forms, MM_MODEL_STEP)?;
+            model_ns = Some(ns);
+            let set = c.entries().filter(|(_, v)| *v != 0).count();
+            Some((c, set, 0, 0, 0))
+        } else {
+            Some(mm_choice_513(&forms)?)
+        }
     } else {
         None
     };
@@ -6737,6 +6756,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     journal.push(Event::Value { what: KT_513_COLSUM_SPLIT, value: colsum_split as u32 });
     journal.push(Event::Value { what: KT_513_FUSED_TILE, value: fused_tile as u32 });
     journal.push(Event::Value { what: KT_513_MM_CHOICE, value: mm_choice_on as u32 });
+    journal.push(Event::Value { what: KT_513_MM_MODEL, value: mm_model_on as u32 });
     // P6-205 (cyber-gpu `8b6a72d`, note C-165_treapta-pe-pas; os-423's occupancy probe gave H1): with `--treapta-pas`
     // (only after `--mm-alegere`), every launch of the step packed with one SM shared-memory step
     // (`step_best_sm_step` -> `pack_with_sm_step`: MIN = TARGET = the step, MAX = 64 KiB); nothing else changes.
@@ -6821,7 +6841,24 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let mut progs: Vec<(ts::Prog, Mapping)> = Vec::new();
     // P6-196: the chosen race variants (`mm_choice_programs`) too, each with the tail page like every program (P6-194).
     let choice_progs: Vec<ts::Prog> = plan0.mm_choice_programs().to_vec();
-    if let Some((c, from_race, filled, common, saved_ns)) = &mm_choice {
+    if let (Some((c, _, _, _, _)), Some(ns)) = (&mm_choice, model_ns) {
+        use nvidia_ga104::mm_train_variants::VARIANTS;
+        let picks: Vec<String> = c.entries().map(|(f, v)| format!("{}x{}x{} f{} -> {}", f.m, f.n, f.k, f.flags, VARIANTS[v].name)).collect();
+        let mut per = [0usize; VARIANTS.len()];
+        for (_, v) in c.entries() {
+            per[v] += 1;
+        }
+        journal.push(Event::Value { what: KT_513_MM_CHOICE_FORMS, value: c.entries().filter(|(_, v)| *v != 0).count() as u32 });
+        let counts: Vec<String> = (0..VARIANTS.len()).filter(|&i| per[i] > 0).map(|i| format!("{} {}", VARIANTS[i].name, per[i])).collect();
+        lines.push(format!(
+            "{}: kronos --gpu: {}: alegerea inmultirilor din modelul valurilor (--mm-model; wave_model::predicted_choice la {} KiB, din timpii os-423; DEDUS, nu o cursa): {} forme ({}); programe in plus: {}; inmultirile prezise ~{} us la ceasul cursei, ~{} us la ceasul pasului (x {} / 1000; Cyber-GPU: pasul ~204 ms, 195-215); {}",
+            p, tag, MM_MODEL_STEP >> 10, c.entries().count(),
+            if counts.is_empty() { String::from("niciuna") } else { counts.join(", ") },
+            if choice_progs.is_empty() { String::from("niciunul") } else { choice_progs.iter().map(|q| q.name()).collect::<Vec<_>>().join(", ") },
+            ns / 1000, ns * nvidia_ga104::wave_model::STEP_OVER_RACE_PERMILLE / 1_000_000, nvidia_ga104::wave_model::STEP_OVER_RACE_PERMILLE,
+            if picks.is_empty() { String::from("nicio forma") } else { picks.join("; ") }
+        ));
+    } else if let Some((c, from_race, filled, common, saved_ns)) = &mm_choice {
         use nvidia_ga104::mm_train_variants::VARIANTS;
         let picks: Vec<String> = c.entries().map(|(f, v)| format!("{}x{}x{} f{} -> {}", f.m, f.n, f.k, f.flags, VARIANTS[v].name)).collect();
         journal.push(Event::Value { what: KT_513_MM_CHOICE_FORMS, value: (from_race + filled) as u32 });
@@ -7002,6 +7039,13 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         let l1 = plan0.step(Recipe::AdamW513, &adam, 1)?;
         let s = ts::step_best_sm_step(&l1, nvidia_ga104::occupancy::Reserve::OneKib);
         journal.push(Event::Value { what: KT_513_SM_STEP_KIB, value: s >> 10 });
+        // P6-213: the waves model judged the shapes at 64 KiB; say so when the step's list picks another step.
+        if mm_model_on && s != MM_MODEL_STEP {
+            lines.push(format!(
+                "{}: kronos --gpu: {}: ATENTIE: --mm-model a ales variantele la {} KiB, dar treapta pasului e {} KiB (alegerea poate sa nu fie cea mai buna; bitii nu se schimba)",
+                p, tag, MM_MODEL_STEP >> 10, s >> 10
+            ));
+        }
         lines.push(format!(
             "{}: kronos --gpu: {}: treapta pas: {} KiB pe {} lansari (--treapta-pas; step_best_sm_step peste {} programe, rezerva 1 KiB; MIN = TARGET = {} KiB, MAX = 64 KiB la fiecare lansare a pasului; restul QMD-urilor = pack)",
             p, tag, s >> 10, l1.len(), ts::step_kernels(&l1).len(), s >> 10

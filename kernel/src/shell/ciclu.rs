@@ -210,7 +210,7 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
     // P6-128: `--ln-32` = `lipita-ln`, then `lipita-ln-32` (every product on quarters), compared; one more list choice.
     // P6-135 (note C-157_P2i, point 1): `--lipita-ln` = the default until now (`lipita-ln` alone); without any list
     // choice the cycle now runs `lipita-ln-32` alone. The checks below go by name, not by position.
-    let all = [FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, P8, P8_S8, COLSUM, PAS_AUR, MM_TC, MM_TC128, MM_TC_PF, MM_TC_V4, MM_TC128_V4, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_VRAM, TRAIN_FUSED, TRAIN_513, TRAIN_513_TILES3, TRAIN_513_MM_TILE, TRAIN_513_FUSED_TILE, TRAIN_513_COLSUM, TRAIN_513_MIXED, TRAIN_513_MM_CHOICE, TRAIN_513_SM_STEP, TRAIN_513_RACE, TRAIN_513_PROBE_64K8, TRAIN_513_OCCUPANCY, TRAIN_RAM];
+    let all = [FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, P8, P8_S8, COLSUM, PAS_AUR, MM_TC, MM_TC128, MM_TC_PF, MM_TC_V4, MM_TC128_V4, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_VRAM, TRAIN_FUSED, TRAIN_513, TRAIN_513_TILES3, TRAIN_513_MM_TILE, TRAIN_513_FUSED_TILE, TRAIN_513_COLSUM, TRAIN_513_MIXED, TRAIN_513_MM_CHOICE, TRAIN_513_SM_STEP, TRAIN_513_MM_MODEL, TRAIN_513_RACE, TRAIN_513_PROBE_64K8, TRAIN_513_OCCUPANCY, TRAIN_RAM];
     let pos = |x: &str| all.iter().position(|y| *y == x).unwrap_or(0);
     let lists = pos(LIPIT)..=pos(LN_32);
     // The two-run lists: the argmax without the copy reads no logits, they need both runs' logits.
@@ -311,6 +311,10 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
         }
         // P6-205: one SM shared-memory step on all of #513's step only right after `--mm-alegere`, last.
         if all[at] == TRAIN_513_SM_STEP && !out.ends_with(TRAIN_513_MM_CHOICE) {
+            return Some(Err(FORM));
+        }
+        // P6-213: the waves model's choice only right after `--treapta-pas` (it judges the shapes at 64 KiB), last.
+        if all[at] == TRAIN_513_MM_MODEL && !out.ends_with(TRAIN_513_SM_STEP) {
             return Some(Err(FORM));
         }
         // P6-190: the night race only right after `--mm-placi` or `--colsum-impartit`.
@@ -913,6 +917,11 @@ pub const TRAIN_513_MM_CHOICE: &str = " --mm-alegere";
 /// the board): `test-placa … --mm-placi [--colsum-impartit] --mm-alegere --treapta-pas`, last.
 pub const TRAIN_513_SM_STEP: &str = " --treapta-pas";
 
+/// P6-213 (cyber-gpu `8fe7637`, note C-165_valuri-alegerea-64k, way 2): suffix of the I9 text when #513's shapes take
+/// the waves model's choice at 64 KiB (`wave_model::predicted_choice` -> `Plan::with_mm_choice`) instead of the os-416
+/// race: `test-placa … --mm-alegere --treapta-pas --mm-model`, last.
+pub const TRAIN_513_MM_MODEL: &str = " --mm-model";
+
 /// P6-208 (centre note 25 Nov 14:40, point 2: the big batch): suffix of the I9 text, followed by a number, when #513's
 /// step runs with a batch of N sequences of 512 (default 2): `test-placa … --antrenare-513 … --lot-513 N`, always last.
 pub const TRAIN_513_BATCH: &str = " --lot-513";
@@ -1029,6 +1038,10 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
         None => (i9, false),
     };
     let (i9, train_513_race) = match i9.strip_suffix(TRAIN_513_RACE) {
+        Some(x) => (x, true),
+        None => (i9, false),
+    };
+    let (i9, train_513_mm_model) = match i9.strip_suffix(TRAIN_513_MM_MODEL) {
         Some(x) => (x, true),
         None => (i9, false),
     };
@@ -1327,6 +1340,8 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::TRAIN_513_MM_CHOICE_IN_CYCLE.store(train_mini && train_vram && train_513 && train_513_tiles3 && train_513_mm_tile && train_513_mm_choice, core::sync::atomic::Ordering::SeqCst);
     // P6-205: one SM shared-memory step on all of #513's step only when the list asked for it, after `--mm-alegere`.
     crate::drivers::gpu_tur::TRAIN_513_SM_STEP_IN_CYCLE.store(train_mini && train_vram && train_513 && train_513_tiles3 && train_513_mm_tile && train_513_mm_choice && train_513_sm_step, core::sync::atomic::Ordering::SeqCst);
+    // P6-213: the waves model's choice only when the list asked for it, after `--treapta-pas`.
+    crate::drivers::gpu_tur::TRAIN_513_MM_MODEL_IN_CYCLE.store(train_mini && train_vram && train_513 && train_513_tiles3 && train_513_mm_tile && train_513_mm_choice && train_513_sm_step && train_513_mm_model, core::sync::atomic::Ordering::SeqCst);
     // P6-198: #513's mixed step only when the list asked for it, last.
     crate::drivers::gpu_tur::TRAIN_513_MIXED_IN_CYCLE.store(train_mini && train_vram && train_513 && train_513_tiles3 && train_513_mm_tile && train_513_mixed, core::sync::atomic::Ordering::SeqCst);
     // P6-190: the night race only when the list asked for it, last, after `--mm-placi`.
@@ -1415,6 +1430,9 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     }
     if train_mini && train_vram && train_513 && train_513_tiles3 && train_513_mm_tile && train_513_mm_choice && train_513_sm_step {
         text.push_str("\n(o singura treapta a memoriei comune pe tot pasul #513, cerut de lista (--treapta-pas; C-165, PREDARE Cyber-GPU 8b6a72d, dupa proba ocuparii os-423 = H1): treapta aleasa cu train_step::step_best_sm_step (rezerva 1 KiB; pe placa 64 KiB, cat cere atentia _3) si lista impachetata cu pack_with_sm_step: MIN = TARGET = treapta, MAX = 64 KiB la fiecare lansare a pasului; aceleasi programe, adrese, cbuf-uri si comenzi, nimic altceva nou pentru placa; Cyber-GPU / centrul asteapta pierderile = oracolul in pasii 1-9 (aceiasi biti ca os-418) si pasul ~338 -> ~200-250 ms (DEDUS din proba ocuparii))\n");
+    }
+    if train_mini && train_vram && train_513 && train_513_tiles3 && train_513_mm_tile && train_513_mm_choice && train_513_sm_step && train_513_mm_model {
+        text.push_str("\n(alegerea inmultirilor din modelul valurilor, cerut de lista (--mm-model; C-165, PREDARE Cyber-GPU 8fe7637, nota C-165_valuri-alegerea-64k, drumul 2): in locul cursei os-416, wave_model::predicted_choice la 64 KiB (timpii pe val din os-423) alege pe fiecare forma mm_train_tile, mm_tv_64x64k8 sau mm_tv_128x128 -> Plan::with_mm_choice; aceleasi trei programe (toate cu aceiasi biti ca martorul in os-416/417/423), aceeasi treapta 64 KiB ca --treapta-pas; nou pentru placa doar amestecul lor in acelasi pas; Cyber-GPU / centrul asteapta pierderile = oracolul in pasii 1-9 si pasul ~267 -> ~204 ms (195-215; ~5 000 simb/s; DEDUS din modelul valurilor))\n");
     }
     if train_mini && train_vram && train_513 && train_513_tiles3 && train_513_mm_tile && train_513_colsum {
         text.push_str("\n(colsum-ul pasului #513 impartit pe randuri, cerut de lista (--colsum-impartit): planul facut cu Plan::new_tiles3(...).with_mm_tile().with_colsum_split() — fiecare colsum devine colsum_part (bucati de randuri in sume partiale) + colsum peste sumele partiale (inca unul la LayerNorm): 385 -> 483 de lansari, tot 2 trimiteri; arena + o zona de lucru de 768 KiB (scrisa si citita doar de placa); programul nou colsum_part (20 registre, bloc 256, fara memorie partajata; SHA-256 verificat; inca neprobat pe placa); nu aceiasi biti ca fara optiune (alta ordine a sumelor), judecat tot fata de oracolul procesorului in pasii 1-9; Cyber-GPU asteapta colsum 24,3 -> ~2,5-5 ms pe pas, pasul cu ~19-22 ms mai scurt)\n");
@@ -1567,6 +1585,7 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::TRAIN_513_MM_CHOICE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TRAIN_513_SM_STEP_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TRAIN_513_MIXED_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::TRAIN_513_MM_MODEL_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TRAIN_513_FUSED_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TRAIN_513_RACE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TRAIN_513_PROBE_64K8_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
@@ -2088,6 +2107,13 @@ pub fn self_test() {
     assert!(board_command("test-placa --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --treapta-pas --mm-alegere").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --mm-alegere --treapta-pas --cursa-mm").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --treapta-pas").is_some_and(|r| r.is_err()));
+    // P6-213: `--mm-model` only right after `--treapta-pas`, last (before `--lot-513 N`).
+    assert!(board_command("test-placa --tablou-viteza --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mm-alegere --treapta-pas --mm-model") == Some(Ok(String::from("c135 --tablou-viteza --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mm-alegere --treapta-pas --mm-model"))));
+    assert!(board_command("test-placa --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --mm-alegere --treapta-pas --mm-model --lot-513 4") == Some(Ok(String::from("c135 --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --mm-alegere --treapta-pas --mm-model --lot-513 4"))));
+    assert!(board_command("test-placa --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --mm-alegere --mm-model").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --mm-model").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --mm-alegere --mm-model --treapta-pas").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --mm-model").is_some_and(|r| r.is_err()));
     // P6-208: `--lot-513 N` = the last two words, only with `--antrenare-513`; carried with its number and split back.
     assert!(board_command("test-placa --tablou-viteza --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mm-alegere --treapta-pas --lot-513 6") == Some(Ok(String::from("c135 --tablou-viteza --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mm-alegere --treapta-pas --lot-513 6"))));
     assert!(board_command("test-placa --antrenare-mini --vram --antrenare-513 --lot-513 8") == Some(Ok(String::from("c135 --antrenare-mini --vram --antrenare-513 --lot-513 8"))));

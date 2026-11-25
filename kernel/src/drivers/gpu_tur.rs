@@ -503,6 +503,12 @@ pub static TRAIN_513_BATCH: core::sync::atomic::AtomicUsize = core::sync::atomic
 /// the test build, by `gpu antrenare-mini-sim vram-513-placi3-mm-alegere`. Off by default.
 pub static TRAIN_513_MM_CHOICE_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-213 (cyber-gpu `8fe7637`, note C-165_valuri-alegerea-64k): with [`TRAIN_513_SM_STEP_IN_CYCLE`], #513's choice from
+/// the waves model at 64 KiB (`wave_model::predicted_choice`) instead of the os-416 race. Set only by the cycle
+/// (`test-placa … --mm-alegere --treapta-pas --mm-model`) and, in the test build, by
+/// `gpu antrenare-mini-sim vram-513-mm-model`. Off by default.
+pub static TRAIN_513_MM_MODEL_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-198 (cyber-gpu `1617228`, note C-165_pas-mixt-513): with [`TRAIN_513_MM_TILE_IN_CYCLE`], #513's mixed step — every
 /// product of the model on `mm_tc`, the loss scale `LOSS_SCALE_513`. Set only by the cycle
 /// (`test-placa … --mm-placi [--colsum-impartit] --mixt-513`) and, in the test build, by
