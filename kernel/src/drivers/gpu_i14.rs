@@ -6185,6 +6185,9 @@ fn occ_verdict(rows: &[(usize, u32, Option<u64>, RaceBits, Option<u32>)], planne
 
 /// P6-196: 1 = #513's `mm_train` shapes on the os-416 race's pick (`--mm-alegere`), and how many shapes left the witness.
 const KT_513_MM_CHOICE: &str = "kt antrenare-513 inmultirile pe varianta aleasa de cursa (1/0)";
+/// P6-205: 1 = #513's step packed with one SM shared-memory step (`--treapta-pas`), and that step in KiB.
+const KT_513_SM_STEP: &str = "kt antrenare-513 o treapta a memoriei comune pe tot pasul (1/0)";
+const KT_513_SM_STEP_KIB: &str = "kt antrenare-513 treapta pasului KiB";
 /// P6-198: 1 = #513's mixed step (`--mixt-513`, every product on `mm_tc`, S = 2^14), 0 = the F32 step.
 const KT_513_MIXED: &str = "kt antrenare-513 pasul mixt (1/0)";
 /// P6-198: the `mm_tc` launches of one mixed #513 step (147 expected on the board).
@@ -6500,6 +6503,11 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     journal.push(Event::Value { what: KT_513_COLSUM_SPLIT, value: colsum_split as u32 });
     journal.push(Event::Value { what: KT_513_FUSED_TILE, value: fused_tile as u32 });
     journal.push(Event::Value { what: KT_513_MM_CHOICE, value: mm_choice_on as u32 });
+    // P6-205 (cyber-gpu `8b6a72d`, note C-165_treapta-pe-pas; os-423's occupancy probe gave H1): with `--treapta-pas`
+    // (only after `--mm-alegere`), every launch of the step packed with one SM shared-memory step
+    // (`step_best_sm_step` -> `pack_with_sm_step`: MIN = TARGET = the step, MAX = 64 KiB); nothing else changes.
+    let sm_step_on = mm_choice_on && super::gpu_tur::TRAIN_513_SM_STEP_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    journal.push(Event::Value { what: KT_513_SM_STEP, value: sm_step_on as u32 });
     // P6-190 (C-165, cyber-gpu note `C-165_cursa-mm.md`): with `--cursa-mm` (only after `--mm-placi`), after the steps,
     // every variant of `mm_train_variants::VARIANTS` on every `mm_train` shape of the step, against the witness.
     let race = mm_tile && super::gpu_tur::TRAIN_513_RACE_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
@@ -6749,6 +6757,20 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // board no GiB-sized m, v on the heap.
     let adam = AdamW { lr: 1e-3, beta1: 0.9, beta2: 0.999, eps: 1e-8, weight_decay: 0.1, t: 0, m: Vec::new(), v: Vec::new() };
     let mut oracle = (!board).then(|| (params0.clone(), AdamW::new(&params0, 1e-3, 0.9, 0.999, 1e-8, 0.1)));
+    // P6-205: the step's shared-memory step, picked once on step 1's list (every step has the same programs; checked
+    // again on every step's list before it is packed).
+    let sm_step: Option<u32> = if sm_step_on {
+        let l1 = plan0.step(Recipe::AdamW513, &adam, 1)?;
+        let s = ts::step_best_sm_step(&l1, nvidia_ga104::occupancy::Reserve::OneKib);
+        journal.push(Event::Value { what: KT_513_SM_STEP_KIB, value: s >> 10 });
+        lines.push(format!(
+            "{}: kronos --gpu: {}: treapta pas: {} KiB pe {} lansari (--treapta-pas; step_best_sm_step peste {} programe, rezerva 1 KiB; MIN = TARGET = {} KiB, MAX = 64 KiB la fiecare lansare a pasului; restul QMD-urilor = pack)",
+            p, tag, s >> 10, l1.len(), ts::step_kernels(&l1).len(), s >> 10
+        ));
+        Some(s)
+    } else {
+        None
+    };
     drop(params0);
     let (mut worst_loss, mut worst_norm) = (0.0f64, 0.0f64);
     let (mut board_ns, mut host_us, mut losses, mut norms): (Vec<u64>, Vec<u64>, Vec<f32>, Vec<f32>) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
@@ -6785,7 +6807,16 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 }
                 None => {
                     let list = plan.step(Recipe::AdamW513, &adam, step)?;
-                    let (zb, qmds) = ts::pack(&list, prog_va, ctl.va)?;
+                    let (zb, qmds) = match sm_step {
+                        // P6-205: the same step on every step's list (the programs never change between steps).
+                        Some(sm) => {
+                            if ts::step_best_sm_step(&list, nvidia_ga104::occupancy::Reserve::OneKib) != sm {
+                                return Err(bad("antrenare-513: treapta memoriei comune difera intre pasi"));
+                            }
+                            ts::pack_with_sm_step(&list, prog_va, ctl.va, sm)?
+                        }
+                        None => ts::pack(&list, prog_va, ctl.va)?,
+                    };
                     (zb, qmds, Some(list))
                 }
             };

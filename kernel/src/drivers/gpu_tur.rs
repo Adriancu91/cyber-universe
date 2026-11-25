@@ -470,6 +470,12 @@ pub static TRAIN_513_PROBE_64K8_IN_CYCLE: core::sync::atomic::AtomicBool = core:
 /// only by the cycle (`test-placa … --cursa-mm --ocupare`) and, in the test build, by `gpu antrenare-mini-sim vram-513-ocupare`.
 pub static TRAIN_513_OCCUPANCY_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-205 (cyber-gpu `8b6a72d`, note C-165_treapta-pe-pas; os-423 occupancy probe: H1): with
+/// [`TRAIN_513_MM_CHOICE_IN_CYCLE`], #513's step packed with one SM shared-memory step for every launch
+/// (`train_step::step_best_sm_step` + `pack_with_sm_step`). Set only by the cycle
+/// (`test-placa … --mm-alegere --treapta-pas`) and, in the test build, by `gpu antrenare-mini-sim vram-513-treapta`.
+pub static TRAIN_513_SM_STEP_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-196 (cyber-gpu `214be67` + `0c74b3c`, note C-165_cursa-mm steps 2-3; os-416 race): with
 /// [`TRAIN_513_MM_TILE_IN_CYCLE`], #513's `mm_train` shapes on the variant the os-416 race picked
 /// (`Plan::with_mm_choice`). Set only by the cycle (`test-placa … --mm-placi [--colsum-impartit] --mm-alegere`) and, in
