@@ -253,6 +253,12 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     pe aceleași intrări, `attn_back_tile0_tc_v4` doar unde `fits` (altfel „sarit (nealiniat)”), dS umplut iar cu NaN, comparat cuvânt
     cu cuvânt cu tc; la `atentie-513-b4` mediana a 5 și raportul față de tc. Rânduri `kt atentie0tc-v4 set N …`, verdictul
     `atentie-tc0-v4 (vechi langa nou, …): TRECE`. Test: `kronos-gpu-atentie-tc0-v4`.
+    **P6-238 (cyber-gpu `8125211`, nota `C-157_P2zw_os462-os465.md` punctul 3): aceleași programe la treapta 64 KiB.** Cu
+    `test-placa … --atentie-tc [însoțitoarele] --atentie-tc-64k` (`gpu_tur::ATTN_TC_64K_IN_CYCLE`; în build-ul de test
+    `gpu atentie-tc-sim on 64k` / `v4-64k`): după fiecare program dQ / dK / dV pe circuitele speciale (tc, tc16, v4 / v4pf),
+    același program încă o dată cu QMD-ul `to_bytes_with_sm_config(…, 64 KiB)` (treapta pasului mixt #513), dqkv umplut iar cu
+    NaN, comparat cuvânt cu cuvânt cu rularea de azi; la `atentie-513-b4` mediana a 5 lângă cea de azi. Rânduri
+    `kt atentie-tc@64k set N …`, verdictul `atentie-tc@64k (…): TRECE`. Test: `kronos-gpu-atentie-tc-v4`.
     **P6-201 (C-165, cyber-gpu `54f5ab8`): proba ocupării.** Cu `test-placa … --cursa-mm --ocupare` (doar imediat după
     `--cursa-mm`, nu cu `--proba-64k8`; `gpu_tur::TRAIN_513_OCCUPANCY_IN_CYCLE`; în build-ul de test
     `gpu antrenare-mini-sim vram-513-ocupare`): în locul cursei mari, pe forma qkv, cele 10 rulări din `occupancy::PROBE`

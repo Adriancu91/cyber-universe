@@ -5039,6 +5039,12 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
             AttnTcProg::Tc16.shared().bytes,
             newer.last().map_or("vechi", |g| g.which.tag())
         ));
+        if super::gpu_tur::ATTN_TC_64K_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+            lines.push(format!(
+                "{}: kronos --gpu: atentie-tc@64k ceruta ({}): dupa fiecare program pe circuitele speciale, acelasi program inca o data cu treapta memoriei comune 64 KiB (campurile lui --treapta-pas, ca in pasul mixt #513), comparat cuvant cu cuvant cu rularea de azi; nimic nou pentru placa",
+                p, label
+            ));
+        }
         if v4_on {
             lines.push(format!(
                 "{}: kronos --gpu: atentie-tc16-v4 ceruta ({}): programele noi attn_back_tile_tc16_v4 si attn_back_tile_tc16_v4pf ({} / {} registre, {} octeti partajati, citiri de 128 de biti, SHA-256 verificate), dupa tc16 pe aceleasi P / dS, doar pe seturile aliniate (fits)",
@@ -5497,7 +5503,9 @@ impl AttnTcProg {
     }
     /// The cbuf (0x800 bytes, the arguments at 0x700 — laid out by the Cyber-GPU module) and the QMD of this program on
     /// `set`, whose buffer is at `buf_va`; the same arguments and grid as `attn_back_tile_3`.
-    fn launch_bytes(self, set: &nvidia_ga104::attn_tile_probe::ProbeSet, prog_va: u64, cbuf_va: u64, buf_va: u64) -> GpuResult<(Vec<u8>, Vec<u8>)> {
+    /// P6-238 (cyber-gpu note C-157_P2zw, point 3): `step = Some(bytes)` = the QMD with this shared-memory step
+    /// (`to_bytes_with_sm_config`, as the mixed step runs it); `None` = the smallest step that fits (today's probe).
+    fn launch_bytes(self, set: &nvidia_ga104::attn_tile_probe::ProbeSet, prog_va: u64, cbuf_va: u64, buf_va: u64, step: Option<u32>) -> GpuResult<(Vec<u8>, Vec<u8>)> {
         use nvidia_ga104::attn_back_tile_tc as at;
         use nvidia_ga104::qmd::ComputeQmd;
         let a = set.back_args(buf_va, nvidia_ga104::attn_back::Mode::Columns);
@@ -5516,8 +5524,11 @@ impl AttnTcProg {
             grid: at::grid(&a),
             block: at::BLOCK,
             release: None,
-        }
-        .to_bytes_with_shared(&self.shared())?;
+        };
+        let q = match step {
+            Some(b) => q.to_bytes_with_sm_config(&self.shared(), b)?,
+            None => q.to_bytes_with_shared(&self.shared())?,
+        };
         Ok((cb.to_vec(), q.to_vec()))
     }
 }
@@ -5541,6 +5552,9 @@ struct TcSet {
     same_words: bool,
     /// P6-233: v4, v4pf on this set: `None` = not aligned (skipped); else (ns, the same words as tc16, guard untouched).
     v4: Vec<Option<(u64, bool, bool)>>,
+    /// P6-238 (C-157_P2zw point 3): per program in `tcs` order, run once more at the 64 KiB step: `None` = not run
+    /// (not aligned); else (ns at 64 KiB, ns today, the same words as today's run of the same program, guard untouched).
+    at64k: Vec<Option<(u64, u64, bool, bool)>>,
 }
 
 impl TcSet {
@@ -5580,6 +5594,9 @@ struct TcBig {
     v4: Vec<Option<(u64, bool, bool)>>,
     /// P6-234: `attn_back_tile0_tc` on `atentie-513-b4` (only with `--atentie-tc0`).
     t0: Option<Tc0Big>,
+    /// P6-238: per program in `tcs` order at the 64 KiB step: `None` = not aligned; else (median ns at 64 KiB, median ns
+    /// today, the same bands as today's run of the same program, guard untouched). Empty = not asked.
+    at64k: Vec<Option<(u64, u64, bool, bool)>>,
 }
 
 /// P6-234 (cyber-gpu note C-157_P2zs): `attn_back_tile0_tc` and its control page (cbuf at +0, 0x800 bytes; QMD at +0x800).
@@ -5725,16 +5742,19 @@ fn tc_small_set<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let (qkv, dout, pm, ds, f32dq) = (take(lay.qkv, nq), take(lay.dout, no), take(lay.p, np), take(lay.ds, np), take(lay.dqkv, nq));
     let span = 4 * nq + 4 * ap::GUARD;
     let fill: Vec<u8> = core::iter::repeat_n(ap::FILL.to_le_bytes(), span / 4).flatten().collect();
-    let mut r = TcSet { verdict: Vec::new(), nominal: Vec::new(), guard_ok: Vec::new(), rel_ppm: Vec::new(), ns: Vec::new(), same_words: false, v4: Vec::new() };
+    let mut r = TcSet { verdict: Vec::new(), nominal: Vec::new(), guard_ok: Vec::new(), rel_ppm: Vec::new(), ns: Vec::new(), same_words: false, v4: Vec::new(), at64k: Vec::new() };
     let mut words: Vec<Vec<u8>> = Vec::new();
+    // P6-238: today's words and time of every program that ran (in `tcs` order; `None` = not aligned).
+    let mut today: Vec<Option<(u64, Vec<u8>)>> = Vec::new();
     for (k, tcb) in tcs.iter().enumerate() {
         // P6-233: v4 / v4pf only where their 128-bit loads are aligned; otherwise skipped (never launched).
         if k >= 2 && !tcb.which.fits(set, buf.va) {
             r.v4.push(None);
+            today.push(None);
             continue;
         }
         ram_write_at(buf, lay.dqkv as u64, &fill);
-        let (cb, q) = tcb.which.launch_bytes(set, tcb.prog_va, tcb.zone.va, buf.va)?;
+        let (cb, q) = tcb.which.launch_bytes(set, tcb.prog_va, tcb.zone.va, buf.va, None)?;
         {
             let w = st.mem.writer_mut();
             put_bytes(w, tcb.zone.pa, &cb)?;
@@ -5755,6 +5775,7 @@ fn tc_small_set<V: Mmio + ?Sized, K: Clock + ?Sized>(
             }
         };
         let got = ram_read_at(buf, lay.dqkv as u64, span as u64);
+        today.push(Some((ns, got[..4 * nq].to_vec())));
         if k >= 2 {
             let guard = got[4 * nq..].chunks(4).all(|w| w == ap::FILL.to_le_bytes());
             let same = words.get(1).is_some_and(|w| w[..] == got[..4 * nq]);
@@ -5770,6 +5791,57 @@ fn tc_small_set<V: Mmio + ?Sized, K: Clock + ?Sized>(
         words.push(got[..4 * nq].to_vec());
     }
     r.same_words = words.len() >= 2 && words[0] == words[1];
+    // P6-238 (C-157_P2zw point 3): every program that ran, once more with the shared-memory step at 64 KiB (the step the
+    // mixed #513 step runs them at: 3–4 blocks per unit for tc16 instead of 1), dqkv filled with NaN again, its words
+    // against today's run of the same program.
+    if super::gpu_tur::ATTN_TC_64K_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+        for (tcb, t) in tcs.iter().zip(today.iter()) {
+            let Some((ns0, w0)) = t else {
+                r.at64k.push(None);
+                continue;
+            };
+            ram_write_at(buf, lay.dqkv as u64, &fill);
+            let (cb, q) = tcb.which.launch_bytes(set, tcb.prog_va, tcb.zone.va, buf.va, Some(STEP_64K))?;
+            {
+                let w = st.mem.writer_mut();
+                put_bytes(w, tcb.zone.pa, &cb)?;
+                put_bytes(w, tcb.zone.pa + 0x800, &q)?;
+            }
+            let ns = match mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, maps, sys, tcb.zone.va + 0x800)? {
+                Ok(t) => t,
+                Err(got) => {
+                    lines.push(format!(
+                        "{}: kronos --gpu: atentie-tc@64k: placa nu a terminat la setul {} ({}), programul {} la treapta 64 KiB: ultima inregistrare = {:#x}; proba oprita, fara reincercare",
+                        p,
+                        i,
+                        set.name,
+                        tcb.which.name(),
+                        got
+                    ));
+                    return Ok(None);
+                }
+            };
+            let got = ram_read_at(buf, lay.dqkv as u64, span as u64);
+            let guard = got[4 * nq..].chunks(4).all(|w| w == ap::FILL.to_le_bytes());
+            r.at64k.push(Some((ns, *ns0, got[..4 * nq] == w0[..], guard)));
+        }
+        let parts: Vec<String> = tcs
+            .iter()
+            .zip(r.at64k.iter())
+            .map(|(tcb, x)| match x {
+                Some((ns, ns0, same, guard)) => format!(
+                    "{} {} ns (azi {} ns), {}{}",
+                    tcb.which.name(),
+                    ns,
+                    ns0,
+                    if *same { "ACEIASI BITI" } else { "DIFERIT" },
+                    if *guard { "" } else { ", garda ATINSA" }
+                ),
+                None => format!("{} nealiniat (sarit)", tcb.which.name()),
+            })
+            .collect();
+        lines.push(format!("{}: kronos --gpu: kt atentie-tc@64k set {} ({}): {}", p, i, set.name, parts.join("; ")));
+    }
     let worst = |k: usize| verdict_text(r.verdict.get(k));
     fn verdict_text(v: Option<&gpu_compute::mm_tc::Verdict>) -> String {
         match v {
@@ -5919,6 +5991,69 @@ fn tc_verdict(p: &str, label: &str, journal: &mut Journal, lines: &mut Vec<Strin
         big_text
     ));
     tc_v4_verdict(p, label, journal, lines, sets, big);
+    tc_64k_verdict(p, label, journal, lines, sets, big);
+}
+
+/// P6-238 (cyber-gpu note C-157_P2zw, point 3): the rows of the same tensor-core programs at the 64 KiB step (only when
+/// they ran): the same words as today's run on every set, and on `atentie-513-b4` the median per launch beside today's.
+fn tc_64k_verdict(p: &str, label: &str, journal: &mut Journal, lines: &mut Vec<String>, sets: &[TcSet], big: Option<&TcBig>) {
+    if sets.iter().all(|s| s.at64k.is_empty()) {
+        return;
+    }
+    const NAMES: [&str; 4] = ["tc", "tc16", "v4", "v4pf"];
+    let progs = sets.iter().map(|s| s.at64k.len()).max().unwrap_or(0).min(NAMES.len());
+    let mut ok = true;
+    let mut parts: Vec<String> = Vec::new();
+    for (k, name) in NAMES.iter().enumerate().take(progs) {
+        let ran: Vec<&(u64, u64, bool, bool)> = sets.iter().filter_map(|s| s.at64k.get(k).and_then(|x| x.as_ref())).collect();
+        let same = ran.iter().filter(|x| x.2 && x.3).count();
+        ok &= same == ran.len() && !ran.is_empty();
+        parts.push(format!("{}@64k = {} pe {} / {} seturi", name, name, same, ran.len()));
+    }
+    let all_same = sets.iter().filter(|s| !s.at64k.is_empty() && s.at64k.iter().flatten().all(|x| x.2 && x.3)).count();
+    journal.push(Event::Value { what: "kt atentie-tc@64k seturi cu aceiasi biti", value: all_same as u32 });
+    let ms = |ns: u64| format!("{},{:02} ms", ns / 1_000_000, (ns / 10_000) % 100);
+    let big_text = match big {
+        Some(b) if b.stopped.is_none() && !b.at64k.is_empty() => {
+            const WHAT: [&str; 4] = ["kt atentie-tc@64k mare timp tc (ns)", "kt atentie-tc@64k mare timp tc16 (ns)", "kt atentie-tc@64k mare timp v4 (ns)", "kt atentie-tc@64k mare timp v4pf (ns)"];
+            let mut t: Vec<String> = Vec::new();
+            for (k, name) in NAMES.iter().enumerate().take(b.at64k.len()) {
+                match b.at64k.get(k) {
+                    Some(Some((ns, ns0, same, guard))) => {
+                        ok &= *same && *guard;
+                        journal.push(Event::Value { what: WHAT[k], value: u32::try_from(*ns).unwrap_or(u32::MAX) });
+                        let ratio = if *ns == 0 { String::from("-") } else { format!("x{},{:02}", ns0 / ns, (ns0 % ns) * 100 / ns) };
+                        t.push(format!(
+                            "{} {} (azi {}, {} fata de azi; pe pasul #513 x 12: {}; benzile {}{})",
+                            name,
+                            ms(*ns),
+                            ms(*ns0),
+                            ratio,
+                            ms(12 * ns),
+                            if *same { "= azi" } else { "DIFERITE de azi" },
+                            if *guard { "" } else { ", garzi ATINSE" }
+                        ));
+                    }
+                    Some(None) => t.push(format!("{} nealiniat (sarit)", name)),
+                    None => t.push(format!("{} -", name)),
+                }
+            }
+            format!("atentie-513-b4 pe lansare (mediana a {}): {}", nvidia_ga104::attn_tile_probe::REPEATS, t.join(", "))
+        }
+        Some(b) if b.stopped.is_some() => {
+            ok = false;
+            String::from("atentie-513-b4 oprit")
+        }
+        _ => String::from("atentie-513-b4 omis"),
+    };
+    lines.push(format!(
+        "{}: kronos --gpu: atentie-tc@64k (aceleasi programe la treapta 64 KiB, {}): {}: {}; {}",
+        p,
+        label,
+        if ok { "TRECE" } else { "NU TRECE" },
+        parts.join(", "),
+        big_text
+    ));
 }
 
 /// P6-233 (cyber-gpu note C-157_P2zq): the rows of `attn_back_tile_tc16_v4` / `_v4pf` beside tc16 (only when they ran):
@@ -6284,7 +6419,7 @@ fn attn_tile_big<V: Mmio + ?Sized, K: Clock + ?Sized>(
                     return Ok(AttnBig::Judged(alloc::boxed::Box::new(r), pairs));
                 }
             }
-            let (cb, q) = tcb.which.launch_bytes(set, tcb.prog_va, tcb.zone.va, big.va)?;
+            let (cb, q) = tcb.which.launch_bytes(set, tcb.prog_va, tcb.zone.va, big.va, None)?;
             {
                 let w = st.mem.writer_mut();
                 put_bytes(w, tcb.zone.pa, &cb)?;
@@ -6319,6 +6454,62 @@ fn attn_tile_big<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 bands.push(band);
             } else {
                 v4_bands.push(Some((med, band)));
+            }
+        }
+        // P6-238 (C-157_P2zw point 3): every program that ran, 5 launches more at the 64 KiB step (the step of the
+        // mixed #513 step), the bands filled with NaN before, read back and compared with today's bands of the same program.
+        if super::gpu_tur::ATTN_TC_64K_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+            let mut v4_it = v4_bands.iter();
+            for (k, tcb) in tcs.iter().enumerate() {
+                let today: Option<(u64, &Vec<u8>)> = if k < 2 {
+                    bands.get(k).map(|b| (tb.ns.get(k).copied().unwrap_or(0), b))
+                } else {
+                    v4_it.next().and_then(|x| x.as_ref().map(|(ns, b)| (*ns, b)))
+                };
+                let Some((ns0, band0)) = today else {
+                    tb.at64k.push(None);
+                    continue;
+                };
+                for &(o, n) in &dq {
+                    let bytes: Vec<u8> = core::iter::repeat_n(ap::FILL.to_le_bytes(), n / 4).flatten().collect();
+                    ram_write(&host, &bytes);
+                    if !copy(vbar, clock, journal, st, l, doorbell, subs, host.va, big.va + o as u64, (n as u64).next_multiple_of(16))? {
+                        tb.stopped = Some(format!("umplerea benzilor dqkv cu NaN inainte de {}@64k nu s-a terminat", tcb.which.name()));
+                        *tc_big = Some(tb);
+                        return Ok(AttnBig::Judged(alloc::boxed::Box::new(r), pairs));
+                    }
+                }
+                let (cb, q) = tcb.which.launch_bytes(set, tcb.prog_va, tcb.zone.va, big.va, Some(STEP_64K))?;
+                {
+                    let w = st.mem.writer_mut();
+                    put_bytes(w, tcb.zone.pa, &cb)?;
+                    put_bytes(w, tcb.zone.pa + 0x800, &q)?;
+                }
+                let mut ts: Vec<u64> = Vec::new();
+                for rep in 0..set.repeats {
+                    match mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, &maps, &sys, tcb.zone.va + 0x800)? {
+                        Ok(ns) => ts.push(ns),
+                        Err(got) => {
+                            tb.stopped = Some(format!("placa nu a terminat programul {} la treapta 64 KiB, lansarea {}: ultima inregistrare = {:#x}", tcb.which.name(), rep, got));
+                            *tc_big = Some(tb);
+                            return Ok(AttnBig::Judged(alloc::boxed::Box::new(r), pairs));
+                        }
+                    }
+                }
+                let mut band: Vec<u8> = Vec::new();
+                for &(o, n) in &dq {
+                    ram_write(&host, &[]);
+                    if !copy(vbar, clock, journal, st, l, doorbell, subs, big.va + o as u64, host.va, (n as u64).next_multiple_of(16))? {
+                        tb.stopped = Some(format!("citirea benzilor dqkv dupa {}@64k nu s-a terminat", tcb.which.name()));
+                        *tc_big = Some(tb);
+                        return Ok(AttnBig::Judged(alloc::boxed::Box::new(r), pairs));
+                    }
+                    band.extend_from_slice(&ram_read(&host, n as u64));
+                }
+                let gg = 4 * ap::GUARD;
+                let same = band[..band.len() - gg] == band0[..band0.len() - gg];
+                let guard = band[band.len() - gg..].chunks(4).all(|w| w == ap::FILL.to_le_bytes());
+                tb.at64k.push(Some((median_ns(&ts), ns0, same, guard)));
             }
         }
         let g = 4 * ap::GUARD;

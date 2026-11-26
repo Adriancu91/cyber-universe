@@ -1533,14 +1533,22 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::ATTN_TC0_V4_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu atentie-tc-sim: pornita cu tc0-v4 (SIMULARE: dupa attn_back_tile0_tc, attn_back_tile0_tc_v4 pe seturile aliniate, comparat cuvant cu cuvant cu tc)\n");
                 }
+                Some("on") if matches!(args.get(2).copied(), Some("64k") | Some("v4-64k")) && args.len() == 3 => {
+                    // P6-238: the tensor-core programs (and v4 / v4pf with `v4-64k`) once more at the 64 KiB step
+                    crate::drivers::gpu_tur::ATTN_TC_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::ATTN_TC_V4_IN_CYCLE.store(args.get(2).copied() == Some("v4-64k"), core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::ATTN_TC_64K_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu atentie-tc-sim: pornita cu treapta 64 KiB (SIMULARE: dupa fiecare program pe circuitele speciale, acelasi program la treapta 64 KiB, comparat cuvant cu cuvant cu rularea de azi)\n");
+                }
                 Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::ATTN_TC_64K_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::ATTN_TC_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::ATTN_TC_V4_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::ATTN_TC0_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::ATTN_TC0_V4_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu atentie-tc-sim: oprita\n");
                 }
-                _ => out!("folosire: gpu atentie-tc-sim on [v4|tc0|tc0-v4]|off\n"),
+                _ => out!("folosire: gpu atentie-tc-sim on [v4|tc0|tc0-v4|64k|v4-64k]|off\n"),
             }
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu atentie-tc-sim: exista doar in build-ul de test (pe stick o porneste doar ciclul, test-placa --atentie-placi --atentie2 --atentie3 --atentie-tc)\n");
