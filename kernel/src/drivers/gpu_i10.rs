@@ -486,6 +486,10 @@ impl SimGpu {
             // P6-168 (cyber-gpu note C-157_P2q): the fourth generation's only new program (the same operations, the
             // whole diagonal on the unguarded loop); its fwd / back0 are the third's binaries, registered above.
             cp.register_program(nvidia_ga104::attn_back_tile_4::ATTN_BACK_TILE_4, c::attn_back_tile_on_cpu);
+            // P6-227 (cyber-gpu note C-157_P2zm): dQ, dK, dV on the tensor cores (arguments at 0x700 of a 0x800 cbuf);
+            // both stand-ins are `gpu_compute::attn_tc::model` (a hypothesis until the board runs them).
+            cp.register_program_with_needs(nvidia_ga104::attn_back_tile_tc::ATTN_BACK_TILE_TC, c::attn_back_tile_tc_on_cpu, c::ATTN_BACK_TILE_TC_NEEDS);
+            cp.register_program_with_needs(nvidia_ga104::attn_back_tile_tc16::ATTN_BACK_TILE_TC16, c::attn_back_tile_tc16_on_cpu, c::ATTN_BACK_TILE_TC16_NEEDS);
             // P6-188 (cyber-gpu note C-157_P2x step 2): the tiled training matmul (`mm_train_tile`, the same cbuf as
             // `mm_train`, 8 KiB shared, one barrier).
             cp.register_program_with_needs(nvidia_ga104::mm_train_tile::MM_TRAIN_TILE, c::mm_train_tile_on_cpu, c::MM_TRAIN_TILE_NEEDS);

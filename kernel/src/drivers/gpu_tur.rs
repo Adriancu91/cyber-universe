@@ -415,6 +415,12 @@ pub static ATTN_TILE3_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::ato
 /// `gpu atentie4-sim on`. Off by default.
 pub static ATTN_TILE4_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-227 (cyber-gpu note C-157_P2zm, commit `3c6fa3b`): `attn_back_tile_tc` and `attn_back_tile_tc16` (dQ, dK, dV on
+/// the tensor cores, f16 inputs) after the newest tiled chain (`_3` or `_4`), in the same probe, on the same P / dS.
+/// Set only by the cycle (`test-placa … --atentie-placi --atentie2 --atentie3 [--atentie4] --atentie-tc`) and, in the
+/// test build, by `gpu atentie-tc-sim on`. Off by default.
+pub static ATTN_TC_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-161 (C-157, cyber-gpu `9359f21`): the RAM ↔ VRAM probe with the copy engine — the copy object allocated on the
 /// work channel right after I9 (one RM message), then, after `kronos --gpu`'s texts, one submission of copies host RAM ↔
 /// VRAM timed and checked byte for byte (`kt ramvram …`). Set only by the cycle (`test-placa … --ram-vram`) and, in the

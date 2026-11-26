@@ -4971,6 +4971,43 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
         newer.push(gb);
     }
+    // P6-227 (note C-157_P2zm): `attn_back_tile_tc` and `attn_back_tile_tc16` after the newest chain, only when asked
+    // (and only with the third generation, whose `attn_back_tile_3` they replace).
+    let tc_on = tile3 && super::gpu_tur::ATTN_TC_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    let mut tcs: Vec<TcOnBoard> = Vec::new();
+    if tc_on {
+        for which in [AttnTcProg::Tc, AttnTcProg::Tc16] {
+            let sha = sha256_hex(which.binary());
+            if sha != which.sha256() {
+                lines.push(format!(
+                    "{}: kronos --gpu: atentie-tc: SHA-256 al programului nou {} = {} nu e cel din nota ({}): nimic trimis",
+                    p,
+                    which.name(),
+                    sha,
+                    which.sha256()
+                ));
+                return Err(bad("atentie-tc: SHA-256 gresit"));
+            }
+            let m = map_vram(st, program_map_bytes(which.binary().len() as u64))?;
+            put_bytes(st.mem.writer_mut(), m.pa, which.binary())?;
+            maps.push(m);
+            let z = map_vram(st, PAGE)?;
+            maps.push(z);
+            tcs.push(TcOnBoard { which, prog_va: m.va, zone: z });
+        }
+        lines.push(format!(
+            "{}: kronos --gpu: atentie-tc ceruta ({}): programele noi attn_back_tile_tc si attn_back_tile_tc16 ({} / {} registre, {} / {} octeti partajati, argumentele la 0x700 intr-un cbuf de 0x800, SHA-256 verificate), dupa lantul {} pe fiecare set, pe aceleasi P / dS",
+            p,
+            label,
+            AttnTcProg::Tc.registers(),
+            AttnTcProg::Tc16.registers(),
+            AttnTcProg::Tc.shared().bytes,
+            AttnTcProg::Tc16.shared().bytes,
+            newer.last().map_or("vechi", |g| g.which.tag())
+        ));
+    }
+    let mut tc_sets: Vec<TcSet> = Vec::new();
+    let mut stopped_tc: Option<usize> = None;
     let small = ap::SETS[..ap::TIMING_SET].iter().map(|s| s.layout().bytes as u64).max().unwrap_or(PAGE);
     let buf = st.mem.alloc_sys_mapped(&arena_pages(0, small.div_ceil(PAGE))?)?;
     if !buf.va.is_multiple_of(PAGE) {
@@ -5022,6 +5059,8 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
             "{}: kronos --gpu: kt atentie set {} ({}): timp fwd {} ns, back0 {} ns, back1 {} ns",
             p, i, set.name, ns[0], ns[1], ns[2]
         ));
+        // P6-227: the time of the newest chain's dQ / dK / dV program on this set (beside the tensor-core programs).
+        let mut last_back_ns = ns[2];
         // P6-149 / P6-160: the same set again for every new generation, the buffer rewritten each time.
         for (gi, gb) in newer.iter().enumerate() {
             ram_write(&buf, &set.buffer());
@@ -5055,10 +5094,22 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 out2.extend_from_slice(&ram_read_at(&buf, o as u64, n as u64));
             }
             pairs[gi].push(ap::judge_pair_set(i, &out, &out2, [&ns2[..1], &ns2[1..2], &ns2[2..]])?);
+            last_back_ns = ns2[2];
+        }
+        // P6-227: the tensor-core programs on the P / dS the newest chain left in the buffer.
+        if !tcs.is_empty() {
+            match tc_small_set(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, &maps, &sys, &buf, set, i, &tcs, last_back_ns)? {
+                Some(r) => tc_sets.push(r),
+                None => {
+                    stopped_tc = Some(i);
+                    break 'sets;
+                }
+            }
         }
     }
-    if stopped.is_none() && stopped2.is_none() {
-        match attn_tile_big(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, &maps, prog_va, &zones, &newer)? {
+    let mut tc_big: Option<TcBig> = None;
+    if stopped.is_none() && stopped2.is_none() && stopped_tc.is_none() {
+        match attn_tile_big(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, &maps, prog_va, &zones, &newer, &tcs, &mut tc_big)? {
             AttnBig::Judged(r, r2) => {
                 probe.add(*r);
                 for (gi, x) in r2.into_iter().enumerate() {
@@ -5160,8 +5211,11 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
             if skipped { "atentie-513-b4 omis" } else { "atentie-513-b4 cronometrat" }
         ));
     }
-    match (stopped, stopped2) {
-        (None, None) => Ok(()),
+    if !tcs.is_empty() {
+        tc_verdict(p, label, journal, lines, &tc_sets, tc_big.as_ref(), stopped.or(stopped2.map(|x| x.1)), stopped_tc);
+    }
+    match (stopped, stopped2, stopped_tc) {
+        (None, None, None) => Ok(()),
         _ => Err(GpuError::Timeout { waited_us: WAIT_US }),
     }
 }
@@ -5258,6 +5312,326 @@ struct GenOnBoard {
     zones: Vec<Mapping>,
 }
 
+/// P6-227 (cyber-gpu note C-157_P2zm): the two tensor-core programs for dQ, dK, dV (`attn_back_tile_3`'s job, f16 inputs).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum AttnTcProg {
+    Tc,
+    Tc16,
+}
+
+impl AttnTcProg {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Tc => "attn_back_tile_tc",
+            Self::Tc16 => "attn_back_tile_tc16",
+        }
+    }
+    fn binary(self) -> &'static [u8] {
+        match self {
+            Self::Tc => nvidia_ga104::attn_back_tile_tc::ATTN_BACK_TILE_TC,
+            Self::Tc16 => nvidia_ga104::attn_back_tile_tc16::ATTN_BACK_TILE_TC16,
+        }
+    }
+    fn sha256(self) -> &'static str {
+        match self {
+            Self::Tc => nvidia_ga104::attn_back_tile_tc::ATTN_BACK_TILE_TC_SHA256,
+            Self::Tc16 => nvidia_ga104::attn_back_tile_tc16::ATTN_BACK_TILE_TC16_SHA256,
+        }
+    }
+    fn registers(self) -> u32 {
+        match self {
+            Self::Tc => nvidia_ga104::attn_back_tile_tc::REGISTERS,
+            Self::Tc16 => nvidia_ga104::attn_back_tile_tc16::REGISTERS,
+        }
+    }
+    fn shared(self) -> nvidia_ga104::qmd::SharedMemory {
+        match self {
+            Self::Tc => nvidia_ga104::attn_back_tile_tc::SHARED,
+            Self::Tc16 => nvidia_ga104::attn_back_tile_tc16::SHARED,
+        }
+    }
+    /// The cbuf (0x800 bytes, the arguments at 0x700 — laid out by the Cyber-GPU module) and the QMD of this program on
+    /// `set`, whose buffer is at `buf_va`; the same arguments and grid as `attn_back_tile_3`.
+    fn launch_bytes(self, set: &nvidia_ga104::attn_tile_probe::ProbeSet, prog_va: u64, cbuf_va: u64, buf_va: u64) -> GpuResult<(Vec<u8>, Vec<u8>)> {
+        use nvidia_ga104::attn_back_tile_tc as at;
+        use nvidia_ga104::qmd::ComputeQmd;
+        let a = set.back_args(buf_va, nvidia_ga104::attn_back::Mode::Columns);
+        let cb = match self {
+            Self::Tc => at::cbuf(&a),
+            Self::Tc16 => nvidia_ga104::attn_back_tile_tc16::cbuf(&a),
+        }
+        .ok_or(bad("atentie-tc: argumentele refuzate de modulul programului"))?;
+        let q = ComputeQmd {
+            program_va: prog_va,
+            registers: self.registers(),
+            cbuf0_va: cbuf_va,
+            cbuf0_size: at::CBUF_BYTES as u32,
+            grid: at::grid(&a),
+            block: at::BLOCK,
+            release: None,
+        }
+        .to_bytes_with_shared(&self.shared())?;
+        Ok((cb.to_vec(), q.to_vec()))
+    }
+}
+
+/// P6-227: one tensor-core program and its control page (cbuf at +0, 0x800 bytes; QMD at +0x800).
+struct TcOnBoard {
+    which: AttnTcProg,
+    prog_va: u64,
+    zone: Mapping,
+}
+
+/// P6-227: one small set, both tensor-core programs (index 0 = tc, 1 = tc16).
+struct TcSet {
+    verdict: Vec<gpu_compute::mm_tc::Verdict>,
+    guard_ok: Vec<bool>,
+    rel_ppm: Vec<Option<u32>>,
+    ns: Vec<u64>,
+    same_words: bool,
+}
+
+impl TcSet {
+    fn in_margin(&self) -> bool {
+        self.verdict.len() == 2
+            && self.verdict.iter().all(|v| matches!(v, gpu_compute::mm_tc::Verdict::InMargine { .. }))
+            && self.guard_ok.iter().all(|&g| g)
+    }
+    fn worst(&self, k: usize) -> Option<u32> {
+        match self.verdict.get(k) {
+            Some(gpu_compute::mm_tc::Verdict::InMargine { worst_permille, .. }) => Some(*worst_permille),
+            _ => None,
+        }
+    }
+}
+
+/// P6-227: `atentie-513-b4` with the tensor-core programs (board only).
+#[derive(Default)]
+struct TcBig {
+    /// Median ns per launch: tc, tc16.
+    ns: Vec<u64>,
+    /// Median ns of the newest chain's dQ / dK / dV program on the same set.
+    f32_ns: u64,
+    guard_ok: Vec<bool>,
+    finite: Vec<bool>,
+    rel_ppm: Vec<Option<u32>>,
+    same_words: bool,
+    words: usize,
+    stopped: Option<String>,
+}
+
+/// P6-227: the median of some times (0 if none).
+fn median_ns(v: &[u64]) -> u64 {
+    let mut s = v.to_vec();
+    s.sort_unstable();
+    s.get(s.len() / 2).copied().unwrap_or(0)
+}
+
+/// P6-227: little-endian f32 words.
+fn f32_words(b: &[u8]) -> Vec<f32> {
+    b.chunks_exact(4).map(|w| f32::from_le_bytes([w[0], w[1], w[2], w[3]])).collect()
+}
+
+/// P6-227: ‖a − b‖ / ‖b‖ in millionths (`None`: a non-finite value, different lengths or ‖b‖ = 0).
+fn rel_ppm(a: &[f32], b: &[f32]) -> Option<u32> {
+    if a.len() != b.len() || a.iter().chain(b).any(|x| !x.is_finite()) {
+        return None;
+    }
+    let (mut num, mut den) = (0f64, 0f64);
+    for (x, y) in a.iter().zip(b) {
+        let d = f64::from(*x) - f64::from(*y);
+        num += d * d;
+        den += f64::from(*y) * f64::from(*y);
+    }
+    if den == 0.0 {
+        return None;
+    }
+    let r2 = ((num / den) * 1e12) as u64;
+    Some(u32::try_from(r2.isqrt()).unwrap_or(u32::MAX))
+}
+
+/// P6-227: millionths as `x,yy·10^-4` (`-` for none).
+fn ppm_text(v: Option<u32>) -> String {
+    match v {
+        Some(x) => format!("{},{:02}e-4", x / 100, x % 100),
+        None => String::from("-"),
+    }
+}
+
+/// P6-227: one small set with both tensor-core programs, on the buffer the newest chain left (P and dS in place).
+/// `None`: the board did not finish a launch (the line is written).
+#[allow(clippy::too_many_arguments)]
+fn tc_small_set<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    doorbell: &mut Bell<'_, V>,
+    subs: &mut u32,
+    ctx: &CopyCtx,
+    maps: &[Mapping],
+    sys: &[SysMapping],
+    buf: &SysMapping,
+    set: &nvidia_ga104::attn_tile_probe::ProbeSet,
+    i: usize,
+    tcs: &[TcOnBoard],
+    f32_ns: u64,
+) -> GpuResult<Option<TcSet>> {
+    use nvidia_ga104::attn_tile_probe as ap;
+    let lay = set.layout();
+    let shape = set.shape();
+    let (nq, no, np) = shape.sizes().ok_or(bad("atentie-tc: forma setului"))?;
+    let whole = ram_read(buf, lay.end as u64);
+    let take = |o: usize, n: usize| f32_words(&whole[o..o + 4 * n]);
+    let (qkv, dout, pm, ds, f32dq) = (take(lay.qkv, nq), take(lay.dout, no), take(lay.p, np), take(lay.ds, np), take(lay.dqkv, nq));
+    let span = 4 * nq + 4 * ap::GUARD;
+    let fill: Vec<u8> = core::iter::repeat_n(ap::FILL.to_le_bytes(), span / 4).flatten().collect();
+    let mut r = TcSet { verdict: Vec::new(), guard_ok: Vec::new(), rel_ppm: Vec::new(), ns: Vec::new(), same_words: false };
+    let mut words: Vec<Vec<u8>> = Vec::new();
+    for tcb in tcs {
+        ram_write_at(buf, lay.dqkv as u64, &fill);
+        let (cb, q) = tcb.which.launch_bytes(set, tcb.prog_va, tcb.zone.va, buf.va)?;
+        {
+            let w = st.mem.writer_mut();
+            put_bytes(w, tcb.zone.pa, &cb)?;
+            put_bytes(w, tcb.zone.pa + 0x800, &q)?;
+        }
+        match mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, maps, sys, tcb.zone.va + 0x800)? {
+            Ok(t) => r.ns.push(t),
+            Err(got) => {
+                lines.push(format!(
+                    "{}: kronos --gpu: atentie-tc: placa nu a terminat la setul {} ({}), programul nou {}: ultima inregistrare = {:#x}; proba oprita, fara reincercare",
+                    p,
+                    i,
+                    set.name,
+                    tcb.which.name(),
+                    got
+                ));
+                return Ok(None);
+            }
+        }
+        let got = ram_read_at(buf, lay.dqkv as u64, span as u64);
+        r.guard_ok.push(got[4 * nq..].chunks(4).all(|w| w == ap::FILL.to_le_bytes()));
+        let v = f32_words(&got[..4 * nq]);
+        r.verdict.push(gpu_compute::attn_tc::judge(&shape, &qkv, &pm, &dout, &ds, &v));
+        r.rel_ppm.push(rel_ppm(&v, &f32dq));
+        words.push(got[..4 * nq].to_vec());
+    }
+    r.same_words = words.len() == 2 && words[0] == words[1];
+    let worst = |k: usize| match r.verdict.get(k) {
+        Some(gpu_compute::mm_tc::Verdict::InMargine { worst_permille, .. }) => format!("{} promile", worst_permille),
+        Some(gpu_compute::mm_tc::Verdict::NuTrece { index, got, reference, margin }) => {
+            format!("NU (primul element in afara, nr. {} pe cap: {:e}, modelul {:e}, marginea {:e})", index, got, reference, margin)
+        }
+        Some(gpu_compute::mm_tc::Verdict::Invalid) => String::from("INVALID (lungime gresita sau valoare nefinita)"),
+        None => String::from("-"),
+    };
+    lines.push(format!(
+        "{}: kronos --gpu: kt atentie-tc set {} ({}): tc {} ns, tc16 {} ns (dQ/dK/dV F32 {} ns); in margine: tc {}, tc16 {}; garda dqkv {}; tc16 = tc cuvant cu cuvant: {}; abaterea fata de F32: tc {}, tc16 {}",
+        p,
+        i,
+        set.name,
+        r.ns.first().copied().unwrap_or(0),
+        r.ns.get(1).copied().unwrap_or(0),
+        f32_ns,
+        worst(0),
+        worst(1),
+        if r.guard_ok.iter().all(|&g| g) { "neatinsa" } else { "ATINSA" },
+        if r.same_words { "DA" } else { "NU" },
+        ppm_text(r.rel_ppm.first().copied().flatten()),
+        ppm_text(r.rel_ppm.get(1).copied().flatten())
+    ));
+    const T: [&str; 2] = ["kt atentie-tc set: timp tc (ns)", "kt atentie-tc set: timp tc16 (ns)"];
+    for (k, what) in T.iter().enumerate() {
+        journal.push(Event::Value { what: *what, value: u32::try_from(r.ns.get(k).copied().unwrap_or(0)).unwrap_or(u32::MAX) });
+    }
+    Ok(Some(r))
+}
+
+/// P6-227: the rows and the verdict of the tensor-core programs. `before`: the set where a chain before them stopped.
+#[allow(clippy::too_many_arguments)]
+fn tc_verdict(p: &str, label: &str, journal: &mut Journal, lines: &mut Vec<String>, sets: &[TcSet], big: Option<&TcBig>, before: Option<usize>, stopped: Option<usize>) {
+    use nvidia_ga104::attn_tile_probe as ap;
+    let n = sets.len();
+    let in_margin = sets.iter().filter(|s| s.in_margin()).count();
+    let same = sets.iter().filter(|s| s.same_words).count();
+    let worst = |k: usize| sets.iter().filter_map(|s| s.worst(k)).max();
+    let max_rel = sets.iter().flat_map(|s| s.rel_ppm.iter().copied()).try_fold(0u32, |m, x| x.map(|x| m.max(x)));
+    journal.push(Event::Value { what: "kt atentie-tc seturi in margine", value: in_margin as u32 });
+    journal.push(Event::Value { what: "kt atentie-tc seturi tc16 = tc", value: same as u32 });
+    journal.push(Event::Value { what: "kt atentie-tc abatere fata de F32 (milionimi)", value: max_rel.unwrap_or(u32::MAX) });
+    lines.push(format!(
+        "{}: kronos --gpu: atentie-tc vechi langa nou ({}): {} / {} seturi in margine (gpu_compute::attn_tc::judge, marginea mm_tc pe cap; cel mai rau tc {} / tc16 {} promile), {} / {} seturi cu tc16 = tc cuvant cu cuvant, abaterea fata de F32 (norma relativa) cel mult {}",
+        p,
+        label,
+        in_margin,
+        n,
+        worst(0).map_or(String::from("-"), |w| format!("{}", w)),
+        worst(1).map_or(String::from("-"), |w| format!("{}", w)),
+        same,
+        n,
+        ppm_text(max_rel)
+    ));
+    let mut big_ok = true;
+    let big_text = match big {
+        None => String::from("atentie-513-b4 omis"),
+        Some(b) if b.stopped.is_some() => {
+            big_ok = false;
+            format!("atentie-513-b4: {}", b.stopped.as_deref().unwrap_or(""))
+        }
+        Some(b) => {
+            let ok = b.guard_ok.iter().all(|&g| g) && b.finite.iter().all(|&f| f) && b.same_words;
+            big_ok = ok;
+            for (k, what) in ["kt atentie-tc mare timp tc (ns)", "kt atentie-tc mare timp tc16 (ns)"].iter().enumerate() {
+                journal.push(Event::Value { what: *what, value: u32::try_from(b.ns.get(k).copied().unwrap_or(0)).unwrap_or(u32::MAX) });
+            }
+            journal.push(Event::Value { what: "kt atentie-tc mare timp F32 (ns)", value: u32::try_from(b.f32_ns).unwrap_or(u32::MAX) });
+            let us = |ns: u64| format!("{},{:02} ms", ns / 1_000_000, (ns / 10_000) % 100);
+            let tc = b.ns.first().copied().unwrap_or(0);
+            let tc16 = b.ns.get(1).copied().unwrap_or(0);
+            lines.push(format!(
+                "{}: kronos --gpu: kt atentie-tc atentie-513-b4: pe lansare (mediana a {}) tc {}, tc16 {}, dQ/dK/dV F32 {}; pe pasul #513 (x 12): tc {}, tc16 {}, F32 {}; benzile dqkv ({} cuvinte): tc16 = tc {}, garzi {}, abaterea fata de F32 tc {} / tc16 {}",
+                p,
+                ap::REPEATS,
+                us(tc),
+                us(tc16),
+                us(b.f32_ns),
+                us(12 * tc),
+                us(12 * tc16),
+                us(12 * b.f32_ns),
+                b.words,
+                if b.same_words { "DA" } else { "NU" },
+                if b.guard_ok.iter().all(|&g| g) { "neatinse" } else { "ATINSE" },
+                ppm_text(b.rel_ppm.first().copied().flatten()),
+                ppm_text(b.rel_ppm.get(1).copied().flatten())
+            ));
+            String::from("atentie-513-b4 cronometrat")
+        }
+    };
+    let verdict = match (stopped, before) {
+        (Some(i), _) => format!("NU A TERMINAT (la setul {})", i),
+        (None, Some(i)) if n < ap::TIMING_SET => format!("NERULAT DUPA SETUL {} (un lant de dinainte s-a oprit)", i),
+        _ if n == ap::TIMING_SET && in_margin == n && same == n && big_ok => String::from("TRECE"),
+        _ => String::from("NU TRECE"),
+    };
+    lines.push(format!(
+        "{}: kronos --gpu: atentie-tc (vechi langa nou): {}: {} / {} seturi in margine; tc16 = tc: {} ({} / {} seturi); abaterea fata de F32 cel mult {}; {}",
+        p,
+        verdict,
+        in_margin,
+        n,
+        if same == n && n > 0 { "DA" } else { "NU" },
+        same,
+        n,
+        ppm_text(max_rel),
+        big_text
+    ));
+}
+
 /// P6-141: what happened to `atentie-513-b4`.
 enum AttnBig {
     /// The old chain judged; P6-149 / P6-160: each new chain's pair in order (`Err(())` = a launch or a copy of that
@@ -5316,6 +5690,8 @@ fn attn_tile_big<V: Mmio + ?Sized, K: Clock + ?Sized>(
     prog_va: [u64; 3],
     zones: &[Mapping],
     newer: &[GenOnBoard],
+    tcs: &[TcOnBoard],
+    tc_big: &mut Option<TcBig>,
 ) -> GpuResult<AttnBig> {
     use nvidia_ga104::attn_tile_probe as ap;
     let set = &ap::SETS[ap::TIMING_SET];
@@ -5471,6 +5847,8 @@ fn attn_tile_big<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // read-back ranges filled with NaN again, then 5 × each of its programs, the ranges back, judged beside the old
     // read-back.
     let mut pairs: Vec<Result<alloc::boxed::Box<ap::PairResult>, ()>> = Vec::with_capacity(newer.len());
+    // P6-227: the times of the newest chain's dQ / dK / dV program (beside the tensor-core programs).
+    let mut last_back_times: Vec<u64> = times[2].clone();
     'gens: for gb in newer {
         let tag = gb.which.tag();
         let stop2 = |lines: &mut Vec<String>, pairs: &mut Vec<Result<alloc::boxed::Box<ap::PairResult>, ()>>, what: &str| {
@@ -5517,6 +5895,86 @@ fn attn_tile_big<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
         let r2 = ap::judge_pair_set(ap::TIMING_SET, &out, &out2, [&times2[0], &times2[1], &times2[2]])?;
         pairs.push(Ok(alloc::boxed::Box::new(r2)));
+        last_back_times = times2[2].clone();
+    }
+    // P6-227 (note C-157_P2zm, step 1): after every chain finished, the tensor-core programs on the P / dS the newest
+    // chain left in VRAM: the dqkv bands (row T − 1 of the banded texts) and their guard filled with NaN before each
+    // program, 5 launches each, the bands back. Judged here: tc16 = tc word for word, the distance from the F32 bands;
+    // the margin is judged on the small sets only (the CPU model of this set would take too long).
+    if !tcs.is_empty() && pairs.len() == newer.len() && pairs.iter().all(|x| x.is_ok()) {
+        let (t, c) = (set.t as usize, set.c as usize);
+        let mut dq: Vec<(usize, usize)> = Vec::new();
+        for b in set.texts() {
+            for tp in set.dq_rows() {
+                dq.push((lay.dqkv + 4 * (b * t + tp) * 3 * c, 4 * 3 * c));
+            }
+        }
+        dq.push((lay.dqkv_guard, 4 * ap::GUARD));
+        let mut tb = TcBig { f32_ns: median_ns(&last_back_times), ..TcBig::default() };
+        // The F32 bands (the newest chain's dqkv).
+        let mut f32_band: Vec<u8> = Vec::new();
+        for &(o, n) in &dq {
+            ram_write(&host, &[]);
+            if !copy(vbar, clock, journal, st, l, doorbell, subs, big.va + o as u64, host.va, (n as u64).next_multiple_of(16))? {
+                tb.stopped = Some(String::from("citirea benzilor dqkv F32 nu s-a terminat"));
+                *tc_big = Some(tb);
+                return Ok(AttnBig::Judged(alloc::boxed::Box::new(r), pairs));
+            }
+            f32_band.extend_from_slice(&ram_read(&host, n as u64));
+        }
+        let mut bands: Vec<Vec<u8>> = Vec::with_capacity(tcs.len());
+        for tcb in tcs {
+            for &(o, n) in &dq {
+                let bytes: Vec<u8> = core::iter::repeat_n(ap::FILL.to_le_bytes(), n / 4).flatten().collect();
+                ram_write(&host, &bytes);
+                if !copy(vbar, clock, journal, st, l, doorbell, subs, host.va, big.va + o as u64, (n as u64).next_multiple_of(16))? {
+                    tb.stopped = Some(format!("umplerea benzilor dqkv cu NaN inainte de {} nu s-a terminat", tcb.which.name()));
+                    *tc_big = Some(tb);
+                    return Ok(AttnBig::Judged(alloc::boxed::Box::new(r), pairs));
+                }
+            }
+            let (cb, q) = tcb.which.launch_bytes(set, tcb.prog_va, tcb.zone.va, big.va)?;
+            {
+                let w = st.mem.writer_mut();
+                put_bytes(w, tcb.zone.pa, &cb)?;
+                put_bytes(w, tcb.zone.pa + 0x800, &q)?;
+            }
+            let mut ts: Vec<u64> = Vec::new();
+            for rep in 0..set.repeats {
+                match mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, &maps, &sys, tcb.zone.va + 0x800)? {
+                    Ok(ns) => ts.push(ns),
+                    Err(got) => {
+                        tb.stopped = Some(format!("placa nu a terminat programul nou {}, lansarea {}: ultima inregistrare = {:#x}", tcb.which.name(), rep, got));
+                        *tc_big = Some(tb);
+                        return Ok(AttnBig::Judged(alloc::boxed::Box::new(r), pairs));
+                    }
+                }
+            }
+            tb.ns.push(median_ns(&ts));
+            let mut band: Vec<u8> = Vec::new();
+            for &(o, n) in &dq {
+                ram_write(&host, &[]);
+                if !copy(vbar, clock, journal, st, l, doorbell, subs, big.va + o as u64, host.va, (n as u64).next_multiple_of(16))? {
+                    tb.stopped = Some(format!("citirea benzilor dqkv dupa {} nu s-a terminat", tcb.which.name()));
+                    *tc_big = Some(tb);
+                    return Ok(AttnBig::Judged(alloc::boxed::Box::new(r), pairs));
+                }
+                band.extend_from_slice(&ram_read(&host, n as u64));
+            }
+            bands.push(band);
+        }
+        let g = 4 * ap::GUARD;
+        let vals = |b: &[u8]| -> Vec<f32> { f32_words(&b[..b.len() - g]) };
+        let f32v = vals(&f32_band);
+        for band in &bands {
+            let v = vals(band);
+            tb.guard_ok.push(band[band.len() - g..].chunks(4).all(|w| w == ap::FILL.to_le_bytes()));
+            tb.finite.push(v.iter().all(|x| x.is_finite()));
+            tb.rel_ppm.push(rel_ppm(&v, &f32v));
+        }
+        tb.same_words = bands.len() == 2 && bands[0][..bands[0].len() - g] == bands[1][..bands[1].len() - g];
+        tb.words = f32v.len();
+        *tc_big = Some(tb);
     }
     Ok(AttnBig::Judged(alloc::boxed::Box::new(r), pairs))
 }
