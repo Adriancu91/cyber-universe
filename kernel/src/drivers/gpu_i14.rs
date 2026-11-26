@@ -7444,6 +7444,8 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // P6-182 (os-395 report, Cyber-GPU's ask: "the time per kind of program for #513's step"): the P6-179 profile on
     // #513's list, every step (each part's records are read whole).
     let mut prof: Option<nvidia_ga104::train_profile::StepProfile> = None;
+    // P6-226: (profile launches, QMDs) when the mixed step's profile did not match its list.
+    let mut mixed_prof_skip: Option<(usize, usize)> = None;
     // P6-192 (A4): the dashboard readings taken during the steps.
     let mut step_dash: Vec<super::gpu_golden::StepSample> = Vec::new();
     // P6-216: the pieces of the step outside the board, per step (µs): batch, list, submissions - board, results.
@@ -7464,6 +7466,8 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         t0: Option<u64>,
         t_batch: Option<u64>,
         t_list: Option<u64>,
+        // P6-226 (PREDARE Cyber-GPU cab6742, note C-157_P2zl): the mixed step's profile names (step 1 only).
+        mprof: Option<nvidia_ga104::train_profile::StepProfile>,
     }
     let prepare = |st: &mut GpuState, k: usize| -> GpuResult<Prep> {
         let (x, y) = data.batches.get(k).ok_or(bad("antrenare-513: pasul nu exista"))?;
@@ -7491,13 +7495,14 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             }
         }
         let t_batch = crate::time::since_boot_us();
-        let (mut tc, mut picks) = (None, None);
+        let (mut tc, mut picks, mut mprof) = (None, None, None);
         let (zb, qmds, list) = match tc_map {
-            // P6-198: the mixed list (the 1x1x1 c/S product included) and its zone; no profile (it reads F32 lists).
+            // P6-198: the mixed list (the 1x1x1 c/S product included) and its zone. P6-226: its profile through
+            // `StepProfile::from_mixed` (each `mm_tc` named after the program really chosen; the RAM copies around it).
             Some(tcm) => {
                 let ml = plan.step_mixed(Recipe::AdamW513, &adam, step, scale)?;
                 tc = Some(ml.iter().filter(|x| matches!(x, ts::MixedLaunch::Tc { .. })).count());
-                let (zb, qmds) = match fast_map {
+                let (zb, qmds, pk) = match fast_map {
                     Some((pf, v4)) => {
                         let progs = ts::TcPrograms { tc: tcm.va, pf: pf.va, v4: v4.va, gelu: 0 };
                         let (zb, qmds, pk) = match &via {
@@ -7505,10 +7510,20 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                             None => ts::pack_mixed_fast(&ml, prog_va, &progs, Some(MIXED_FAST_STEP), ctl.va)?,
                         };
                         picks = Some(fast_picks_text(&pk));
-                        (zb, qmds)
+                        (zb, qmds, pk)
                     }
-                    None => ts::pack_mixed(&ml, prog_va, tcm.va, ctl.va)?,
+                    None => {
+                        let (zb, qmds) = ts::pack_mixed(&ml, prog_va, tcm.va, ctl.va)?;
+                        (zb, qmds, alloc::vec![None; ml.len()])
+                    }
                 };
+                if k == 0 {
+                    let pr = nvidia_ga104::train_profile::StepProfile::from_mixed(&ml, &pk)?;
+                    mprof = Some(match &via {
+                        Some(v) => pr.with_copies(v.copies_in.len(), v.copies_out.len())?,
+                        None => pr,
+                    });
+                }
                 (zb, qmds, None)
             }
             None => {
@@ -7531,7 +7546,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
         ram_write(ctl, &zb);
         let t_list = crate::time::since_boot_us();
-        Ok(Prep { slot, plan, via, qmds, list, tc, picks, t0, t_batch, t_list })
+        Ok(Prep { slot, plan, via, qmds, list, tc, picks, t0, t_batch, t_list, mprof })
     };
     // P6-217: one part of a step submitted and rung, not waited for: (what to wait for, first payload, launches).
     // `None` = the pushbuffer has no room for it until an earlier part is retired (nothing was submitted).
@@ -7564,7 +7579,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 Some(pr) => pr,
                 None => prepare(st, k)?,
             };
-            let Prep { slot, plan, via, qmds, list, tc, picks, t0, t_batch, t_list } = prep;
+            let Prep { slot, plan, via, qmds, list, tc, picks, t0, t_batch, t_list, mprof } = prep;
             if let Some(t) = tc {
                 tc_per_step = t;
             }
@@ -7580,6 +7595,15 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                     return Err(bad("antrenare-513: profilul pasului nu are cate lansari are lista"));
                 }
                 prof = Some(pr);
+            }
+            // P6-226: the mixed step's profile. A count that differs from the QMDs leaves the run without a profile (the
+            // line below says so) instead of stopping a run that is otherwise fine.
+            if let (None, Some(pr)) = (prof.as_ref(), mprof) {
+                if pr.launches() == qmds.len() {
+                    prof = Some(pr);
+                } else {
+                    mixed_prof_skip = Some((pr.launches(), qmds.len()));
+                }
             }
             let mut step_ns: Vec<u64> = Vec::with_capacity(qmds.len());
             let mut busy = 0u64;
@@ -7851,6 +7875,9 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         for row in pr.lines(8) {
             lines.push(format!("{}: kronos --gpu: {}: {}", p, tag, row));
         }
+    }
+    if let Some((a, b)) = mixed_prof_skip {
+        lines.push(format!("{}: kronos --gpu: {}: profilul pasului mixt sarit: {} lansari in profil, {} in lista (P6-226)", p, tag, a, b));
     }
     // P6-190 (C-165, decision H3): the night race. After the steps (the arena holds real weights, activations and
     // gradients, nothing reads it any more), for every `mm_train` shape of the step: the same A, B (and bias) as the
