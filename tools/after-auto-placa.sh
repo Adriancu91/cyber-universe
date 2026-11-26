@@ -22,4 +22,13 @@ for want in "== [2/6] test-placa-sim --gresit ==" "REFUZAT: forma corecta" "== [
             "== REZULTAT: 4 rulate, 2 refuzate" "teste pe placa pornite: 4"; do
     grep -qF -- "$want" <<<"$text" || { echo "[after-auto-placa] EȘUAT: raportul listei nu are: $want"; echo "$text" | head -80; exit 1; }
 done
+# P6-236: each refused board line has its own `ciclu-auto-…-refuzat.txt` (it goes to the hub with the others), with why.
+mapfile -t refs < <(echo "$files" | grep -E '/ciclu-auto-[0-9]{8}-[0-9]{4}-refuzat(-[0-9]+)?\.txt$' | sort)
+(( ${#refs[@]} == 2 )) || { echo "[after-auto-placa] EȘUAT: trebuiau 2 rapoarte ciclu-auto-…-refuzat, sunt ${#refs[@]}"; echo "$files"; exit 1; }
+rtext=""
+for r in "${refs[@]}"; do rtext+="$(m mtype -i "$IMG@@1M" "::${r#::}" 2>/dev/null)"$'\n'; done
+for want in "randul [2/6]: test-placa-sim --gresit" "de ce: \`--gresit\` nu e o optiune cunoscuta" "randul [6/6]: test-placa-sim" "REFUZAT: placa nu a revenit" "nimic nu s-a scris in placa; restul listei a continuat."; do
+    grep -qF -- "$want" <<<"$rtext" || { echo "[after-auto-placa] EȘUAT: rapoartele refuzurilor nu au: $want"; echo "$rtext"; exit 1; }
+done
+grep -qF -- "REFUZAT, de ce: \`--gresit\` nu e o optiune cunoscuta" <<<"$text" || { echo "[after-auto-placa] EȘUAT: raportul listei fără motivul refuzului"; exit 1; }
 echo "[after-auto-placa] ok: 4 teste pe placa intr-o pornire, ${#reps[@]} rapoarte, al cincilea refuzat"

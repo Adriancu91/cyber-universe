@@ -155,6 +155,10 @@ pub fn target(command: &str) -> Result<(String, String), &'static str> {
     }
 }
 
+/// Every `test-placa` option in the one order the line must keep (each at most once); the I9 text carries them as
+/// suffixes in this order. P6-236: shared with `board_refusal_hint`.
+const BOARD_OPTIONS: &[&str] = &[FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, P8, P8_S8, BARIERA, BARIERA_LARGA, COLSUM, PAS_AUR, MM_TC, MM_TC128, MM_TC_PF, MM_TC_V4, MM_TC128_V4, MM_TC_64K, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, ATTN_TC, ATTN_TC_V4, ATTN_TC0, ATTN_TC0_V4, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_MIXED_FAST, TRAIN_VRAM, TRAIN_FUSED, TRAIN_513, TRAIN_513_TILES3, TRAIN_513_MM_TILE, TRAIN_513_FUSED_TILE, TRAIN_513_COLSUM, TRAIN_513_MIXED, TRAIN_513_MIXED_FAST, TRAIN_513_VIA_RAM, TRAIN_513_SLOTS, TRAIN_513_ATTN_TC16, TRAIN_513_MM_CHOICE, TRAIN_513_SM_STEP, TRAIN_513_MM_MODEL, TRAIN_513_RACE, TRAIN_513_PROBE_64K8, TRAIN_513_OCCUPANCY, TRAIN_RAM];
+
 /// P6-96: `test-placa [--i9 …]` of the automatic list -> the I9.
 pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
     const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou` sau `--tablou-viteza`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi` sau `--ln-32`, apoi `--k651`, apoi `--argmax-placa` sau `--argmax-fara-copie`, apoi `--dieta2`, apoi `--lot`, apoi `--p8` (urmat optional de `--p8-s8`), apoi `--bariera`, apoi `--bariera-larga`, apoi `--colsum`, apoi `--pas-aur`, apoi `--mm-tc` (urmat optional de `--mm-tc128`), apoi `--atentie-placi`, apoi `--atentie2`, apoi `--atentie3`, apoi `--atentie4`, apoi `--atentie-tc`, apoi `--atentie-tc16-v4`, apoi `--atentie-tc0`, apoi `--atentie-tc0-v4`, apoi `--ram-vram`, apoi `--adam-ram`, apoi `--antrenare-mini` la sfarsit, optional urmat de `--mixt` sau `--vram` (iar dupa `--vram` optional `--pas-lipit`, `--antrenare-513` sau `--lot-ram`; dupa `--antrenare-513` optional `--placi3`, dupa el optional `--mm-placi`, dupa el optional `--lipit-placi` (ultimul) sau `--colsum-impartit`, la sfarsit optional `--mixt-513` (ultimul), `--mm-alegere` (ultimul, urmat optional de `--treapta-pas`) sau `--cursa-mm` dupa `--mm-placi` sau `--colsum-impartit`, `--cursa-mm` urmat optional de `--proba-64k8` sau `--ocupare`) (in aceasta ordine; `--mixt` sau `--vram` doar imediat dupa `--antrenare-mini`, nu amandoua; `--pas-lipit`, `--antrenare-513` sau `--lot-ram` doar imediat dupa `--vram`; `--adam-ram` doar imediat dupa `--ram-vram`; `--atentie2` doar dupa `--atentie-placi`, `--atentie3` doar dupa `--atentie2`, `--atentie4` doar dupa `--atentie3`, `--atentie-tc` doar dupa `--atentie3` sau `--atentie4`, `--atentie-tc16-v4` doar imediat dupa `--atentie-tc`, `--atentie-tc0` doar imediat dupa `--atentie-tc` sau `--atentie-tc16-v4`, `--atentie-tc0-v4` doar imediat dupa `--atentie-tc0`; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi`, `--ln-32`; `--k651` nu merge cu `--lipit` sau `--simplu`; `--argmax-fara-copie` nu merge cu `--lipit`, `--ln-nou`, `--sferturi` sau `--ln-32`; `--lot` doar cu `--argmax-fara-copie` si lista implicita lipita-ln-32, fara alta alegere de lista)";
@@ -212,7 +216,7 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
     // P6-128: `--ln-32` = `lipita-ln`, then `lipita-ln-32` (every product on quarters), compared; one more list choice.
     // P6-135 (note C-157_P2i, point 1): `--lipita-ln` = the default until now (`lipita-ln` alone); without any list
     // choice the cycle now runs `lipita-ln-32` alone. The checks below go by name, not by position.
-    let all = [FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, P8, P8_S8, BARIERA, BARIERA_LARGA, COLSUM, PAS_AUR, MM_TC, MM_TC128, MM_TC_PF, MM_TC_V4, MM_TC128_V4, MM_TC_64K, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, ATTN_TC, ATTN_TC_V4, ATTN_TC0, ATTN_TC0_V4, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_MIXED_FAST, TRAIN_VRAM, TRAIN_FUSED, TRAIN_513, TRAIN_513_TILES3, TRAIN_513_MM_TILE, TRAIN_513_FUSED_TILE, TRAIN_513_COLSUM, TRAIN_513_MIXED, TRAIN_513_MIXED_FAST, TRAIN_513_VIA_RAM, TRAIN_513_SLOTS, TRAIN_513_ATTN_TC16, TRAIN_513_MM_CHOICE, TRAIN_513_SM_STEP, TRAIN_513_MM_MODEL, TRAIN_513_RACE, TRAIN_513_PROBE_64K8, TRAIN_513_OCCUPANCY, TRAIN_RAM];
+    let all = BOARD_OPTIONS;
     let pos = |x: &str| all.iter().position(|y| *y == x).unwrap_or(0);
     let lists = pos(LIPIT)..=pos(LN_32);
     // The two-run lists: the argmax without the copy reads no logits, they need both runs' logits.
@@ -401,6 +405,55 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
         out.push_str(&format!("{} {}", TRAIN_513_BATCH, n));
     }
     Some(Ok(out))
+}
+
+/// P6-236 (centre note 26 Nov 17:50, after os-462 / os-465): why a refused `test-placa` line was refused, in one
+/// sentence for the report: the first word the line cannot take where it stands (the line up to it is refused while
+/// the line before it is not), or the `--lot-513 N` ending. `None` when the line is not `test-placa` or is accepted.
+pub fn board_refusal_hint(command: &str) -> Option<String> {
+    let words: Vec<&str> = command.split_whitespace().collect();
+    if words.first() != Some(&"test-placa") || !matches!(board_command(command), Some(Err(_))) {
+        return None;
+    }
+    let refused = |n: usize| matches!(board_command(&words[..n].join(" ")), Some(Err(_)));
+    let mut start = 1;
+    if words.get(1) == Some(&"--i9") {
+        if words.len() < 3 || refused(3) {
+            return Some(String::from("dupa `--i9` vine una din c125, c133, c135, os302"));
+        }
+        start = 3;
+    }
+    let lot = words.len() >= start + 2 && words[words.len() - 2] == "--lot-513";
+    let end = if lot { words.len() - 2 } else { words.len() };
+    let rank = |w: &str| BOARD_OPTIONS.iter().position(|x| x.trim() == w);
+    for k in start..end {
+        if !refused(k + 1) {
+            continue;
+        }
+        let w = words[k];
+        if w == "--lot-513" {
+            return Some(String::from("`--lot-513 N` sta doar la sfarsitul randului (ultimele doua cuvinte), cu N intre 1 si 16"));
+        }
+        let Some(at) = rank(w) else {
+            return Some(format!("`{}` nu e o optiune cunoscuta a lui `test-placa` (cuvantul {} din rand)", w, k + 1));
+        };
+        let prev = words[k - 1];
+        if words[start..k].contains(&w) {
+            return Some(format!("`{}` apare de doua ori", w));
+        }
+        // An earlier word that comes later in the one order: the usual mistake (os-462 / os-465).
+        if let Some(later) = words[start..k].iter().find(|x| rank(x).is_some_and(|r| r > at)) {
+            return Some(format!(
+                "`{}` e pus prea tarziu: in ordinea optiunilor vine inaintea lui `{}` (muta `{}` inaintea lui `{}`)",
+                w, later, w, later
+            ));
+        }
+        return Some(format!("`{}` nu poate sta dupa `{}` (vezi forma corecta: ce optiune o cere imediat inainte)", w, prev));
+    }
+    if lot {
+        return Some(String::from("`--lot-513 N` cere `--antrenare-513` in rand si N intre 1 si 16"));
+    }
+    Some(String::from("randul intreg nu se potriveste cu forma corecta"))
 }
 
 /// P6-96 (C-143 point 3): `gpu recupereaza` brought the card back when its last check says the I6 pre-check passes again
@@ -2342,6 +2395,17 @@ pub fn self_test() {
     assert!(board_command("test-placa --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --lot-prin-ram --doua-locuri --atentie-tc16") == Some(Ok(String::from("c135 --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --lot-prin-ram --doua-locuri --atentie-tc16"))));
     assert!(board_command("test-placa --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --atentie-tc16").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --atentie-tc16 --lot-prin-ram").is_some_and(|r| r.is_err()));
+    // P6-236 (centre note 26 Nov 17:50): the refused line says which word is out of place (os-465's first line).
+    let os465 = "test-placa --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --atentie-tc16 --lot-prin-ram --doua-locuri --lot-513 6";
+    assert!(board_refusal_hint(os465).is_some_and(|h| h.contains("`--lot-prin-ram` e pus prea tarziu") && h.contains("inaintea lui `--atentie-tc16`")), "ciclu: indiciul os-465");
+    assert!(board_refusal_hint("test-placa --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --lot-prin-ram --doua-locuri --atentie-tc16 --lot-513 6").is_none());
+    assert!(board_refusal_hint("gpu lant").is_none() && board_refusal_hint("test-placa --bariera").is_none());
+    assert!(board_refusal_hint("test-placa --bariera --atentie-tc17").is_some_and(|h| h.contains("`--atentie-tc17` nu e o optiune cunoscuta")));
+    assert!(board_refusal_hint("test-placa --bariera --bariera").is_some_and(|h| h.contains("de doua ori")));
+    assert!(board_refusal_hint("test-placa --atentie2").is_some_and(|h| h.contains("`--atentie2` nu poate sta dupa `test-placa`")));
+    assert!(board_refusal_hint("test-placa --i9 c999 --bariera").is_some_and(|h| h.contains("dupa `--i9`")));
+    assert!(board_refusal_hint("test-placa --bariera --lot-513 6").is_some_and(|h| h.contains("cere `--antrenare-513`")));
+    assert!(board_refusal_hint("test-placa --lot-513 6 --bariera").is_some_and(|h| h.contains("la sfarsitul randului")));
     assert!(board_command("test-placa --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --lot-prin-ram --doua-locuri --lot-513 6") == Some(Ok(String::from("c135 --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --lot-prin-ram --doua-locuri --lot-513 6"))));
     assert!(board_command("test-placa --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --doua-locuri").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --antrenare-mini --vram --doua-locuri").is_some_and(|r| r.is_err()));

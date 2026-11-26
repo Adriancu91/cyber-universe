@@ -136,6 +136,7 @@ pub fn run_if_present() {
 
     let start = crate::time::uptime_ms().unwrap_or(0);
     let (mut ran, mut refused) = (0usize, 0usize);
+    let mut refused_notes = 0usize;
     let total = plan.commands.len();
     for (i, cmd) in plan.commands.iter().enumerate() {
         out.add(&format!("\n== [{}/{}] {} ==\n", i + 1, total, cmd));
@@ -162,8 +163,16 @@ pub fn run_if_present() {
                 }
                 Err(why) => {
                     refused += 1;
+                    // The test builds' `test-placa-sim` reads like `test-placa` for the hint.
+                    let hint = super::ciclu::board_refusal_hint(&cmd.replacen("test-placa-sim", "test-placa", 1));
                     say(&format!("auto: [{}/{}] REFUZAT: {} ({})\n", i + 1, total, cmd, why));
+                    if let Some(h) = &hint {
+                        say(&format!("auto: [{}/{}] de ce: {}\n", i + 1, total, h));
+                        out.add(&format!("REFUZAT, de ce: {}\n", h));
+                    }
                     out.add(&format!("REFUZAT: {} (nimic nu s-a scris in placa)\n", why));
+                    // P6-236 (centre note 26 Nov 17:50): the refusal reaches the hub too, not only this stick report.
+                    board_refused_note(i + 1, total, cmd, hint.as_deref(), &why, &mut refused_notes);
                 }
             }
             continue;
@@ -209,6 +218,15 @@ pub fn run_if_present() {
         ran += 1;
     }
     watch_stop(&mut out);
+    // P6-236: refused board lines written for the hub are sent once more at the end (a board test after them already
+    // sent them; the ledger of `gh-trimite` keeps a report from going twice).
+    if refused_notes > 0 && cfg!(not(feature = "test-auto")) {
+        super::emit_capture_begin();
+        raport::send_to_hub();
+        let sent = super::emit_capture_end();
+        say(&sent);
+        out.add(&format!("\nrandurile `test-placa` refuzate ({}) trimise in hub:\n{}", refused_notes, sent));
+    }
     let secs = crate::time::uptime_ms().unwrap_or(0).saturating_sub(start) / 1000;
     let summary = format!("REZULTAT: {} rulate, {} refuzate, {} s; teste pe placa pornite: {}", ran, refused, secs, super::ciclu::board_runs());
     out.add(&format!("\n== {} ==\n", summary));
@@ -314,6 +332,37 @@ pub(super) fn board_test(parsed: Result<String, &'static str>) -> Result<String,
     let start = board_start(&i9)?;
     let (body, result) = super::ciclu::board_test(&i9, start.nth);
     board_end(&i9, &start, "cheile: fisierul de pe stick + DECIZII.md", body, result, raport::hub_paths().0, true)
+}
+
+/// P6-236 (centre note 26 Nov 17:50, after os-462 / os-465): a refused `test-placa` line of the list gets its own small
+/// report next to the board tests' copies (`ciclu-auto-<date>-refuzat.txt`), so it reaches the hub's
+/// `rezultate/os-automat/` with the others: the line, why, and that nothing was written to the board.
+fn board_refused_note(n: usize, total: usize, cmd: &str, hint: Option<&str>, why: &str, notes: &mut usize) {
+    // The test builds write next to their pretend board tests' copies (`board_test_sim`).
+    #[cfg(feature = "test-auto")]
+    let reports = DIR;
+    #[cfg(not(feature = "test-auto"))]
+    let reports = raport::hub_paths().0;
+    if fs::kind(reports).is_err() {
+        let _ = fs::create(reports, Kind::Dir);
+    }
+    let path = free_name(&format!("{}/ciclu-auto-{}-refuzat", reports, date_stamp()));
+    let mut note = Report::create(&path);
+    note.add(&format!(
+        "== rand REFUZAT din lista automata (P6-236): raport Cyber Universe OS ==\nnucleu: cyber-universe {} (cyber-gpu {})\nora: {}\nrandul [{}/{}]: {}\n",
+        env!("CARGO_PKG_VERSION"),
+        crate::drivers::gpu::CYBER_GPU_REV,
+        now_text(),
+        n,
+        total,
+        cmd
+    ));
+    if let Some(h) = hint {
+        note.add(&format!("de ce: {}\n", h));
+    }
+    note.add(&format!("REFUZAT: {}\nnimic nu s-a scris in placa; restul listei a continuat.\n", why));
+    say(&format!("auto: [{}/{}] refuzul scris pentru hub: {}\n", n, total, path));
+    *notes += 1;
 }
 
 /// P6-139: a board test that got its slot.
