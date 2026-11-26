@@ -4428,6 +4428,10 @@ fn mm_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         if super::gpu_tur::MM_TC_V4_IN_CYCLE.load(ord) {
             v.push(Comp::V4);
         }
+        // P6-242 (C-157 p.2, cyber-gpu `2b24cc7`, note P2zzb): `mm_tc_v5` (12 KiB block) right after `mm_tc_v4`.
+        if super::gpu_tur::MM_TC_V5_IN_CYCLE.load(ord) {
+            v.push(Comp::V5);
+        }
         // P6-212 (C-157 p.2, cyber-gpu `abb4f73`): `mm_tc128_v4` last.
         if super::gpu_tur::MM_TC128_V4_IN_CYCLE.load(ord) {
             v.push(Comp::Tc128V4);
@@ -4630,6 +4634,8 @@ enum Comp {
     Pf,
     /// P6-210: `mm_tc_v4`, `mm_tc_pf` with 128-bit reads (128 registers, the same block and grid); only aligned products.
     V4,
+    /// P6-242: `mm_tc_v5`, `mm_tc_v4` with a 12 KiB block (the same loop, block, grid and cbuf); only aligned products.
+    V5,
     /// P6-212: `mm_tc128_v4`, `mm_tc128` with 128-bit reads in advance (168 registers, `mm_tc128`'s block and grid);
     /// only aligned products.
     Tc128V4,
@@ -4645,6 +4651,7 @@ impl Comp {
     fn fits(self, a: &nvidia_ga104::mm_tc::Args) -> bool {
         match self {
             Comp::V4 => nvidia_ga104::mm_tc_v4::fits(a),
+            Comp::V5 => nvidia_ga104::mm_tc_v5::fits(a),
             Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::fits(a),
             Comp::Tc128 | Comp::Pf | Comp::Tc => true,
         }
@@ -4654,6 +4661,7 @@ impl Comp {
             Comp::Tc128 => "mm_tc128",
             Comp::Pf => "mm_tc_pf",
             Comp::V4 => "mm_tc_v4",
+            Comp::V5 => "mm_tc_v5",
             Comp::Tc128V4 => "mm_tc128_v4",
             Comp::Tc => "mm_tc",
         }
@@ -4663,6 +4671,7 @@ impl Comp {
             Comp::Tc128 => nvidia_ga104::mm_tc128::MM_TC128,
             Comp::Pf => nvidia_ga104::mm_tc_pf::MM_TC_PF,
             Comp::V4 => nvidia_ga104::mm_tc_v4::MM_TC_V4,
+            Comp::V5 => nvidia_ga104::mm_tc_v5::MM_TC_V5,
             Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::MM_TC128_V4,
             Comp::Tc => nvidia_ga104::mm_tc::MM_TC,
         }
@@ -4672,6 +4681,7 @@ impl Comp {
             Comp::Tc128 => nvidia_ga104::mm_tc128::MM_TC128_SHA256,
             Comp::Pf => nvidia_ga104::mm_tc_pf::MM_TC_PF_SHA256,
             Comp::V4 => nvidia_ga104::mm_tc_v4::MM_TC_V4_SHA256,
+            Comp::V5 => nvidia_ga104::mm_tc_v5::MM_TC_V5_SHA256,
             Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::MM_TC128_V4_SHA256,
             Comp::Tc => nvidia_ga104::mm_tc::MM_TC_SHA256,
         }
@@ -4681,6 +4691,7 @@ impl Comp {
             Comp::Tc128 => nvidia_ga104::mm_tc128::REGISTERS,
             Comp::Pf => nvidia_ga104::mm_tc_pf::REGISTERS,
             Comp::V4 => nvidia_ga104::mm_tc_v4::REGISTERS,
+            Comp::V5 => nvidia_ga104::mm_tc_v5::REGISTERS,
             Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::REGISTERS,
             Comp::Tc => nvidia_ga104::mm_tc::REGISTERS,
         }
@@ -4690,6 +4701,7 @@ impl Comp {
             Comp::Tc128 => nvidia_ga104::mm_tc128::BLOCK,
             Comp::Pf => nvidia_ga104::mm_tc_pf::BLOCK,
             Comp::V4 => nvidia_ga104::mm_tc_v4::BLOCK,
+            Comp::V5 => nvidia_ga104::mm_tc_v5::BLOCK,
             Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::BLOCK,
             Comp::Tc => nvidia_ga104::mm_tc::BLOCK,
         }
@@ -4699,6 +4711,7 @@ impl Comp {
             Comp::Tc128 => nvidia_ga104::mm_tc128::SHARED,
             Comp::Pf => nvidia_ga104::mm_tc_pf::SHARED,
             Comp::V4 => nvidia_ga104::mm_tc_v4::SHARED,
+            Comp::V5 => nvidia_ga104::mm_tc_v5::SHARED,
             Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::SHARED,
             Comp::Tc => nvidia_ga104::mm_tc::SHARED,
         }
@@ -4708,6 +4721,7 @@ impl Comp {
             Comp::Tc128 => nvidia_ga104::mm_tc128::grid(a),
             Comp::Pf => nvidia_ga104::mm_tc_pf::grid(a),
             Comp::V4 => nvidia_ga104::mm_tc_v4::grid(a),
+            Comp::V5 => nvidia_ga104::mm_tc_v5::grid(a),
             Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::grid(a),
             Comp::Tc => a.grid(),
         }
@@ -4717,6 +4731,7 @@ impl Comp {
             Comp::Tc128 => nvidia_ga104::mm_tc128::CBUF_BYTES,
             Comp::Pf => nvidia_ga104::mm_tc_pf::CBUF_BYTES,
             Comp::V4 => nvidia_ga104::mm_tc_v4::CBUF_BYTES,
+            Comp::V5 => nvidia_ga104::mm_tc_v5::CBUF_BYTES,
             Comp::Tc128V4 => nvidia_ga104::mm_tc128_v4::CBUF_BYTES,
             Comp::Tc => nvidia_ga104::mm_tc::CBUF_BYTES,
         }
@@ -4749,6 +4764,12 @@ impl Comp {
                     "kt mm_tc_v4@64k seturi rulate",
                     "kt mm_tc_v4@64k qkv median ns",
                     "kt mm_tc qkv median ns (langa mm_tc_v4@64k)",
+                ],
+                Comp::V5 => [
+                    "kt mm_tc_v5@64k seturi cu aceiasi biti ca mm_tc",
+                    "kt mm_tc_v5@64k seturi rulate",
+                    "kt mm_tc_v5@64k qkv median ns",
+                    "kt mm_tc qkv median ns (langa mm_tc_v5@64k)",
                 ],
                 Comp::Tc128V4 => [
                     "kt mm_tc128_v4@64k seturi cu aceiasi biti ca mm_tc",
@@ -4783,6 +4804,12 @@ impl Comp {
                 "kt mm_tc_v4 seturi rulate",
                 "kt mm_tc_v4 qkv median ns",
                 "kt mm_tc qkv median ns (langa mm_tc_v4)",
+            ],
+            Comp::V5 => [
+                "kt mm_tc_v5 seturi cu aceiasi biti ca mm_tc",
+                "kt mm_tc_v5 seturi rulate",
+                "kt mm_tc_v5 qkv median ns",
+                "kt mm_tc qkv median ns (langa mm_tc_v5)",
             ],
             Comp::Tc128V4 => [
                 "kt mm_tc128_v4 seturi cu aceiasi biti ca mm_tc",

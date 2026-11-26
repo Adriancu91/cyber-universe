@@ -470,6 +470,8 @@ impl SimGpu {
             cp.register_program_with_needs(nvidia_ga104::mm_tc_pf::MM_TC_PF, c::mm_tc_pf_on_cpu, c::MM_TC_PF_NEEDS);
             // P6-210 (C-157 p.2, cyber-gpu `273a42b`): `mm_tc_v4`, 128-bit reads (refuses misaligned products).
             cp.register_program_with_needs(nvidia_ga104::mm_tc_v4::MM_TC_V4, c::mm_tc_v4_on_cpu, c::MM_TC_V4_NEEDS);
+            // P6-242 (C-157 p.2, cyber-gpu `2b24cc7`): `mm_tc_v5`, `mm_tc_v4` with a 12 KiB block (refuses misaligned products).
+            cp.register_program_with_needs(nvidia_ga104::mm_tc_v5::MM_TC_V5, c::mm_tc_v5_on_cpu, c::MM_TC_V5_NEEDS);
             // P6-212 (C-157 p.2, cyber-gpu `abb4f73`): `mm_tc128_v4`, `mm_tc128` with 128-bit reads (refuses misaligned).
             cp.register_program_with_needs(nvidia_ga104::mm_tc128_v4::MM_TC128_V4, c::mm_tc128_v4_on_cpu, c::MM_TC128_V4_NEEDS);
             // P6-141 (C-161 point 4): the three tiled training attention programs (blocks of 256, 32–37 KiB shared).
