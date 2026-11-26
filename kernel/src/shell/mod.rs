@@ -899,11 +899,17 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::BARRIER_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu bariera-sim: pornita (SIMULARE: dupa texte, grid_barrier cu G = SM-uri x 1 si x 2, R = 1 si 1001)\n");
                 }
+                Some("on") if args.get(2).copied() == Some("larg") && args.len() == 3 => {
+                    // P6-232: the wide run (G = SMs x 8, then x 16)
+                    crate::drivers::gpu_tur::BARRIER_WIDE_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu bariera-sim: pornita larg (SIMULARE: dupa texte, grid_barrier cu G = SM-uri x 8 si x 16, R = 1 si 1001)\n");
+                }
                 Some("off") if args.len() == 2 => {
                     crate::drivers::gpu_tur::BARRIER_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::BARRIER_WIDE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu bariera-sim: oprita\n");
                 }
-                _ => out!("folosire: gpu bariera-sim on|off\n"),
+                _ => out!("folosire: gpu bariera-sim on [larg]|off\n"),
             }
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu bariera-sim: exista doar in build-ul de test (pe stick proba barierei o porneste doar ciclul, test-placa --bariera)\n");

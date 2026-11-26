@@ -647,6 +647,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-229** Cititorul de carduri gol (sense 2/3A) = un rând INFO, nu avertismente: agentul de bord nu mai vede „abatere” la fiecare pornire. Plan: `docs/plans/P6-229.md`. Dep: P6-228.
 - [x] **P6-230** Marginea pentru subnormalele f16 în proba `--atentie-tc` (PREDARE Cyber-GPU P2zo `3e34202` / P2zp `250c9b8`): rândul `attn_tc::judge_nominal` lângă cel vechi, verdictul pe marginea nouă. Plan: `docs/plans/P6-230.md`. Dep: P6-227.
 - [x] **P6-231** Atenția înapoi pe circuitele f16 în pasul mixt rapid #513 (`--atentie-tc16`, PREDARE Cyber-GPU P2zm pasul 2 / P2zp `250c9b8`). Plan: `docs/plans/P6-231.md`. Dep: P6-230.
+- [x] **P6-232** Proba barierei largă (`test-placa --bariera-larga`, G = SM-uri × 8 / × 16; PREDARE Cyber-GPU P2zr `6e69f1a`). Plan: `docs/plans/P6-232.md`. Dep: P6-228.
   Gata (2026-11-26 ~09:05 RO): cyber-gpu `3c6fa3b` → `aa94bea`; I9 folosește `query_gr_counts` (`GpuState::gr_counts`); proba barierei: `groups_for_sms(counts.sms, …)`, raportul scrie TPC, SM și maximele LITTER; altă cifră decât 48 SM = proba oprită, nimic trimis. Teste: `kronos-gpu-bariera`, `boot` TRECUTE.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 

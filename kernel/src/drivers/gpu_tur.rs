@@ -347,6 +347,11 @@ pub static P8_S8_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::
 /// G = SMs × 1, then × 2 if it held) — `test-placa … --bariera`; in the test build `gpu bariera-sim on`. Off by default.
 pub static BARRIER_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-232 (cyber-gpu `6e69f1a`, note `C-157_P2zr_bariera-larga.md`): the wide grid-barrier probe — the same program,
+/// buffers and limit as [`BARRIER_IN_CYCLE`], only G = SMs × 8 (384), then × 16 (768) if it held —
+/// `test-placa … --bariera-larga`; in the test build `gpu bariera-sim on larg`. Off by default.
+pub static BARRIER_WIDE_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-134 (C-161 point 4, cyber-gpu `3b4ca77`): the first backward program of the training on the board, the `colsum`
 /// probe (5 fixed sets), after `kronos --gpu`'s texts (and after P8 when asked). Set only by the cycle when the list
 /// asks for it (`test-placa … --colsum`) and, in the test build, by `gpu colsum-sim on`. Off by default.

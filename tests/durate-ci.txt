@@ -92,6 +92,7 @@ kronos-gpu-mm-tc-64k 600
 kronos-gpu-p8 186
 kronos-gpu-p8-s8 200
 kronos-gpu-bariera 200
+kronos-gpu-bariera-larga 220
 kronos-gpu-pas-aur 330
 kronos-gpu-antrenare-mini 720
 kronos-gpu-antrenare-mini-mixt 600

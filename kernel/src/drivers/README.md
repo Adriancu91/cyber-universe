@@ -232,6 +232,10 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     (`GpuState.gr`), golește contorul din VRAM înainte de fiecare lansare și rulează G = SM-uri × 1 cu R = 1 și 1 001 (limită
     100 ms pe lansare pe placă, `gpu_i11::wait_records_within`), apoi, doar dacă a trecut, G = SM-uri × 2 → `bariera G=… R=…:
     TRECE / CONTOR GRESIT / CUVINTE VECHI`, `o bariera = … ns`, `BLOCATA` (oprire, nimic altceva trimis). Test: `kronos-gpu-bariera`.
+    **P6-232 (cyber-gpu `6e69f1a`, nota `C-157_P2zr_bariera-larga.md`): proba barierei largă.** Cu `test-placa … --bariera-larga`
+    (după `--bariera` sau singură, înainte de `--colsum`; `gpu_tur::BARRIER_WIDE_IN_CYCLE`; în build-ul de test `gpu bariera-sim on larg`):
+    aceeași `barrier_probe` cu `wide = true` — G = `grid_barrier::groups_for_wide_sms(sms, 8)` (384), apoi, doar dacă a trecut,
+    `(sms, 16)` (768); zona probei are 3 pagini. Rândurile ca mai sus, la final `proba barierei larga: …`. Test: `kronos-gpu-bariera-larga`.
     **P6-201 (C-165, cyber-gpu `54f5ab8`): proba ocupării.** Cu `test-placa … --cursa-mm --ocupare` (doar imediat după
     `--cursa-mm`, nu cu `--proba-64k8`; `gpu_tur::TRAIN_513_OCCUPANCY_IN_CYCLE`; în build-ul de test
     `gpu antrenare-mini-sim vram-513-ocupare`): în locul cursei mari, pe forma qkv, cele 10 rulări din `occupancy::PROBE`

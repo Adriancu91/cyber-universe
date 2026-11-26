@@ -2874,8 +2874,15 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
         // P6-218 (cyber-gpu `adc783c`): the grid-barrier probe, only when the cycle's list asks for it
         // (`test-placa … --bariera`), after P8; its failure is a line.
         if super::gpu_tur::BARRIER_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
-            if let Err(e) = barrier_probe(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, &ctx) {
+            if let Err(e) = barrier_probe(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, &ctx, false) {
                 lines.push(format!("{}: kronos --gpu: proba barierei: oprita: {}", p, e));
+            }
+        }
+        // P6-232 (cyber-gpu `6e69f1a`, note `C-157_P2zr_bariera-larga.md`): the wide barrier probe (G = SMs × 8, then
+        // × 16), only when the cycle's list asks for it (`test-placa … --bariera-larga`); its failure is a line.
+        if super::gpu_tur::BARRIER_WIDE_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+            if let Err(e) = barrier_probe(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, &ctx, true) {
+                lines.push(format!("{}: kronos --gpu: proba barierei larga: oprita: {}", p, e));
             }
         }
         // P6-134 (C-161 point 4, cyber-gpu `3b4ca77`): the first backward program of the training (`colsum`), only when
@@ -3789,6 +3796,10 @@ const EXPECTED_SMS: u32 = 48;
 /// `grid_barrier::judge`; the cost of one barrier from the two board times. Only if G × 1 held: the same with G × 2. A
 /// launch that does not finish in time stops the probe (`BLOCATA`): nothing else is sent. New for the board: this
 /// program (its SHA-256 checked first), 19 registers, no shared memory, atomics on a VRAM word.
+///
+/// P6-232 (cyber-gpu `6e69f1a`, note `C-157_P2zr_bariera-larga.md`): `wide` = the same probe with G = SMs × 8 (384),
+/// then × 16 (768) only if 384 held (`grid_barrier::groups_for_wide_sms`, never `groups_for_wide`); a larger zone
+/// (3 pages) holds the 768 groups' data and results. Nothing else changes for the board.
 #[allow(clippy::too_many_arguments)]
 fn barrier_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     p: &str,
@@ -3802,19 +3813,21 @@ fn barrier_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     doorbell: &mut Bell<'_, V>,
     subs: &mut u32,
     ctx: &CopyCtx,
+    wide: bool,
 ) -> GpuResult<()> {
     use nvidia_ga104::grid_barrier as gb;
     // The page: counter +0, data +0x100 (8·G ≤ 768 B), results +0x400 (4·G ≤ 384 B); cbuf +0x800, QMD +0xa00.
+    // P6-232, the wide run (G ≤ 768): data +0x100 (≤ 6 144 B), results +0x1900 (≤ 3 072 B); cbuf +0x2800, QMD +0x2a00.
     const SYNC: u64 = 0;
     const DATA: u64 = 0x100;
-    const OUT: u64 = 0x400;
-    const CBUF: u64 = 0x800;
-    const QMD: u64 = 0xa00;
+    #[allow(non_snake_case)]
+    let (OUT, CBUF, QMD, ZONE): (u64, u64, u64, u64) = if wide { (0x1900, 0x2800, 0x2a00, 3 * PAGE) } else { (0x400, 0x800, 0xa00, PAGE) };
+    let name = if wide { "proba barierei larga" } else { "proba barierei" };
     let label = if permit.is_some() { "placa" } else { "SIMULARE" };
     let limit = if permit.is_some() { BARRIER_LIMIT_US } else { WAIT_US };
     let sha = sha256_hex(gb::PROGRAM);
     if sha != GRID_BARRIER_SHA256 {
-        lines.push(format!("{}: kronos --gpu: proba barierei: SHA-256 al programului {} nu e cel din nota ({}): nimic trimis", p, sha, GRID_BARRIER_SHA256));
+        lines.push(format!("{}: kronos --gpu: {}: SHA-256 al programului {} nu e cel din nota ({}): nimic trimis", p, name, sha, GRID_BARRIER_SHA256));
         return Err(bad("bariera: SHA-256 gresit"));
     }
     let gr = st.gr.ok_or_else(|| bad("bariera: forma GR lipseste (I9 nu a raportat-o)"))?;
@@ -3823,8 +3836,9 @@ fn barrier_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let counts = st.gr_counts.ok_or_else(|| bad("bariera: numarul de TPC lipseste (I9 nu l-a raportat)"))?;
     let sms = counts.sms;
     lines.push(format!(
-        "{}: kronos --gpu: proba barierei ({}): programul grid_barrier ({} octeti, SHA-256 {}..., {} registre, blocuri de {}), {} SM-uri active ({} TPC x {} SM; maximele de proiect {} GPC x {} TPC x {} SM), R = {} apoi {}, limita {} ms pe lansare",
+        "{}: kronos --gpu: {} ({}): programul grid_barrier ({} octeti, SHA-256 {}..., {} registre, blocuri de {}), {} SM-uri active ({} TPC x {} SM; maximele de proiect {} GPC x {} TPC x {} SM), R = {} apoi {}, limita {} ms pe lansare{}",
         p,
+        name,
         label,
         gb::PROGRAM.len(),
         &sha[..16],
@@ -3838,29 +3852,31 @@ fn barrier_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         gr.sm_per_tpc,
         gb::ROUNDS_SHORT,
         gb::ROUNDS_LONG,
-        limit / 1000
+        limit / 1000,
+        if wide { ", G = SM-uri x 8 apoi x 16" } else { "" }
     ));
     if sms != EXPECTED_SMS {
         // the note: if another count comes, stop and write the values (do not guess them)
         lines.push(format!(
-            "{}: kronos --gpu: proba barierei: GSP-RM raporteaza {} TPC -> {} SM, asteptat {} (RTX 3070 Ti); proba oprita, nimic trimis",
-            p, counts.tpcs, sms, EXPECTED_SMS
+            "{}: kronos --gpu: {}: GSP-RM raporteaza {} TPC -> {} SM, asteptat {} (RTX 3070 Ti); proba oprita, nimic trimis",
+            p, name, counts.tpcs, sms, EXPECTED_SMS
         ));
         return Err(bad("bariera: numarul de SM nu e cel asteptat"));
     }
     let prog = map_vram(st, program_map_bytes(gb::PROGRAM.len() as u64))?;
-    let zone = map_vram(st, PAGE)?;
+    let zone = map_vram(st, ZONE)?;
     put_bytes(st.mem.writer_mut(), prog.pa, gb::PROGRAM)?;
     let mut maps = ctx.maps.clone();
     maps.push(prog);
     maps.push(zone);
     let sys = [ctx.sys.clone()];
     let mut verdicts: Vec<String> = Vec::new();
-    for per_sm in 1..=gb::MAX_PER_SM {
-        let g = gb::groups_for_sms(sms, per_sm)?;
+    let steps: &[u32] = if wide { &[8, gb::MAX_PER_SM_WIDE] } else { &[1, gb::MAX_PER_SM] };
+    for &per_sm in steps {
+        let g = if wide { gb::groups_for_wide_sms(sms, per_sm)? } else { gb::groups_for_sms(sms, per_sm)? };
         let (_, d_bytes, o_bytes) = gb::buffer_bytes(g);
         if DATA + d_bytes > OUT || OUT + o_bytes > CBUF {
-            return Err(bad("bariera: G prea mare pentru pagina probei"));
+            return Err(bad("bariera: G prea mare pentru zona probei"));
         }
         let mut times = [0u64; 2];
         let mut held = true;
@@ -3892,7 +3908,7 @@ fn barrier_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
                     ));
                     lines.push(format!("{}: kronos --gpu: kt bariera G={} BLOCATA", p, g));
                     verdicts.push(format!("G={} BLOCATA", g));
-                    lines.push(format!("{}: kronos --gpu: proba barierei: {}", p, verdicts.join(", ")));
+                    lines.push(format!("{}: kronos --gpu: {}: {}", p, name, verdicts.join(", ")));
                     return Err(GpuError::Timeout { waited_us: limit });
                 }
             };
@@ -3937,10 +3953,10 @@ fn barrier_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         } else {
             lines.push(format!("{}: kronos --gpu: kt bariera G={} NU TRECE", p, g));
             verdicts.push(format!("G={} NU TRECE", g));
-            break; // G × 2 only after G × 1 held
+            break; // G × 2 (× 16) only after G × 1 (× 8) held
         }
     }
-    lines.push(format!("{}: kronos --gpu: proba barierei: {}", p, verdicts.join(", ")));
+    lines.push(format!("{}: kronos --gpu: {}: {}", p, name, verdicts.join(", ")));
     Ok(())
 }
 
