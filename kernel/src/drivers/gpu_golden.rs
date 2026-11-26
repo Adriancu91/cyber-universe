@@ -146,6 +146,9 @@ pub(super) struct GpuState {
     /// P6-218 (cyber-gpu `adc783c`): GR0's shape as GSP-RM reported it in I9 (`query_gr_info`), for the grid-barrier
     /// probe's group count; `None` before I9.
     pub gr: Option<nvidia_ga104::gsp::work_queue::GrShape>,
+    /// P6-228 (cyber-gpu `aa94bea`, after os-456): what GR0 really has (enabled TPCs, SMs) from the same I9 answer;
+    /// the `LITTER_*` product in `gr` is the chip family's design maximum (84), not the board's SM count (48).
+    pub gr_counts: Option<nvidia_ga104::gsp::rmapi::GrCounts>,
 }
 
 impl GpuState {
@@ -153,7 +156,7 @@ impl GpuState {
         let pending: Pending = Rc::new(RefCell::new(Vec::new()));
         // The root table is allocated and cleared here (collected, written before the first RM message).
         let mem = GpuMemory::new(zone.start, zone.end, PendingVram(pending.clone()))?;
-        Ok(GpuState { mem, pending, zone, golden: None, space: None, rm_calls: 0, vram_words: 0, copy_obj: None, gr: None })
+        Ok(GpuState { mem, pending, zone, golden: None, space: None, rm_calls: 0, vram_words: 0, copy_obj: None, gr: None, gr_counts: None })
     }
 }
 
@@ -306,9 +309,9 @@ pub(super) fn channel_step<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized
                 // computed token (only if GSP-RM refuses N's token). Makes its own channel group, like C133.
                 I9Choice::C135 => user_space::open_work_channel_c135(&mut t, &mut *mem, &u, gi, &mut rep135)?.1,
             };
-            let info = user_space::query_gr_info(&mut t, &u)?;
+            let (info, counts) = user_space::query_gr_counts(&mut t, &u)?;
             info.check_sm86()?;
-            Ok::<_, GpuError>((u, w, info.shape))
+            Ok::<_, GpuError>((u, w, info.shape, counts))
         })()
     }
     .and_then(|x| flush(vbar, journal, permit, zone, pending, vram_words).map(|_| x));
@@ -329,10 +332,11 @@ pub(super) fn channel_step<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized
         }
     }
     match r {
-        Ok((u, w, gr)) => {
+        Ok((u, w, gr, counts)) => {
             lines.push(format!("{}: pas I9 canal de lucru: ok (SM 8.6; {} mesaje RM)", p, st.rm_calls - calls0));
             st.space = Some((u, w));
             st.gr = Some(gr);
+            st.gr_counts = Some(counts);
             Ok(())
         }
         Err(e) => {

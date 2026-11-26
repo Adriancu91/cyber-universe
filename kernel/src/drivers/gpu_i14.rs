@@ -3780,6 +3780,8 @@ const GRID_BARRIER_SHA256: &str = "535f353705579f16deea31c363755092e7b00a7ba1ac4
 
 /// P6-218: the time limit of one barrier launch on the board (the note's proposal; predicted ≤ 3 ms).
 const BARRIER_LIMIT_US: u64 = 100_000;
+/// P6-228: the RTX 3070 Ti has 48 SMs (24 TPC x 2); any other count GSP-RM reports stops the barrier probe.
+const EXPECTED_SMS: u32 = 48;
 
 /// P6-218 (cyber-gpu `adc783c`, note `C-157_P2zh_proba-barierei.md`): the grid-barrier probe — `grid_barrier` with G
 /// workgroups of 32 meeting R times at a barrier through a counter in VRAM. G = the SMs GSP-RM reported in I9 × 1, with
@@ -3816,9 +3818,12 @@ fn barrier_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         return Err(bad("bariera: SHA-256 gresit"));
     }
     let gr = st.gr.ok_or_else(|| bad("bariera: forma GR lipseste (I9 nu a raportat-o)"))?;
-    let sms = gr.gpcs * gr.tpc_per_gpc * gr.sm_per_tpc;
+    // P6-228 (cyber-gpu `aa94bea`, after os-456): the LITTER_* product is the design maximum (84), not the board's SMs;
+    // the group count comes from the enabled TPCs GSP-RM reports in the same I9 answer.
+    let counts = st.gr_counts.ok_or_else(|| bad("bariera: numarul de TPC lipseste (I9 nu l-a raportat)"))?;
+    let sms = counts.sms;
     lines.push(format!(
-        "{}: kronos --gpu: proba barierei ({}): programul grid_barrier ({} octeti, SHA-256 {}..., {} registre, blocuri de {}), {} SM-uri raportate ({} GPC x {} TPC x {} SM), R = {} apoi {}, limita {} ms pe lansare",
+        "{}: kronos --gpu: proba barierei ({}): programul grid_barrier ({} octeti, SHA-256 {}..., {} registre, blocuri de {}), {} SM-uri active ({} TPC x {} SM; maximele de proiect {} GPC x {} TPC x {} SM), R = {} apoi {}, limita {} ms pe lansare",
         p,
         label,
         gb::PROGRAM.len(),
@@ -3826,6 +3831,8 @@ fn barrier_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         gb::REGISTERS,
         gb::BLOCK,
         sms,
+        counts.tpcs,
+        gr.sm_per_tpc,
         gr.gpcs,
         gr.tpc_per_gpc,
         gr.sm_per_tpc,
@@ -3833,6 +3840,14 @@ fn barrier_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         gb::ROUNDS_LONG,
         limit / 1000
     ));
+    if sms != EXPECTED_SMS {
+        // the note: if another count comes, stop and write the values (do not guess them)
+        lines.push(format!(
+            "{}: kronos --gpu: proba barierei: GSP-RM raporteaza {} TPC -> {} SM, asteptat {} (RTX 3070 Ti); proba oprita, nimic trimis",
+            p, counts.tpcs, sms, EXPECTED_SMS
+        ));
+        return Err(bad("bariera: numarul de SM nu e cel asteptat"));
+    }
     let prog = map_vram(st, program_map_bytes(gb::PROGRAM.len() as u64))?;
     let zone = map_vram(st, PAGE)?;
     put_bytes(st.mem.writer_mut(), prog.pa, gb::PROGRAM)?;
@@ -3842,7 +3857,7 @@ fn barrier_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let sys = [ctx.sys.clone()];
     let mut verdicts: Vec<String> = Vec::new();
     for per_sm in 1..=gb::MAX_PER_SM {
-        let g = gb::groups_for(&gr, per_sm)?;
+        let g = gb::groups_for_sms(sms, per_sm)?;
         let (_, d_bytes, o_bytes) = gb::buffer_bytes(g);
         if DATA + d_bytes > OUT || OUT + o_bytes > CBUF {
             return Err(bad("bariera: G prea mare pentru pagina probei"));
