@@ -1008,6 +1008,25 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu lot-sim: exista doar in build-ul de test (pe stick lotul il porneste doar ciclul, test-placa --argmax-fara-copie --lot)\n");
         }
+        Some("token32-sim") => {
+            // P6-240 (cyber-gpu `ce8324a`): test build only: after the texts of the next `kronos --gpu-sim`, the same texts
+            // with `token32` (one launch per token, G = SMs x 8 then x 16); on the stick only the cycle turns it on,
+            // `test-placa … --token32`.
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TOKEN32_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu token32-sim: pornit (SIMULARE: dupa texte, aceleasi texte cu token32, o lansare pe simbol, G = SM-uri x 8 apoi x 16)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TOKEN32_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu token32-sim: oprit\n");
+                }
+                _ => out!("folosire: gpu token32-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu token32-sim: exista doar in build-ul de test (pe stick il porneste doar ciclul, test-placa --token32)\n");
+        }
         Some("atentie-placi-sim") => {
             // P6-141 (C-161 point 4): test build only: the tiled attention probe (5 small sets; atentie-513-b4 uploaded
             // and read back, its launches skipped in SIMULARE) after the next `kronos --gpu-sim`'s texts (in the stick's

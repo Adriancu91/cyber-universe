@@ -232,6 +232,11 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     (`GpuState.gr`), golește contorul din VRAM înainte de fiecare lansare și rulează G = SM-uri × 1 cu R = 1 și 1 001 (limită
     100 ms pe lansare pe placă, `gpu_i11::wait_records_within`), apoi, doar dacă a trecut, G = SM-uri × 2 → `bariera G=… R=…:
     TRECE / CONTOR GRESIT / CUVINTE VECHI`, `o bariera = … ns`, `BLOCATA` (oprire, nimic altceva trimis). Test: `kronos-gpu-bariera`.
+    **P6-240 (cyber-gpu `ce8324a`, nota `C-157_P2zz_token32-pe-placa.md`): `token32`, o lansare pe simbol.** Cu `test-placa … --token32`
+    (după `--lot`, înainte de `--p8`; `gpu_tur::TOKEN32_IN_CYCLE`; în build-ul de test `gpu token32-sim on`): după toate textele,
+    `token32_runs` le rulează din nou cu `BoardRunner::t32` pus — `submit32` trimite lista simbolului ca o singură lansare
+    (`work_list32`, `token_cbuf_for`, `token32_qmd_wide`, contorul barierei golit, limită 100 ms) — la G = SM-uri × 8, apoi × 16
+    doar dacă a trecut; trece = aceleași simboluri, aceeași amprentă, contorul (n − 1) · G. Test: `kronos-gpu-token32`.
     **P6-232 (cyber-gpu `6e69f1a`, nota `C-157_P2zr_bariera-larga.md`): proba barierei largă.** Cu `test-placa … --bariera-larga`
     (după `--bariera` sau singură, înainte de `--colsum`; `gpu_tur::BARRIER_WIDE_IN_CYCLE`; în build-ul de test `gpu bariera-sim on larg`):
     aceeași `barrier_probe` cu `wide = true` — G = `grid_barrier::groups_for_wide_sms(sms, 8)` (384), apoi, doar dacă a trecut,

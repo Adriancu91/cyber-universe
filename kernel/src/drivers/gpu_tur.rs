@@ -333,6 +333,13 @@ pub static ARGMAX_TOP_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::ato
 /// `gpu lot-sim on`. Off by default.
 pub static BATCH_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-240 (cyber-gpu `ce8324a`, note `C-157_P2zz_token32-pe-placa.md`): after `kronos --gpu`'s texts, the same texts
+/// again with `token32` — the whole token in ONE launch (G workgroups meeting at a grid barrier between operations):
+/// G = SMs × 8 (384), then × 16 (768) only if 384 passed; judged against the texts' own run (same tokens, same print).
+/// Set only by the cycle when the list asks for it (`test-placa … --token32`) and, in the test build, by
+/// `gpu token32-sim on`. Off by default.
+pub static TOKEN32_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-117 (C-161 point 2, cyber-gpu `3199fa2`): P8, the first tensor-core computation (`mma16_f16`, 6 sets), after
 /// `kronos --gpu`'s texts. Set only by the cycle when the list asks for it (`test-placa … --p8`) and, in the test
 /// build, by `gpu p8-sim on`. Off by default: every other run sends exactly what os-332 sent.
