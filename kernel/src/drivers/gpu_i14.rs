@@ -1298,8 +1298,24 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
     }
     if token32 {
-        if let Err(e) = token32_runs(&mut runner, runs, &t32_refs) {
-            runner.lines.push(format!("{}: kronos --gpu: token32 (o lansare pe simbol): oprit: {}", p, e));
+        let t32_ok = match token32_runs(&mut runner, runs, &t32_refs, false) {
+            Ok(()) => true,
+            Err(e) => {
+                runner.lines.push(format!("{}: kronos --gpu: token32 (o lansare pe simbol): oprit: {}", p, e));
+                false
+            }
+        };
+        runner.t32 = None;
+        // P6-243 (cyber-gpu `16a0cf5`, P2zzd): `token32_v2` after `token32` (the same warmed board), when the list asks;
+        // not after a `token32` that stopped (a launch that did not finish leaves the board unsure).
+        let v2 = super::gpu_tur::TOKEN32_V2_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+        if v2 && !t32_ok {
+            runner.lines.push(format!("{}: kronos --gpu: token32_v2 (o lansare pe simbol): NETRIMIS (token32 s-a oprit)", p));
+        }
+        if v2 && t32_ok {
+            if let Err(e) = token32_runs(&mut runner, runs, &t32_refs, true) {
+                runner.lines.push(format!("{}: kronos --gpu: token32_v2 (o lansare pe simbol): oprit: {}", p, e));
+            }
         }
         runner.t32 = None;
     }
@@ -1449,35 +1465,38 @@ struct T32Ref {
 /// (768) only if 384 passed. Passes = for every text the same tokens (and the same logits' print) as its own run, and
 /// the barrier counter (n − 1) · G after every launch. A launch that does not finish stops `token32` (nothing more is
 /// sent with it). Every counter of the ordinary run (speed, profile, splits, prints) is put back afterwards.
-fn token32_runs<V: Mmio + ?Sized, K: Clock + ?Sized>(runner: &mut BoardRunner<'_, '_, V, K>, runs: &[Run<'_>], refs: &[T32Ref]) -> GpuResult<()> {
+fn token32_runs<V: Mmio + ?Sized, K: Clock + ?Sized>(runner: &mut BoardRunner<'_, '_, V, K>, runs: &[Run<'_>], refs: &[T32Ref], v2: bool) -> GpuResult<()> {
     use nvidia_ga104::kronos_token as kt;
+    // P6-243 (cyber-gpu `16a0cf5`, P2zzd): `token32_v2` = the same code with the reads through L1, and only the
+    // changed words of the list written before every token.
+    let (pn, code, want_sha, regs) = if v2 { ("token32_v2", kt::TOKEN32_V2, TOKEN32_V2_SHA256, kt::TOKEN32_V2_REGISTERS) } else { ("token32", kt::TOKEN32, TOKEN32_SHA256, kt::TOKEN32_REGISTERS) };
     let p = runner.p;
     let label = if runner.permit.is_some() { "placa" } else { "SIMULARE" };
-    let sha = sha256_hex(kt::TOKEN32);
-    if sha != TOKEN32_SHA256 {
-        runner.lines.push(format!("{}: kronos --gpu: token32: SHA-256 al programului {} nu e cel din nota ({}): nimic trimis", p, sha, TOKEN32_SHA256));
+    let sha = sha256_hex(code);
+    if sha != want_sha {
+        runner.lines.push(format!("{}: kronos --gpu: {pn}: SHA-256 al programului {} nu e cel din nota ({}): nimic trimis", p, sha, want_sha));
         return Err(bad("token32: SHA-256 gresit"));
     }
     let counts = runner.st.gr_counts.ok_or_else(|| bad("token32: numarul de TPC lipseste (I9 nu l-a raportat)"))?;
     let sms = counts.sms;
     runner.lines.push(format!(
-        "{}: kronos --gpu: token32 ({}): programul token32 ({} octeti, SHA-256 {}..., {} registre, blocuri de {}), {} SM-uri active, G = SM-uri x 8 apoi x 16, limita {} ms pe lansare, {} texte",
+        "{}: kronos --gpu: {pn} ({}): programul {pn} ({} octeti, SHA-256 {}..., {} registre, blocuri de {}), {} SM-uri active, G = SM-uri x 8 apoi x 16, limita {} ms pe lansare, {} texte",
         p,
         label,
-        kt::TOKEN32.len(),
+        code.len(),
         &sha[..16],
-        kt::TOKEN32_REGISTERS,
+        regs,
         kt::TOKEN_BLOCK,
         sms,
         BARRIER_LIMIT_US / 1000,
         refs.len()
     ));
     if sms != EXPECTED_SMS {
-        runner.lines.push(format!("{}: kronos --gpu: token32: GSP-RM raporteaza {} SM, asteptat {} (RTX 3070 Ti); oprit, nimic trimis", p, sms, EXPECTED_SMS));
+        runner.lines.push(format!("{}: kronos --gpu: {pn}: GSP-RM raporteaza {} SM, asteptat {} (RTX 3070 Ti); oprit, nimic trimis", p, sms, EXPECTED_SMS));
         return Err(bad("token32: numarul de SM nu e cel asteptat"));
     }
-    let prog = map_vram(runner.st, program_map_bytes(kt::TOKEN32.len() as u64))?;
-    put_bytes(runner.st.mem.writer_mut(), prog.pa, kt::TOKEN32)?;
+    let prog = map_vram(runner.st, program_map_bytes(code.len() as u64))?;
+    put_bytes(runner.st.mem.writer_mut(), prog.pa, code)?;
     let list = map_vram(runner.st, ((kt::ENTRY * runner.n) as u64).next_multiple_of(PAGE))?;
     let zone = map_vram(runner.st, PAGE)?;
     // What the ordinary run left (put back at the end; `token32` only measures).
@@ -1502,7 +1521,7 @@ fn token32_runs<V: Mmio + ?Sized, K: Clock + ?Sized>(runner: &mut BoardRunner<'_
     'g: for per_sm in [8u32, 16] {
         let g = kt::token32_groups_for_sms(sms, per_sm)?;
         let step = kt::token32_step_for(g, sms)?;
-        runner.t32 = Some(T32 { prog, list, zone, groups: g, sms, counted: 0, counter_ok: 0, counter_bad: None, hung: None });
+        runner.t32 = Some(T32 { prog, list, zone, groups: g, sms, counted: 0, counter_ok: 0, counter_bad: None, hung: None, prev: None, diff: v2, words: 0, tokens: 0 });
         let mut pass = true;
         for r in refs {
             let run = runs.get(r.ri).ok_or(bad("token32: text necunoscut"))?;
@@ -1518,14 +1537,14 @@ fn token32_runs<V: Mmio + ?Sized, K: Clock + ?Sized>(runner: &mut BoardRunner<'_
             let stop = if runner.argmax_top { generation.run_top(&mut *runner).clone() } else { generation.run(&mut *runner, None).clone() };
             let t = runner.t32.as_ref().ok_or(bad("token32: nepregatit"))?;
             if let Some(why) = t.hung.clone() {
-                runner.lines.push(format!("{}: kronos --gpu: token32 {}; oprit, nimic altceva trimis cu token32", p, why));
-                runner.lines.push(format!("{}: kronos --gpu: kt token32 G={} NU A TERMINAT", p, g));
+                runner.lines.push(format!("{}: kronos --gpu: {pn} {}; oprit, nimic altceva trimis cu {pn}", p, why));
+                runner.lines.push(format!("{}: kronos --gpu: kt {pn} G={} NU A TERMINAT", p, g));
                 verdicts.push(format!("G={} NU A TERMINAT", g));
                 result = Err(GpuError::Timeout { waited_us: BARRIER_LIMIT_US });
                 break 'g;
             }
             if !stop.is_clean_end() {
-                runner.lines.push(format!("{}: kronos --gpu: token32 G={} \"{}\": oprit: {}", p, g, run.name, stop.line()));
+                runner.lines.push(format!("{}: kronos --gpu: {pn} G={} \"{}\": oprit: {}", p, g, run.name, stop.line()));
                 verdicts.push(format!("G={} OPRIT", g));
                 pass = false;
                 break;
@@ -1540,7 +1559,7 @@ fn token32_runs<V: Mmio + ?Sized, K: Clock + ?Sized>(runner: &mut BoardRunner<'_
             let ok = same_seq && same_print && counters;
             pass &= ok;
             runner.lines.push(format!(
-                "{}: kronos --gpu: token32 G={} \"{}\" ({}, treapta {} KiB): {} - {} simboluri {}, amprenta {} ({}), contorul barierei corect la {} / {} simboluri; placa pe simbol median {} us (lista obisnuita {} us), cu driverul {} us (lista {} us)",
+                "{}: kronos --gpu: {pn} G={} \"{}\" ({}, treapta {} KiB): {} - {} simboluri {}, amprenta {} ({}), contorul barierei corect la {} / {} simboluri; placa pe simbol median {} us (lista obisnuita {} us), cu driverul {} us (lista {} us)",
                 p,
                 g,
                 run.name,
@@ -1563,20 +1582,30 @@ fn token32_runs<V: Mmio + ?Sized, K: Clock + ?Sized>(runner: &mut BoardRunner<'_
                 us(r.host_us)
             ));
             if let Some(why) = &t.counter_bad {
-                runner.lines.push(format!("{}: kronos --gpu: token32 G={}: primul contor gresit: {}", p, g, why));
+                runner.lines.push(format!("{}: kronos --gpu: {pn} G={}: primul contor gresit: {}", p, g, why));
             }
             if !same_seq {
-                runner.lines.push(format!("{}: kronos --gpu: token32 G={} \"{}\": simbolurile {:?}, lista obisnuita {:?}", p, g, run.name, generation.generated(), &r.seq[run.prompt.len().min(r.seq.len())..]));
+                runner.lines.push(format!("{}: kronos --gpu: {pn} G={} \"{}\": simbolurile {:?}, lista obisnuita {:?}", p, g, run.name, generation.generated(), &r.seq[run.prompt.len().min(r.seq.len())..]));
             }
-            runner.lines.push(format!("{}: kronos --gpu: kt token32 G={} placa {} us, cu driverul {} us", p, g, us(board), us(host)));
+            runner.lines.push(format!("{}: kronos --gpu: kt {pn} G={} placa {} us, cu driverul {} us", p, g, us(board), us(host)));
         }
-        runner.lines.push(format!("{}: kronos --gpu: kt token32 G={} {}", p, g, if pass { "TRECE" } else { "NU TRECE" }));
+        if let Some(t) = runner.t32.as_ref() {
+            runner.lines.push(format!(
+                "{}: kronos --gpu: kt {pn} G={} cuvinte scrise in lista pe simbol {} ({} simboluri, {})",
+                p,
+                g,
+                if t.tokens > 0 { t.words / t.tokens } else { 0 },
+                t.tokens,
+                if t.diff { "doar cuvintele schimbate, work_list_changes" } else { "lista intreaga" }
+            ));
+        }
+        runner.lines.push(format!("{}: kronos --gpu: kt {pn} G={} {}", p, g, if pass { "TRECE" } else { "NU TRECE" }));
         verdicts.push(format!("G={} {}", g, if pass { "TRECE" } else { "NU TRECE" }));
         if !pass {
             break; // G = 768 only after 384 passed
         }
     }
-    runner.lines.push(format!("{}: kronos --gpu: token32 (o lansare pe simbol): {}", p, verdicts.join(", ")));
+    runner.lines.push(format!("{}: kronos --gpu: {pn} (o lansare pe simbol): {}", p, verdicts.join(", ")));
     runner.t32 = None;
     runner.speed = speed0;
     *runner.tokens_done = done0;
@@ -2029,6 +2058,14 @@ struct T32 {
     counter_ok: u32,
     counter_bad: Option<String>,
     hung: Option<String>,
+    /// P6-243 (cyber-gpu `16a0cf5`, P2zzd): with `token32_v2` the list of the token before (only the changed words are
+    /// written, `kronos_token::work_list_changes`); `None` = the whole list is written (the first token, or `token32`).
+    prev: Option<Vec<u8>>,
+    /// P6-243: write only the changed words (set for `token32_v2`).
+    diff: bool,
+    /// P6-243: words written in the list (all tokens) and tokens sent, for the average words per token.
+    words: u64,
+    tokens: u64,
 }
 
 const T32_CBUF: u64 = 0;
@@ -2036,6 +2073,8 @@ const T32_QMD: u64 = 0x100;
 const T32_SYNC: u64 = 0x200;
 /// P6-240: `kronos_token::TOKEN32`'s SHA-256 as the note writes it (checked before anything is sent).
 const TOKEN32_SHA256: &str = "40d9749cc8074f639ca0eb3fafae9686b2ca4d2491e868b3b2544ec7faa1ad5f";
+/// P6-243: `kronos_token::TOKEN32_V2`'s SHA-256 as note P2zzd writes it (checked before anything is sent).
+const TOKEN32_V2_SHA256: &str = "5f4d22a0d01f35d2bd3b88f0e43e492acede1a1a8d912b80fc0712d012f11171";
 
 impl<V: Mmio + ?Sized, K: Clock + ?Sized> BoardRunner<'_, '_, V, K> {
     /// The VRAM address of `bytes` at GPU VA `va` (one of the step's own mappings).
@@ -2209,15 +2248,36 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> BoardRunner<'_, '_, V, K> {
         if bytes.len() as u64 > lm.size {
             return Err(bad("token32: lista de lucru nu incape in zona ei"));
         }
+        // P6-243: with `token32_v2` only the words that differ from the token before (the first token, or another
+        // length: the whole list).
+        let changes = match (&t.prev, t.diff) {
+            (Some(prev), true) if prev.len() == bytes.len() => Some(kt::work_list_changes(prev, &bytes)?),
+            _ => None,
+        };
         let cb = kt::token_cbuf_for(lm.va, zone.va + T32_SYNC, n, g)?;
         let q = kt::token32_qmd_wide(prog.va, zone.va + T32_CBUF, g, sms)?;
+        let written = changes.as_ref().map_or(bytes.len() as u64 / 4, |c| c.len() as u64);
         {
             let w = self.st.mem.writer_mut();
-            put_bytes(w, lm.pa, &bytes)?;
+            match &changes {
+                Some(c) => {
+                    for &(off, word) in c {
+                        put_bytes(w, lm.pa + off as u64, &word.to_le_bytes())?;
+                    }
+                }
+                None => put_bytes(w, lm.pa, &bytes)?,
+            }
             put_bytes(w, zone.pa + T32_CBUF, &cb)?;
             put_bytes(w, zone.pa + T32_QMD, &q)?;
             put_bytes(w, zone.pa + T32_SYNC, &[0u8; 16])?;
             put_bytes(w, self.rec.pa, &[0u8; 32])?;
+        }
+        if let Some(t) = self.t32.as_mut() {
+            t.words += written;
+            t.tokens += 1;
+            if t.diff {
+                t.prev = Some(bytes);
+            }
         }
         // The pushbuffer is written here without its shadow: the shadow no longer knows it.
         if let Some(sh) = self.push_shadow.as_mut() {
