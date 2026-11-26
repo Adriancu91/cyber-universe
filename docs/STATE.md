@@ -3,6 +3,10 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-26 ~04:10–04:45 UTC (06:10–~06:45 ora RO) — sesiune programată, fără Adrian, lucrul continuu (C-158). **CI run 45751983866 (`a43c655`, P6-226) VERDE (16 părți QEMU + `stick`) → Release `os-456`** (13 fișiere) = **GATA DE TEST** în hub: profilul pe lansări al pasului mixt #513 (nimic nou pentru placă; timpii MĂSURAȚI pe programe la rândul `--mixt-513 --mixt-513-rapid`).
+  - Semnul `in-lucru/cyber-universe.md`: era `liber` (06:00) → `ocupat` 06:10. Copia locală superficială cu `main` vechi „divergent” → `checkout -B main origin/main`. `env-check --install` OK.
+  - Nicio PREDARE nouă Cyber-GPU (sesiunea 243: `attn_back_tile_tc`, „nicio PREDARE”), nicio comandă `nou` pentru `cyber-universe`, os-451 încă fără rezultat (ultimul ciclu automat: 25 nov). Nicio sarcină nouă în cod.
+  - **Pentru sesiunea următoare:** (1) rezultatele plăcii (os-445/447/449/451/456); la os-451 TRECE: proba barierei largă G = 384 / 768 când o cere Cyber-GPU. (2) PREDĂRI noi (Cyber-GPU: `attn_back_tile_tc` încă nelegat în pasul lor). (3) Notele centrului după testul agentului de bord.
 - 2026-11-26 ~03:10–04:00 UTC (05:10–~06:00 ora RO) — sesiune programată, fără Adrian, lucrul continuu (C-158). **P6-226 GATA — legarea PREDĂRII Cyber-GPU `cab6742`** (profilul pe lansări al pasului mixt #513, nota `C-157_P2zl_profil-pas-mixt.md`; nimic nou pentru placă) → `main` `a43c655`, **CI run 45751983866 în curs** → Release următor (`os-456`).
   - Rândul PREDARE `cab6742` era în `stare/cyber-gpu.md` din 03:50 (sesiunea 241); trecerile 04:11 / 04:41 l-au scăpat (îl socoteau „fără rând PREDARE”).
   - Cod: cyber-gpu `eb17f1d` → `cab6742` (strămoș verificat; doar adăugări). În `gpu_i14.rs` (antrenarea #513), ramura mixtă (cu și fără `--mixt-513-rapid`) face acum profilul la pasul 1 cu `StepProfile::from_mixed(&lista, &alegeri)` (`.with_copies(5, 2)` cu `--lot-prin-ram`); dacă lansările nu se potrivesc cu QMD-urile, rândul „profilul pasului mixt sarit … (P6-226)” și rularea continuă.
