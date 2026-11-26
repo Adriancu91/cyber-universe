@@ -30,6 +30,8 @@ jobs:
   # P6-195: twelve QEMU parts (teste-1..12): with `kronos-gpu-antrenare-513-proba64` the table gave ~55.6 min per part out of 11.
   # P6-197: thirteen QEMU parts (teste-1..13): with `kronos-gpu-mm-tc128` the table gave ~53.9 min per part out of 12.
   # P6-198: fourteen QEMU parts (teste-1..14): with `kronos-gpu-antrenare-513-mixt` the table gave ~52 min per part out of 13.
+  # P6-234: seventeen QEMU parts (teste-1..17): run 45828216361 (os-465) had teste-2 at 59m43s of the 60 with 16 parts;
+  # with `kronos-gpu-atentie-tc0` the table gives ~59.7 min per part out of 17 (63.5 out of 16).
   build-and-test:
     name: ${{ matrix.parte }}
     runs-on: ubuntu-24.04
@@ -39,37 +41,39 @@ jobs:
       matrix:
         include:
           - parte: teste-1
-            shard: 1/16
+            shard: 1/17
           - parte: teste-2
-            shard: 2/16
+            shard: 2/17
           - parte: teste-3
-            shard: 3/16
+            shard: 3/17
           - parte: teste-4
-            shard: 4/16
+            shard: 4/17
           - parte: teste-5
-            shard: 5/16
+            shard: 5/17
           - parte: teste-6
-            shard: 6/16
+            shard: 6/17
           - parte: teste-7
-            shard: 7/16
+            shard: 7/17
           - parte: teste-8
-            shard: 8/16
+            shard: 8/17
           - parte: teste-9
-            shard: 9/16
+            shard: 9/17
           - parte: teste-10
-            shard: 10/16
+            shard: 10/17
           - parte: teste-11
-            shard: 11/16
+            shard: 11/17
           - parte: teste-12
-            shard: 12/16
+            shard: 12/17
           - parte: teste-13
-            shard: 13/16
+            shard: 13/17
           - parte: teste-14
-            shard: 14/16
+            shard: 14/17
           - parte: teste-15
-            shard: 15/16
+            shard: 15/17
           - parte: teste-16
-            shard: 16/16
+            shard: 16/17
+          - parte: teste-17
+            shard: 17/17
           - parte: stick
             shard: ""
     steps:

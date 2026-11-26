@@ -5050,6 +5050,36 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
             ));
         }
     }
+    // P6-234 (note C-157_P2zs): `attn_back_tile0_tc` (dS with dP on the tensor cores) after them, only when asked.
+    let mut tc0: Option<Tc0OnBoard> = None;
+    if tc_on && super::gpu_tur::ATTN_TC0_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+        use nvidia_ga104::attn_back_tile0_tc as a0;
+        let sha = sha256_hex(a0::ATTN_BACK_TILE0_TC);
+        if sha != a0::ATTN_BACK_TILE0_TC_SHA256 {
+            lines.push(format!(
+                "{}: kronos --gpu: atentie-tc0: SHA-256 al programului nou attn_back_tile0_tc = {} nu e cel din nota ({}): nimic trimis",
+                p,
+                sha,
+                a0::ATTN_BACK_TILE0_TC_SHA256
+            ));
+            return Err(bad("atentie-tc0: SHA-256 gresit"));
+        }
+        let m = map_vram(st, program_map_bytes(a0::ATTN_BACK_TILE0_TC.len() as u64))?;
+        put_bytes(st.mem.writer_mut(), m.pa, a0::ATTN_BACK_TILE0_TC)?;
+        maps.push(m);
+        let z = map_vram(st, PAGE)?;
+        maps.push(z);
+        tc0 = Some(Tc0OnBoard { prog_va: m.va, zone: z });
+        lines.push(format!(
+            "{}: kronos --gpu: atentie-tc0 ceruta ({}): programul nou attn_back_tile0_tc ({} registre, {} octeti partajati, argumentele la 0x700 intr-un cbuf de 0x800, SHA-256 verificat), dS cu dP = dO*V^T pe circuitele speciale, dupa programele dQ / dK / dV pe aceleasi P / dO / V, langa dS-ul F32 al lantului {}",
+            p,
+            label,
+            a0::REGISTERS,
+            a0::SHARED.bytes,
+            newer.last().map_or("vechi", |g| g.which.tag())
+        ));
+    }
+    let mut tc0_sets: Vec<Tc0Set> = Vec::new();
     let mut tc_sets: Vec<TcSet> = Vec::new();
     let mut stopped_tc: Option<usize> = None;
     let small = ap::SETS[..ap::TIMING_SET].iter().map(|s| s.layout().bytes as u64).max().unwrap_or(PAGE);
@@ -5105,6 +5135,8 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         ));
         // P6-227: the time of the newest chain's dQ / dK / dV program on this set (beside the tensor-core programs).
         let mut last_back_ns = ns[2];
+        // P6-234: likewise its dS program (`attn_back_tile0_*`), beside `attn_back_tile0_tc`.
+        let mut last_back0_ns = ns[1];
         // P6-149 / P6-160: the same set again for every new generation, the buffer rewritten each time.
         for (gi, gb) in newer.iter().enumerate() {
             ram_write(&buf, &set.buffer());
@@ -5139,6 +5171,7 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
             }
             pairs[gi].push(ap::judge_pair_set(i, &out, &out2, [&ns2[..1], &ns2[1..2], &ns2[2..]])?);
             last_back_ns = ns2[2];
+            last_back0_ns = ns2[1];
         }
         // P6-227: the tensor-core programs on the P / dS the newest chain left in the buffer.
         if !tcs.is_empty() {
@@ -5149,11 +5182,21 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
                     break 'sets;
                 }
             }
+            // P6-234: then dS on the tensor cores, on the same P / dO / V (the F32 dS read first, then overwritten).
+            if let Some(t0) = tc0.as_ref() {
+                match tc0_small_set(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, &maps, &sys, &buf, set, i, t0, last_back0_ns)? {
+                    Some(r) => tc0_sets.push(r),
+                    None => {
+                        stopped_tc = Some(i);
+                        break 'sets;
+                    }
+                }
+            }
         }
     }
     let mut tc_big: Option<TcBig> = None;
     if stopped.is_none() && stopped2.is_none() && stopped_tc.is_none() {
-        match attn_tile_big(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, &maps, prog_va, &zones, &newer, &tcs, &mut tc_big)? {
+        match attn_tile_big(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, &maps, prog_va, &zones, &newer, &tcs, tc0.as_ref(), &mut tc_big)? {
             AttnBig::Judged(r, r2) => {
                 probe.add(*r);
                 for (gi, x) in r2.into_iter().enumerate() {
@@ -5257,6 +5300,9 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     }
     if !tcs.is_empty() {
         tc_verdict(p, label, journal, lines, &tc_sets, tc_big.as_ref(), stopped.or(stopped2.map(|x| x.1)), stopped_tc);
+    }
+    if tc0.is_some() {
+        tc0_verdict(p, label, journal, lines, &tc0_sets, tc_big.as_ref().and_then(|b| b.t0.as_ref()), stopped.is_some() || stopped2.is_some() || stopped_tc.is_some());
     }
     match (stopped, stopped2, stopped_tc) {
         (None, None, None) => Ok(()),
@@ -5500,6 +5546,50 @@ struct TcBig {
     stopped: Option<String>,
     /// P6-233: v4, v4pf on `atentie-513-b4`: `None` = not aligned; else (median ns, the same bands as tc16, guard untouched).
     v4: Vec<Option<(u64, bool, bool)>>,
+    /// P6-234: `attn_back_tile0_tc` on `atentie-513-b4` (only with `--atentie-tc0`).
+    t0: Option<Tc0Big>,
+}
+
+/// P6-234 (cyber-gpu note C-157_P2zs): `attn_back_tile0_tc` and its control page (cbuf at +0, 0x800 bytes; QMD at +0x800).
+struct Tc0OnBoard {
+    prog_va: u64,
+    zone: Mapping,
+}
+
+/// P6-234: one small set with `attn_back_tile0_tc`, beside the newest chain's F32 dS.
+struct Tc0Set {
+    ns: u64,
+    f32_ns: u64,
+    /// Words under (and on) the diagonal equal bit for bit to `attn_tc::back0_model` / how many such words.
+    exact: usize,
+    lower: usize,
+    /// NaN left under (or on) the diagonal (the program must write all of them).
+    nan_lower: usize,
+    /// Words above the diagonal that are not +0 / −0 (the model writes zeros there), of `upper`.
+    upper_nonzero: usize,
+    upper: usize,
+    guard_ok: bool,
+    /// ‖dS_tc − dS_F32‖ / ‖dS_F32‖ under the diagonal, in millionths.
+    rel_ppm: Option<u32>,
+}
+
+impl Tc0Set {
+    /// Passes: every word under the diagonal written and finite, the guard untouched, within 1e-3 of the F32 dS.
+    fn passes(&self) -> bool {
+        self.nan_lower == 0 && self.guard_ok && self.rel_ppm.is_some_and(|r| r <= 1000)
+    }
+}
+
+/// P6-234: `attn_back_tile0_tc` on `atentie-513-b4` (board only): the rows T − 1 of the banded texts, every head.
+#[derive(Default)]
+struct Tc0Big {
+    ns: u64,
+    f32_ns: u64,
+    rel_ppm: Option<u32>,
+    finite: bool,
+    guard_ok: bool,
+    words: usize,
+    stopped: Option<String>,
 }
 
 /// P6-227: the median of some times (0 if none).
@@ -5879,6 +5969,7 @@ fn attn_tile_big<V: Mmio + ?Sized, K: Clock + ?Sized>(
     zones: &[Mapping],
     newer: &[GenOnBoard],
     tcs: &[TcOnBoard],
+    tc0: Option<&Tc0OnBoard>,
     tc_big: &mut Option<TcBig>,
 ) -> GpuResult<AttnBig> {
     use nvidia_ga104::attn_tile_probe as ap;
@@ -6037,6 +6128,8 @@ fn attn_tile_big<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let mut pairs: Vec<Result<alloc::boxed::Box<ap::PairResult>, ()>> = Vec::with_capacity(newer.len());
     // P6-227: the times of the newest chain's dQ / dK / dV program (beside the tensor-core programs).
     let mut last_back_times: Vec<u64> = times[2].clone();
+    // P6-234: and of its dS program (beside `attn_back_tile0_tc`).
+    let mut last_back0_times: Vec<u64> = times[1].clone();
     'gens: for gb in newer {
         let tag = gb.which.tag();
         let stop2 = |lines: &mut Vec<String>, pairs: &mut Vec<Result<alloc::boxed::Box<ap::PairResult>, ()>>, what: &str| {
@@ -6084,6 +6177,7 @@ fn attn_tile_big<V: Mmio + ?Sized, K: Clock + ?Sized>(
         let r2 = ap::judge_pair_set(ap::TIMING_SET, &out, &out2, [&times2[0], &times2[1], &times2[2]])?;
         pairs.push(Ok(alloc::boxed::Box::new(r2)));
         last_back_times = times2[2].clone();
+        last_back0_times = times2[1].clone();
     }
     // P6-227 (note C-157_P2zm, step 1): after every chain finished, the tensor-core programs on the P / dS the newest
     // chain left in VRAM: the dqkv bands (row T − 1 of the banded texts) and their guard filled with NaN before each
@@ -6183,7 +6277,261 @@ fn attn_tile_big<V: Mmio + ?Sized, K: Clock + ?Sized>(
         tb.words = f32v.len();
         *tc_big = Some(tb);
     }
+    // P6-234 (note C-157_P2zs, step 1): after the dQ / dK / dV programs, `attn_back_tile0_tc` on the same P / dO / V
+    // in VRAM: the F32 dS rows T − 1 of the banded texts (every head, all under the diagonal) read first, then those rows
+    // and the dS guard filled with NaN, 5 launches, the rows back: the distance from F32, finite, the guard.
+    if let (Some(t0), Some(tb)) = (tc0, tc_big.as_mut()) {
+        if pairs.len() == newer.len() && pairs.iter().all(|x| x.is_ok()) && tb.stopped.is_none() {
+            let (t, h) = (set.t as usize, set.heads as usize);
+            let mut rows: Vec<(usize, usize)> = Vec::new();
+            for b in set.texts() {
+                for hh in 0..h {
+                    rows.push((lay.ds + 4 * ((b * h + hh) * t + (t - 1)) * t, 4 * t));
+                }
+            }
+            rows.push((lay.ds_guard, 4 * ap::GUARD));
+            let mut r0 = Tc0Big { f32_ns: median_ns(&last_back0_times), ..Tc0Big::default() };
+            let read_rows = |vbar: &mut V, clock: &mut K, journal: &mut Journal, st: &mut GpuState, l: &mut Launched, doorbell: &mut Bell<'_, V>, subs: &mut u32| -> GpuResult<Option<Vec<u8>>> {
+                let mut band: Vec<u8> = Vec::new();
+                for &(o, n) in &rows {
+                    ram_write(&host, &[]);
+                    if !copy(vbar, clock, journal, st, l, doorbell, subs, big.va + o as u64, host.va, (n as u64).next_multiple_of(16))? {
+                        return Ok(None);
+                    }
+                    band.extend_from_slice(&ram_read(&host, n as u64));
+                }
+                Ok(Some(band))
+            };
+            'tc0: {
+                let Some(f32_band) = read_rows(vbar, clock, journal, st, l, doorbell, subs)? else {
+                    r0.stopped = Some(String::from("citirea randurilor dS F32 nu s-a terminat"));
+                    break 'tc0;
+                };
+                for &(o, n) in &rows {
+                    let bytes: Vec<u8> = core::iter::repeat_n(ap::FILL.to_le_bytes(), n / 4).flatten().collect();
+                    ram_write(&host, &bytes);
+                    if !copy(vbar, clock, journal, st, l, doorbell, subs, host.va, big.va + o as u64, (n as u64).next_multiple_of(16))? {
+                        r0.stopped = Some(String::from("umplerea randurilor dS cu NaN nu s-a terminat"));
+                        break 'tc0;
+                    }
+                }
+                let a = set.back_args(big.va, nvidia_ga104::attn_back::Mode::Rows);
+                let (cb, q) = tc0_launch_bytes(&a, t0.prog_va, t0.zone.va)?;
+                {
+                    let w = st.mem.writer_mut();
+                    put_bytes(w, t0.zone.pa, &cb)?;
+                    put_bytes(w, t0.zone.pa + 0x800, &q)?;
+                }
+                let mut ts: Vec<u64> = Vec::new();
+                for rep in 0..set.repeats {
+                    match mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, &maps, &sys, t0.zone.va + 0x800)? {
+                        Ok(ns) => ts.push(ns),
+                        Err(got) => {
+                            r0.stopped = Some(format!("placa nu a terminat programul nou attn_back_tile0_tc, lansarea {}: ultima inregistrare = {:#x}", rep, got));
+                            break 'tc0;
+                        }
+                    }
+                }
+                r0.ns = median_ns(&ts);
+                let Some(band) = read_rows(vbar, clock, journal, st, l, doorbell, subs)? else {
+                    r0.stopped = Some(String::from("citirea randurilor dS dupa attn_back_tile0_tc nu s-a terminat"));
+                    break 'tc0;
+                };
+                let g = 4 * ap::GUARD;
+                let v = f32_words(&band[..band.len() - g]);
+                let f = f32_words(&f32_band[..f32_band.len() - g]);
+                r0.guard_ok = band[band.len() - g..].chunks(4).all(|w| w == ap::FILL.to_le_bytes());
+                r0.finite = v.iter().all(|x| x.is_finite());
+                r0.rel_ppm = rel_ppm(&v, &f);
+                r0.words = v.len();
+            }
+            tb.t0 = Some(r0);
+        }
+    }
     Ok(AttnBig::Judged(alloc::boxed::Box::new(r), pairs))
+}
+
+/// P6-234 (cyber-gpu note C-157_P2zs): the cbuf (0x800 bytes, the arguments at 0x700) and the QMD of `attn_back_tile0_tc`
+/// for `a` (mode 0 = rows, the same arguments and grid as `attn_back_tile0_3`).
+fn tc0_launch_bytes(a: &nvidia_ga104::attn_back::Args, prog_va: u64, cbuf_va: u64) -> GpuResult<(Vec<u8>, Vec<u8>)> {
+    use nvidia_ga104::attn_back_tile0_tc as a0;
+    use nvidia_ga104::qmd::ComputeQmd;
+    let cb = a0::cbuf(a).ok_or(bad("atentie-tc0: argumentele refuzate de modulul programului"))?;
+    let q = ComputeQmd {
+        program_va: prog_va,
+        registers: a0::REGISTERS,
+        cbuf0_va: cbuf_va,
+        cbuf0_size: a0::CBUF_BYTES as u32,
+        grid: a0::grid(a),
+        block: a0::BLOCK,
+        release: None,
+    }
+    .to_bytes_with_shared(&a0::SHARED)?;
+    Ok((cb.to_vec(), q.to_vec()))
+}
+
+/// P6-234 (cyber-gpu note C-157_P2zs, step 1): one small set with `attn_back_tile0_tc`, on the buffer the newest chain
+/// left (P, dO, V and its F32 dS in place): the F32 dS read, the dS region and its guard filled with NaN, one launch, dS
+/// back. `None`: the board did not finish (the line is written).
+#[allow(clippy::too_many_arguments)]
+fn tc0_small_set<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    doorbell: &mut Bell<'_, V>,
+    subs: &mut u32,
+    ctx: &CopyCtx,
+    maps: &[Mapping],
+    sys: &[SysMapping],
+    buf: &SysMapping,
+    set: &nvidia_ga104::attn_tile_probe::ProbeSet,
+    i: usize,
+    t0: &Tc0OnBoard,
+    f32_ns: u64,
+) -> GpuResult<Option<Tc0Set>> {
+    use nvidia_ga104::attn_tile_probe as ap;
+    let lay = set.layout();
+    let shape = set.shape();
+    let (nq, no, np) = shape.sizes().ok_or(bad("atentie-tc0: forma setului"))?;
+    let whole = ram_read(buf, lay.end as u64);
+    let take = |o: usize, n: usize| f32_words(&whole[o..o + 4 * n]);
+    let (qkv, dout, pm, f32ds) = (take(lay.qkv, nq), take(lay.dout, no), take(lay.p, np), take(lay.ds, np));
+    let span = 4 * np + 4 * ap::GUARD;
+    let fill: Vec<u8> = core::iter::repeat_n(ap::FILL.to_le_bytes(), span / 4).flatten().collect();
+    ram_write_at(buf, lay.ds as u64, &fill);
+    let a = set.back_args(buf.va, nvidia_ga104::attn_back::Mode::Rows);
+    let (cb, q) = tc0_launch_bytes(&a, t0.prog_va, t0.zone.va)?;
+    {
+        let w = st.mem.writer_mut();
+        put_bytes(w, t0.zone.pa, &cb)?;
+        put_bytes(w, t0.zone.pa + 0x800, &q)?;
+    }
+    let ns = match mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, maps, sys, t0.zone.va + 0x800)? {
+        Ok(t) => t,
+        Err(got) => {
+            lines.push(format!(
+                "{}: kronos --gpu: atentie-tc0: placa nu a terminat la setul {} ({}), programul nou attn_back_tile0_tc: ultima inregistrare = {:#x}; proba oprita, fara reincercare",
+                p, i, set.name, got
+            ));
+            return Ok(None);
+        }
+    };
+    let got = ram_read_at(buf, lay.ds as u64, span as u64);
+    let v = f32_words(&got[..4 * np]);
+    let model = gpu_compute::attn_tc::back0_model(&shape, &qkv, &pm, &dout, a.scale);
+    let (b, h, t) = (shape.batch, shape.heads, shape.t);
+    let mut r = Tc0Set {
+        ns,
+        f32_ns,
+        exact: 0,
+        lower: 0,
+        nan_lower: 0,
+        upper_nonzero: 0,
+        upper: 0,
+        guard_ok: got[4 * np..].chunks(4).all(|w| w == ap::FILL.to_le_bytes()),
+        rel_ppm: None,
+    };
+    let (mut lo_v, mut lo_f) = (Vec::new(), Vec::new());
+    for bh in 0..b * h {
+        for row in 0..t {
+            for j in 0..t {
+                let at = (bh * t + row) * t + j;
+                if j <= row {
+                    r.lower += 1;
+                    r.nan_lower += usize::from(v[at].is_nan());
+                    r.exact += usize::from(model.as_ref().is_some_and(|m| m[at].to_bits() == v[at].to_bits()));
+                    lo_v.push(v[at]);
+                    lo_f.push(f32ds[at]);
+                } else {
+                    r.upper += 1;
+                    r.upper_nonzero += usize::from(v[at] != 0.0);
+                }
+            }
+        }
+    }
+    r.rel_ppm = rel_ppm(&lo_v, &lo_f);
+    journal.push(Event::Value { what: "kt atentie-tc0 set: timp tc0 (ns)", value: u32::try_from(ns).unwrap_or(u32::MAX) });
+    lines.push(format!(
+        "{}: kronos --gpu: kt atentie-tc0 set {} ({}): attn_back_tile0_tc {} ns (dS F32 {} ns); abaterea fata de F32 {}; NaN sub diagonala {}; deasupra diagonalei {}; garda dS {}; exacte fata de attn_tc::back0_model {} / {}{}",
+        p,
+        i,
+        set.name,
+        ns,
+        f32_ns,
+        ppm_text(r.rel_ppm),
+        r.nan_lower,
+        if r.upper_nonzero == 0 { String::from("zerouri") } else { format!("{} / {} NU sunt zero", r.upper_nonzero, r.upper) },
+        if r.guard_ok { "neatinsa" } else { "ATINSA" },
+        r.exact,
+        r.lower,
+        if model.is_none() { " (modelul a refuzat intrarile)" } else { "" }
+    ));
+    Ok(Some(r))
+}
+
+/// P6-234 (cyber-gpu note C-157_P2zs): the verdict of `attn_back_tile0_tc` beside the F32 dS (small sets + `atentie-513-b4`).
+fn tc0_verdict(p: &str, label: &str, journal: &mut Journal, lines: &mut Vec<String>, sets: &[Tc0Set], big: Option<&Tc0Big>, stopped: bool) {
+    use nvidia_ga104::attn_tile_probe as ap;
+    let n = sets.len();
+    let ok_sets = sets.iter().filter(|s| s.passes()).count();
+    let max_rel = sets.iter().map(|s| s.rel_ppm).try_fold(0u32, |m, x| x.map(|x| m.max(x)));
+    let nan: usize = sets.iter().map(|s| s.nan_lower).sum();
+    let (exact, lower): (usize, usize) = sets.iter().fold((0, 0), |a, s| (a.0 + s.exact, a.1 + s.lower));
+    let upper_zero = sets.iter().all(|s| s.upper_nonzero == 0);
+    let guard = sets.iter().all(|s| s.guard_ok);
+    let mut ok = !stopped && n == ap::TIMING_SET && ok_sets == n;
+    journal.push(Event::Value { what: "kt atentie-tc0 exacte (model)", value: u32::try_from(exact).unwrap_or(u32::MAX) });
+    journal.push(Event::Value { what: "kt atentie-tc0 abatere (x1e6)", value: max_rel.unwrap_or(u32::MAX) });
+    journal.push(Event::Value { what: "kt atentie-tc0 garda (NaN sub diagonala)", value: u32::try_from(nan).unwrap_or(u32::MAX) });
+    let big_text = match big {
+        Some(b) if b.stopped.is_none() => {
+            ok &= b.finite && b.guard_ok && b.rel_ppm.is_some_and(|r| r <= 1000);
+            journal.push(Event::Value { what: "kt atentie-tc0 timp (ns)", value: u32::try_from(b.ns).unwrap_or(u32::MAX) });
+            journal.push(Event::Value { what: "kt atentie-tc0 timp dS F32 (ns)", value: u32::try_from(b.f32_ns).unwrap_or(u32::MAX) });
+            let ms = |ns: u64| format!("{},{:02} ms", ns / 1_000_000, (ns / 10_000) % 100);
+            let ratio = if b.ns == 0 { String::from("-") } else { format!("x{},{:02}", b.f32_ns / b.ns, (b.f32_ns % b.ns) * 100 / b.ns) };
+            format!(
+                "atentie-513-b4 pe lansare (mediana a {}): attn_back_tile0_tc {} fata de dS F32 {} ({} mai rapid; x12 pe pas: {} fata de {}); randurile T-1 ({} cuvinte) fata de F32 {}{}{}",
+                ap::REPEATS,
+                ms(b.ns),
+                ms(b.f32_ns),
+                ratio,
+                ms(12 * b.ns),
+                ms(12 * b.f32_ns),
+                b.words,
+                ppm_text(b.rel_ppm),
+                if b.finite { "" } else { ", valori NEFINITE" },
+                if b.guard_ok { "" } else { ", garda ATINSA" }
+            )
+        }
+        Some(b) => {
+            ok = false;
+            format!("atentie-513-b4 oprit: {}", b.stopped.as_deref().unwrap_or("-"))
+        }
+        None => String::from("atentie-513-b4 omis"),
+    };
+    lines.push(format!(
+        "{}: kronos --gpu: atentie-tc0 (vechi langa nou, {}): {}: {} / {} seturi bune (abaterea fata de dS F32 cel mult {}, sub 1e-3; NaN sub diagonala {}; garda {}; deasupra diagonalei {}); exacte fata de attn_tc::back0_model {} / {} cuvinte; seturile mici in total: attn_back_tile0_tc {} ns, dS F32 {} ns; {}",
+        p,
+        label,
+        if ok { "TRECE" } else { "NU TRECE" },
+        ok_sets,
+        n,
+        ppm_text(max_rel),
+        nan,
+        if guard { "neatinsa" } else { "ATINSA" },
+        if upper_zero { "zerouri" } else { "NU doar zerouri" },
+        exact,
+        lower,
+        sets.iter().map(|s| s.ns).sum::<u64>(),
+        sets.iter().map(|s| s.f32_ns).sum::<u64>(),
+        big_text
+    ));
 }
 
 /// P6-137: FNV-1a (32 bit) of bytes (the same as `mm_tc_probe::fnv`).

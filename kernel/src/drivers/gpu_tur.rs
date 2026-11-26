@@ -431,6 +431,13 @@ pub static ATTN_TC_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic
 /// (`test-placa … --atentie-tc --atentie-tc16-v4`; in the test build `gpu atentie-tc-sim on v4`). Off by default.
 pub static ATTN_TC_V4_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-234 (cyber-gpu note C-157_P2zs, commit `f6ce737`): with [`ATTN_TC_IN_CYCLE`], `attn_back_tile0_tc` (dS of the
+/// attention with dP = dO·Vᵀ on the tensor cores) after the tensor-core dQ / dK / dV programs, on the same P / dO / V,
+/// beside the newest chain's `attn_back_tile0_*` (F32): exact words against `gpu_compute::attn_tc::back0_model`, the
+/// distance from the F32 dS, NaN left under the diagonal, the times (`test-placa … --atentie-tc [--atentie-tc16-v4]
+/// --atentie-tc0`; in the test build `gpu atentie-tc-sim on tc0`). Off by default.
+pub static ATTN_TC0_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-161 (C-157, cyber-gpu `9359f21`): the RAM ↔ VRAM probe with the copy engine — the copy object allocated on the
 /// work channel right after I9 (one RM message), then, after `kronos --gpu`'s texts, one submission of copies host RAM ↔
 /// VRAM timed and checked byte for byte (`kt ramvram …`). Set only by the cycle (`test-placa … --ram-vram`) and, in the
