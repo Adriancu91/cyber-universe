@@ -7444,7 +7444,7 @@ fn map_fast_tc(st: &mut GpuState) -> GpuResult<(Mapping, Mapping)> {
 /// P6-215: how many launches of one step got each `mm_tc` program (`mm_tc_v4 135, mm_tc_pf 12`).
 fn fast_picks_text(picks: &[Option<nvidia_ga104::train_step::TcPick>]) -> String {
     use nvidia_ga104::train_step::TcPick;
-    let parts: Vec<String> = [TcPick::V4, TcPick::Pf, TcPick::Tc, TcPick::Gelu, TcPick::AttnTc, TcPick::AttnTc16, TcPick::AttnTc16V4, TcPick::AttnTc16V4pf]
+    let parts: Vec<String> = [TcPick::V4, TcPick::Pf, TcPick::Tc, TcPick::Gelu, TcPick::AttnTc, TcPick::AttnTc16, TcPick::AttnTc16V4, TcPick::AttnTc16V4pf, TcPick::Attn0Tc, TcPick::Attn0TcV4]
         .iter()
         .map(|k| (k, picks.iter().filter(|x| **x == Some(*k)).count()))
         .filter(|(_, n)| *n > 0)
@@ -8418,6 +8418,8 @@ const KT_513_VIA_RAM: &str = "kt antrenare-513 lot prin RAM (1/0)";
 const KT_513_ATTN_TC16: &str = "kt antrenare-513 atentia pe f16 (1/0)";
 /// P6-237: 1 when #513's fast mixed step ran with `attn_back_tile_tc16_v4` on the aligned launches (`--atentie-v4`).
 const KT_513_ATTN_V4: &str = "kt antrenare-513 atentia pe f16 v4 (1/0)";
+/// P6-241: dS of #513's fast mixed step on `attn_back_tile0_tc` / `_v4` (`--atentie-ds`).
+const KT_513_ATTN_DS: &str = "kt antrenare-513 dS pe f16 (1/0)";
 const KT_513_OUTSIDE_US: &str = "kt antrenare-513 us in afara placii pe pas (median)";
 /// P6-217 (note C-157_P2zg step 2): two batch slots (1/0), and the parts of steps 2..N sent while the step before ran.
 const KT_513_SLOTS: &str = "kt antrenare-513 doua locuri de lot (1/0)";
@@ -9012,6 +9014,32 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         None
     };
     journal.push(Event::Value { what: KT_513_ATTN_V4, value: u32::from(attn_v4_map.is_some()) });
+    // P6-241 (`--atentie-ds`, note C-157_P2zu; programs repaired in P2zx): the 12 dS launches on `attn_back_tile0_tc_v4`
+    // where aligned, `attn_back_tile0_tc` for the rest (SHA-256 first, each with the tail page).
+    let attn0_maps = if attn16_map.is_some() && super::gpu_tur::TRAIN_513_ATTN_DS_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+        use nvidia_ga104::attn_back_tile0_tc as a0;
+        use nvidia_ga104::attn_back_tile0_tc_v4 as a4;
+        if sha256_hex(a0::ATTN_BACK_TILE0_TC) != a0::ATTN_BACK_TILE0_TC_SHA256 {
+            lines.push(format!("{}: kronos --gpu: {}: SHA-256 al lui attn_back_tile0_tc nu e cel din nota: nimic trimis", p, tag));
+            return Err(bad("pasul mixt rapid: SHA-256 attn_back_tile0_tc gresit"));
+        }
+        if sha256_hex(a4::ATTN_BACK_TILE0_TC_V4) != a4::ATTN_BACK_TILE0_TC_V4_SHA256 {
+            lines.push(format!("{}: kronos --gpu: {}: SHA-256 al lui attn_back_tile0_tc_v4 nu e cel din nota: nimic trimis", p, tag));
+            return Err(bad("pasul mixt rapid: SHA-256 attn_back_tile0_tc_v4 gresit"));
+        }
+        let m0 = map_vram(st, program_map_bytes(a0::ATTN_BACK_TILE0_TC.len() as u64))?;
+        put_bytes(st.mem.writer_mut(), m0.pa, a0::ATTN_BACK_TILE0_TC)?;
+        let m4 = map_vram(st, program_map_bytes(a4::ATTN_BACK_TILE0_TC_V4.len() as u64))?;
+        put_bytes(st.mem.writer_mut(), m4.pa, a4::ATTN_BACK_TILE0_TC_V4)?;
+        lines.push(format!(
+            "{}: kronos --gpu: {}: dS al atentiei pe circuitele f16 (--atentie-ds, nota Cyber-GPU C-157_P2zu): attn_back_tile0_tc_v4 unde forma e aliniata, attn_back_tile0_tc pe rest ({} registre, {} octeti partajati, SHA-256 verificate) in locul celor 12 lansari attn_back_tile0_3 din pas",
+            p, tag, a0::REGISTERS, a0::SHARED.bytes
+        ));
+        Some((m0, m4))
+    } else {
+        None
+    };
+    journal.push(Event::Value { what: KT_513_ATTN_DS, value: u32::from(attn0_maps.is_some()) });
     let mut fast_picks = String::new();
     let pages = |first: u64, n: u64| (first..first + n).map(|i| host + i * PAGE).collect::<Vec<u64>>();
     let stage = st.mem.alloc_sys_mapped(&pages(0, piece / PAGE))?;
@@ -9075,6 +9103,8 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     maps.extend(attn16_map);
     // P6-237: `attn_back_tile_tc16_v4` too.
     maps.extend(attn_v4_map);
+    // P6-241: `attn_back_tile0_tc` and `_v4` too.
+    maps.extend(attn0_maps.iter().flat_map(|(a, b)| [*a, *b]));
     maps.extend(recs.iter().flatten().copied());
     let mut sys = alloc::vec![ctx.sys.clone(), stage.clone()];
     sys.extend(ctls.iter().cloned());
@@ -9279,6 +9309,8 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 let ml = plan.step_mixed(Recipe::AdamW513, &adam, step, scale)?;
                 // P6-231: the 12 `attn_back_tile_3` launches onto `MixedLaunch::AttnTc` (nothing else changes).
                 let ml = if attn16_map.is_some() { ts::attn_tc_list(ml)? } else { ml };
+                // P6-241: and the 12 `attn_back_tile0_3` (dS) launches onto `MixedLaunch::Attn0Tc`.
+                let ml = if attn0_maps.is_some() { ts::attn0_tc_list(ml)? } else { ml };
                 tc = Some(ml.iter().filter(|x| matches!(x, ts::MixedLaunch::Tc { .. })).count());
                 let (zb, qmds, pk) = match fast_map {
                     Some((pf, v4)) => {
@@ -9286,14 +9318,16 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                         let attn = attn16_map.as_ref().map(|m| ts::AttnTcProgram::Tc16(m.va));
                         // P6-237: with `--atentie-v4`, the v4 winner on the aligned launches (`pack_mixed_fast_attn4`).
                         let fast = attn_v4_map.as_ref().map(|m| ts::AttnTcFast::V4(m.va));
-                        let none0 = ts::Attn0Programs { tc: 0, v4: 0 };
+                        // P6-241: with `--atentie-ds`, both dS programs (v4 picked on the aligned launches).
+                        let attn0 = attn0_maps.as_ref().map_or(ts::Attn0Programs { tc: 0, v4: 0 }, |(m0, m4)| ts::Attn0Programs { tc: m0.va, v4: m4.va });
+                        let with4 = fast.is_some() || attn0_maps.is_some();
                         let (zb, qmds, pk) = match (&via, attn, fast) {
-                            (Some(v), at, Some(f)) => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn4(&ml, prog_va, &progs, at, Some(f), none0, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
-                            (None, at, Some(f)) => ts::pack_mixed_fast_attn4(&ml, prog_va, &progs, at, Some(f), none0, Some(MIXED_FAST_STEP), ctl.va)?,
+                            (Some(v), at, f) if with4 => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn4(&ml, prog_va, &progs, at, f, attn0, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
+                            (None, at, f) if with4 => ts::pack_mixed_fast_attn4(&ml, prog_va, &progs, at, f, attn0, Some(MIXED_FAST_STEP), ctl.va)?,
                             (Some(v), None, None) => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram(&ml, prog_va, &progs, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
                             (None, None, None) => ts::pack_mixed_fast(&ml, prog_va, &progs, Some(MIXED_FAST_STEP), ctl.va)?,
-                            (Some(v), at, None) => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn(&ml, prog_va, &progs, at, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
-                            (None, at, None) => ts::pack_mixed_fast_attn(&ml, prog_va, &progs, at, Some(MIXED_FAST_STEP), ctl.va)?,
+                            (Some(v), at, _) => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn(&ml, prog_va, &progs, at, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
+                            (None, at, _) => ts::pack_mixed_fast_attn(&ml, prog_va, &progs, at, Some(MIXED_FAST_STEP), ctl.va)?,
                         };
                         picks = Some(fast_picks_text(&pk));
                         (zb, qmds, pk)
