@@ -102,7 +102,9 @@ AGENT_STEPS = [
     ("repara", {"actiune": "setare", "nume": "plafon_zi", "valoare": "1000"}, lambda r, e: not e and "max_tokens = 4096 scris in /etc/agent.setari" in r),
     ("repara", {"actiune": "setare", "nume": "live_minute", "valoare": "0"}, lambda r, e: e and "nu e in lista aprobata" in r),
     ("repara", {"actiune": "opreste_lucrarea", "nume": "proba-agent"}, lambda r, e: e and "iese din limite" in r),
-    ("repara", {"actiune": "formateaza", "nume": "/disk"}, lambda r, e: "lucrare proba-agent:" in r),
+    # P6-225: taking up a job the OS gave up on; this one never ran, so the kernel refuses.
+    ("repara", {"actiune": "reia_lucrarea", "nume": "proba-agent"}, lambda r, e: "lucrare proba-agent:" in r),
+    ("repara", {"actiune": "formateaza", "nume": "/disk"}, lambda r, e: e and "reluarea REFUZATA" in r),
     (None, None, lambda r, e: e and "nu e in lista alba a reparatiilor" in r),
 ]
 

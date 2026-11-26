@@ -6,7 +6,8 @@
 //!
 //! P6-219 (C-166 step 4): one tool that changes something, `repara`, limited to a white list decided here: the safe
 //! stop of a long job (`lucrare opreste <nume>`: after the step in progress) and a few values of `agent.setari` within
-//! fixed bounds. Every other action or setting is refused; every repair, done or refused, goes into
+//! fixed bounds; P6-225: taking up again a long job the OS gave up on (`lucrare reia <nume>`). Every other action or
+//! setting is refused; every repair, done or refused, goes into
 //! `<root>/agent/reparatii.txt`.
 //!
 //! P6-220 (C-166 step 5): `citeste_cod` reads the OS's code on GitHub (`main`, read only) and `propune` writes a change
@@ -41,7 +42,7 @@ pub const DEFINITIONS: &str = r#"[
  {"name":"ruleaza","description":"Ruleaza o comanda de citire din lista alba a shell-ului: ls, mem, uptime, lspci, lsusb, discuri, net, cpu, hw, hw lista [--detalii], log ..., usb timp, lucrare stare, porneste (fara argumente), hub stare|comenzi|decizii [proiect]. Orice altceva e refuzat de OS.","input_schema":{"type":"object","properties":{"comanda":{"type":"string"}},"required":["comanda"]}},
  {"name":"citeste_cod","description":"Citeste codul lui Cyber Universe OS de pe GitHub (ramura main, doar citire): un fisier (cel mult 32 KiB de la `de_la`) sau lista unui dosar (cale goala = radacina). De ex. user/src/agent_tools.rs, kernel/src/shell.","input_schema":{"type":"object","properties":{"cale":{"type":"string"},"de_la":{"type":"integer"}},"required":["cale"]}},
  {"name":"propune","description":"Scrie o modificare de cod ca PROPUNERE pe o ramura noua agent/<zi>-<subiect> a depozitului OS-ului (niciodata main; sesiunea OS o verifica, o testeaza si decide). Fisierele se dau intregi (continutul nou complet). Cel mult 8 fisiere de cel mult 128 KiB; refuzate: .github/, LICENSE, CLAUDE.md, docs/DECISIONS.md. Explicatia si dovada (de ce, ce ai vazut, cum se poate verifica) sunt obligatorii.","input_schema":{"type":"object","properties":{"subiect":{"type":"string","description":"litere mici, cifre si -, cel mult 40"},"explicatie":{"type":"string"},"dovada":{"type":"string"},"fisiere":{"type":"array","items":{"type":"object","properties":{"cale":{"type":"string"},"continut":{"type":"string"}},"required":["cale","continut"]}}},"required":["subiect","explicatie","dovada","fisiere"]}},
- {"name":"repara","description":"Reparatii din lista alba a OS-ului (singurele schimbari permise): actiune `opreste_lucrarea` = oprirea sigura a unei lucrari lungi dupa pasul in lucru (`nume` = lucrarea, ca in `lucrare stare`); actiune `setare` = o valoare din agent.setari, doar live_minute (1-60), analiza_minute (2-120) sau max_tokens (256-8192), in `valoare`. Orice alta actiune sau setare e refuzata de OS. Fiecare reparatie se scrie in agent/reparatii.txt.","input_schema":{"type":"object","properties":{"actiune":{"type":"string","enum":["opreste_lucrarea","setare"]},"nume":{"type":"string"},"valoare":{"type":"string"}},"required":["actiune","nume"]}}
+ {"name":"repara","description":"Reparatii din lista alba a OS-ului (singurele schimbari permise): actiune `opreste_lucrarea` = oprirea sigura a unei lucrari lungi dupa pasul in lucru (`nume` = lucrarea, ca in `lucrare stare`); actiune `reia_lucrarea` = reluarea, de la pasul la care a renuntat, a unei lucrari oprite de OS dupa 2 intreruperi la rand ale aceluiasi pas (`nume` = lucrarea; cel mult de 2 ori pe lucrare; continua la urmatoarea ei rulare sau la pornire); actiune `setare` = o valoare din agent.setari, doar live_minute (1-60), analiza_minute (2-120) sau max_tokens (256-8192), in `valoare`. Orice alta actiune sau setare e refuzata de OS. Fiecare reparatie se scrie in agent/reparatii.txt.","input_schema":{"type":"object","properties":{"actiune":{"type":"string","enum":["opreste_lucrarea","reia_lucrarea","setare"]},"nume":{"type":"string"},"valoare":{"type":"string"}},"required":["actiune","nume"]}}
 ]"#;
 
 /// P6-219: the settings `repara` may change, with their bounds (inclusive). Not the model, the daily cap, the prices,
@@ -121,6 +122,14 @@ fn repair(action: &str, name: &str, value: Option<&str>, root: &str, term: &mut 
             let out = claude_tools::run_command(&format!("lucrare opreste {}", name), term)?;
             if out.contains("oprirea ceruta") { Ok(out) } else { Err(out) }
         }
+        // P6-225 (C-166 step 4, "reluarea unui pas"): the kernel decides (only a job it gave up on, at most twice).
+        "reia_lucrarea" => {
+            if !job_name(name) {
+                return Err(format!("numele lucrarii `{}` nu e permis (litere mici, cifre, - _)", name));
+            }
+            let out = claude_tools::run_command(&format!("lucrare reia {}", name), term)?;
+            if out.contains("reluarea ceruta") { Ok(out) } else { Err(out) }
+        }
         "setare" => {
             let Some(&(_, lo, hi)) = SETTINGS_ALLOWED.iter().find(|(n, _, _)| *n == name) else {
                 return Err(format!(
@@ -140,7 +149,7 @@ fn repair(action: &str, name: &str, value: Option<&str>, root: &str, term: &mut 
             let _ = cyber_user::sync(root);
             Ok(format!("{} = {} scris in {} (de la urmatoarea pornire a agentului)", name, value, path))
         }
-        other => Err(format!("actiunea `{}` nu e in lista alba a reparatiilor (doar opreste_lucrarea, setare); OS-ul a refuzat-o", other)),
+        other => Err(format!("actiunea `{}` nu e in lista alba a reparatiilor (doar opreste_lucrarea, reia_lucrarea, setare); OS-ul a refuzat-o", other)),
     }
 }
 
@@ -431,8 +440,8 @@ pub fn run(name: &str, input: &Value, root: &str, gh: Option<&Gh>, term: &mut Op
 const BOARD_MS: u64 = 120 * 60 * 1000;
 
 /// P6-222 (C-166 step 6, part 1): one command of the centre's channel (`live/os-agent-comenzi.md`), decided here, by the
-/// OS: `stare`, `tablou [n]`, `jurnal [n] [cuvant]`, `repara opreste_lucrarea <nume>`, `repara setare <nume> <valoare>`
-/// and every read-only shell command of the white list. P6-223 (part 2): a command on the board (`test-placa …`) only
+/// OS: `stare`, `tablou [n]`, `jurnal [n] [cuvant]`, `repara opreste_lucrarea <nume>`, `repara reia_lucrarea <nume>`
+/// (P6-225), `repara setare <nume> <valoare>` and every read-only shell command of the white list. P6-223 (part 2): a command on the board (`test-placa …`) only
 /// with the centre's signature `sig`, checked by the kernel (`agent-placa`); everything else is refused.
 pub fn channel_command(nr: u32, text: &str, sig: Option<&str>, root: &str, term: &mut Option<i64>) -> Result<String, String> {
     let words: Vec<&str> = text.split_whitespace().collect();
@@ -449,6 +458,9 @@ pub fn channel_command(nr: u32, text: &str, sig: Option<&str>, root: &str, term:
         }
         ["repara", "opreste_lucrarea", name] => {
             run("repara", &Value::object([("actiune", Value::str("opreste_lucrarea")), ("nume", Value::str(name))]), root, None, term, &mut note)
+        }
+        ["repara", "reia_lucrarea", name] => {
+            run("repara", &Value::object([("actiune", Value::str("reia_lucrarea")), ("nume", Value::str(name))]), root, None, term, &mut note)
         }
         ["repara", "setare", name, value] => run(
             "repara",

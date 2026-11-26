@@ -67,3 +67,10 @@ Adrian); altfel pornește Windows, iar lucrarea se reia la următoarea pornire d
 QEMU: `lucrare` (lista automată: pornire după 2 s, 2 tururi × 3 pași, rapoarte; oprire la comandă; oprire la durată; fișă
 refuzată) și `lucrare-reluare` (reluare de la turul 2 pasul 2; oprire după a doua tăiere a aceluiași pas; o lucrare terminată
 rămâne neatinsă); `lucrare::self_test` (fișa, starea, ora peste miezul nopții).
+
+**Reluarea la cerere (P6-225):** o lucrare oprită așa se poate relua de la **același pas** cu `lucrare reia <nume>` (de la
+tastatură, un rând în `auto\teste.txt` sau de către agentul de bord, ca reparație din lista albă: `repara reia_lucrarea
+<nume>`). Comanda doar o marchează (`stare=de reluat`); lucrarea continuă la următoarea ei rulare (`lucrare <nume>`, rândul
+din listă) sau la pornire. O nouă întrerupere a aceluiași pas o oprește iar. Se poate cere de cel mult **2 ori** pe lucrare
+(`cerute=` în `.stare`); după aceea OS-ul refuză: e de văzut de Adrian. Orice altă lucrare (terminată, oprită la comandă sau
+la oră, în lucru) e refuzată.

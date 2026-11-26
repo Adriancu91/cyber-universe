@@ -6,6 +6,10 @@
 //! automatic mode's allow-list only). The state `<name>.stare` is written to the stick after every step, so after a power
 //! cut the OS takes the job up again at boot from the next step; a step cut off twice in a row is not tried a third time.
 //! `lucrare opreste <name>` (or the file `<name>.opreste`) stops it between two steps.
+//! P6-225 (C-166 step 4, "reluarea unui pas"): `lucrare reia <name>` takes up again, from the very step it gave up on, a
+//! job the OS stopped because that step was cut off twice in a row — at most `MAX_ASKED` times per job, so a step that
+//! keeps bringing the machine down cannot be retried forever. It only marks the job; the job goes on at the next run
+//! (`lucrare <name>`, its line in the automatic list, or the boot). The on-board agent may ask for it (`repara`).
 //! Idea: job schedulers with checkpoints (cron, systemd timers, batch queues); our own code.
 
 use super::auto::{Report, date_stamp, free_name, now_text, say};
@@ -33,6 +37,10 @@ const DEFAULT_REPORT_MIN: u64 = 30;
 const DEFAULT_STEP_MIN: u64 = 30;
 /// A step cut off this many times in a row (power cut, hang + safety clock) stops the job.
 const MAX_CUTS: u64 = 2;
+/// P6-225: how many times `lucrare reia` may take up one job the OS gave up on.
+const MAX_ASKED: u64 = 2;
+/// P6-225: the state a job asked to be taken up again is in (counts as running: the boot takes it up too).
+const ASKED: &str = "de reluat";
 
 /// Who runs the job: Adrian at the shell, a line of the automatic list, or the boot that finds a job cut off.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -187,13 +195,15 @@ struct State {
     taiat_la: String,
     taieri: u64,
     motiv: String,
+    /// P6-225: how many times `lucrare reia` took it up.
+    cerute: u64,
 }
 
 impl State {
     fn text(&self) -> String {
         format!(
-            "stare={}\ntur={}\npas={}\nfacuti={}\nlucrat_s={}\npornit={}\nreluari={}\ntaiat_la={}\ntaieri={}\nmotiv={}\n",
-            self.stare, self.tur, self.pas, self.facuti, self.lucrat_s, self.pornit, self.reluari, self.taiat_la, self.taieri, self.motiv
+            "stare={}\ntur={}\npas={}\nfacuti={}\nlucrat_s={}\npornit={}\nreluari={}\ntaiat_la={}\ntaieri={}\nmotiv={}\ncerute={}\n",
+            self.stare, self.tur, self.pas, self.facuti, self.lucrat_s, self.pornit, self.reluari, self.taiat_la, self.taieri, self.motiv, self.cerute
         )
     }
 
@@ -213,6 +223,7 @@ impl State {
                 "taiat_la" => s.taiat_la = String::from(v),
                 "taieri" => s.taieri = v.parse().unwrap_or(0),
                 "motiv" => s.motiv = String::from(v),
+                "cerute" => s.cerute = v.parse().unwrap_or(0),
                 _ => {}
             }
         }
@@ -220,7 +231,34 @@ impl State {
     }
 
     fn running(&self) -> bool {
-        matches!(self.stare.as_str(), "asteapta" | "in lucru")
+        matches!(self.stare.as_str(), "asteapta" | "in lucru" | ASKED)
+    }
+
+    /// P6-225: whether the OS gave up on it because a step was cut off too many times in a row.
+    fn gave_up(&self) -> bool {
+        self.stare == "oprita" && self.taieri >= MAX_CUTS
+    }
+
+    /// P6-225: marks a job the OS gave up on to be taken up again from the same step; Err = refused, with why.
+    fn ask_resume(&mut self) -> Result<(), String> {
+        if !self.gave_up() {
+            let now = if self.stare.is_empty() { String::from("nepornita") } else { self.stare.clone() };
+            return Err(format!(
+                "se reia doar o lucrare oprita de OS dupa {} intreruperi la rand ale aceluiasi pas; starea ei: {}{}",
+                MAX_CUTS,
+                now,
+                if self.motiv.is_empty() { String::new() } else { format!(" ({})", self.motiv) }
+            ));
+        }
+        if self.cerute >= MAX_ASKED {
+            return Err(format!("a fost reluata la cerere de {} ori deja (cel mult {}); de vazut de Adrian", self.cerute, MAX_ASKED));
+        }
+        self.cerute += 1;
+        self.stare = String::from(ASKED);
+        self.taieri = 0;
+        self.taiat_la = String::new();
+        self.motiv = format!("reluare ceruta ({} din {})", self.cerute, MAX_ASKED);
+        Ok(())
     }
 }
 
@@ -262,16 +300,17 @@ pub(super) fn command(args: &[&str]) {
                 super::emit(&format!("  {}\n", summary(&n)));
             }
             if args.is_empty() {
-                super::emit("folosire: lucrare <nume> | lucrare stare [nume] | lucrare opreste <nume>\n");
+                super::emit("folosire: lucrare <nume> | lucrare stare [nume] | lucrare opreste <nume> | lucrare reia <nume>\n");
             }
         }
         ["stare", name] => super::emit(&format!("{}\n", summary(name))),
         ["opreste", name] => super::emit(&stop_request(name)),
+        ["reia", name] => super::emit(&resume_request(name)),
         [name] => {
             let text = run(name, Mode::Shell);
             super::emit(&text);
         }
-        _ => super::emit("folosire: lucrare <nume> | lucrare stare [nume] | lucrare opreste <nume>\n"),
+        _ => super::emit("folosire: lucrare <nume> | lucrare stare [nume] | lucrare opreste <nume> | lucrare reia <nume>\n"),
     }
 }
 
@@ -283,8 +322,9 @@ pub(super) fn auto_line(line: &str) -> String {
         ["lucrare", "stare"] => names().iter().map(|n| format!("{}\n", summary(n))).collect(),
         ["lucrare", "stare", n] => format!("{}\n", summary(n)),
         ["lucrare", "opreste", n] => stop_request(n),
+        ["lucrare", "reia", n] => resume_request(n),
         ["lucrare", n] => run(n, Mode::List),
-        _ => String::from("REFUZAT: folosire: lucrare <nume> | lucrare stare [nume] | lucrare opreste <nume>\n"),
+        _ => String::from("REFUZAT: folosire: lucrare <nume> | lucrare stare [nume] | lucrare opreste <nume> | lucrare reia <nume>\n"),
     }
 }
 
@@ -355,6 +395,34 @@ fn stop_request(name: &str) -> String {
     }
 }
 
+/// P6-225: `lucrare reia <name>` — only marks the job (see `State::ask_resume`); it goes on at its next run.
+fn resume_request(name: &str) -> String {
+    if !valid_name(name) {
+        return format!("lucrare {}: nume nepermis\n", name);
+    }
+    if fs::kind(&path(name, ".txt")).is_err() {
+        return format!("lucrare {}: reluarea REFUZATA: {} nu exista\n", name, path(name, ".txt"));
+    }
+    let Some(mut st) = load_state(name) else {
+        return format!("lucrare {}: reluarea REFUZATA: nepornita inca (nimic de reluat)\n", name);
+    };
+    if let Err(why) = st.ask_resume() {
+        return format!("lucrare {}: reluarea REFUZATA: {}\n", name, why);
+    }
+    match save_state(name, &st) {
+        Ok(()) => format!(
+            "lucrare {}: reluarea ceruta ({} din {}): turul {}, pasul {} se reia la urmatoarea rulare (lucrare {}, randul din lista sau pornirea)\n",
+            name,
+            st.cerute,
+            MAX_ASKED,
+            st.tur + 1,
+            st.pas + 1,
+            name
+        ),
+        Err(e) => format!("lucrare {}: reluarea NU s-a putut scrie: {}\n", name, e),
+    }
+}
+
 fn stop_asked(name: &str) -> bool {
     fs::kind(&path(name, ".opreste")).is_ok()
 }
@@ -414,7 +482,21 @@ impl<'a> Job<'a> {
         }
         self.log = Some(Report::open(&path(name, "-jurnal.txt")));
         let mut head = String::new();
-        if resumed {
+        if resumed && st.stare == ASKED {
+            // P6-225: taken up on request (`lucrare reia`): not a cut; the cut counter starts again from this step.
+            st.reluari += 1;
+            // One more cut of this same step (counted at the next boot) and the OS gives up on it again.
+            st.taiat_la = format!("{}.{}", st.tur, st.pas);
+            st.taieri = 1;
+            head.push_str(&format!(
+                "lucrare {}: RELUATA la cerere ({}): turul {}, pasul {}; {} pasi facuti inainte\n",
+                name,
+                st.motiv,
+                st.tur + 1,
+                st.pas + 1,
+                st.facuti
+            ));
+        } else if resumed {
             // The step it was on when it was cut (power, hang + safety clock, or Adrian restarting).
             let at = format!("{}.{}", st.tur, st.pas);
             st.taieri = if st.taiat_la == at { st.taieri + 1 } else { 1 };
@@ -664,9 +746,28 @@ pub fn self_test() {
     ] {
         assert!(parse_card(bad).is_err(), "fisa trebuia refuzata: {:?}", bad);
     }
-    let s = State { stare: String::from("in lucru"), tur: 2, pas: 1, facuti: 7, lucrat_s: 90, pornit: String::from("2026-11-22 22:00:00"), reluari: 1, taiat_la: String::from("2.1"), taieri: 1, motiv: String::new() };
+    let s = State { stare: String::from("in lucru"), tur: 2, pas: 1, facuti: 7, lucrat_s: 90, pornit: String::from("2026-11-22 22:00:00"), reluari: 1, taiat_la: String::from("2.1"), taieri: 1, motiv: String::new(), cerute: 1 };
     assert_eq!(State::parse(&s.text()), s);
     assert!(s.running());
+    // P6-225: `lucrare reia` only for a job the OS gave up on, at most MAX_ASKED times.
+    let mut r = State::default();
+    assert!(r.ask_resume().is_err(), "nepornita");
+    for stare in ["in lucru", "terminata", "asteapta"] {
+        let mut r = State { stare: String::from(stare), taieri: MAX_CUTS, ..State::default() };
+        assert!(r.ask_resume().is_err(), "{}", stare);
+    }
+    let mut r = State { stare: String::from("oprita"), motiv: String::from("la comanda"), ..State::default() };
+    assert!(r.ask_resume().is_err(), "oprita la comanda");
+    let mut r = State { stare: String::from("oprita"), tur: 1, pas: 2, taiat_la: String::from("1.2"), taieri: MAX_CUTS, ..State::default() };
+    for k in 1..=MAX_ASKED {
+        assert!(r.ask_resume().is_ok(), "ceruta {}", k);
+        assert!(r.running() && r.stare == ASKED && r.taieri == 0 && (r.tur, r.pas) == (1, 2) && r.cerute == k);
+        let back = State::parse(&r.text());
+        assert_eq!(back, r);
+        r.stare = String::from("oprita");
+        r.taieri = MAX_CUTS;
+    }
+    assert!(r.ask_resume().unwrap_err().contains("de vazut de Adrian"), "a treia cerere");
     for (n, ok) in [("proba", true), ("noapte-1", true), ("a_b", true), ("Mare", false), ("../x", false), ("", false), ("a b", false)] {
         assert_eq!(valid_name(n), ok, "{}", n);
     }

@@ -27,7 +27,9 @@ O comandă = un rând, cu trei câmpuri despărțite de ` · ` (spațiu, punct m
 - `stare` (timpul, memoria, lucrările, rețeaua), `tablou [n]` (citirile tabloului plăcii din jurnal), `jurnal [n] [cuvânt]`;
 - orice comandă de citire din lista albă a agentului (aceeași ca unealta `ruleaza`: `ls`, `mem`, `uptime`, `lspci`, `discuri`,
   `net`, `hw`, `log …`, `lucrare stare`, `hub stare|comenzi|decizii` …);
-- `repara opreste_lucrarea <nume>` (oprirea sigură a unei lucrări după pasul în lucru) și `repara setare <nume> <valoare>`
+- `repara opreste_lucrarea <nume>` (oprirea sigură a unei lucrări după pasul în lucru), `repara reia_lucrarea <nume>`
+  (P6-225: reluarea unei lucrări oprite de OS după 2 întreruperi ale aceluiași pas, de la acel pas, de cel mult 2 ori) și
+  `repara setare <nume> <valoare>`
   (doar `live_minute` 1–60, `analiza_minute` 2–120, `max_tokens` 256–8192).
 - Orice altceva: `refuzat` de OS, cu motivul.
 
