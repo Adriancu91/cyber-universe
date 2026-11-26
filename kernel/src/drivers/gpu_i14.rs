@@ -5400,6 +5400,9 @@ struct TcOnBoard {
 /// P6-227: one small set, both tensor-core programs (index 0 = tc, 1 = tc16).
 struct TcSet {
     verdict: Vec<gpu_compute::mm_tc::Verdict>,
+    /// P6-230 (cyber-gpu note C-157_P2zo): the same values judged with `attn_tc::judge_nominal` (binary16 subnormals
+    /// counted at their nominal exponent, as the os-335 adder aligns them).
+    nominal: Vec<gpu_compute::mm_tc::Verdict>,
     guard_ok: Vec<bool>,
     rel_ppm: Vec<Option<u32>>,
     ns: Vec<u64>,
@@ -5410,6 +5413,12 @@ impl TcSet {
     fn in_margin(&self) -> bool {
         self.verdict.len() == 2
             && self.verdict.iter().all(|v| matches!(v, gpu_compute::mm_tc::Verdict::InMargine { .. }))
+            && self.guard_ok.iter().all(|&g| g)
+    }
+    /// P6-230: in margin under the nominal-exponent margin (and the guards untouched).
+    fn in_margin_nominal(&self) -> bool {
+        self.nominal.len() == 2
+            && self.nominal.iter().all(|v| matches!(v, gpu_compute::mm_tc::Verdict::InMargine { .. }))
             && self.guard_ok.iter().all(|&g| g)
     }
     fn worst(&self, k: usize) -> Option<u32> {
@@ -5505,7 +5514,7 @@ fn tc_small_set<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let (qkv, dout, pm, ds, f32dq) = (take(lay.qkv, nq), take(lay.dout, no), take(lay.p, np), take(lay.ds, np), take(lay.dqkv, nq));
     let span = 4 * nq + 4 * ap::GUARD;
     let fill: Vec<u8> = core::iter::repeat_n(ap::FILL.to_le_bytes(), span / 4).flatten().collect();
-    let mut r = TcSet { verdict: Vec::new(), guard_ok: Vec::new(), rel_ppm: Vec::new(), ns: Vec::new(), same_words: false };
+    let mut r = TcSet { verdict: Vec::new(), nominal: Vec::new(), guard_ok: Vec::new(), rel_ppm: Vec::new(), ns: Vec::new(), same_words: false };
     let mut words: Vec<Vec<u8>> = Vec::new();
     for tcb in tcs {
         ram_write_at(buf, lay.dqkv as u64, &fill);
@@ -5533,18 +5542,22 @@ fn tc_small_set<V: Mmio + ?Sized, K: Clock + ?Sized>(
         r.guard_ok.push(got[4 * nq..].chunks(4).all(|w| w == ap::FILL.to_le_bytes()));
         let v = f32_words(&got[..4 * nq]);
         r.verdict.push(gpu_compute::attn_tc::judge(&shape, &qkv, &pm, &dout, &ds, &v));
+        r.nominal.push(gpu_compute::attn_tc::judge_nominal(&shape, &qkv, &pm, &dout, &ds, &v));
         r.rel_ppm.push(rel_ppm(&v, &f32dq));
         words.push(got[..4 * nq].to_vec());
     }
     r.same_words = words.len() == 2 && words[0] == words[1];
-    let worst = |k: usize| match r.verdict.get(k) {
+    let worst = |k: usize| verdict_text(r.verdict.get(k));
+    fn verdict_text(v: Option<&gpu_compute::mm_tc::Verdict>) -> String {
+        match v {
         Some(gpu_compute::mm_tc::Verdict::InMargine { worst_permille, .. }) => format!("{} promile", worst_permille),
         Some(gpu_compute::mm_tc::Verdict::NuTrece { index, got, reference, margin }) => {
             format!("NU (primul element in afara, nr. {} pe cap: {:e}, modelul {:e}, marginea {:e})", index, got, reference, margin)
         }
         Some(gpu_compute::mm_tc::Verdict::Invalid) => String::from("INVALID (lungime gresita sau valoare nefinita)"),
         None => String::from("-"),
-    };
+        }
+    }
     lines.push(format!(
         "{}: kronos --gpu: kt atentie-tc set {} ({}): tc {} ns, tc16 {} ns (dQ/dK/dV F32 {} ns); in margine: tc {}, tc16 {}; garda dqkv {}; tc16 = tc cuvant cu cuvant: {}; abaterea fata de F32: tc {}, tc16 {}",
         p,
@@ -5560,6 +5573,16 @@ fn tc_small_set<V: Mmio + ?Sized, K: Clock + ?Sized>(
         ppm_text(r.rel_ppm.first().copied().flatten()),
         ppm_text(r.rel_ppm.get(1).copied().flatten())
     ));
+    // P6-230 (C-157_P2zo): the second margin, beside the first, never instead of it.
+    lines.push(format!(
+        "{}: kronos --gpu: kt atentie-tc set {} ({}): marginea-subnormale (attn_tc::judge_nominal) {}: tc {}, tc16 {}",
+        p,
+        i,
+        set.name,
+        if r.in_margin_nominal() { "in margine" } else { "NU" },
+        verdict_text(r.nominal.first()),
+        verdict_text(r.nominal.get(1))
+    ));
     const T: [&str; 2] = ["kt atentie-tc set: timp tc (ns)", "kt atentie-tc set: timp tc16 (ns)"];
     for (k, what) in T.iter().enumerate() {
         journal.push(Event::Value { what: *what, value: u32::try_from(r.ns.get(k).copied().unwrap_or(0)).unwrap_or(u32::MAX) });
@@ -5573,10 +5596,12 @@ fn tc_verdict(p: &str, label: &str, journal: &mut Journal, lines: &mut Vec<Strin
     use nvidia_ga104::attn_tile_probe as ap;
     let n = sets.len();
     let in_margin = sets.iter().filter(|s| s.in_margin()).count();
+    let in_nominal = sets.iter().filter(|s| s.in_margin_nominal()).count();
     let same = sets.iter().filter(|s| s.same_words).count();
     let worst = |k: usize| sets.iter().filter_map(|s| s.worst(k)).max();
     let max_rel = sets.iter().flat_map(|s| s.rel_ppm.iter().copied()).try_fold(0u32, |m, x| x.map(|x| m.max(x)));
     journal.push(Event::Value { what: "kt atentie-tc seturi in margine", value: in_margin as u32 });
+    journal.push(Event::Value { what: "kt atentie-tc seturi in marginea-subnormale", value: in_nominal as u32 });
     journal.push(Event::Value { what: "kt atentie-tc seturi tc16 = tc", value: same as u32 });
     journal.push(Event::Value { what: "kt atentie-tc abatere fata de F32 (milionimi)", value: max_rel.unwrap_or(u32::MAX) });
     lines.push(format!(
@@ -5630,13 +5655,16 @@ fn tc_verdict(p: &str, label: &str, journal: &mut Journal, lines: &mut Vec<Strin
     let verdict = match (stopped, before) {
         (Some(i), _) => format!("NU A TERMINAT (la setul {})", i),
         (None, Some(i)) if n < ap::TIMING_SET => format!("NERULAT DUPA SETUL {} (un lant de dinainte s-a oprit)", i),
-        _ if n == ap::TIMING_SET && in_margin == n && same == n && big_ok => String::from("TRECE"),
+        // P6-230: the verdict follows the nominal-exponent margin (C-157_P2zo); the old count stays written beside it.
+        _ if n == ap::TIMING_SET && in_nominal == n && same == n && big_ok => String::from("TRECE"),
         _ => String::from("NU TRECE"),
     };
     lines.push(format!(
-        "{}: kronos --gpu: atentie-tc (vechi langa nou): {}: {} / {} seturi in margine; tc16 = tc: {} ({} / {} seturi); abaterea fata de F32 cel mult {}; {}",
+        "{}: kronos --gpu: atentie-tc (vechi langa nou): {}: {} / {} seturi in marginea-subnormale (marginea veche {} / {}); tc16 = tc: {} ({} / {} seturi); abaterea fata de F32 cel mult {}; {}",
         p,
         verdict,
+        in_nominal,
+        n,
         in_margin,
         n,
         if same == n && n > 0 { "DA" } else { "NU" },

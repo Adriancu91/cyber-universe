@@ -645,6 +645,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
   Gata (2026-11-26 ~08:20 RO): cyber-gpu `cab6742` → `3c6fa3b`; `--atentie-tc` după `--atentie3` / `--atentie4`. SIMULARE: 4 / 5 seturi în margine (setul `ascutit` iese din margine chiar cu modelul Cyber-GPU — subnormale f16, fără scara 2¹⁴), `tc16` = `tc` pe 5 / 5, abaterea față de F32 ≤ 3,02·10⁻⁴. Teste `kronos-gpu-atentie-tc`, `kronos-gpu-atentie4`, `ghpush`, `boot` — TRECUTE.
 - [x] **P6-228** Legarea PREDĂRII Cyber-GPU `aa94bea` (nota `C-157_P2zn`): proba barierei numără grupurile din numărul real de SM-uri (`query_gr_counts`, `groups_for_sms`), nu din maximele de proiect (os-456: 84 în loc de 48). Plan: `docs/plans/P6-228.md`. Dep: P6-227, P6-218.
 - [x] **P6-229** Cititorul de carduri gol (sense 2/3A) = un rând INFO, nu avertismente: agentul de bord nu mai vede „abatere” la fiecare pornire. Plan: `docs/plans/P6-229.md`. Dep: P6-228.
+- [x] **P6-230** Marginea pentru subnormalele f16 în proba `--atentie-tc` (PREDARE Cyber-GPU P2zo `3e34202` / P2zp `250c9b8`): rândul `attn_tc::judge_nominal` lângă cel vechi, verdictul pe marginea nouă. Plan: `docs/plans/P6-230.md`. Dep: P6-227.
   Gata (2026-11-26 ~09:05 RO): cyber-gpu `3c6fa3b` → `aa94bea`; I9 folosește `query_gr_counts` (`GpuState::gr_counts`); proba barierei: `groups_for_sms(counts.sms, …)`, raportul scrie TPC, SM și maximele LITTER; altă cifră decât 48 SM = proba oprită, nimic trimis. Teste: `kronos-gpu-bariera`, `boot` TRECUTE.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
