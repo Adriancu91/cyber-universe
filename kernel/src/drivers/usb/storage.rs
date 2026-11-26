@@ -237,9 +237,27 @@ impl Bot {
     }
 }
 
+/// Why `UsbDisk::start` gave no disk.
+pub enum StartError {
+    /// Medium Not Present (sense 2/3A) repeated: an empty card reader, not an error.
+    NoMedium,
+    /// Anything else (already logged as a warning).
+    Failed,
+}
+
 impl UsbDisk {
-    /// Configures `dev` (a Bulk-Only mass-storage device) and reads its size.
-    pub fn start(x: &mut Xhci, dev: &UsbDevice) -> Option<UsbDisk> {
+    /// Configures `dev` (a Bulk-Only mass-storage device) and reads its size. `Err(NoMedium)` = the device answers
+    /// but holds no medium (an empty card reader): not a failure, the caller only notes it.
+    pub fn start(x: &mut Xhci, dev: &UsbDevice) -> Result<UsbDisk, StartError> {
+        let mut no_medium = false;
+        match Self::start_inner(x, dev, &mut no_medium) {
+            Some(disk) => Ok(disk),
+            None if no_medium => Err(StartError::NoMedium),
+            None => Err(StartError::Failed),
+        }
+    }
+
+    fn start_inner(x: &mut Xhci, dev: &UsbDevice, empty: &mut bool) -> Option<UsbDisk> {
         let port = dev.port;
         // SET_CONFIGURATION
         if let Err(c) = x.control_out(dev.slot, [0x00, 9, dev.config, 0, 0, 0, 0, 0]) {
@@ -299,10 +317,12 @@ impl UsbDisk {
             no_medium = if sense.is_some_and(|k| k[0] == 2 && k[1] == 0x3A) { no_medium + 1 } else { 0 };
             if no_medium == 5 {
                 crate::info!("usb: port {}: {} fara mediu (sense 2/3a, de ex. cititor de carduri gol): sar peste", port, name);
+                *empty = true;
                 return None;
             }
             last = alloc::format!("{}: {}", step, Bot::why(csw, sense));
-            if attempt < 3 || attempt % 10 == 9 {
+            // "Medium Not Present" is the normal answer of an empty card reader: no warning while it repeats.
+            if no_medium == 0 && (attempt < 3 || attempt % 10 == 9) {
                 crate::warn!("usb: port {}: incercarea {}, {}", port, attempt + 1, last);
             }
             crate::sched::sleep_ms(if attempt < 5 { 20 } else { 100 });

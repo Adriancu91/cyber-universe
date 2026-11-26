@@ -31,8 +31,11 @@ pub fn init() {
         }
         for d in devices.iter().filter(|d| d.class == (0x08, 0x06, 0x50)) {
             match storage::UsbDisk::start(x, d) {
-                Some(disk) => disks.push(disk),
-                None => {
+                Ok(disk) => disks.push(disk),
+                Err(storage::StartError::NoMedium) => {
+                    crate::info!("usb: portul {}: cititor fara card, sarit (nu e o eroare)", d.location());
+                }
+                Err(storage::StartError::Failed) => {
                     crate::warn!("usb: stick-ul de pe portul {} nu porneste", d.location());
                     if crate::fs::failure("/usb").is_none() {
                         crate::fs::note_failure("/usb", "stick-ul nu porneste (configurare USB; vezi log usb)");
