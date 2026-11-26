@@ -157,7 +157,7 @@ pub fn target(command: &str) -> Result<(String, String), &'static str> {
 
 /// P6-96: `test-placa [--i9 …]` of the automatic list -> the I9.
 pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
-    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou` sau `--tablou-viteza`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi` sau `--ln-32`, apoi `--k651`, apoi `--argmax-placa` sau `--argmax-fara-copie`, apoi `--dieta2`, apoi `--lot`, apoi `--p8` (urmat optional de `--p8-s8`), apoi `--bariera`, apoi `--bariera-larga`, apoi `--colsum`, apoi `--pas-aur`, apoi `--mm-tc` (urmat optional de `--mm-tc128`), apoi `--atentie-placi`, apoi `--atentie2`, apoi `--atentie3`, apoi `--atentie4`, apoi `--atentie-tc`, apoi `--ram-vram`, apoi `--adam-ram`, apoi `--antrenare-mini` la sfarsit, optional urmat de `--mixt` sau `--vram` (iar dupa `--vram` optional `--pas-lipit`, `--antrenare-513` sau `--lot-ram`; dupa `--antrenare-513` optional `--placi3`, dupa el optional `--mm-placi`, dupa el optional `--lipit-placi` (ultimul) sau `--colsum-impartit`, la sfarsit optional `--mixt-513` (ultimul), `--mm-alegere` (ultimul, urmat optional de `--treapta-pas`) sau `--cursa-mm` dupa `--mm-placi` sau `--colsum-impartit`, `--cursa-mm` urmat optional de `--proba-64k8` sau `--ocupare`) (in aceasta ordine; `--mixt` sau `--vram` doar imediat dupa `--antrenare-mini`, nu amandoua; `--pas-lipit`, `--antrenare-513` sau `--lot-ram` doar imediat dupa `--vram`; `--adam-ram` doar imediat dupa `--ram-vram`; `--atentie2` doar dupa `--atentie-placi`, `--atentie3` doar dupa `--atentie2`, `--atentie4` doar dupa `--atentie3`, `--atentie-tc` doar dupa `--atentie3` sau `--atentie4`; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi`, `--ln-32`; `--k651` nu merge cu `--lipit` sau `--simplu`; `--argmax-fara-copie` nu merge cu `--lipit`, `--ln-nou`, `--sferturi` sau `--ln-32`; `--lot` doar cu `--argmax-fara-copie` si lista implicita lipita-ln-32, fara alta alegere de lista)";
+    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou` sau `--tablou-viteza`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi` sau `--ln-32`, apoi `--k651`, apoi `--argmax-placa` sau `--argmax-fara-copie`, apoi `--dieta2`, apoi `--lot`, apoi `--p8` (urmat optional de `--p8-s8`), apoi `--bariera`, apoi `--bariera-larga`, apoi `--colsum`, apoi `--pas-aur`, apoi `--mm-tc` (urmat optional de `--mm-tc128`), apoi `--atentie-placi`, apoi `--atentie2`, apoi `--atentie3`, apoi `--atentie4`, apoi `--atentie-tc`, apoi `--atentie-tc16-v4`, apoi `--ram-vram`, apoi `--adam-ram`, apoi `--antrenare-mini` la sfarsit, optional urmat de `--mixt` sau `--vram` (iar dupa `--vram` optional `--pas-lipit`, `--antrenare-513` sau `--lot-ram`; dupa `--antrenare-513` optional `--placi3`, dupa el optional `--mm-placi`, dupa el optional `--lipit-placi` (ultimul) sau `--colsum-impartit`, la sfarsit optional `--mixt-513` (ultimul), `--mm-alegere` (ultimul, urmat optional de `--treapta-pas`) sau `--cursa-mm` dupa `--mm-placi` sau `--colsum-impartit`, `--cursa-mm` urmat optional de `--proba-64k8` sau `--ocupare`) (in aceasta ordine; `--mixt` sau `--vram` doar imediat dupa `--antrenare-mini`, nu amandoua; `--pas-lipit`, `--antrenare-513` sau `--lot-ram` doar imediat dupa `--vram`; `--adam-ram` doar imediat dupa `--ram-vram`; `--atentie2` doar dupa `--atentie-placi`, `--atentie3` doar dupa `--atentie2`, `--atentie4` doar dupa `--atentie3`, `--atentie-tc` doar dupa `--atentie3` sau `--atentie4`, `--atentie-tc16-v4` doar imediat dupa `--atentie-tc`; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi`, `--ln-32`; `--k651` nu merge cu `--lipit` sau `--simplu`; `--argmax-fara-copie` nu merge cu `--lipit`, `--ln-nou`, `--sferturi` sau `--ln-32`; `--lot` doar cu `--argmax-fara-copie` si lista implicita lipita-ln-32, fara alta alegere de lista)";
     let words: Vec<&str> = command.split_whitespace().collect();
     let Some(("test-placa", rest)) = words.split_first().map(|(a, b)| (*a, b)) else { return None };
     let (i9, flags) = match rest {
@@ -212,7 +212,7 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
     // P6-128: `--ln-32` = `lipita-ln`, then `lipita-ln-32` (every product on quarters), compared; one more list choice.
     // P6-135 (note C-157_P2i, point 1): `--lipita-ln` = the default until now (`lipita-ln` alone); without any list
     // choice the cycle now runs `lipita-ln-32` alone. The checks below go by name, not by position.
-    let all = [FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, P8, P8_S8, BARIERA, BARIERA_LARGA, COLSUM, PAS_AUR, MM_TC, MM_TC128, MM_TC_PF, MM_TC_V4, MM_TC128_V4, MM_TC_64K, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, ATTN_TC, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_MIXED_FAST, TRAIN_VRAM, TRAIN_FUSED, TRAIN_513, TRAIN_513_TILES3, TRAIN_513_MM_TILE, TRAIN_513_FUSED_TILE, TRAIN_513_COLSUM, TRAIN_513_MIXED, TRAIN_513_MIXED_FAST, TRAIN_513_VIA_RAM, TRAIN_513_SLOTS, TRAIN_513_ATTN_TC16, TRAIN_513_MM_CHOICE, TRAIN_513_SM_STEP, TRAIN_513_MM_MODEL, TRAIN_513_RACE, TRAIN_513_PROBE_64K8, TRAIN_513_OCCUPANCY, TRAIN_RAM];
+    let all = [FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, P8, P8_S8, BARIERA, BARIERA_LARGA, COLSUM, PAS_AUR, MM_TC, MM_TC128, MM_TC_PF, MM_TC_V4, MM_TC128_V4, MM_TC_64K, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, ATTN_TC, ATTN_TC_V4, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_MIXED_FAST, TRAIN_VRAM, TRAIN_FUSED, TRAIN_513, TRAIN_513_TILES3, TRAIN_513_MM_TILE, TRAIN_513_FUSED_TILE, TRAIN_513_COLSUM, TRAIN_513_MIXED, TRAIN_513_MIXED_FAST, TRAIN_513_VIA_RAM, TRAIN_513_SLOTS, TRAIN_513_ATTN_TC16, TRAIN_513_MM_CHOICE, TRAIN_513_SM_STEP, TRAIN_513_MM_MODEL, TRAIN_513_RACE, TRAIN_513_PROBE_64K8, TRAIN_513_OCCUPANCY, TRAIN_RAM];
     let pos = |x: &str| all.iter().position(|y| *y == x).unwrap_or(0);
     let lists = pos(LIPIT)..=pos(LN_32);
     // The two-run lists: the argmax without the copy reads no logits, they need both runs' logits.
@@ -270,6 +270,10 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
         }
         // P6-227: the tensor-core programs only right after the third or the fourth (they replace `attn_back_tile_3`).
         if all[at] == ATTN_TC && !(out.ends_with(ATTN_TILE3) || out.ends_with(ATTN_TILE4)) {
+            return Some(Err(FORM));
+        }
+        // P6-233: v4 / v4pf only right after the tensor-core programs (they are compared with tc16).
+        if all[at] == ATTN_TC_V4 && !out.ends_with(ATTN_TC) {
             return Some(Err(FORM));
         }
         // P6-163: m, v in RAM only right after the RAM ↔ VRAM probe (it must pass first, in the same power-on).
@@ -906,6 +910,10 @@ pub const ATTN_TILE4: &str = " --atentie4";
 /// [--atentie4] --atentie-tc`, only right after `--atentie3` or `--atentie4`).
 pub const ATTN_TC: &str = " --atentie-tc";
 
+/// P6-233 (cyber-gpu note C-157_P2zq, commit `4293b5c`): suffix of the I9 text when `attn_back_tile_tc16_v4` and
+/// `_v4pf` run after tc16 in the same probe (`test-placa … --atentie-tc --atentie-tc16-v4`, only right after `--atentie-tc`).
+pub const ATTN_TC_V4: &str = " --atentie-tc16-v4";
+
 /// P6-161 (C-157, cyber-gpu `9359f21`): suffix of the I9 text when the RAM ↔ VRAM probe with the copy engine is asked
 /// (`test-placa … --ram-vram`, always last).
 pub const RAM_VRAM: &str = " --ram-vram";
@@ -1200,6 +1208,10 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
         Some(x) => (x, true),
         None => (i9, false),
     };
+    let (i9, attn_tc_v4) = match i9.strip_suffix(ATTN_TC_V4) {
+        Some(x) => (x, true),
+        None => (i9, false),
+    };
     let (i9, attn_tc) = match i9.strip_suffix(ATTN_TC) {
         Some(x) => (x, true),
         None => (i9, false),
@@ -1435,6 +1447,8 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::ATTN_TILE4_IN_CYCLE.store(attn_tile && attn_tile2 && attn_tile3 && attn_tile4, core::sync::atomic::Ordering::SeqCst);
     // P6-227: the tensor-core programs after the newest chain only when the list asked for it.
     crate::drivers::gpu_tur::ATTN_TC_IN_CYCLE.store(attn_tile && attn_tile2 && attn_tile3 && attn_tc, core::sync::atomic::Ordering::SeqCst);
+    // P6-233: v4 / v4pf after tc16 only when the list asked for it.
+    crate::drivers::gpu_tur::ATTN_TC_V4_IN_CYCLE.store(attn_tile && attn_tile2 && attn_tile3 && attn_tc && attn_tc_v4, core::sync::atomic::Ordering::SeqCst);
     // P6-161 (C-157): the copy object (right after I9) and the RAM ↔ VRAM probe only when the list asked for it.
     crate::drivers::gpu_tur::RAM_VRAM_IN_CYCLE.store(ram_vram, core::sync::atomic::Ordering::SeqCst);
     // P6-163 (C-157): the golden step with m, v in RAM only when the list asked for it (and only after `--ram-vram`).
@@ -1622,6 +1636,9 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     if attn_tc {
         text.push_str("\n(atentie-tc, vechi langa nou: ceruta de lista (--atentie-tc); in aceeasi proba, dupa ultimul lant nou (_3 sau _4) pe fiecare set, pe aceleasi P / dS, attn_back_tile_tc si apoi attn_back_tile_tc16 (dQ, dK, dV pe circuitele speciale, intrarile in f16), fiecare cu dqkv umplut cu NaN inainte; 2 programe noi pentru placa (48 / 48 de registre, 32 768 / 16 384 octeti partajati, argumentele la 0x700 intr-un cbuf de 0x800); judecate cu gpu_compute::attn_tc::judge (marginea mm_tc pe cap), tc16 comparat cuvant cu cuvant cu tc, cronometrate langa attn_back_tile_3; Cyber-GPU asteapta 5 / 5 seturi in margine, tc16 = tc peste tot, abaterea fata de F32 ~3e-4, la atentie-513-b4 tc ~0,2-0,37 ms pe lansare (2,4-4,5 ms pe 12), tc16 cel mult cat tc, fata de ~0,77 la _3)\n");
     }
+    if attn_tc && attn_tc_v4 {
+        text.push_str("\n(atentie-tc16-v4, vechi langa nou: ceruta de lista (--atentie-tc16-v4); in proba atentie-tc, dupa tc16, pe aceleasi P / dS, programele noi attn_back_tile_tc16_v4 (72 de registre) si attn_back_tile_tc16_v4pf (104), citiri de 128 de biti, doar pe seturile aliniate (fits; celelalte sarite); trece = aceleasi cuvinte ca tc16 pe toate seturile aliniate si pe benzile atentie-513-b4, garzi neatinse; prezis Cyber-GPU: aceiasi biti, 0,35-0,55 ms pe lansare la atentie-513-b4 fata de 0,87 ms tc16)\n");
+    }
     if attn_tile4 {
         text.push_str("\n(atentie4, vechi langa nou: ceruta de lista (--atentie4); in aceeasi proba, dupa lantul attn_*_3 pe fiecare set, pe acelasi buffer reumplut, lantul attn_fwd_tile3 -> attn_back_tile0_3 -> attn_back_tile_4 (primele doua = fisierele _3; doar ultimul e nou: placa intreaga a diagonalei dK / dV pe bucla fara garda, aceleasi operatii in aceeasi ordine); un singur program nou pentru placa (attn_back_tile_4: 80 de registre, 33 024 octeti partajati); judecat fata de prima generatie, cronometrat langa _3; Cyber-GPU asteapta 6 / 6 seturi in margine, 6 / 6 identice cu vechii (~85 %), back1 ~1,2-1,35 ms fata de ~1,60)\n");
     }
@@ -1733,6 +1750,7 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::ATTN_TILE3_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::ATTN_TILE4_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::ATTN_TC_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::ATTN_TC_V4_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::RAM_VRAM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::ADAM_RAM_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TRAIN_MINI_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
@@ -2226,6 +2244,10 @@ pub fn self_test() {
     assert!(board_command("test-placa --atentie-placi --atentie2 --atentie3 --atentie4 --atentie-tc") == Some(Ok(String::from("c135 --atentie-placi --atentie2 --atentie3 --atentie4 --atentie-tc"))));
     assert!(board_command("test-placa --atentie-placi --atentie2 --atentie-tc").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --atentie-tc").is_some_and(|r| r.is_err()));
+    // P6-233: v4 / v4pf only right after `--atentie-tc`.
+    assert!(board_command("test-placa --atentie-placi --atentie2 --atentie3 --atentie-tc --atentie-tc16-v4") == Some(Ok(String::from("c135 --atentie-placi --atentie2 --atentie3 --atentie-tc --atentie-tc16-v4"))));
+    assert!(board_command("test-placa --atentie-placi --atentie2 --atentie3 --atentie-tc16-v4").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --atentie-placi --atentie2 --atentie3 --atentie-tc --atentie-tc16-v4 --ram-vram") == Some(Ok(String::from("c135 --atentie-placi --atentie2 --atentie3 --atentie-tc --atentie-tc16-v4 --ram-vram"))));
     assert!(board_command("test-placa --atentie-placi --atentie2 --atentie3 --atentie-tc --atentie4").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --atentie-placi --atentie2 --atentie3 --atentie-tc --ram-vram") == Some(Ok(String::from("c135 --atentie-placi --atentie2 --atentie3 --atentie-tc --ram-vram"))));
     assert!(board_command("test-placa --atentie-placi --atentie2 --atentie3 --atentie4 --antrenare-mini --mixt") == Some(Ok(String::from("c135 --atentie-placi --atentie2 --atentie3 --atentie4 --antrenare-mini --mixt"))));

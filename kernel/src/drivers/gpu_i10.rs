@@ -490,6 +490,9 @@ impl SimGpu {
             // both stand-ins are `gpu_compute::attn_tc::model` (a hypothesis until the board runs them).
             cp.register_program_with_needs(nvidia_ga104::attn_back_tile_tc::ATTN_BACK_TILE_TC, c::attn_back_tile_tc_on_cpu, c::ATTN_BACK_TILE_TC_NEEDS);
             cp.register_program_with_needs(nvidia_ga104::attn_back_tile_tc16::ATTN_BACK_TILE_TC16, c::attn_back_tile_tc16_on_cpu, c::ATTN_BACK_TILE_TC16_NEEDS);
+            // P6-233 (cyber-gpu note C-157_P2zq): tc16 with 128-bit loads (the stand-ins refuse unaligned launches).
+            cp.register_program_with_needs(nvidia_ga104::attn_back_tile_tc16_v4::ATTN_BACK_TILE_TC16_V4, c::attn_back_tile_tc16_v4_on_cpu, c::ATTN_BACK_TILE_TC16_V4_NEEDS);
+            cp.register_program_with_needs(nvidia_ga104::attn_back_tile_tc16_v4pf::ATTN_BACK_TILE_TC16_V4PF, c::attn_back_tile_tc16_v4pf_on_cpu, c::ATTN_BACK_TILE_TC16_V4PF_NEEDS);
             // P6-188 (cyber-gpu note C-157_P2x step 2): the tiled training matmul (`mm_train_tile`, the same cbuf as
             // `mm_train`, 8 KiB shared, one barrier).
             cp.register_program_with_needs(nvidia_ga104::mm_train_tile::MM_TRAIN_TILE, c::mm_train_tile_on_cpu, c::MM_TRAIN_TILE_NEEDS);

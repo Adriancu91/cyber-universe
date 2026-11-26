@@ -236,6 +236,12 @@ partiție Linux → `/disk` = partiția 2, inventarul, `Flush` acceptat, jurnalu
     (după `--bariera` sau singură, înainte de `--colsum`; `gpu_tur::BARRIER_WIDE_IN_CYCLE`; în build-ul de test `gpu bariera-sim on larg`):
     aceeași `barrier_probe` cu `wide = true` — G = `grid_barrier::groups_for_wide_sms(sms, 8)` (384), apoi, doar dacă a trecut,
     `(sms, 16)` (768); zona probei are 3 pagini. Rândurile ca mai sus, la final `proba barierei larga: …`. Test: `kronos-gpu-bariera-larga`.
+    **P6-233 (cyber-gpu `4293b5c`, nota `C-157_P2zq_attn-tc16-v4.md`): tc16 cu citiri de 128 de biți.** Cu `test-placa … --atentie-tc
+    --atentie-tc16-v4` (doar imediat după `--atentie-tc`; `gpu_tur::ATTN_TC_V4_IN_CYCLE`; în build-ul de test `gpu atentie-tc-sim on v4`):
+    după tc16, pe aceleași P / dS, `attn_back_tile_tc16_v4` și `_v4pf` — doar unde `fits` (T, d multipli de 4, adrese de 16 octeți),
+    altfel „nealiniat (sarit)”, nelansat. Rânduri: `kt atentie-tc16-v4 set N …` (timp, ACEIASI BITI ca tc16), la `atentie-513-b4`
+    mediana a 5 și raportul față de tc16; verdictul `atentie-tc16-v4 (vechi langa nou, …): TRECE` separat de cel al lui `atentie-tc`.
+    Test: `kronos-gpu-atentie-tc-v4`.
     **P6-201 (C-165, cyber-gpu `54f5ab8`): proba ocupării.** Cu `test-placa … --cursa-mm --ocupare` (doar imediat după
     `--cursa-mm`, nu cu `--proba-64k8`; `gpu_tur::TRAIN_513_OCCUPANCY_IN_CYCLE`; în build-ul de test
     `gpu antrenare-mini-sim vram-513-ocupare`): în locul cursei mari, pe forma qkv, cele 10 rulări din `occupancy::PROBE`

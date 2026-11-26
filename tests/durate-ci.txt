@@ -167,6 +167,7 @@ antrenare-mini-placi 420
 kronos-gpu-atentie3 700
 kronos-gpu-atentie4 780
 kronos-gpu-atentie-tc 800
+kronos-gpu-atentie-tc-v4 860
 kronos-gpu-ram-vram 200
 antrenare-mini-placa-kronos 640
 antrenare-mini-placa-mixt 700

@@ -5007,7 +5007,10 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let tc_on = tile3 && super::gpu_tur::ATTN_TC_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     let mut tcs: Vec<TcOnBoard> = Vec::new();
     if tc_on {
-        for which in [AttnTcProg::Tc, AttnTcProg::Tc16] {
+        // P6-233 (note C-157_P2zq): with `--atentie-tc16-v4`, `attn_back_tile_tc16_v4` and `_v4pf` too (indices 2, 3).
+        let v4_on = super::gpu_tur::ATTN_TC_V4_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+        let progs: &[AttnTcProg] = if v4_on { &[AttnTcProg::Tc, AttnTcProg::Tc16, AttnTcProg::V4, AttnTcProg::V4pf] } else { &[AttnTcProg::Tc, AttnTcProg::Tc16] };
+        for &which in progs {
             let sha = sha256_hex(which.binary());
             if sha != which.sha256() {
                 lines.push(format!(
@@ -5036,6 +5039,16 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
             AttnTcProg::Tc16.shared().bytes,
             newer.last().map_or("vechi", |g| g.which.tag())
         ));
+        if v4_on {
+            lines.push(format!(
+                "{}: kronos --gpu: atentie-tc16-v4 ceruta ({}): programele noi attn_back_tile_tc16_v4 si attn_back_tile_tc16_v4pf ({} / {} registre, {} octeti partajati, citiri de 128 de biti, SHA-256 verificate), dupa tc16 pe aceleasi P / dS, doar pe seturile aliniate (fits)",
+                p,
+                label,
+                AttnTcProg::V4.registers(),
+                AttnTcProg::V4pf.registers(),
+                AttnTcProg::V4.shared().bytes
+            ));
+        }
     }
     let mut tc_sets: Vec<TcSet> = Vec::new();
     let mut stopped_tc: Option<usize> = None;
@@ -5348,6 +5361,10 @@ struct GenOnBoard {
 enum AttnTcProg {
     Tc,
     Tc16,
+    /// P6-233 (cyber-gpu note C-157_P2zq): tc16 with 128-bit loads; only where `fits` (aligned shapes and addresses).
+    V4,
+    /// P6-233: V4 with the next tile read ahead.
+    V4pf,
 }
 
 impl AttnTcProg {
@@ -5355,30 +5372,49 @@ impl AttnTcProg {
         match self {
             Self::Tc => "attn_back_tile_tc",
             Self::Tc16 => "attn_back_tile_tc16",
+            Self::V4 => "attn_back_tile_tc16_v4",
+            Self::V4pf => "attn_back_tile_tc16_v4pf",
         }
     }
     fn binary(self) -> &'static [u8] {
         match self {
             Self::Tc => nvidia_ga104::attn_back_tile_tc::ATTN_BACK_TILE_TC,
             Self::Tc16 => nvidia_ga104::attn_back_tile_tc16::ATTN_BACK_TILE_TC16,
+            Self::V4 => nvidia_ga104::attn_back_tile_tc16_v4::ATTN_BACK_TILE_TC16_V4,
+            Self::V4pf => nvidia_ga104::attn_back_tile_tc16_v4pf::ATTN_BACK_TILE_TC16_V4PF,
         }
     }
     fn sha256(self) -> &'static str {
         match self {
             Self::Tc => nvidia_ga104::attn_back_tile_tc::ATTN_BACK_TILE_TC_SHA256,
             Self::Tc16 => nvidia_ga104::attn_back_tile_tc16::ATTN_BACK_TILE_TC16_SHA256,
+            Self::V4 => nvidia_ga104::attn_back_tile_tc16_v4::ATTN_BACK_TILE_TC16_V4_SHA256,
+            Self::V4pf => nvidia_ga104::attn_back_tile_tc16_v4pf::ATTN_BACK_TILE_TC16_V4PF_SHA256,
         }
     }
     fn registers(self) -> u32 {
         match self {
             Self::Tc => nvidia_ga104::attn_back_tile_tc::REGISTERS,
             Self::Tc16 => nvidia_ga104::attn_back_tile_tc16::REGISTERS,
+            Self::V4 => nvidia_ga104::attn_back_tile_tc16_v4::REGISTERS,
+            Self::V4pf => nvidia_ga104::attn_back_tile_tc16_v4pf::REGISTERS,
         }
     }
     fn shared(self) -> nvidia_ga104::qmd::SharedMemory {
         match self {
             Self::Tc => nvidia_ga104::attn_back_tile_tc::SHARED,
             Self::Tc16 => nvidia_ga104::attn_back_tile_tc16::SHARED,
+            Self::V4 => nvidia_ga104::attn_back_tile_tc16_v4::SHARED,
+            Self::V4pf => nvidia_ga104::attn_back_tile_tc16_v4pf::SHARED,
+        }
+    }
+    /// P6-233: only the 128-bit-load programs have a rule: `fits` (T and d multiples of 4, the addresses of 16 bytes).
+    fn fits(self, set: &nvidia_ga104::attn_tile_probe::ProbeSet, buf_va: u64) -> bool {
+        let a = set.back_args(buf_va, nvidia_ga104::attn_back::Mode::Columns);
+        match self {
+            Self::Tc | Self::Tc16 => true,
+            Self::V4 => nvidia_ga104::attn_back_tile_tc16_v4::fits(&a),
+            Self::V4pf => nvidia_ga104::attn_back_tile_tc16_v4pf::fits(&a),
         }
     }
     /// The cbuf (0x800 bytes, the arguments at 0x700 — laid out by the Cyber-GPU module) and the QMD of this program on
@@ -5390,6 +5426,8 @@ impl AttnTcProg {
         let cb = match self {
             Self::Tc => at::cbuf(&a),
             Self::Tc16 => nvidia_ga104::attn_back_tile_tc16::cbuf(&a),
+            Self::V4 => nvidia_ga104::attn_back_tile_tc16_v4::cbuf(&a),
+            Self::V4pf => nvidia_ga104::attn_back_tile_tc16_v4pf::cbuf(&a),
         }
         .ok_or(bad("atentie-tc: argumentele refuzate de modulul programului"))?;
         let q = ComputeQmd {
@@ -5423,6 +5461,8 @@ struct TcSet {
     rel_ppm: Vec<Option<u32>>,
     ns: Vec<u64>,
     same_words: bool,
+    /// P6-233: v4, v4pf on this set: `None` = not aligned (skipped); else (ns, the same words as tc16, guard untouched).
+    v4: Vec<Option<(u64, bool, bool)>>,
 }
 
 impl TcSet {
@@ -5458,6 +5498,8 @@ struct TcBig {
     same_words: bool,
     words: usize,
     stopped: Option<String>,
+    /// P6-233: v4, v4pf on `atentie-513-b4`: `None` = not aligned; else (median ns, the same bands as tc16, guard untouched).
+    v4: Vec<Option<(u64, bool, bool)>>,
 }
 
 /// P6-227: the median of some times (0 if none).
@@ -5530,9 +5572,14 @@ fn tc_small_set<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let (qkv, dout, pm, ds, f32dq) = (take(lay.qkv, nq), take(lay.dout, no), take(lay.p, np), take(lay.ds, np), take(lay.dqkv, nq));
     let span = 4 * nq + 4 * ap::GUARD;
     let fill: Vec<u8> = core::iter::repeat_n(ap::FILL.to_le_bytes(), span / 4).flatten().collect();
-    let mut r = TcSet { verdict: Vec::new(), nominal: Vec::new(), guard_ok: Vec::new(), rel_ppm: Vec::new(), ns: Vec::new(), same_words: false };
+    let mut r = TcSet { verdict: Vec::new(), nominal: Vec::new(), guard_ok: Vec::new(), rel_ppm: Vec::new(), ns: Vec::new(), same_words: false, v4: Vec::new() };
     let mut words: Vec<Vec<u8>> = Vec::new();
-    for tcb in tcs {
+    for (k, tcb) in tcs.iter().enumerate() {
+        // P6-233: v4 / v4pf only where their 128-bit loads are aligned; otherwise skipped (never launched).
+        if k >= 2 && !tcb.which.fits(set, buf.va) {
+            r.v4.push(None);
+            continue;
+        }
         ram_write_at(buf, lay.dqkv as u64, &fill);
         let (cb, q) = tcb.which.launch_bytes(set, tcb.prog_va, tcb.zone.va, buf.va)?;
         {
@@ -5540,8 +5587,8 @@ fn tc_small_set<V: Mmio + ?Sized, K: Clock + ?Sized>(
             put_bytes(w, tcb.zone.pa, &cb)?;
             put_bytes(w, tcb.zone.pa + 0x800, &q)?;
         }
-        match mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, maps, sys, tcb.zone.va + 0x800)? {
-            Ok(t) => r.ns.push(t),
+        let ns = match mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, maps, sys, tcb.zone.va + 0x800)? {
+            Ok(t) => t,
             Err(got) => {
                 lines.push(format!(
                     "{}: kronos --gpu: atentie-tc: placa nu a terminat la setul {} ({}), programul nou {}: ultima inregistrare = {:#x}; proba oprita, fara reincercare",
@@ -5553,8 +5600,15 @@ fn tc_small_set<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 ));
                 return Ok(None);
             }
-        }
+        };
         let got = ram_read_at(buf, lay.dqkv as u64, span as u64);
+        if k >= 2 {
+            let guard = got[4 * nq..].chunks(4).all(|w| w == ap::FILL.to_le_bytes());
+            let same = words.get(1).is_some_and(|w| w[..] == got[..4 * nq]);
+            r.v4.push(Some((ns, same, guard)));
+            continue;
+        }
+        r.ns.push(ns);
         r.guard_ok.push(got[4 * nq..].chunks(4).all(|w| w == ap::FILL.to_le_bytes()));
         let v = f32_words(&got[..4 * nq]);
         r.verdict.push(gpu_compute::attn_tc::judge(&shape, &qkv, &pm, &dout, &ds, &v));
@@ -5562,7 +5616,7 @@ fn tc_small_set<V: Mmio + ?Sized, K: Clock + ?Sized>(
         r.rel_ppm.push(rel_ppm(&v, &f32dq));
         words.push(got[..4 * nq].to_vec());
     }
-    r.same_words = words.len() == 2 && words[0] == words[1];
+    r.same_words = words.len() >= 2 && words[0] == words[1];
     let worst = |k: usize| verdict_text(r.verdict.get(k));
     fn verdict_text(v: Option<&gpu_compute::mm_tc::Verdict>) -> String {
         match v {
@@ -5602,6 +5656,28 @@ fn tc_small_set<V: Mmio + ?Sized, K: Clock + ?Sized>(
     const T: [&str; 2] = ["kt atentie-tc set: timp tc (ns)", "kt atentie-tc set: timp tc16 (ns)"];
     for (k, what) in T.iter().enumerate() {
         journal.push(Event::Value { what: *what, value: u32::try_from(r.ns.get(k).copied().unwrap_or(0)).unwrap_or(u32::MAX) });
+    }
+    // P6-233 (C-157_P2zq): v4 / v4pf beside tc16, word for word.
+    if !r.v4.is_empty() {
+        let one = |x: Option<&Option<(u64, bool, bool)>>| match x {
+            Some(Some((ns, same, guard))) => format!(
+                "{} ns, {}{}",
+                ns,
+                if *same { "ACEIASI BITI ca tc16" } else { "DIFERIT de tc16" },
+                if *guard { "" } else { ", garda ATINSA" }
+            ),
+            Some(None) => String::from("nealiniat (sarit)"),
+            None => String::from("-"),
+        };
+        lines.push(format!(
+            "{}: kronos --gpu: kt atentie-tc16-v4 set {} ({}): tc16 {} ns; v4 {}; v4pf {}",
+            p,
+            i,
+            set.name,
+            r.ns.get(1).copied().unwrap_or(0),
+            one(r.v4.first()),
+            one(r.v4.get(1))
+        ));
     }
     Ok(Some(r))
 }
@@ -5687,6 +5763,59 @@ fn tc_verdict(p: &str, label: &str, journal: &mut Journal, lines: &mut Vec<Strin
         same,
         n,
         ppm_text(max_rel),
+        big_text
+    ));
+    tc_v4_verdict(p, label, journal, lines, sets, big);
+}
+
+/// P6-233 (cyber-gpu note C-157_P2zq): the rows of `attn_back_tile_tc16_v4` / `_v4pf` beside tc16 (only when they ran):
+/// how many aligned sets gave the same words as tc16, and on `atentie-513-b4` the median per launch and the speed-up.
+fn tc_v4_verdict(p: &str, label: &str, journal: &mut Journal, lines: &mut Vec<String>, sets: &[TcSet], big: Option<&TcBig>) {
+    if sets.iter().all(|s| s.v4.is_empty()) {
+        return;
+    }
+    let names = ["v4", "v4pf"];
+    let mut ok = true;
+    let mut parts: Vec<String> = Vec::new();
+    for (k, name) in names.iter().enumerate() {
+        let ran: Vec<&(u64, bool, bool)> = sets.iter().filter_map(|s| s.v4.get(k).and_then(|x| x.as_ref())).collect();
+        let same = ran.iter().filter(|x| x.1 && x.2).count();
+        let skipped = sets.iter().filter(|s| matches!(s.v4.get(k), Some(None))).count();
+        ok &= same == ran.len() && !ran.is_empty();
+        journal.push(Event::Value { what: if k == 0 { "kt atentie-tc16-v4 seturi v4 = tc16" } else { "kt atentie-tc16-v4 seturi v4pf = tc16" }, value: same as u32 });
+        parts.push(format!("{} = tc16 pe {} / {} seturi aliniate ({} sarite)", name, same, ran.len(), skipped));
+    }
+    let big_text = match big {
+        Some(b) if b.stopped.is_none() && !b.v4.is_empty() => {
+            let tc16 = b.ns.get(1).copied().unwrap_or(0);
+            let ms = |ns: u64| format!("{},{:02} ms", ns / 1_000_000, (ns / 10_000) % 100);
+            let ratio = |ns: u64| if ns == 0 { String::from("-") } else { format!("x{},{:02}", tc16 / ns, (tc16 % ns) * 100 / ns) };
+            let mut t: Vec<String> = Vec::new();
+            for (k, name) in names.iter().enumerate() {
+                match b.v4.get(k) {
+                    Some(Some((ns, same, guard))) => {
+                        ok &= *same && *guard;
+                        journal.push(Event::Value { what: if k == 0 { "kt atentie-tc16-v4 mare timp v4 (ns)" } else { "kt atentie-tc16-v4 mare timp v4pf (ns)" }, value: u32::try_from(*ns).unwrap_or(u32::MAX) });
+                        t.push(format!("{} {} ({} fata de tc16, benzile {}{})", name, ms(*ns), ratio(*ns), if *same { "= tc16" } else { "DIFERITE de tc16" }, if *guard { "" } else { ", garzi ATINSE" }));
+                    }
+                    Some(None) => t.push(format!("{} nealiniat (sarit)", name)),
+                    None => t.push(format!("{} -", name)),
+                }
+            }
+            format!("atentie-513-b4 pe lansare (mediana a {}): tc16 {}, {}", nvidia_ga104::attn_tile_probe::REPEATS, ms(tc16), t.join(", "))
+        }
+        Some(b) if b.stopped.is_some() => {
+            ok = false;
+            String::from("atentie-513-b4 oprit")
+        }
+        _ => String::from("atentie-513-b4 omis"),
+    };
+    lines.push(format!(
+        "{}: kronos --gpu: atentie-tc16-v4 (vechi langa nou, {}): {}: {}; {}",
+        p,
+        label,
+        if ok { "TRECE" } else { "NU TRECE" },
+        parts.join(", "),
         big_text
     ));
 }
@@ -5982,7 +6111,13 @@ fn attn_tile_big<V: Mmio + ?Sized, K: Clock + ?Sized>(
             f32_band.extend_from_slice(&ram_read(&host, n as u64));
         }
         let mut bands: Vec<Vec<u8>> = Vec::with_capacity(tcs.len());
-        for tcb in tcs {
+        let mut v4_bands: Vec<Option<(u64, Vec<u8>)>> = Vec::new();
+        for (k, tcb) in tcs.iter().enumerate() {
+            // P6-233: v4 / v4pf only where aligned (never launched otherwise).
+            if k >= 2 && !tcb.which.fits(set, big.va) {
+                v4_bands.push(None);
+                continue;
+            }
             for &(o, n) in &dq {
                 let bytes: Vec<u8> = core::iter::repeat_n(ap::FILL.to_le_bytes(), n / 4).flatten().collect();
                 ram_write(&host, &bytes);
@@ -6009,7 +6144,10 @@ fn attn_tile_big<V: Mmio + ?Sized, K: Clock + ?Sized>(
                     }
                 }
             }
-            tb.ns.push(median_ns(&ts));
+            let med = median_ns(&ts);
+            if k < 2 {
+                tb.ns.push(med);
+            }
             let mut band: Vec<u8> = Vec::new();
             for &(o, n) in &dq {
                 ram_write(&host, &[]);
@@ -6020,7 +6158,11 @@ fn attn_tile_big<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 }
                 band.extend_from_slice(&ram_read(&host, n as u64));
             }
-            bands.push(band);
+            if k < 2 {
+                bands.push(band);
+            } else {
+                v4_bands.push(Some((med, band)));
+            }
         }
         let g = 4 * ap::GUARD;
         let vals = |b: &[u8]| -> Vec<f32> { f32_words(&b[..b.len() - g]) };
@@ -6032,6 +6174,12 @@ fn attn_tile_big<V: Mmio + ?Sized, K: Clock + ?Sized>(
             tb.rel_ppm.push(rel_ppm(&v, &f32v));
         }
         tb.same_words = bands.len() == 2 && bands[0][..bands[0].len() - g] == bands[1][..bands[1].len() - g];
+        for x in &v4_bands {
+            tb.v4.push(x.as_ref().map(|(ns, band)| {
+                let same = bands.get(1).is_some_and(|b1| b1[..b1.len() - g] == band[..band.len() - g]);
+                (*ns, same, band[band.len() - g..].chunks(4).all(|w| w == ap::FILL.to_le_bytes()))
+            }));
+        }
         tb.words = f32v.len();
         *tc_big = Some(tb);
     }
