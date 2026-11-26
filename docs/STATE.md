@@ -3,6 +3,11 @@
 > Claude Code actualizează acest fișier la finalul FIECĂREI sesiuni. Sesiunea următoare pornește de aici.
 
 ## Ultima sesiune
+- 2026-11-26 ~19:42–20:45 UTC (21:42–~22:45 ora RO) — sesiune programată, fără Adrian, lucrul continuu (C-158). Semnul `in-lucru`: `liber` → `ocupat` 21:42. `env-check --install` OK. Nicio comandă nouă în `COMENZI.md`.
+  - **CI run 45884871218 (`90e37de`, P6-240) VERDE → Release `os-471` = GATA DE TEST** în hub: `test-placa --token32` (aștept G=384 și G=768 TRECE, aceleași simboluri, amprenta `0x6c8501f0`; ~1,26 ms / simbol la 384, ~1,0 la 768, față de ~1,07 lista obișnuită).
+  - Cyber-GPU P2zy (răspuns os-468) și P2zza (răspuns os-469) citite: nimic nou pentru placă; rugămințile (`--tablou-viteza` în rândurile cu câștiguri sub 1 %, `--atentie-tc-64k` pentru programele noi cu ≤ 32 KiB comune) sunt opțiuni care există deja — de folosit în rândurile viitoare.
+  - Rezultatul os-470 (tc0 reluat) încă nu a venit. Nicio schimbare de cod în această sesiune (am așteptat CI-ul fără să urc pe `main`).
+  - **Pentru sesiunea următoare:** (1) rezultatele os-470 și os-471 când vin în hub (rapoartele `ciclu-auto-*`); (2) după ce tc0 trece pe placă: P2zu (dS pe tc / v4 în pasul mixt, `pack_mixed_fast_attn3`); (3) altfel, uneltele lungi din C-158.
 - 2026-11-26 ~19:11–19:45 UTC (21:11–~21:45 ora RO) — sesiune programată, fără Adrian, lucrul continuu (C-158). Semnul `in-lucru`: `liber` (20:50) → `ocupat` 21:11. Copia locală veche `cyber-universe` divergentă → lucrat în clona nouă `os` (hub: clona `Cyber-hub`). `env-check --install` OK.
   - **CI run 45878682438 (`1aacf47`, P6-239) VERDE → Release `os-470` (13 fișiere) = GATA DE TEST** în hub: os-467 reluat cu programele dS reparate, rândul `test-placa --atentie-placi --atentie2 --atentie3 --atentie-tc --atentie-tc0 --atentie-tc0-v4`.
   - **Rezultat placă os-469 (ciclul 20:29, `--atentie-tc-64k`): TRECE** — la treapta 64 KiB aceiași biți (tc / tc16 5 / 5, v4 / v4pf 4 / 4) și mai repede la `atentie-513-b4`: tc 0,69 ms (azi 1,16), tc16 0,41 (0,87), **v4 0,34 (0,52)**, v4pf 0,45 (0,64).
