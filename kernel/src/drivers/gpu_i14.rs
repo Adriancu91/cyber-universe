@@ -5069,7 +5069,7 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         maps.push(m);
         let z = map_vram(st, PAGE)?;
         maps.push(z);
-        tc0 = Some(Tc0OnBoard { prog_va: m.va, zone: z });
+        tc0 = Some(Tc0OnBoard { prog_va: m.va, zone: z, v4_va: None });
         lines.push(format!(
             "{}: kronos --gpu: atentie-tc0 ceruta ({}): programul nou attn_back_tile0_tc ({} registre, {} octeti partajati, argumentele la 0x700 intr-un cbuf de 0x800, SHA-256 verificat), dS cu dP = dO*V^T pe circuitele speciale, dupa programele dQ / dK / dV pe aceleasi P / dO / V, langa dS-ul F32 al lantului {}",
             p,
@@ -5078,6 +5078,35 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
             a0::SHARED.bytes,
             newer.last().map_or("vechi", |g| g.which.tag())
         ));
+        // P6-235 (note C-157_P2zt): `attn_back_tile0_tc_v4` (128-bit loads / stores) after it, only when asked.
+        if super::gpu_tur::ATTN_TC0_V4_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+            use nvidia_ga104::attn_back_tile0_tc_v4 as a4;
+            let sha = sha256_hex(a4::ATTN_BACK_TILE0_TC_V4);
+            if sha != a4::ATTN_BACK_TILE0_TC_V4_SHA256 {
+                lines.push(format!(
+                    "{}: kronos --gpu: atentie-tc0-v4: SHA-256 al programului nou attn_back_tile0_tc_v4 = {} nu e cel din nota ({}): nimic trimis",
+                    p,
+                    sha,
+                    a4::ATTN_BACK_TILE0_TC_V4_SHA256
+                ));
+                return Err(bad("atentie-tc0-v4: SHA-256 gresit"));
+            }
+            let m4 = map_vram(st, program_map_bytes(a4::ATTN_BACK_TILE0_TC_V4.len() as u64))?;
+            put_bytes(st.mem.writer_mut(), m4.pa, a4::ATTN_BACK_TILE0_TC_V4)?;
+            maps.push(m4);
+            if let Some(t) = tc0.as_mut() {
+                t.v4_va = Some(m4.va);
+            }
+            lines.push(format!(
+                "{}: kronos --gpu: atentie-tc0-v4 ceruta ({}): programul nou attn_back_tile0_tc_v4 ({} registre, {} octeti partajati, {} citiri si {} scrieri de 128 de biti, SHA-256 verificat), dupa attn_back_tile0_tc pe aceleasi intrari, doar pe seturile aliniate (fits), comparat cuvant cu cuvant cu dS-ul lui attn_back_tile0_tc",
+                p,
+                label,
+                a4::REGISTERS,
+                a4::SHARED.bytes,
+                a4::LOADS_128,
+                a4::STORES_128
+            ));
+        }
     }
     let mut tc0_sets: Vec<Tc0Set> = Vec::new();
     let mut tc_sets: Vec<TcSet> = Vec::new();
@@ -5303,6 +5332,9 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     }
     if tc0.is_some() {
         tc0_verdict(p, label, journal, lines, &tc0_sets, tc_big.as_ref().and_then(|b| b.t0.as_ref()), stopped.is_some() || stopped2.is_some() || stopped_tc.is_some());
+    }
+    if tc0.as_ref().is_some_and(|t| t.v4_va.is_some()) {
+        tc0_v4_verdict(p, label, journal, lines, &tc0_sets, tc_big.as_ref().and_then(|b| b.t0.as_ref()), stopped.is_some() || stopped2.is_some() || stopped_tc.is_some());
     }
     match (stopped, stopped2, stopped_tc) {
         (None, None, None) => Ok(()),
@@ -5554,6 +5586,33 @@ struct TcBig {
 struct Tc0OnBoard {
     prog_va: u64,
     zone: Mapping,
+    /// P6-235 (cyber-gpu note C-157_P2zt): `attn_back_tile0_tc_v4` when `--atentie-tc0-v4` asked for it.
+    v4_va: Option<u64>,
+}
+
+/// P6-235: `attn_back_tile0_tc_v4` after `attn_back_tile0_tc` on one set (or the `atentie-513-b4` rows).
+#[derive(Default, Clone)]
+enum Tc0V4 {
+    /// Not asked.
+    #[default]
+    Off,
+    /// `attn_back_tile0_tc_v4::fits` said no: not launched.
+    Unaligned,
+    /// Launched: time (median on the big set), words equal bit for bit to tc's dS / of how many, the guard untouched.
+    Ran { ns: u64, same: usize, words: usize, guard_ok: bool },
+    /// The board did not finish (or a copy did not).
+    Stopped(String),
+}
+
+impl Tc0V4 {
+    /// The v4 words equal to tc's everywhere, the guard untouched (`None` = not launched).
+    fn ok(&self) -> Option<bool> {
+        match self {
+            Tc0V4::Ran { same, words, guard_ok, .. } => Some(same == words && *guard_ok),
+            Tc0V4::Stopped(_) => Some(false),
+            _ => None,
+        }
+    }
 }
 
 /// P6-234: one small set with `attn_back_tile0_tc`, beside the newest chain's F32 dS.
@@ -5571,6 +5630,8 @@ struct Tc0Set {
     guard_ok: bool,
     /// ‖dS_tc − dS_F32‖ / ‖dS_F32‖ under the diagonal, in millionths.
     rel_ppm: Option<u32>,
+    /// P6-235: `attn_back_tile0_tc_v4` on the same inputs.
+    v4: Tc0V4,
 }
 
 impl Tc0Set {
@@ -5590,6 +5651,8 @@ struct Tc0Big {
     guard_ok: bool,
     words: usize,
     stopped: Option<String>,
+    /// P6-235: `attn_back_tile0_tc_v4` on the same rows.
+    v4: Tc0V4,
 }
 
 /// P6-227: the median of some times (0 if none).
@@ -6344,6 +6407,49 @@ fn attn_tile_big<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 r0.finite = v.iter().all(|x| x.is_finite());
                 r0.rel_ppm = rel_ppm(&v, &f);
                 r0.words = v.len();
+                // P6-235 (note C-157_P2zt): then `attn_back_tile0_tc_v4` on the same inputs, only when aligned: the rows and
+                // the guard filled with NaN again, 5 launches, the rows back, word for word against tc's.
+                if let Some(v4_va) = t0.v4_va {
+                    if !nvidia_ga104::attn_back_tile0_tc_v4::fits(&a) {
+                        r0.v4 = Tc0V4::Unaligned;
+                        break 'tc0;
+                    }
+                    for &(o, n) in &rows {
+                        let bytes: Vec<u8> = core::iter::repeat_n(ap::FILL.to_le_bytes(), n / 4).flatten().collect();
+                        ram_write(&host, &bytes);
+                        if !copy(vbar, clock, journal, st, l, doorbell, subs, host.va, big.va + o as u64, (n as u64).next_multiple_of(16))? {
+                            r0.v4 = Tc0V4::Stopped(String::from("umplerea randurilor dS cu NaN (v4) nu s-a terminat"));
+                            break 'tc0;
+                        }
+                    }
+                    let (cb, q) = tc0_v4_launch_bytes(&a, v4_va, t0.zone.va)?;
+                    {
+                        let w = st.mem.writer_mut();
+                        put_bytes(w, t0.zone.pa, &cb)?;
+                        put_bytes(w, t0.zone.pa + 0x800, &q)?;
+                    }
+                    let mut ts4: Vec<u64> = Vec::new();
+                    for rep in 0..set.repeats {
+                        match mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, &maps, &sys, t0.zone.va + 0x800)? {
+                            Ok(ns) => ts4.push(ns),
+                            Err(got) => {
+                                r0.v4 = Tc0V4::Stopped(format!("placa nu a terminat programul nou attn_back_tile0_tc_v4, lansarea {}: ultima inregistrare = {:#x}", rep, got));
+                                break 'tc0;
+                            }
+                        }
+                    }
+                    let Some(band4) = read_rows(vbar, clock, journal, st, l, doorbell, subs)? else {
+                        r0.v4 = Tc0V4::Stopped(String::from("citirea randurilor dS dupa attn_back_tile0_tc_v4 nu s-a terminat"));
+                        break 'tc0;
+                    };
+                    let body = band.len() - g;
+                    r0.v4 = Tc0V4::Ran {
+                        ns: median_ns(&ts4),
+                        same: band4[..body].chunks(4).zip(band[..body].chunks(4)).filter(|(x, y)| x == y).count(),
+                        words: body / 4,
+                        guard_ok: band4[body..].chunks(4).all(|w| w == ap::FILL.to_le_bytes()),
+                    };
+                }
             }
             tb.t0 = Some(r0);
         }
@@ -6367,6 +6473,25 @@ fn tc0_launch_bytes(a: &nvidia_ga104::attn_back::Args, prog_va: u64, cbuf_va: u6
         release: None,
     }
     .to_bytes_with_shared(&a0::SHARED)?;
+    Ok((cb.to_vec(), q.to_vec()))
+}
+
+/// P6-235 (cyber-gpu note C-157_P2zt): the cbuf and the QMD of `attn_back_tile0_tc_v4` (the same cbuf as tc when `fits`;
+/// the same registers, shared memory, grid and block — only the program differs).
+fn tc0_v4_launch_bytes(a: &nvidia_ga104::attn_back::Args, prog_va: u64, cbuf_va: u64) -> GpuResult<(Vec<u8>, Vec<u8>)> {
+    use nvidia_ga104::attn_back_tile0_tc_v4 as a4;
+    use nvidia_ga104::qmd::ComputeQmd;
+    let cb = a4::cbuf(a).ok_or(bad("atentie-tc0-v4: argumentele refuzate de modulul programului (nealiniate)"))?;
+    let q = ComputeQmd {
+        program_va: prog_va,
+        registers: a4::REGISTERS,
+        cbuf0_va: cbuf_va,
+        cbuf0_size: a4::CBUF_BYTES as u32,
+        grid: a4::grid(a),
+        block: a4::BLOCK,
+        release: None,
+    }
+    .to_bytes_with_shared(&a4::SHARED)?;
     Ok((cb.to_vec(), q.to_vec()))
 }
 
@@ -6435,6 +6560,7 @@ fn tc0_small_set<V: Mmio + ?Sized, K: Clock + ?Sized>(
         upper: 0,
         guard_ok: got[4 * np..].chunks(4).all(|w| w == ap::FILL.to_le_bytes()),
         rel_ppm: None,
+        v4: Tc0V4::Off,
     };
     let (mut lo_v, mut lo_f) = (Vec::new(), Vec::new());
     for bh in 0..b * h {
@@ -6471,7 +6597,110 @@ fn tc0_small_set<V: Mmio + ?Sized, K: Clock + ?Sized>(
         r.lower,
         if model.is_none() { " (modelul a refuzat intrarile)" } else { "" }
     ));
+    // P6-235 (note C-157_P2zt): `attn_back_tile0_tc_v4` on the same inputs, only when aligned, dS (and its guard) filled
+    // with NaN again; its words against tc's, bit for bit.
+    if let Some(v4_va) = t0.v4_va {
+        if !nvidia_ga104::attn_back_tile0_tc_v4::fits(&a) {
+            r.v4 = Tc0V4::Unaligned;
+            lines.push(format!("{}: kronos --gpu: kt atentie0tc-v4 set {} ({}): sarit (nealiniat)", p, i, set.name));
+        } else {
+            ram_write_at(buf, lay.ds as u64, &fill);
+            let (cb, q) = tc0_v4_launch_bytes(&a, v4_va, t0.zone.va)?;
+            {
+                let w = st.mem.writer_mut();
+                put_bytes(w, t0.zone.pa, &cb)?;
+                put_bytes(w, t0.zone.pa + 0x800, &q)?;
+            }
+            let ns4 = match mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, maps, sys, t0.zone.va + 0x800)? {
+                Ok(t) => t,
+                Err(got) => {
+                    lines.push(format!(
+                        "{}: kronos --gpu: atentie-tc0-v4: placa nu a terminat la setul {} ({}), programul nou attn_back_tile0_tc_v4: ultima inregistrare = {:#x}; proba oprita, fara reincercare",
+                        p, i, set.name, got
+                    ));
+                    return Ok(None);
+                }
+            };
+            let got4 = ram_read_at(buf, lay.ds as u64, span as u64);
+            let same = got4[..4 * np].chunks(4).zip(got[..4 * np].chunks(4)).filter(|(x, y)| x == y).count();
+            let guard4 = got4[4 * np..].chunks(4).all(|w| w == ap::FILL.to_le_bytes());
+            r.v4 = Tc0V4::Ran { ns: ns4, same, words: np, guard_ok: guard4 };
+            journal.push(Event::Value { what: "kt atentie0tc-v4 set: timp v4 (ns)", value: u32::try_from(ns4).unwrap_or(u32::MAX) });
+            lines.push(format!(
+                "{}: kronos --gpu: kt atentie0tc-v4 set {} ({}): attn_back_tile0_tc_v4 {} ns (tc {} ns); = tc: {} / {} cuvinte{}; garda dS {}",
+                p,
+                i,
+                set.name,
+                ns4,
+                ns,
+                same,
+                np,
+                if same == np { " (ACEIASI BITI)" } else { " (DIFERA)" },
+                if guard4 { "neatinsa" } else { "ATINSA" }
+            ));
+        }
+    }
     Ok(Some(r))
+}
+
+/// P6-235 (cyber-gpu note C-157_P2zt): the verdict of `attn_back_tile0_tc_v4` beside `attn_back_tile0_tc` (the aligned
+/// small sets + `atentie-513-b4`): passes = the same words as tc on every aligned set and on the big rows, guards untouched.
+fn tc0_v4_verdict(p: &str, label: &str, journal: &mut Journal, lines: &mut Vec<String>, sets: &[Tc0Set], big: Option<&Tc0Big>, stopped: bool) {
+    use nvidia_ga104::attn_tile_probe as ap;
+    let ran = sets.iter().filter(|s| s.v4.ok().is_some()).count();
+    let good = sets.iter().filter(|s| s.v4.ok() == Some(true)).count();
+    let skipped = sets.iter().filter(|s| matches!(s.v4, Tc0V4::Unaligned)).count();
+    let (same, words) = sets.iter().fold((0usize, 0usize), |a, s| match s.v4 {
+        Tc0V4::Ran { same, words, .. } => (a.0 + same, a.1 + words),
+        _ => a,
+    });
+    let mut ok = !stopped && sets.len() == ap::TIMING_SET && ran > 0 && good == ran;
+    journal.push(Event::Value { what: "kt atentie0tc-v4 = tc (cuvinte)", value: u32::try_from(same).unwrap_or(u32::MAX) });
+    journal.push(Event::Value { what: "kt atentie0tc-v4 sarit (nealiniat)", value: u32::try_from(skipped).unwrap_or(u32::MAX) });
+    let big_text = match big.map(|b| (b, &b.v4)) {
+        Some((b, Tc0V4::Ran { ns, same, words, guard_ok })) if b.stopped.is_none() => {
+            ok &= same == words && *guard_ok;
+            journal.push(Event::Value { what: "kt atentie0tc-v4 timp (ns)", value: u32::try_from(*ns).unwrap_or(u32::MAX) });
+            let ms = |ns: u64| format!("{},{:02} ms", ns / 1_000_000, (ns / 10_000) % 100);
+            let ratio = |a: u64, b: u64| if b == 0 { String::from("-") } else { format!("x{},{:02}", a / b, (a % b) * 100 / b) };
+            format!(
+                "atentie-513-b4 pe lansare (mediana a {}): attn_back_tile0_tc_v4 {} fata de attn_back_tile0_tc {} ({} mai rapid; Cyber-GPU: x1,2-1,8, sub x1,15 nu se leaga) si dS F32 {} ({}); randurile T-1 = tc: {} / {} cuvinte{}",
+                ap::REPEATS,
+                ms(*ns),
+                ms(b.ns),
+                ratio(b.ns, *ns),
+                ms(b.f32_ns),
+                ratio(b.f32_ns, *ns),
+                same,
+                words,
+                if *guard_ok { "" } else { ", garda ATINSA" }
+            )
+        }
+        Some((_, Tc0V4::Unaligned)) => String::from("atentie-513-b4 nealiniat (v4 sarit)"),
+        Some((_, Tc0V4::Stopped(why))) => {
+            ok = false;
+            format!("atentie-513-b4 oprit: {}", why)
+        }
+        Some((b, _)) if b.stopped.is_some() => {
+            ok = false;
+            format!("atentie-513-b4 oprit (tc): {}", b.stopped.as_deref().unwrap_or("-"))
+        }
+        _ => String::from("atentie-513-b4 omis"),
+    };
+    lines.push(format!(
+        "{}: kronos --gpu: atentie-tc0-v4 (vechi langa nou, {}): {}: v4 = tc pe {} / {} seturi aliniate ({} sarite), {} / {} cuvinte; seturile mici in total: v4 {} ns, tc {} ns; {}",
+        p,
+        label,
+        if ok { "TRECE" } else { "NU TRECE" },
+        good,
+        ran,
+        skipped,
+        same,
+        words,
+        sets.iter().map(|s| if let Tc0V4::Ran { ns, .. } = s.v4 { ns } else { 0 }).sum::<u64>(),
+        sets.iter().filter(|s| matches!(s.v4, Tc0V4::Ran { .. })).map(|s| s.ns).sum::<u64>(),
+        big_text
+    ));
 }
 
 /// P6-234 (cyber-gpu note C-157_P2zs): the verdict of `attn_back_tile0_tc` beside the F32 dS (small sets + `atentie-513-b4`).

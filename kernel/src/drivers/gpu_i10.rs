@@ -495,6 +495,8 @@ impl SimGpu {
             cp.register_program_with_needs(nvidia_ga104::attn_back_tile_tc16_v4pf::ATTN_BACK_TILE_TC16_V4PF, c::attn_back_tile_tc16_v4pf_on_cpu, c::ATTN_BACK_TILE_TC16_V4PF_NEEDS);
             // P6-234 (cyber-gpu note C-157_P2zs): dS with dP on the tensor cores (the stand-in is `attn_tc::back0_model`).
             cp.register_program_with_needs(nvidia_ga104::attn_back_tile0_tc::ATTN_BACK_TILE0_TC, c::attn_back_tile0_tc_on_cpu, c::ATTN_BACK_TILE0_TC_NEEDS);
+            // P6-235 (cyber-gpu note C-157_P2zt): the same dS with 128-bit loads / stores (refuses unaligned launches).
+            cp.register_program_with_needs(nvidia_ga104::attn_back_tile0_tc_v4::ATTN_BACK_TILE0_TC_V4, c::attn_back_tile0_tc_v4_on_cpu, c::ATTN_BACK_TILE0_TC_V4_NEEDS);
             // P6-188 (cyber-gpu note C-157_P2x step 2): the tiled training matmul (`mm_train_tile`, the same cbuf as
             // `mm_train`, 8 KiB shared, one barrier).
             cp.register_program_with_needs(nvidia_ga104::mm_train_tile::MM_TRAIN_TILE, c::mm_train_tile_on_cpu, c::MM_TRAIN_TILE_NEEDS);

@@ -650,6 +650,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-232** Proba barierei largă (`test-placa --bariera-larga`, G = SM-uri × 8 / × 16; PREDARE Cyber-GPU P2zr `6e69f1a`). Plan: `docs/plans/P6-232.md`. Dep: P6-228.
 - [x] **P6-233** tc16 cu citiri de 128 de biți (`attn_back_tile_tc16_v4` / `_v4pf`) lângă tc16 în proba `--atentie-tc` (`--atentie-tc16-v4`, PREDARE Cyber-GPU P2zq `4293b5c`; dependența → `f6ce737`). Plan: `docs/plans/P6-233.md`. Dep: P6-227.
 - [x] **P6-234** dS-ul atenției pe circuitele speciale (`attn_back_tile0_tc`) lângă dS-ul F32 în proba `--atentie-tc` (`--atentie-tc0`, PREDARE Cyber-GPU P2zs `f6ce737`, pasul 1 „proba întâi”). Plan: `docs/plans/P6-234.md`. Dep: P6-227.
+- [x] **P6-235** dS pe circuitele speciale cu citiri de 128 de biți (`attn_back_tile0_tc_v4`) lângă `attn_back_tile0_tc` (`--atentie-tc0-v4`, PREDARE Cyber-GPU P2zt `62197c0`; dependența → `9b11018`). Plan: `docs/plans/P6-235.md`. Dep: P6-234.
   Gata (2026-11-26 ~09:05 RO): cyber-gpu `3c6fa3b` → `aa94bea`; I9 folosește `query_gr_counts` (`GpuState::gr_counts`); proba barierei: `groups_for_sms(counts.sms, …)`, raportul scrie TPC, SM și maximele LITTER; altă cifră decât 48 SM = proba oprită, nimic trimis. Teste: `kronos-gpu-bariera`, `boot` TRECUTE.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
