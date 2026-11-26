@@ -33,6 +33,7 @@ jobs:
   # P6-234: seventeen QEMU parts (teste-1..17): run 45828216361 (os-465) had teste-2 at 59m43s of the 60 with 16 parts;
   # with `kronos-gpu-atentie-tc0` the table gives ~59.7 min per part out of 17 (63.5 out of 16).
   # P6-235: eighteen QEMU parts (teste-1..18): with `kronos-gpu-atentie-tc0-v4` the table gives ~60.7 min out of 17, ~57.3 out of 18.
+  # P6-237: nineteen QEMU parts (teste-1..19): with `kronos-gpu-antrenare-513-atentie-v4` the table gives ~59.0 min out of 18, ~55.9 out of 19.
   build-and-test:
     name: ${{ matrix.parte }}
     runs-on: ubuntu-24.04
@@ -42,41 +43,43 @@ jobs:
       matrix:
         include:
           - parte: teste-1
-            shard: 1/18
+            shard: 1/19
           - parte: teste-2
-            shard: 2/18
+            shard: 2/19
           - parte: teste-3
-            shard: 3/18
+            shard: 3/19
           - parte: teste-4
-            shard: 4/18
+            shard: 4/19
           - parte: teste-5
-            shard: 5/18
+            shard: 5/19
           - parte: teste-6
-            shard: 6/18
+            shard: 6/19
           - parte: teste-7
-            shard: 7/18
+            shard: 7/19
           - parte: teste-8
-            shard: 8/18
+            shard: 8/19
           - parte: teste-9
-            shard: 9/18
+            shard: 9/19
           - parte: teste-10
-            shard: 10/18
+            shard: 10/19
           - parte: teste-11
-            shard: 11/18
+            shard: 11/19
           - parte: teste-12
-            shard: 12/18
+            shard: 12/19
           - parte: teste-13
-            shard: 13/18
+            shard: 13/19
           - parte: teste-14
-            shard: 14/18
+            shard: 14/19
           - parte: teste-15
-            shard: 15/18
+            shard: 15/19
           - parte: teste-16
-            shard: 16/18
+            shard: 16/19
           - parte: teste-17
-            shard: 17/18
+            shard: 17/19
           - parte: teste-18
-            shard: 18/18
+            shard: 18/19
+          - parte: teste-19
+            shard: 19/19
           - parte: stick
             shard: ""
     steps:

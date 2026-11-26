@@ -1553,13 +1553,21 @@ fn gpu(args: &[&str]) {
             match args.get(1).copied() {
                 Some("on") if args.len() == 2 => {
                     crate::drivers::gpu_tur::TRAIN_513_ATTN_TC16_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_513_ATTN_V4_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu atentie-tc16-sim: pornita (SIMULARE: in pasul mixt rapid #513, dQ / dK / dV pe attn_back_tile_tc16)\n");
                 }
+                // P6-237: `on v4` = the same, with the aligned launches on `attn_back_tile_tc16_v4` (`--atentie-v4`).
+                Some("on") if args.len() == 3 && args[2] == "v4" => {
+                    crate::drivers::gpu_tur::TRAIN_513_ATTN_TC16_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TRAIN_513_ATTN_V4_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu atentie-tc16-sim: pornita cu v4 (SIMULARE: in pasul mixt rapid #513, dQ / dK / dV pe attn_back_tile_tc16_v4 unde forma e aliniata, altfel tc16)\n");
+                }
                 Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TRAIN_513_ATTN_V4_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TRAIN_513_ATTN_TC16_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu atentie-tc16-sim: oprita\n");
                 }
-                _ => out!("folosire: gpu atentie-tc16-sim on|off\n"),
+                _ => out!("folosire: gpu atentie-tc16-sim on [v4]|off\n"),
             }
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu atentie-tc16-sim: exista doar in build-ul de test (pe stick o porneste doar ciclul, test-placa ... --mixt-513-rapid --atentie-tc16)\n");
