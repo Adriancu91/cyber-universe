@@ -458,6 +458,8 @@ impl SimGpu {
             cp.register_program_with_needs(nvidia_ga104::kronos_token::TOKEN32, c::token32_on_cpu, c::TOKEN32_NEEDS);
             // P6-243 (cyber-gpu `16a0cf5`): `token32_v2`, the same model (only its loads go through L1 on the board).
             cp.register_program_with_needs(nvidia_ga104::kronos_token::TOKEN32_V2, c::token32_on_cpu, c::TOKEN32_NEEDS);
+            // P6-255 (cyber-gpu `e117394`): `token32_v2c`, the same model plus an invented clock area (SIMULARE).
+            cp.register_program_with_needs(nvidia_ga104::token_clock::TOKEN32_V2C, c::token32c_on_cpu, c::TOKEN32_NEEDS);
             // P6-123 (C-155 point 3): the argmax on the board (256 threads, shfl + barrier, 16 bytes written).
             cp.register_program_with_needs(nvidia_ga104::argmax::ARGMAX, c::argmax_on_cpu, c::ARGMAX_NEEDS);
             // P6-145 (C-157 point 7): the embedding that reads its token from the argmax slot before it (`embed_dev`).

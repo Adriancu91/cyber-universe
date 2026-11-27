@@ -157,7 +157,7 @@ pub fn target(command: &str) -> Result<(String, String), &'static str> {
 
 /// Every `test-placa` option in the one order the line must keep (each at most once); the I9 text carries them as
 /// suffixes in this order. P6-236: shared with `board_refusal_hint`.
-const BOARD_OPTIONS: &[&str] = &[FLR_PROBA, TABLOU, TABLOU_VITEZA, VITEZA_1800, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, TOKEN32, TOKEN32_V2, P8, P8_S8, BARIERA, BARIERA_LARGA, COLSUM, PAS_AUR, MM_TC, MM_TC128, MM_TC_PF, MM_TC_V4, MM_TC_V5, MM_TC_V6, MM_TC_V7, MM_TC128_V4, MM_TC_64K, MM_TC_DXDW, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, ATTN_TC, ATTN_TC_V4, ATTN_TC0, ATTN_TC0_V4, ATTN_TC_64K, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_MIXED_FAST, TRAIN_VRAM, TRAIN_FUSED, TRAIN_513, TRAIN_513_TILES3, TRAIN_513_MM_TILE, TRAIN_513_FUSED_TILE, TRAIN_513_COLSUM, TRAIN_513_MIXED, TRAIN_513_MIXED_FAST, TRAIN_513_VIA_RAM, TRAIN_513_SLOTS, TRAIN_513_ATTN_TC16, TRAIN_513_ATTN_V4, TRAIN_513_ATTN_DS, TRAIN_513_MM_V5, TRAIN_513_MM_V6, TRAIN_513_MM_CHOICE, TRAIN_513_SM_STEP, TRAIN_513_MM_MODEL, TRAIN_513_RACE, TRAIN_513_PROBE_64K8, TRAIN_513_OCCUPANCY, TRAIN_RAM];
+const BOARD_OPTIONS: &[&str] = &[FLR_PROBA, TABLOU, TABLOU_VITEZA, VITEZA_1800, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, TOKEN32, TOKEN32_V2, TOKEN32_V2C, P8, P8_S8, BARIERA, BARIERA_LARGA, COLSUM, PAS_AUR, MM_TC, MM_TC128, MM_TC_PF, MM_TC_V4, MM_TC_V5, MM_TC_V6, MM_TC_V7, MM_TC128_V4, MM_TC_64K, MM_TC_DXDW, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, ATTN_TC, ATTN_TC_V4, ATTN_TC0, ATTN_TC0_V4, ATTN_TC_64K, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_MIXED_FAST, TRAIN_VRAM, TRAIN_FUSED, TRAIN_513, TRAIN_513_TILES3, TRAIN_513_MM_TILE, TRAIN_513_FUSED_TILE, TRAIN_513_COLSUM, TRAIN_513_MIXED, TRAIN_513_MIXED_FAST, TRAIN_513_VIA_RAM, TRAIN_513_SLOTS, TRAIN_513_ATTN_TC16, TRAIN_513_ATTN_V4, TRAIN_513_ATTN_DS, TRAIN_513_MM_V5, TRAIN_513_MM_V6, TRAIN_513_MM_CHOICE, TRAIN_513_SM_STEP, TRAIN_513_MM_MODEL, TRAIN_513_RACE, TRAIN_513_PROBE_64K8, TRAIN_513_OCCUPANCY, TRAIN_RAM];
 
 /// P6-96: `test-placa [--i9 …]` of the automatic list -> the I9.
 pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
@@ -177,7 +177,7 @@ pub const VITEZA_1800_SCOPE: &str = "`--viteza-1800` doar intr-un rand cu `--mm-
 
 /// The one order of the options (every rule except the scope of `--viteza-1800`, see [`board_command`]).
 fn board_command_form(command: &str) -> Option<Result<String, &'static str>> {
-    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou` sau `--tablou-viteza`, `--viteza-1800`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi` sau `--ln-32`, apoi `--k651`, apoi `--argmax-placa` sau `--argmax-fara-copie`, apoi `--dieta2`, apoi `--lot`, apoi `--token32` (urmat optional de `--token32-v2`), apoi `--p8` (urmat optional de `--p8-s8`), apoi `--bariera`, apoi `--bariera-larga`, apoi `--colsum`, apoi `--pas-aur`, apoi `--mm-tc` (urmat optional de `--mm-tc128`), apoi `--atentie-placi`, apoi `--atentie2`, apoi `--atentie3`, apoi `--atentie4`, apoi `--atentie-tc`, apoi `--atentie-tc16-v4`, apoi `--atentie-tc0`, apoi `--atentie-tc0-v4`, apoi `--atentie-tc-64k`, apoi `--ram-vram`, apoi `--adam-ram`, apoi `--antrenare-mini` la sfarsit, optional urmat de `--mixt` sau `--vram` (iar dupa `--vram` optional `--pas-lipit`, `--antrenare-513` sau `--lot-ram`; dupa `--antrenare-513` optional `--placi3`, dupa el optional `--mm-placi`, dupa el optional `--lipit-placi` (ultimul) sau `--colsum-impartit`, la sfarsit optional `--mixt-513` (ultimul), `--mm-alegere` (ultimul, urmat optional de `--treapta-pas`) sau `--cursa-mm` dupa `--mm-placi` sau `--colsum-impartit`, `--cursa-mm` urmat optional de `--proba-64k8` sau `--ocupare`) (in aceasta ordine; `--mixt` sau `--vram` doar imediat dupa `--antrenare-mini`, nu amandoua; `--pas-lipit`, `--antrenare-513` sau `--lot-ram` doar imediat dupa `--vram`; `--adam-ram` doar imediat dupa `--ram-vram`; `--atentie2` doar dupa `--atentie-placi`, `--atentie3` doar dupa `--atentie2`, `--atentie4` doar dupa `--atentie3`, `--atentie-tc` doar dupa `--atentie3` sau `--atentie4`, `--atentie-tc16-v4` doar imediat dupa `--atentie-tc`, `--atentie-tc0` doar imediat dupa `--atentie-tc` sau `--atentie-tc16-v4`, `--atentie-tc0-v4` doar imediat dupa `--atentie-tc0`, `--atentie-tc-64k` doar imediat dupa `--atentie-tc`, `--atentie-tc16-v4`, `--atentie-tc0` sau `--atentie-tc0-v4`; `--atentie-v4` doar imediat dupa `--atentie-tc16`, ultimul; `--atentie-ds` doar imediat dupa `--atentie-tc16` sau `--atentie-v4`, ultimul; `--pas-v5` doar imediat dupa `--atentie-tc16`, `--atentie-v4` sau `--atentie-ds`, ultimul; `--pas-v6` doar imediat dupa `--pas-v5`, ultimul; `--mm-tc-dxdw` doar imediat dupa `--mm-tc-64k`; `--mm-tc-v6` doar imediat dupa `--mm-tc` sau `--mm-tc-v5`; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi`, `--ln-32`; `--k651` nu merge cu `--lipit` sau `--simplu`; `--argmax-fara-copie` nu merge cu `--lipit`, `--ln-nou`, `--sferturi` sau `--ln-32`; `--lot` doar cu `--argmax-fara-copie` si lista implicita lipita-ln-32, fara alta alegere de lista)";
+    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou` sau `--tablou-viteza`, `--viteza-1800`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi` sau `--ln-32`, apoi `--k651`, apoi `--argmax-placa` sau `--argmax-fara-copie`, apoi `--dieta2`, apoi `--lot`, apoi `--token32` (urmat optional de `--token32-v2`, iar dupa el optional `--token32-v2c`), apoi `--p8` (urmat optional de `--p8-s8`), apoi `--bariera`, apoi `--bariera-larga`, apoi `--colsum`, apoi `--pas-aur`, apoi `--mm-tc` (urmat optional de `--mm-tc128`), apoi `--atentie-placi`, apoi `--atentie2`, apoi `--atentie3`, apoi `--atentie4`, apoi `--atentie-tc`, apoi `--atentie-tc16-v4`, apoi `--atentie-tc0`, apoi `--atentie-tc0-v4`, apoi `--atentie-tc-64k`, apoi `--ram-vram`, apoi `--adam-ram`, apoi `--antrenare-mini` la sfarsit, optional urmat de `--mixt` sau `--vram` (iar dupa `--vram` optional `--pas-lipit`, `--antrenare-513` sau `--lot-ram`; dupa `--antrenare-513` optional `--placi3`, dupa el optional `--mm-placi`, dupa el optional `--lipit-placi` (ultimul) sau `--colsum-impartit`, la sfarsit optional `--mixt-513` (ultimul), `--mm-alegere` (ultimul, urmat optional de `--treapta-pas`) sau `--cursa-mm` dupa `--mm-placi` sau `--colsum-impartit`, `--cursa-mm` urmat optional de `--proba-64k8` sau `--ocupare`) (in aceasta ordine; `--mixt` sau `--vram` doar imediat dupa `--antrenare-mini`, nu amandoua; `--pas-lipit`, `--antrenare-513` sau `--lot-ram` doar imediat dupa `--vram`; `--adam-ram` doar imediat dupa `--ram-vram`; `--atentie2` doar dupa `--atentie-placi`, `--atentie3` doar dupa `--atentie2`, `--atentie4` doar dupa `--atentie3`, `--atentie-tc` doar dupa `--atentie3` sau `--atentie4`, `--atentie-tc16-v4` doar imediat dupa `--atentie-tc`, `--atentie-tc0` doar imediat dupa `--atentie-tc` sau `--atentie-tc16-v4`, `--atentie-tc0-v4` doar imediat dupa `--atentie-tc0`, `--atentie-tc-64k` doar imediat dupa `--atentie-tc`, `--atentie-tc16-v4`, `--atentie-tc0` sau `--atentie-tc0-v4`; `--atentie-v4` doar imediat dupa `--atentie-tc16`, ultimul; `--atentie-ds` doar imediat dupa `--atentie-tc16` sau `--atentie-v4`, ultimul; `--pas-v5` doar imediat dupa `--atentie-tc16`, `--atentie-v4` sau `--atentie-ds`, ultimul; `--pas-v6` doar imediat dupa `--pas-v5`, ultimul; `--mm-tc-dxdw` doar imediat dupa `--mm-tc-64k`; `--mm-tc-v6` doar imediat dupa `--mm-tc` sau `--mm-tc-v5`; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi`, `--ln-32`; `--k651` nu merge cu `--lipit` sau `--simplu`; `--argmax-fara-copie` nu merge cu `--lipit`, `--ln-nou`, `--sferturi` sau `--ln-32`; `--lot` doar cu `--argmax-fara-copie` si lista implicita lipita-ln-32, fara alta alegere de lista)";
     let words: Vec<&str> = command.split_whitespace().collect();
     let Some(("test-placa", rest)) = words.split_first().map(|(a, b)| (*a, b)) else { return None };
     let (i9, flags) = match rest {
@@ -254,6 +254,10 @@ fn board_command_form(command: &str) -> Option<Result<String, &'static str>> {
         }
         // P6-243: `token32_v2` only right after `token32` (it runs after it, on the same warmed board).
         if all[at] == TOKEN32_V2 && !out.ends_with(TOKEN32) {
+            return Some(Err(FORM));
+        }
+        // P6-255: `token32_v2c` only right after `token32_v2` (it runs after a v2 that passed).
+        if all[at] == TOKEN32_V2C && !out.ends_with(TOKEN32_V2) {
             return Some(Err(FORM));
         }
         // P6-200: `mma16_s8` only right after P8 (the same path, the same page).
@@ -991,6 +995,11 @@ pub const TOKEN32: &str = " --token32";
 /// `test-placa … --token32 --token32-v2`, only right after `--token32`.
 pub const TOKEN32_V2: &str = " --token32-v2";
 
+/// P6-255 (cyber-gpu `e117394`, note `C-157_P2zzq_token32-v2c-ceas.md`): suffix of the I9 text when, after a
+/// `token32_v2` that passed, the texts run once more with `token32_v2c` (v2 + the SM clock around every operation)
+/// at G = SMs x 16 only — `test-placa … --token32 --token32-v2 --token32-v2c`, only right after `--token32-v2`.
+pub const TOKEN32_V2C: &str = " --token32-v2c";
+
 /// P6-117 (C-161 point 2): suffix of the I9 text when P8 is asked (`test-placa … --p8`, always last).
 pub const P8: &str = " --p8";
 
@@ -1530,6 +1539,10 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
         Some(x) => (x, true),
         None => (i9, false),
     };
+    let (i9, token32_v2c) = match i9.strip_suffix(TOKEN32_V2C) {
+        Some(x) => (x, true),
+        None => (i9, false),
+    };
     let (i9, token32_v2) = match i9.strip_suffix(TOKEN32_V2) {
         Some(x) => (x, true),
         None => (i9, false),
@@ -1803,11 +1816,16 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::TOKEN32_IN_CYCLE.store(token32, core::sync::atomic::Ordering::SeqCst);
     // P6-243: `token32_v2` after it, only when the list asked for it.
     crate::drivers::gpu_tur::TOKEN32_V2_IN_CYCLE.store(token32 && token32_v2, core::sync::atomic::Ordering::SeqCst);
+    // P6-255: `token32_v2c` after it, only when the list asked for it.
+    crate::drivers::gpu_tur::TOKEN32_V2C_IN_CYCLE.store(token32 && token32_v2 && token32_v2c, core::sync::atomic::Ordering::SeqCst);
     if token32 {
         text.push_str("\n(token32: cerut de lista (--token32); dupa textele lui #513, aceleasi texte inca o data cu programul nou `token32` (92 registre, 2176 B partajati, blocuri de 32): tot simbolul intr-o singura lansare, G grupuri care se intalnesc la o bariera pe toata placa intre operatii; intai G = SM-uri x 8 (384, treapta 32 KiB), apoi doar daca a trecut G = SM-uri x 16 (768, treapta 64 KiB); limita 100 ms pe lansare; trece = aceleasi simboluri si aceeasi amprenta a logit-urilor ca rularea obisnuita, contorul barierei (n - 1) x G la fiecare simbol; o lansare care nu se termina = oprire, nimic altceva trimis cu token32; prezis Cyber-GPU: aceleasi simboluri, la 384 ~1,26 ms pe simbol, la 768 ~1,0 ms)\n");
     }
     if token32 && token32_v2 {
         text.push_str("\n(token32_v2: cerut de lista (--token32-v2); dupa token32, aceleasi texte inca o data cu programul token32_v2 (acelasi cod ca token32, aceleasi 92 registre si 2176 B partajati; doar 173 de citiri trec prin L1 in loc de L2) si cu lista de lucru scrisa doar unde se schimba fata de simbolul dinainte (work_list_changes, ~38 de cuvinte din 5632); aceleasi G si aceeasi limita; trece = aceleasi simboluri si aceeasi amprenta ca rularea obisnuita, contorul barierei (n - 1) x G; daca amprenta difera, token32_v2 se opreste; nu porneste daca token32 s-a oprit; prezis Cyber-GPU: placa la 384 0,9-1,75 ms pe simbol, la 768 0,95-2,1 ms (token32 a avut 3,86 ms, lista obisnuita 1,07), partea driverului ~0,9-1,2 ms in loc de 4,6)\n");
+    }
+    if token32 && token32_v2 && token32_v2c {
+        text.push_str("\n(token32_v2c: cerut de lista (--token32-v2c); dupa un token32_v2 care a trecut, aceleasi texte inca o data cu programul de masurat token32_v2c (aceeasi aritmetica ca token32_v2, 99 registre, QMD-ul lui propriu) doar la G = SM-uri x 16 (768): la inceputul si la sfarsitul fiecarei operatii citeste ceasul SM-ului si scrie intr-o zona separata din memoria placii (~267 KiB), citita la sfarsitul fiecarui text; in jurnal randurile `kc` ale ultimului simbol (sumar + 3 pe fiecare fel de operatie); trece = aceleasi simboluri si aceeasi amprenta ca rularea obisnuita, contorul barierei (n - 1) x G; nimic nou scris in registrele placii; prezis Cyber-GPU: placa cel mult +3 % fata de token32_v2, ceasul SM dedus 1 400-2 000 MHz, bariera dupa cel mai lent 0,14-0,40 ms)\n");
     }
     if batch {
         text.push_str("\n(lotul, simbolul ales ramane pe placa: cerut de lista (--lot); dupa textele cu argmax fara copie, aceeasi generare inca o data pe loturi: programul nou `embed_dev` (19 registre, blocuri de 256) citeste simbolul din rezultatul argmax al pozitiei de dinainte, deci mai multe pozitii (88 de lansari fiecare, invalidare inaintea fiecarei lansari) intra intr-o singura trimitere si o singura sonerie; intai loturi de 4, apoi tot textul (sau cat incape in zona de comenzi); trece = aceleasi simboluri si aceleasi 4 cuvinte argmax pe fiecare pozitie ca rularea cu o pozitie pe trimitere; Cyber-GPU estimeaza ~710-800 simb/s)\n");
@@ -2128,6 +2146,7 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::BATCH_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TOKEN32_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TOKEN32_V2_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::TOKEN32_V2C_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     // P6-240: the `token32` verdict too.
     let result = if token32 {
         let verdict = text.lines().rev().find(|l| l.contains("token32 (o lansare pe simbol)")).map_or("token32: niciun rezultat (vezi raportul)", |l| l.trim());
@@ -2138,6 +2157,13 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     // P6-243: the `token32_v2` verdict too.
     let result = if token32 && token32_v2 {
         let verdict = text.lines().rev().find(|l| l.contains("token32_v2 (o lansare pe simbol)")).map_or("token32_v2: niciun rezultat (vezi raportul)", |l| l.trim());
+        format!("{}; {}", result, verdict)
+    } else {
+        result
+    };
+    // P6-255: the `token32_v2c` verdict too.
+    let result = if token32 && token32_v2 && token32_v2c {
+        let verdict = text.lines().rev().find(|l| l.contains("token32_v2c (o lansare pe simbol)")).map_or("token32_v2c: niciun rezultat (vezi raportul)", |l| l.trim());
         format!("{}; {}", result, verdict)
     } else {
         result
@@ -2558,6 +2584,11 @@ pub fn self_test() {
     assert!(board_command("test-placa --tablou-viteza --token32 --token32-v2 --p8").is_some_and(|r| r.is_ok()));
     assert!(board_command("test-placa --token32-v2").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --token32-v2 --token32").is_some_and(|r| r.is_err()));
+    // P6-255: `token32_v2c` only right after `token32_v2`.
+    assert!(board_command("test-placa --tablou-viteza --token32 --token32-v2 --token32-v2c") == Some(Ok(String::from("c135 --tablou-viteza --token32 --token32-v2 --token32-v2c"))));
+    assert!(board_command("test-placa --token32 --token32-v2c").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --token32-v2c").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --token32 --token32-v2c --token32-v2").is_some_and(|r| r.is_err()));
     // P6-232: the wide barrier probe, alone or right after `--bariera`, before `--colsum`.
     assert!(board_command("test-placa --bariera-larga") == Some(Ok(String::from("c135 --bariera-larga"))));
     assert!(board_command("test-placa --bariera --bariera-larga --colsum") == Some(Ok(String::from("c135 --bariera --bariera-larga --colsum"))));

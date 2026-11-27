@@ -1298,8 +1298,8 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
     }
     if token32 {
-        let t32_ok = match token32_runs(&mut runner, runs, &t32_refs, false) {
-            Ok(()) => true,
+        let t32_ok = match token32_runs(&mut runner, runs, &t32_refs, T32Kind::Plain) {
+            Ok(_) => true,
             Err(e) => {
                 runner.lines.push(format!("{}: kronos --gpu: token32 (o lansare pe simbol): oprit: {}", p, e));
                 false
@@ -1312,9 +1312,23 @@ fn run_model<V: Mmio + ?Sized, K: Clock + ?Sized>(
         if v2 && !t32_ok {
             runner.lines.push(format!("{}: kronos --gpu: token32_v2 (o lansare pe simbol): NETRIMIS (token32 s-a oprit)", p));
         }
+        let mut v2_pass = false;
         if v2 && t32_ok {
-            if let Err(e) = token32_runs(&mut runner, runs, &t32_refs, true) {
-                runner.lines.push(format!("{}: kronos --gpu: token32_v2 (o lansare pe simbol): oprit: {}", p, e));
+            match token32_runs(&mut runner, runs, &t32_refs, T32Kind::V2) {
+                Ok(all) => v2_pass = all,
+                Err(e) => runner.lines.push(format!("{}: kronos --gpu: token32_v2 (o lansare pe simbol): oprit: {}", p, e)),
+            }
+        }
+        runner.t32 = None;
+        // P6-255 (cyber-gpu `e117394`, P2zzq): `token32_v2c` (v2 + the SM clock) only after a `token32_v2` that passed
+        // at every G (the same texts, a measuring program).
+        let v2c = super::gpu_tur::TOKEN32_V2C_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+        if v2c && !(v2 && v2_pass) {
+            runner.lines.push(format!("{}: kronos --gpu: token32_v2c (o lansare pe simbol): NETRIMIS (token32_v2 nu a trecut)", p));
+        }
+        if v2c && v2 && v2_pass {
+            if let Err(e) = token32_runs(&mut runner, runs, &t32_refs, T32Kind::V2c) {
+                runner.lines.push(format!("{}: kronos --gpu: token32_v2c (o lansare pe simbol): oprit: {}", p, e));
             }
         }
         runner.t32 = None;
@@ -1465,11 +1479,31 @@ struct T32Ref {
 /// (768) only if 384 passed. Passes = for every text the same tokens (and the same logits' print) as its own run, and
 /// the barrier counter (n − 1) · G after every launch. A launch that does not finish stops `token32` (nothing more is
 /// sent with it). Every counter of the ordinary run (speed, profile, splits, prints) is put back afterwards.
-fn token32_runs<V: Mmio + ?Sized, K: Clock + ?Sized>(runner: &mut BoardRunner<'_, '_, V, K>, runs: &[Run<'_>], refs: &[T32Ref], v2: bool) -> GpuResult<()> {
+/// The program `token32_runs` sends: `token32`, `token32_v2` (P6-243) or `token32_v2c` (P6-255, v2 + the SM clock).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum T32Kind {
+    Plain,
+    V2,
+    V2c,
+}
+
+/// Returns whether every G passed.
+fn token32_runs<V: Mmio + ?Sized, K: Clock + ?Sized>(runner: &mut BoardRunner<'_, '_, V, K>, runs: &[Run<'_>], refs: &[T32Ref], kind: T32Kind) -> GpuResult<bool> {
     use nvidia_ga104::kronos_token as kt;
+    use nvidia_ga104::token_clock as tc;
     // P6-243 (cyber-gpu `16a0cf5`, P2zzd): `token32_v2` = the same code with the reads through L1, and only the
-    // changed words of the list written before every token.
-    let (pn, code, want_sha, regs) = if v2 { ("token32_v2", kt::TOKEN32_V2, TOKEN32_V2_SHA256, kt::TOKEN32_V2_REGISTERS) } else { ("token32", kt::TOKEN32, TOKEN32_SHA256, kt::TOKEN32_REGISTERS) };
+    // changed words of the list written before every token. P6-255 (cyber-gpu `e117394`, P2zzq): `token32_v2c` = v2's
+    // arithmetic plus the SM clock around every operation, written to a clock area; G = SMs x 16 only.
+    let (pn, code, want_sha, regs) = match kind {
+        T32Kind::V2c => ("token32_v2c", tc::TOKEN32_V2C, TOKEN32_V2C_SHA256, tc::TOKEN32_V2C_REGISTERS),
+        T32Kind::V2 => ("token32_v2", kt::TOKEN32_V2, TOKEN32_V2_SHA256, kt::TOKEN32_V2_REGISTERS),
+        T32Kind::Plain => ("token32", kt::TOKEN32, TOKEN32_SHA256, kt::TOKEN32_REGISTERS),
+    };
+    let v2 = kind != T32Kind::Plain;
+    if kind == T32Kind::V2c && tc::TOKEN32_V2C_SHA256 != TOKEN32_V2C_SHA256 {
+        runner.lines.push(format!("{}: kronos --gpu: {pn}: SHA-256 din dependenta nu e cel din nota: nimic trimis", runner.p));
+        return Err(bad("token32_v2c: SHA-256 gresit"));
+    }
     let p = runner.p;
     let label = if runner.permit.is_some() { "placa" } else { "SIMULARE" };
     let sha = sha256_hex(code);
@@ -1480,7 +1514,7 @@ fn token32_runs<V: Mmio + ?Sized, K: Clock + ?Sized>(runner: &mut BoardRunner<'_
     let counts = runner.st.gr_counts.ok_or_else(|| bad("token32: numarul de TPC lipseste (I9 nu l-a raportat)"))?;
     let sms = counts.sms;
     runner.lines.push(format!(
-        "{}: kronos --gpu: {pn} ({}): programul {pn} ({} octeti, SHA-256 {}..., {} registre, blocuri de {}), {} SM-uri active, G = SM-uri x 8 apoi x 16, limita {} ms pe lansare, {} texte",
+        "{}: kronos --gpu: {pn} ({}): programul {pn} ({} octeti, SHA-256 {}..., {} registre, blocuri de {}), {} SM-uri active, G = SM-uri x {}, limita {} ms pe lansare, {} texte",
         p,
         label,
         code.len(),
@@ -1488,6 +1522,7 @@ fn token32_runs<V: Mmio + ?Sized, K: Clock + ?Sized>(runner: &mut BoardRunner<'_
         regs,
         kt::TOKEN_BLOCK,
         sms,
+        if kind == T32Kind::V2c { "16 (doar)" } else { "8 apoi x 16" },
         BARRIER_LIMIT_US / 1000,
         refs.len()
     ));
@@ -1518,10 +1553,15 @@ fn token32_runs<V: Mmio + ?Sized, K: Clock + ?Sized>(runner: &mut BoardRunner<'_
     let (name0, list0) = (runner.name.clone(), runner.list);
     let mut verdicts: Vec<String> = Vec::new();
     let mut result: GpuResult<()> = Ok(());
-    'g: for per_sm in [8u32, 16] {
+    let mut all_pass = true;
+    let per_sms: &[u32] = if kind == T32Kind::V2c { &[16] } else { &[8, 16] };
+    'g: for &per_sm in per_sms {
         let g = kt::token32_groups_for_sms(sms, per_sm)?;
         let step = kt::token32_step_for(g, sms)?;
-        runner.t32 = Some(T32 { prog, list, zone, groups: g, sms, counted: 0, counter_ok: 0, counter_bad: None, hung: None, prev: None, diff: v2, words: 0, tokens: 0, per_token: Vec::new() });
+        // P6-255: the clock area (n·G + n + 1 + G words) for the most launches a token can have.
+        let clock = if kind == T32Kind::V2c { Some(map_vram(runner.st, (4 * tc::clock_words(runner.n, g)? as u64).next_multiple_of(PAGE))?) } else { None };
+        runner.t32 = Some(T32 { prog, list, zone, groups: g, sms, counted: 0, counter_ok: 0, counter_bad: None, hung: None, prev: None, diff: v2, words: 0, tokens: 0, per_token: Vec::new(), clock, last: None });
+        let mut kc: Option<Vec<String>> = None;
         let mut pass = true;
         for r in refs {
             let run = runs.get(r.ri).ok_or(bad("token32: text necunoscut"))?;
@@ -1588,6 +1628,14 @@ fn token32_runs<V: Mmio + ?Sized, K: Clock + ?Sized>(runner: &mut BoardRunner<'_
                 runner.lines.push(format!("{}: kronos --gpu: {pn} G={} \"{}\": simbolurile {:?}, lista obisnuita {:?}", p, g, run.name, generation.generated(), &r.seq[run.prompt.len().min(r.seq.len())..]));
             }
             runner.lines.push(format!("{}: kronos --gpu: kt {pn} G={} placa {} us, cu driverul {} us", p, g, us(board), us(host)));
+            // P6-255: the clock area holds the text's last token (every launch rewrites every word); read once here, so
+            // the tokens' own driver time is not touched.
+            if t.clock.is_some() {
+                kc = Some(runner.clock_rows(g));
+            }
+        }
+        if let Some(rows) = kc.take() {
+            runner.lines.extend(rows);
         }
         if let Some(t) = runner.t32.as_ref() {
             runner.lines.push(format!(
@@ -1614,6 +1662,7 @@ fn token32_runs<V: Mmio + ?Sized, K: Clock + ?Sized>(runner: &mut BoardRunner<'_
         }
         runner.lines.push(format!("{}: kronos --gpu: kt {pn} G={} {}", p, g, if pass { "TRECE" } else { "NU TRECE" }));
         verdicts.push(format!("G={} {}", g, if pass { "TRECE" } else { "NU TRECE" }));
+        all_pass &= pass;
         if !pass {
             break; // G = 768 only after 384 passed
         }
@@ -1638,7 +1687,7 @@ fn token32_runs<V: Mmio + ?Sized, K: Clock + ?Sized>(runner: &mut BoardRunner<'_
     runner.kept = kept0;
     runner.name = name0;
     runner.list = list0;
-    result
+    result.map(|_| all_pass)
 }
 
 /// P6-145 (C-157 point 7): the batch runs of one text (batches of 4, then the whole text or as many positions as the
@@ -2082,6 +2131,11 @@ struct T32 {
     /// P6-252 (cyber-gpu `de8bfbf`, P2zzn): words written for each token in order (the first one = the whole list), for
     /// the row with the first token apart and the median of the others.
     per_token: Vec<u64>,
+    /// P6-255 (cyber-gpu `e117394`, P2zzq): with `token32_v2c` the clock area in VRAM (`4 · clock_words(n, G)` bytes).
+    clock: Option<Mapping>,
+    /// P6-255: the last token sent — its operations, its parts (`token_clock::parts_of`, or why they were refused) and
+    /// its board time (ns, from the launch's records), for the `kc` rows of the clock area.
+    last: Option<(usize, Result<Vec<nvidia_ga104::token_clock::Part>, String>, u64)>,
 }
 
 const T32_CBUF: u64 = 0;
@@ -2091,6 +2145,8 @@ const T32_SYNC: u64 = 0x200;
 const TOKEN32_SHA256: &str = "40d9749cc8074f639ca0eb3fafae9686b2ca4d2491e868b3b2544ec7faa1ad5f";
 /// P6-243: `kronos_token::TOKEN32_V2`'s SHA-256 as note P2zzd writes it (checked before anything is sent).
 const TOKEN32_V2_SHA256: &str = "5f4d22a0d01f35d2bd3b88f0e43e492acede1a1a8d912b80fc0712d012f11171";
+/// P6-255: `token_clock::TOKEN32_V2C`'s SHA-256 as note P2zzq writes it (checked before anything is sent).
+const TOKEN32_V2C_SHA256: &str = "e899fa7cce1d7e31e511f0304bb6d82961c0e13bcd19d86827d58db4b6c18206";
 
 impl<V: Mmio + ?Sized, K: Clock + ?Sized> BoardRunner<'_, '_, V, K> {
     /// The VRAM address of `bytes` at GPU VA `va` (one of the step's own mappings).
@@ -2258,7 +2314,7 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> BoardRunner<'_, '_, V, K> {
     fn submit32(&mut self, list: &[kl::Launch]) -> GpuResult<()> {
         use nvidia_ga104::kronos_token as kt;
         let t = self.t32.as_ref().ok_or(bad("token32: nepregatit"))?;
-        let (prog, lm, zone, g, sms) = (t.prog, t.list, t.zone, t.groups, t.sms);
+        let (prog, lm, zone, g, sms, clock) = (t.prog, t.list, t.zone, t.groups, t.sms, t.clock);
         let n = list.len();
         let bytes = kt::work_list32(list)?;
         if bytes.len() as u64 > lm.size {
@@ -2270,8 +2326,17 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> BoardRunner<'_, '_, V, K> {
             (Some(prev), true) if prev.len() == bytes.len() => Some(kt::work_list_changes(prev, &bytes)?),
             _ => None,
         };
-        let cb = kt::token_cbuf_for(lm.va, zone.va + T32_SYNC, n, g)?;
-        let q = kt::token32_qmd_wide(prog.va, zone.va + T32_CBUF, g, sms)?;
+        // P6-255: `token32_v2c` = the clock area's address in the constant buffer and ITS QMD (99 registers; the
+        // `token32` QMD writes 92 and would break the registers).
+        let (cb, q) = match clock {
+            Some(c) => {
+                if 4 * nvidia_ga104::token_clock::clock_words(n, g)? as u64 > c.size {
+                    return Err(bad("token32_v2c: zona ceasului nu incape"));
+                }
+                (nvidia_ga104::token_clock::token_cbuf_clock(lm.va, zone.va + T32_SYNC, n, g, c.va)?, nvidia_ga104::token_clock::token32_v2c_qmd_wide(prog.va, zone.va + T32_CBUF, g, sms)?)
+            }
+            None => (kt::token_cbuf_for(lm.va, zone.va + T32_SYNC, n, g)?, kt::token32_qmd_wide(prog.va, zone.va + T32_CBUF, g, sms)?),
+        };
         let written = changes.as_ref().map_or(bytes.len() as u64 / 4, |c| c.len() as u64);
         {
             let w = self.st.mem.writer_mut();
@@ -2307,6 +2372,7 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> BoardRunner<'_, '_, V, K> {
         let nw = pb.len();
         let mut maps = self.tmaps.to_vec();
         maps.extend([prog, lm, zone]);
+        maps.extend(clock);
         let sys = [self.host_logits.clone()];
         let limit = if self.permit.is_some() { BARRIER_LIMIT_US } else { WAIT_US };
         let sent = submit_records(self.vbar, self.clock, self.journal, self.st, self.l, self.permit, &words[..nw], self.rec, 2, first + 1, &maps, &sys, self.doorbell)?;
@@ -2339,7 +2405,19 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> BoardRunner<'_, '_, V, K> {
         };
         let want = (n as u64 - 1) * u64::from(g);
         let (pos, name) = (self.pos, self.name.clone());
+        // P6-255: the list of the ordinary chain ends with the logits' copy (no argmax on the board): its parts are those
+        // of the list without it, the copy is summed apart (`clock_rows`).
+        let parts = clock.map(|_| {
+            let body = match list.split_last() {
+                Some((l, rest)) if l.prog == kl::Prog::Copy => rest,
+                _ => list,
+            };
+            nvidia_ga104::token_clock::parts_of(body).map_err(|e| format!("{} ({} operatii: {:?})", e, n, list.iter().map(|l| l.prog).collect::<Vec<_>>()))
+        });
         if let Some(t) = self.t32.as_mut() {
+            if let Some(parts) = parts {
+                t.last = Some((n, parts, ns));
+            }
             t.counted += 1;
             if u64::from(counter) == want {
                 t.counter_ok += 1;
@@ -2353,6 +2431,57 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> BoardRunner<'_, '_, V, K> {
             Some((s, _, sum)) => (s, time(1), sum + ns),
         });
         Ok(())
+    }
+}
+
+impl<V: Mmio + ?Sized, K: Clock + ?Sized> BoardRunner<'_, '_, V, K> {
+    /// P6-255 (cyber-gpu `e117394`, P2zzq): the `kc` rows of the last token sent with `token32_v2c` — its clock area read
+    /// back, split per operation (`read_clock`), summed per part of the list (`by_part`), cycles turned into ns with the
+    /// same token's board time (`rows`). A refused area is one error row (not an error of the board).
+    fn clock_rows(&mut self, g: u32) -> Vec<String> {
+        use nvidia_ga104::token_clock as tc;
+        let p = self.p;
+        let Some((cm, Some((n, parts, ns)))) = self.t32.as_ref().map(|t| (t.clock, t.last.clone())) else {
+            return alloc::vec![format!("{}: kronos --gpu: kc token32_v2c G={}: niciun simbol trimis", p, g)];
+        };
+        let Some(cm) = cm else { return Vec::new() };
+        let got = (|| -> GpuResult<Vec<u32>> {
+            let words = tc::clock_words(n, g)?;
+            let GpuState { zone, .. } = &*self.st;
+            let mut vw = nvidia_ga104::vram_window::VramWindow::new(&mut *self.vbar, &mut *self.journal, self.permit, zone.vram_size, &zone.protected)?;
+            let r = (0..words as u64).map(|i| vw.read_u32(cm.pa + 4 * i)).collect::<GpuResult<Vec<u32>>>();
+            let back = vw.restore();
+            r.and_then(|v| back.map(|_| v))
+        })();
+        let rows = got.and_then(|w| tc::read_clock(&w, n, g)).map_err(|e| format!("{}", e)).and_then(|mut r| {
+            let parts = parts.map_err(|e| format!("felurile listei refuzate: {}", e))?;
+            // The logits' copy at the end (when the list has one more operation than its parts): taken out of the
+            // report, and the board time shortened by the copy's share of the windows, so the deduced clock and every
+            // ns row stay those of the whole token.
+            let mut copy_ns = None;
+            let mut board = ns;
+            if r.ops.len() == parts.len() + 1 {
+                let all: u64 = r.ops.iter().map(|o| u64::from(o.window)).sum();
+                let last = r.ops.pop().map_or(0, |o| u64::from(o.window));
+                if all > 0 {
+                    let c = ((u128::from(last) * u128::from(ns)) / u128::from(all)) as u64;
+                    board = ns - c.min(ns);
+                    copy_ns = Some(c);
+                }
+            }
+            tc::by_part(&r, &parts).map(|s| (s.rows(board), copy_ns)).map_err(|e| format!("{}", e))
+        });
+        match rows {
+            Ok((rows, copy_ns)) => {
+                let mut v = alloc::vec![format!("{}: kronos --gpu: kc token32_v2c G={}: zona ceasului a ultimului simbol ({} operatii, placa {} ns{})", p, g, n, ns, if copy_ns.is_some() { ", ultima = copia logit-urilor, numarata separat" } else { "" })];
+                v.extend(rows.iter().map(|(name, value)| format!("{}: kronos --gpu: {} {}", p, name, value)));
+                if let Some(c) = copy_ns {
+                    v.push(format!("{}: kronos --gpu: kc copie logit fereastra (ns) {}", p, c));
+                }
+                v
+            }
+            Err(e) => alloc::vec![format!("{}: kronos --gpu: kc token32_v2c G={}: zona ceasului refuzata: {} (nu e o eroare a placii)", p, g, e)],
+        }
     }
 }
 

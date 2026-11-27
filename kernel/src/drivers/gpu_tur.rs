@@ -346,6 +346,12 @@ pub static TOKEN32_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic
 /// Off by default.
 pub static TOKEN32_V2_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-255 (cyber-gpu `e117394`, note `C-157_P2zzq_token32-v2c-ceas.md`): after a `token32_v2` that passed, the same
+/// texts with `token32_v2c` (v2 + the SM clock read around every operation, a program to measure with), only at
+/// G = SMs x 16. Set only by the cycle (`test-placa … --token32 --token32-v2 --token32-v2c`) and, in the test build,
+/// by `gpu token32-sim v2c`. Off by default.
+pub static TOKEN32_V2C_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-117 (C-161 point 2, cyber-gpu `3199fa2`): P8, the first tensor-core computation (`mma16_f16`, 6 sets), after
 /// `kronos --gpu`'s texts. Set only by the cycle when the list asks for it (`test-placa … --p8`) and, in the test
 /// build, by `gpu p8-sim on`. Off by default: every other run sends exactly what os-332 sent.
