@@ -181,6 +181,15 @@ jobs:
         if: matrix.parte == 'stick'
         run: cd e1000e && cargo test --release
 
+      - name: Rândurile test-placa din ultima sesiune (STATE.md) primite de lista automată (P6-256)
+        if: matrix.parte == 'stick'
+        run: |
+          # The known refusal of 27 Nov 13:28 must stay refused (the copy of ciclu.rs is the real parser) ...
+          if tools/verifica-rand.py "test-placa --tablou-viteza --mm-tc --mm-tc-v5"; then echo "randul gresit a fost primit"; exit 1; fi
+          # ... its corrected form and every row of the newest session must be accepted.
+          tools/verifica-rand.py "test-placa --tablou-viteza --mm-tc --mm-tc-v4 --mm-tc-v5 --mm-tc-v6 --mm-tc-64k --mm-tc-dxdw"
+          tools/verifica-rand.py --din docs/STATE.md --ultima-sesiune
+
       - name: Acces la cyber-gpu (repo privat, B-005)
         env:
           CYBER_GPU_TOKEN: ${{ secrets.CYBER_GPU_TOKEN }}

@@ -84,6 +84,12 @@ resetul din interior (FLR, exact calea dovedită pe placă în proba os-323). Fi
 interior nu coboară WPR2), restul testelor din pornire sunt refuzate, fără altă încercare. Fiecare test împinge ceasul de
 siguranță la cel puțin 20 min de la începutul lui. Rezumatul listei: `teste pe placa pornite: N`. Ciclul din hub și modul viu
 numără în aceeași socoteală (de la os-359 modul viu nu mai are limita lui de o comandă pe sesiune, P6-143).
+
+**Verifică rândul înainte să-l pui pe stick (P6-256):** `tools/verifica-rand.py "test-placa …"` spune pe loc, cu exact codul
+listei automate (copiat din `kernel/src/shell/ciclu.rs`, compilat pe gazdă), dacă rândul e `PRIMIT` sau `REFUZAT` și de ce
+(același motiv ca în raportul OS-ului). `tools/verifica-rand.py --din docs/STATE.md --ultima-sesiune` verifică toate rândurile
+anunțate de ultima sesiune OS (CI-ul face asta la fiecare push); `--din <fișier.md>` merge pe orice fișier (de ex.
+`stare/cyber-universe.md` din hub). Exemplu: rândul de la 27 nov 13:28 → `REFUZAT … --mm-tc-v5 nu poate sta dupa --mm-tc`.
 **Viteza maximă (P6-106, C-148 completarea 1):** doar în ciclu (`test-placa`, `ciclu-test`), imediat după ce canalul de lucru
 e deschis, placa e rugată să urce la viteza maximă (600 s, forma NVIDIA); la sfârșit cererea e ștearsă. În raport: rândul
 `ks: viteza maxima ceruta …` (înainte, răspunsul, după, verdictul 0–3), `ks: inainte de stergere …` și blocul „viteza fata de
