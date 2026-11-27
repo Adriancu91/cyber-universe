@@ -670,6 +670,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-252** PREDARE Cyber-GPU P2zzn (`de8bfbf`, punctul 2): rândul nou `kt token32[_v2] G=… cuvinte scrise in lista: primul simbol N, mediana celorlalte M (cel mai mic, cel mai mare, K simboluri)` lângă media de până acum (care include primul simbol, scris întreg); doar textul jurnalului, nou pentru placă: nimic. Plan: `docs/plans/P6-252.md`.
   Gata (2026-11-26 ~09:05 RO): cyber-gpu `3c6fa3b` → `aa94bea`; I9 folosește `query_gr_counts` (`GpuState::gr_counts`); proba barierei: `groups_for_sms(counts.sms, …)`, raportul scrie TPC, SM și maximele LITTER; altă cifră decât 48 SM = proba oprită, nimic trimis. Teste: `kronos-gpu-bariera`, `boot` TRECUTE.
 - [x] **P6-253** C-158 (decizia lui Adrian, 27 nov 14:35): `--viteza-1800` primit doar într-un rând cu `--mm-tc-dxdw` (refuz cu motivul pe nume; la rulare și `mm_tc_dxdw` cerut). Dep: P6-251. Plan: `docs/plans/P6-253.md`.
+- [ ] **P6-254** C-158 (nota centrului 27 nov 15:36, după os-490): `--pas-v7` — `mm_tc_v7` primul pe înmulțirile aliniate ale pasului #513. Dep: PREDAREA Cyber-GPU (`TcPick::V7`, `pack_mixed_fast_attn7`). Plan: `docs/plans/P6-254.md`.
   Gata (2026-11-27 ~15:45 RO): `ciclu::board_command` = `board_command_form` + regula; `board_refusal_hint` cu motivul nou; teste `ghpush` (self_test ciclu), `gpu-viteza-1800`, `gpu-viteza`, `auto-placa`, `boot` TREC.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
