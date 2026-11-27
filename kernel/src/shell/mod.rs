@@ -1073,13 +1073,21 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::TOKEN32_V2C_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu token32-sim: pornit cu v2c (SIMULARE: dupa token32_v2, aceleasi texte cu token32_v2c la G = 768, zona ceasului)\n");
                 }
+                Some("v3") if args.len() == 2 => {
+                    // P6-257 (cyber-gpu `b93e876`): token32, token32_v2, then token32_v3 (layernorms folded).
+                    crate::drivers::gpu_tur::TOKEN32_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TOKEN32_V2_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TOKEN32_V3_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu token32-sim: pornit cu v3 (SIMULARE: dupa token32_v2, aceleasi texte cu token32_v3, LayerNorm lipit in inmultirea urmatoare)\n");
+                }
                 Some("off") if args.len() == 2 => {
                     crate::drivers::gpu_tur::TOKEN32_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TOKEN32_V2_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::TOKEN32_V2C_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::TOKEN32_V3_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu token32-sim: oprit\n");
                 }
-                _ => out!("folosire: gpu token32-sim on|v2|v2c|off\n"),
+                _ => out!("folosire: gpu token32-sim on|v2|v2c|v3|off\n"),
             }
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu token32-sim: exista doar in build-ul de test (pe stick il porneste doar ciclul, test-placa --token32)\n");

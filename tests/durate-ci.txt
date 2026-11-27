@@ -101,6 +101,7 @@ kronos-gpu-bariera-larga 220
 kronos-gpu-token32 300
 kronos-gpu-token32-v2 420
 kronos-gpu-token32-v2c 540
+kronos-gpu-token32-v3 560
 kronos-gpu-pas-aur 330
 kronos-gpu-antrenare-mini 720
 kronos-gpu-antrenare-mini-mixt 600
