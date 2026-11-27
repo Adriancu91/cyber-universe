@@ -618,6 +618,12 @@ pub static TRAIN_513_ATTN_V4_IN_CYCLE: core::sync::atomic::AtomicBool = core::sy
 /// [--atentie-v4] --atentie-ds`) and, in the test build, by `gpu atentie-tc16-sim on [v4] ds`. Off by default.
 pub static TRAIN_513_ATTN_DS_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-245 (C-157, cyber-gpu `34961eb`, note `C-157_P2zzf_mm-tc-v5-in-pas.md`, after os-476): with
+/// [`TRAIN_513_ATTN_TC16_IN_CYCLE`], every aligned product of #513's fast mixed step on `mm_tc_v5` (12 KiB block, 4 blocks
+/// per SM at 64 KiB; `pack_mixed_fast_attn5`), the rest as before. Set only by the cycle (`test-placa … --atentie-tc16
+/// [--atentie-v4] [--atentie-ds] --pas-v5`) and, in the test build, by `gpu pas-v5-sim on`. Off by default.
+pub static TRAIN_513_MM_V5_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-178 (cyber-gpu `d173a59`, note C-157_P2s): with [`TRAIN_MINI_VRAM_IN_CYCLE`], the resident run twice from the same
 /// state — the batch and the results through the VRAM window (os-390), then through pinned RAM with the copy program in
 /// the step's own list — compared bit for bit. Set only by the cycle (`test-placa … --antrenare-mini --vram --lot-ram`)

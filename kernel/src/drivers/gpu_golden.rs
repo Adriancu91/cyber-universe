@@ -681,7 +681,9 @@ fn verdict_text(v: nvidia_ga104::gsp::rusd_watch::Verdict) -> String {
         Verdict::Continue => String::from("continua"),
         Verdict::Warn => String::from("AVERTIZARE (80 grade C sau peste)"),
         Verdict::Stop(StopReason::Hot(t)) => format!("OPRIRE: {} grade C (pragul 85)", t),
-        Verdict::Stop(StopReason::Slowdown(b)) => format!("OPRIRE: incetinire termica / de urgenta (motive {:#x})", b),
+        // P6-245 (Cyber-GPU P2zzf, ciclul 01:44): the reasons by name (0x20 = thermal slow-down from software, not the
+        // hardware emergency 0x40 nor the power brake 0x80).
+        Verdict::Stop(StopReason::Slowdown(b)) => format!("OPRIRE: incetinire termica / de urgenta (motive {})", reasons_text(b)),
         Verdict::Stop(StopReason::Silent(ms)) => format!("OPRIRE: tabloul neschimbat de {} ms", ms),
         Verdict::Stop(StopReason::NoTemperature) => String::from("OPRIRE: temperatura necitita"),
     }
@@ -769,8 +771,8 @@ pub(super) fn reasons_text(r: u32) -> String {
         (rr::SW_POWER_CAP, "plafonul de putere"),
         (rr::HW_SLOWDOWN, "incetinire hardware"),
         (rr::SYNC_BOOST, "sync boost"),
-        (rr::SW_THERMAL_SLOWDOWN, "termic (program)"),
-        (rr::HW_THERMAL_SLOWDOWN, "termic (hardware)"),
+        (rr::SW_THERMAL_SLOWDOWN, "incetinire termica (software)"),
+        (rr::HW_THERMAL_SLOWDOWN, "incetinire termica (hardware, de urgenta)"),
         (rr::HW_POWER_BRAKES_SLOWDOWN, "franele de putere"),
         (rr::DISPLAY_CLOCK_SETTING, "ceasul ecranului"),
     ];
@@ -906,6 +908,9 @@ pub(super) fn dash_summary_self_test() -> bool {
         && l[1].contains("903 la mie")
         && l.iter().any(|x| x == "kt k puterea maxima mW 250000")
         && reasons_text(0x201) == "0x201 = repaus, alti biti 0x200"
+        // P6-245: the stop of the 01:44 cycle (0x20) by name.
+        && verdict_text(nvidia_ga104::gsp::rusd_watch::Verdict::Stop(nvidia_ga104::gsp::rusd_watch::StopReason::Slowdown(0x20)))
+            == "OPRIRE: incetinire termica / de urgenta (motive 0x20 = incetinire termica (software))"
         && dash_summary("t", "x", "k", &[]).len() == 1
 }
 
@@ -947,7 +952,12 @@ pub(super) fn watch_summary_line(p: &str, w: &nvidia_ga104::gsp::rusd_watch::Wat
         w.temp_max.map_or_else(|| String::from("-"), |t| format!("{}", t)),
         w.power_max_mw.map_or_else(|| String::from("-"), |x| format!("{} mW", x)),
         w.silent_reads,
-        w.stopped().map_or_else(String::new, |r| format!("; oprirea ceasului: {}", verdict_text(nvidia_ga104::gsp::rusd_watch::Verdict::Stop(r))))
+        // P6-245 (Cyber-GPU P2zzf): the stop with the highest temperature read.
+        w.stopped().map_or_else(String::new, |r| format!(
+            "; oprirea ceasului: {}, temperatura cea mai mare citita {}",
+            verdict_text(nvidia_ga104::gsp::rusd_watch::Verdict::Stop(r)),
+            w.temp_max.map_or_else(|| String::from("necitita"), |t| format!("{} grade C", t))
+        ))
     )
 }
 

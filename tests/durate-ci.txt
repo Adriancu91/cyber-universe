@@ -200,6 +200,7 @@ kronos-gpu-antrenare-513-mixt-rapid 1800
 kronos-gpu-antrenare-513-atentie-tc16 1800
 kronos-gpu-antrenare-513-atentie-v4 1800
 kronos-gpu-antrenare-513-atentie-ds 1800
+kronos-gpu-antrenare-513-v5 1800
 kronos-gpu-antrenare-513-ocupare 2000
 kronos-gpu-antrenare-513-lot-prin-ram 1800
 kronos-gpu-antrenare-513-doua-locuri 1800
