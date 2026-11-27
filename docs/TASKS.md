@@ -674,7 +674,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-254** C-158 (nota centrului 27 nov 15:36, după os-490): `--pas-v7` — `mm_tc_v7` primul pe înmulțirile aliniate ale pasului #513. Dep: PREDAREA Cyber-GPU P2zzr (`3206d58`, CI `9e02227`) — venită. Plan: `docs/plans/P6-254.md`.
   Gata (2026-11-27 ~15:45 RO): `ciclu::board_command` = `board_command_form` + regula; `board_refusal_hint` cu motivul nou; teste `ghpush` (self_test ciclu), `gpu-viteza-1800`, `gpu-viteza`, `auto-placa`, `boot` TREC.
 - [x] **P6-256** C-158 (unelte; lecția rândului refuzat la 13:28, P2zzp): **`tools/verifica-rand.py`** — verifică pe gazdă, cu exact codul lui `ciclu.rs`, dacă un rând `test-placa …` e primit de lista automată (și de ce nu); `--din <fișier.md>` verifică toate rândurile `test-placa` dintre apostroafe; în CI pe rândurile ultimei sesiuni din STATE.md. Nimic nou pentru placă. Plan: `docs/plans/P6-256.md`.
-  Gata (2026-11-27 ~20:15 RO): rândul de la 13:28 → REFUZAT cu motivul OS-ului, forma corectată și rândul os-496 → PRIMIT; pas nou în CI (partea `stick`); `docs/BUCLA_AUTOMATA.md`. Kernelul neatins (`boot` TRECE).
+  Gata (2026-11-27 ~19:46 RO): rândul de la 13:28 → REFUZAT cu motivul OS-ului, forma corectată și rândul os-496 → PRIMIT; pas nou în CI (partea `stick`); `docs/BUCLA_AUTOMATA.md`. Kernelul neatins (`boot` TRECE).
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)
