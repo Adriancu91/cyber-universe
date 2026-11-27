@@ -9472,6 +9472,10 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     journal.flush_live();
     let hold = super::gpu_i6::GenHold::start();
     journal.set_routine(Some(kf::gen_routine(&GEN_NOTES)));
+    // P6-249 (Cyber-GPU P2zzj, os-481): the dashboard values after each step are held with the routine's writes
+    // (Flush::Later, same max_pending) instead of one stick write each; flush_live / leaving the routine writes them.
+    // The thermal watch decides on the values read, not on the ones written, so it is unchanged.
+    journal.set_hold_values(true);
     // P6-217: one step made ready on the CPU — its batch in place (staging area or VRAM window), its list packed into its
     // slot's launch zone. Nothing here touches the other slot, so it can run while the board works on that one.
     struct Prep {
@@ -9809,8 +9813,13 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
     }
     drop(hold);
+    journal.set_hold_values(false);
     journal.set_routine(None);
     steps_r?;
+    lines.push(format!(
+        "{}: kronos --gpu: {}: tabloul de dupa fiecare pas tinut in jurnal cu scrierile rutinei (P2zzj, set_hold_values; scris pe stick la golire / la iesirea din rutina)",
+        p, tag
+    ));
     if slots_on {
         journal.push(Event::Value { what: KT_513_AHEAD, value: sent_ahead as u32 });
         lines.push(format!(
