@@ -157,11 +157,11 @@ pub fn target(command: &str) -> Result<(String, String), &'static str> {
 
 /// Every `test-placa` option in the one order the line must keep (each at most once); the I9 text carries them as
 /// suffixes in this order. P6-236: shared with `board_refusal_hint`.
-const BOARD_OPTIONS: &[&str] = &[FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, TOKEN32, TOKEN32_V2, P8, P8_S8, BARIERA, BARIERA_LARGA, COLSUM, PAS_AUR, MM_TC, MM_TC128, MM_TC_PF, MM_TC_V4, MM_TC_V5, MM_TC_V6, MM_TC_V7, MM_TC128_V4, MM_TC_64K, MM_TC_DXDW, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, ATTN_TC, ATTN_TC_V4, ATTN_TC0, ATTN_TC0_V4, ATTN_TC_64K, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_MIXED_FAST, TRAIN_VRAM, TRAIN_FUSED, TRAIN_513, TRAIN_513_TILES3, TRAIN_513_MM_TILE, TRAIN_513_FUSED_TILE, TRAIN_513_COLSUM, TRAIN_513_MIXED, TRAIN_513_MIXED_FAST, TRAIN_513_VIA_RAM, TRAIN_513_SLOTS, TRAIN_513_ATTN_TC16, TRAIN_513_ATTN_V4, TRAIN_513_ATTN_DS, TRAIN_513_MM_V5, TRAIN_513_MM_V6, TRAIN_513_MM_CHOICE, TRAIN_513_SM_STEP, TRAIN_513_MM_MODEL, TRAIN_513_RACE, TRAIN_513_PROBE_64K8, TRAIN_513_OCCUPANCY, TRAIN_RAM];
+const BOARD_OPTIONS: &[&str] = &[FLR_PROBA, TABLOU, TABLOU_VITEZA, VITEZA_1800, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, TOKEN32, TOKEN32_V2, P8, P8_S8, BARIERA, BARIERA_LARGA, COLSUM, PAS_AUR, MM_TC, MM_TC128, MM_TC_PF, MM_TC_V4, MM_TC_V5, MM_TC_V6, MM_TC_V7, MM_TC128_V4, MM_TC_64K, MM_TC_DXDW, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, ATTN_TC, ATTN_TC_V4, ATTN_TC0, ATTN_TC0_V4, ATTN_TC_64K, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_MIXED_FAST, TRAIN_VRAM, TRAIN_FUSED, TRAIN_513, TRAIN_513_TILES3, TRAIN_513_MM_TILE, TRAIN_513_FUSED_TILE, TRAIN_513_COLSUM, TRAIN_513_MIXED, TRAIN_513_MIXED_FAST, TRAIN_513_VIA_RAM, TRAIN_513_SLOTS, TRAIN_513_ATTN_TC16, TRAIN_513_ATTN_V4, TRAIN_513_ATTN_DS, TRAIN_513_MM_V5, TRAIN_513_MM_V6, TRAIN_513_MM_CHOICE, TRAIN_513_SM_STEP, TRAIN_513_MM_MODEL, TRAIN_513_RACE, TRAIN_513_PROBE_64K8, TRAIN_513_OCCUPANCY, TRAIN_RAM];
 
 /// P6-96: `test-placa [--i9 …]` of the automatic list -> the I9.
 pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
-    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou` sau `--tablou-viteza`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi` sau `--ln-32`, apoi `--k651`, apoi `--argmax-placa` sau `--argmax-fara-copie`, apoi `--dieta2`, apoi `--lot`, apoi `--token32` (urmat optional de `--token32-v2`), apoi `--p8` (urmat optional de `--p8-s8`), apoi `--bariera`, apoi `--bariera-larga`, apoi `--colsum`, apoi `--pas-aur`, apoi `--mm-tc` (urmat optional de `--mm-tc128`), apoi `--atentie-placi`, apoi `--atentie2`, apoi `--atentie3`, apoi `--atentie4`, apoi `--atentie-tc`, apoi `--atentie-tc16-v4`, apoi `--atentie-tc0`, apoi `--atentie-tc0-v4`, apoi `--atentie-tc-64k`, apoi `--ram-vram`, apoi `--adam-ram`, apoi `--antrenare-mini` la sfarsit, optional urmat de `--mixt` sau `--vram` (iar dupa `--vram` optional `--pas-lipit`, `--antrenare-513` sau `--lot-ram`; dupa `--antrenare-513` optional `--placi3`, dupa el optional `--mm-placi`, dupa el optional `--lipit-placi` (ultimul) sau `--colsum-impartit`, la sfarsit optional `--mixt-513` (ultimul), `--mm-alegere` (ultimul, urmat optional de `--treapta-pas`) sau `--cursa-mm` dupa `--mm-placi` sau `--colsum-impartit`, `--cursa-mm` urmat optional de `--proba-64k8` sau `--ocupare`) (in aceasta ordine; `--mixt` sau `--vram` doar imediat dupa `--antrenare-mini`, nu amandoua; `--pas-lipit`, `--antrenare-513` sau `--lot-ram` doar imediat dupa `--vram`; `--adam-ram` doar imediat dupa `--ram-vram`; `--atentie2` doar dupa `--atentie-placi`, `--atentie3` doar dupa `--atentie2`, `--atentie4` doar dupa `--atentie3`, `--atentie-tc` doar dupa `--atentie3` sau `--atentie4`, `--atentie-tc16-v4` doar imediat dupa `--atentie-tc`, `--atentie-tc0` doar imediat dupa `--atentie-tc` sau `--atentie-tc16-v4`, `--atentie-tc0-v4` doar imediat dupa `--atentie-tc0`, `--atentie-tc-64k` doar imediat dupa `--atentie-tc`, `--atentie-tc16-v4`, `--atentie-tc0` sau `--atentie-tc0-v4`; `--atentie-v4` doar imediat dupa `--atentie-tc16`, ultimul; `--atentie-ds` doar imediat dupa `--atentie-tc16` sau `--atentie-v4`, ultimul; `--pas-v5` doar imediat dupa `--atentie-tc16`, `--atentie-v4` sau `--atentie-ds`, ultimul; `--pas-v6` doar imediat dupa `--pas-v5`, ultimul; `--mm-tc-dxdw` doar imediat dupa `--mm-tc-64k`; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi`, `--ln-32`; `--k651` nu merge cu `--lipit` sau `--simplu`; `--argmax-fara-copie` nu merge cu `--lipit`, `--ln-nou`, `--sferturi` sau `--ln-32`; `--lot` doar cu `--argmax-fara-copie` si lista implicita lipita-ln-32, fara alta alegere de lista)";
+    const FORM: &str = "forma corecta: `test-placa` sau `test-placa --i9 c135` (c125, c133, c135, os302), plus optional `--flr-proba`, `--tablou` sau `--tablou-viteza`, `--viteza-1800`, `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi` sau `--ln-32`, apoi `--k651`, apoi `--argmax-placa` sau `--argmax-fara-copie`, apoi `--dieta2`, apoi `--lot`, apoi `--token32` (urmat optional de `--token32-v2`), apoi `--p8` (urmat optional de `--p8-s8`), apoi `--bariera`, apoi `--bariera-larga`, apoi `--colsum`, apoi `--pas-aur`, apoi `--mm-tc` (urmat optional de `--mm-tc128`), apoi `--atentie-placi`, apoi `--atentie2`, apoi `--atentie3`, apoi `--atentie4`, apoi `--atentie-tc`, apoi `--atentie-tc16-v4`, apoi `--atentie-tc0`, apoi `--atentie-tc0-v4`, apoi `--atentie-tc-64k`, apoi `--ram-vram`, apoi `--adam-ram`, apoi `--antrenare-mini` la sfarsit, optional urmat de `--mixt` sau `--vram` (iar dupa `--vram` optional `--pas-lipit`, `--antrenare-513` sau `--lot-ram`; dupa `--antrenare-513` optional `--placi3`, dupa el optional `--mm-placi`, dupa el optional `--lipit-placi` (ultimul) sau `--colsum-impartit`, la sfarsit optional `--mixt-513` (ultimul), `--mm-alegere` (ultimul, urmat optional de `--treapta-pas`) sau `--cursa-mm` dupa `--mm-placi` sau `--colsum-impartit`, `--cursa-mm` urmat optional de `--proba-64k8` sau `--ocupare`) (in aceasta ordine; `--mixt` sau `--vram` doar imediat dupa `--antrenare-mini`, nu amandoua; `--pas-lipit`, `--antrenare-513` sau `--lot-ram` doar imediat dupa `--vram`; `--adam-ram` doar imediat dupa `--ram-vram`; `--atentie2` doar dupa `--atentie-placi`, `--atentie3` doar dupa `--atentie2`, `--atentie4` doar dupa `--atentie3`, `--atentie-tc` doar dupa `--atentie3` sau `--atentie4`, `--atentie-tc16-v4` doar imediat dupa `--atentie-tc`, `--atentie-tc0` doar imediat dupa `--atentie-tc` sau `--atentie-tc16-v4`, `--atentie-tc0-v4` doar imediat dupa `--atentie-tc0`, `--atentie-tc-64k` doar imediat dupa `--atentie-tc`, `--atentie-tc16-v4`, `--atentie-tc0` sau `--atentie-tc0-v4`; `--atentie-v4` doar imediat dupa `--atentie-tc16`, ultimul; `--atentie-ds` doar imediat dupa `--atentie-tc16` sau `--atentie-v4`, ultimul; `--pas-v5` doar imediat dupa `--atentie-tc16`, `--atentie-v4` sau `--atentie-ds`, ultimul; `--pas-v6` doar imediat dupa `--pas-v5`, ultimul; `--mm-tc-dxdw` doar imediat dupa `--mm-tc-64k`; `--mm-tc-v6` doar imediat dupa `--mm-tc` sau `--mm-tc-v5`; doar una din `--lipit`, `--simplu`, `--ln-nou`, `--ln-vechi`, `--lipita-ln`, `--sferturi`, `--ln-32`; `--k651` nu merge cu `--lipit` sau `--simplu`; `--argmax-fara-copie` nu merge cu `--lipit`, `--ln-nou`, `--sferturi` sau `--ln-32`; `--lot` doar cu `--argmax-fara-copie` si lista implicita lipita-ln-32, fara alta alegere de lista)";
     let words: Vec<&str> = command.split_whitespace().collect();
     let Some(("test-placa", rest)) = words.split_first().map(|(a, b)| (*a, b)) else { return None };
     let (i9, flags) = match rest {
@@ -261,7 +261,9 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
             return Some(Err(FORM));
         }
         // P6-246: `mm_tc_v6` only right after `mm_tc_v5` (the note compares it with v5, set by set).
-        if all[at] == MM_TC_V6 && !out.ends_with(MM_TC_V5) {
+        // P6-251 (P2zzm): or right after `mm_tc` (the row `--mm-tc --mm-tc-v6 --mm-tc-v7`; each companion is compared
+        // with `mm_tc` on its own, v5 is not needed for v6 to run).
+        if all[at] == MM_TC_V6 && !(out.ends_with(MM_TC_V5) || out.ends_with(MM_TC)) {
             return Some(Err(FORM));
         }
         // P6-248: `mm_tc_v7` only right after `mm_tc_v6` (the note compares it with v6, set by set).
@@ -504,6 +506,14 @@ pub fn board_refusal_hint(command: &str) -> Option<String> {
 /// (WPR2 down, read after the program — or it was never raised). Anything else = a cold start is needed.
 pub fn recovery_passed(lines: &[String]) -> bool {
     lines.iter().any(|l| l.contains("pregatirea I6 trece din nou"))
+}
+
+/// P6-251: the words of Adrian's decision line that let `--viteza-1800` hold the max-speed request 1 800 s.
+pub const PHRASE_1800: &str = "viteza maxima 1800 s aprobata";
+
+/// P6-251: a decision line (a list item) of DECIZII.md with [`PHRASE_1800`] (a heading or a quote does not count).
+pub fn long_boost_found(text: &str) -> bool {
+    text.lines().any(|l| l.trim_start().starts_with("- ") && l.contains(PHRASE_1800))
 }
 
 /// Key b: a decision line (a list item) of DECIZII.md with the exact words.
@@ -904,6 +914,12 @@ pub const TABLOU: &str = " --tablou";
 /// P6-142 (C-157 point 5): in place of `--tablou`: the dashboard started before the max-speed request, read before it,
 /// 1 s after it and at the end, every read through the thermal watch.
 pub const TABLOU_VITEZA: &str = " --tablou-viteza";
+/// P6-251 (C-157, PREDARE Cyber-GPU P2zzm, `b0810e3`): the cycle's max-speed request held for 1 800 s instead of the
+/// default 600 (`BoostPlan { duration_s: 1800, .. }`), so the long `--mm-tc-dxdw` probe (~1 150 s) stays inside the
+/// window; right after `--tablou` / `--tablou-viteza` or first. Only the duration changes (the same request, cleared at the end).
+pub const VITEZA_1800: &str = " --viteza-1800";
+/// P6-251: the duration of that longer request (s).
+pub const BOOST_LONG_S: u32 = 1800;
 
 /// P6-110: suffix of the I9 text when P3's glued list is asked (`test-placa … --lipit`, always last).
 pub const LIPIT: &str = " --lipit";
@@ -1551,6 +1567,10 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
         Some(x) => (x, true),
         None => (i9, false),
     };
+    let (i9, boost_long) = match i9.strip_suffix(VITEZA_1800) {
+        Some(x) => (x, true),
+        None => (i9, false),
+    };
     let (i9, dashboard_early) = match i9.strip_suffix(TABLOU_VITEZA) {
         Some(x) => (x, true),
         None => (i9, false),
@@ -1608,6 +1628,15 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     }
     // P6-106 (C-148 completion 1): only the cycle's test asks the board for its maximum speed (not the FLR trial's chain).
     crate::drivers::gpu_tur::BOOST_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+    // P6-251 (P2zzm): the request held 1 800 s instead of 600 only when the list asked for it AND Adrian's decision line
+    // is in the DECIZII.md the keys just fetched (his "da" of 19 Nov 23:25 names 600 s; without a new one, 600 s stays).
+    let boost_long_ok = boost_long && long_boost_found(&String::from_utf8_lossy(&fs::read_all(&format!("{}/decizii.md", hubcmd::dir())).unwrap_or_default()));
+    crate::drivers::gpu_golden::BOOST_DURATION_S.store(if boost_long_ok { BOOST_LONG_S } else { 0 }, core::sync::atomic::Ordering::SeqCst);
+    if boost_long_ok {
+        text.push_str("\n(cererea de viteza maxima tinuta 1 800 s in loc de 600: cerut de lista (--viteza-1800; C-157, PREDARE Cyber-GPU P2zzm, b0810e3) si aprobat in DECIZII.md, ca proba lunga --mm-tc-dxdw (~1 150 s) sa ramana toata in fereastra; aceeasi cerere, stearsa la final; nou pentru placa: nimic)\n");
+    } else if boost_long {
+        text.push_str(&format!("\n(--viteza-1800 cerut de lista, dar in DECIZII.md nu e decizia lui Adrian cu `{}` (decizia din 19 nov 23:25 spune 600 s): cererea ramane 600 s)\n", PHRASE_1800));
+    }
     // P6-107 (C-154): the driver's diet, likewise only for the cycle's ordinary test.
     crate::drivers::gpu_tur::DIET_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
     // P6-105: the dashboard only when the list asked for it, and only for this chain (not the FLR trial's second one).
@@ -2036,6 +2065,7 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::MM_TC128_V4_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::MM_TC_64K_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::MM_TC_DXDW_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_golden::BOOST_DURATION_S.store(0, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::ATTN_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::ATTN_TILE2_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::ATTN_TILE3_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
@@ -2567,7 +2597,15 @@ pub fn self_test() {
     assert!(board_command("test-placa --tablou-viteza --mm-tc --mm-tc-v4 --mm-tc-v5 --mm-tc-v6 --mm-tc-64k").is_some_and(|r| r.is_ok()));
     assert!(board_command("test-placa --mm-tc --mm-tc-v4 --mm-tc-v5 --mm-tc-v6 --mm-tc128-v4 --mm-tc-64k").is_some_and(|r| r.is_ok()));
     assert!(board_command("test-placa --mm-tc --mm-tc-v4 --mm-tc-v6").is_some_and(|r| r.is_err()));
-    assert!(board_command("test-placa --mm-tc --mm-tc-v6").is_some_and(|r| r.is_err()));
+    // P6-251 (P2zzm): v6 right after `mm_tc` too (the row without v5); still not after v4 alone, nor before v5.
+    assert!(board_command("test-placa --mm-tc --mm-tc-v6") == Some(Ok(String::from("c135 --mm-tc --mm-tc-v6"))));
+    // P6-251: the P2zzm row with the request held 1 800 s; `--viteza-1800` right after `--tablou-viteza` (or first), once.
+    assert!(board_command("test-placa --tablou-viteza --viteza-1800 --mm-tc --mm-tc-v6 --mm-tc-v7 --mm-tc-64k --mm-tc-dxdw") == Some(Ok(String::from("c135 --tablou-viteza --viteza-1800 --mm-tc --mm-tc-v6 --mm-tc-v7 --mm-tc-64k --mm-tc-dxdw"))));
+    assert!(board_command("test-placa --i9 c135 --tablou-viteza --viteza-1800 --mm-tc --mm-tc-v6 --mm-tc-v7 --mm-tc-64k --mm-tc-dxdw").is_some_and(|r| r.is_ok()));
+    assert!(board_command("test-placa --viteza-1800 --mm-tc").is_some_and(|r| r.is_ok()));
+    assert!(board_command("test-placa --viteza-1800 --tablou-viteza --mm-tc").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --tablou-viteza --viteza-1800 --viteza-1800 --mm-tc").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --mm-tc --viteza-1800").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --mm-tc --mm-tc-v4 --mm-tc-v6 --mm-tc-v5").is_some_and(|r| r.is_err()));
     // P6-248: `mm_tc_v7` only right after `mm_tc_v6`, before `mm_tc128_v4` / `--mm-tc-64k` (and `--mm-tc-dxdw` after it).
     assert!(board_command("test-placa --mm-tc --mm-tc-v4 --mm-tc-v5 --mm-tc-v6 --mm-tc-v7 --mm-tc-64k") == Some(Ok(String::from("c135 --mm-tc --mm-tc-v4 --mm-tc-v5 --mm-tc-v6 --mm-tc-v7 --mm-tc-64k"))));
@@ -2924,6 +2962,10 @@ pub fn self_test() {
         "## 2026-11-18 17:48 · Adrian · teste pe placă fără el (ciclul automat C-105)\n- 2026-11-18 17:48 — **ciclu-test activat** (Adrian: „Da chei”, după ce `os-306` a trecut tot lanțul I0→I14 pe placa reală): înlocuiește explicit regula\n"
     ));
     assert!(!decision_found("## 2026-11-18 17:48 · ciclu-test activat\n"), "ciclu: un titlu nu e o decizie");
+    // P6-251: the 1 800 s request only with its own decision line.
+    assert!(long_boost_found("# Decizii\n- 2026-11-27 — viteza maxima 1800 s aprobata (Adrian)\n"));
+    assert!(!long_boost_found("## viteza maxima 1800 s aprobata\n"));
+    assert!(!long_boost_found("- 2026-11-20 — ciclu-test activat (Adrian)\n- viteza maxima 600 s\n"));
     assert!(!decision_found("# Decizii\n- Teste complet automate: directia aprobata, fara activare\n"));
     assert!(!decision_found("ciclu-test activat\n"), "ciclu: doar un rand de decizie (`- `) conteaza");
     let s = State { phase: Phase::TestStarted, id: String::from("K-12"), tag: String::from("os-300"), i9: String::from("c133") };

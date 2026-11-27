@@ -444,10 +444,10 @@ pub(super) fn boost_begin<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized>
     lines: &mut Vec<String>,
     poll: impl FnMut(&mut dyn SharedMem),
 ) -> GpuResult<nvidia_ga104::gsp::perf::BoostStart> {
-    use nvidia_ga104::gsp::perf::{self as gp, BoostPlan};
+    use nvidia_ga104::gsp::perf as gp;
     let Some((u, _)) = st.space.as_ref() else { return Err(GpuError::InvalidArgument("ks: lipseste canalul de lucru")) };
     let (client, sub) = (u.client, u.subdevice);
-    let plan = BoostPlan { enabled: true, ..BoostPlan::default() };
+    let plan = cycle_boost_plan();
     let GpuState { pending, zone, rm_calls, vram_words, .. } = st;
     let mut rows = Journal::new(16);
     let r = {
@@ -494,10 +494,10 @@ pub(super) fn boost_end<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized>(
     lines: &mut Vec<String>,
     poll: impl FnMut(&mut dyn SharedMem),
 ) -> GpuResult<()> {
-    use nvidia_ga104::gsp::perf::{self as gp, BoostPlan};
+    use nvidia_ga104::gsp::perf as gp;
     let Some((u, _)) = st.space.as_ref() else { return Err(GpuError::InvalidArgument("ks: lipseste canalul de lucru")) };
     let (client, sub) = (u.client, u.subdevice);
-    let plan = BoostPlan { enabled: true, ..BoostPlan::default() };
+    let plan = cycle_boost_plan();
     let GpuState { pending, zone, rm_calls, vram_words, .. } = st;
     let mut rows = Journal::new(16);
     let r = {
@@ -922,6 +922,23 @@ pub(super) fn dash_summary_self_test() -> bool {
         && dash_summary("t", "x", "k", &[]).len() == 1
 }
 
+/// P6-251 (C-157, PREDARE Cyber-GPU P2zzm, `b0810e3`): the duration (s) of the cycle's max-speed request asked by the
+/// list (`--viteza-1800`); 0 = the library's default plan (600 s). Set by `ciclu` with `BOOST_IN_CYCLE`, cleared after.
+pub static BOOST_DURATION_S: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// P6-251: the plan of the cycle's max-speed request — the default one, held longer only when the list asked for it
+/// (the same plan for `boost_begin` and `boost_end`, so the clear and the window use the same duration).
+pub(super) fn cycle_boost_plan() -> nvidia_ga104::gsp::perf::BoostPlan {
+    boost_plan_for(BOOST_DURATION_S.load(core::sync::atomic::Ordering::SeqCst))
+}
+
+/// P6-251: the pure part: `0` keeps the default duration, anything else replaces it (at most `BOOST_DURATION_MAX_S` = 3 600 s, P2zzl).
+fn boost_plan_for(duration_s: u32) -> nvidia_ga104::gsp::perf::BoostPlan {
+    use nvidia_ga104::gsp::perf::BoostPlan;
+    let p = BoostPlan { enabled: true, ..BoostPlan::default() };
+    if duration_s == 0 { p } else { BoostPlan { duration_s: duration_s.min(nvidia_ga104::gsp::perf::BOOST_DURATION_MAX_S), ..p } }
+}
+
 /// P6-250 (C-157 P2zzl, after os-485: the request accepted at 114.3 s, the chain 1 611 s, the board in P8 at the end):
 /// the OS clock (µs) when the cycle's max-speed request was accepted, and its plan. `None` outside the cycle or when the
 /// request was refused / not sent: then no time is judged against a window.
@@ -999,6 +1016,13 @@ pub(super) fn speed_window_self_test() -> bool {
         && window_outside(at, &long, 848_000_000, 1_611_000_000).is_none()
         && window_outside(at, &BoostPlan::default(), at, at + 1000).is_some()
         && window_outside(at, &p, 0, 0).is_none()
+        // P6-251 (P2zzm): the plan the list asks with `--viteza-1800`, and the default kept without it.
+        && boost_plan_for(0) == p
+        && boost_plan_for(1800) == long
+        && boost_plan_for(9999).duration_s == 3600
+        // os-486: the request accepted at 114.9 s, the first dW at ~804 s, the probe done at ~1 150 s: outside 600, inside 1 800.
+        && window_outside(114_900_000, &p, 804_000_000, 1_150_000_000).is_some()
+        && window_outside(114_900_000, &long, 804_000_000, 1_150_000_000).is_none()
 }
 
 /// P6-142: what the dashboard says the max-speed request did (`compare_boost`, `kw viteza maxima` rows + one line).

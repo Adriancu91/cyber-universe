@@ -56,6 +56,7 @@ gpu-tablou-viteza 95
 gpu-tur 109
 gpu-var 107
 gpu-viteza 192
+gpu-viteza-1800 260
 https 30
 https-real 30
 hw-lista 15

@@ -1848,7 +1848,7 @@ fn lant(rest: &[&str]) {
     }
     let i9 = i9.unwrap_or_default();
     let rest = &opts[..];
-    if let Some(bad) = rest.iter().find(|a| !matches!(**a, "--sim" | "--eroare" | "--doar-citire" | "--date-vechi" | "--flr-proba" | "--ciclu-viteza" | "--ciclu-viteza-refuz" | "--tablou" | "--tablou-refuz" | "--tablou-viteza")) {
+    if let Some(bad) = rest.iter().find(|a| !matches!(**a, "--sim" | "--eroare" | "--doar-citire" | "--date-vechi" | "--flr-proba" | "--ciclu-viteza" | "--ciclu-viteza-refuz" | "--tablou" | "--tablou-refuz" | "--tablou-viteza" | "--viteza-1800")) {
         out!("gpu lant: optiune necunoscuta: {} (folosire: gpu lant [--varianta N] [--i9 c125|c133|c135] [--flr-proba] [--tablou])\n", bad);
         return;
     }
@@ -1867,6 +1867,11 @@ fn lant(rest: &[&str]) {
     // P6-142: `--tablou-viteza` = the dashboard before the max-speed request (the cycle's chain), only in SIMULATION here.
     if rest.contains(&"--tablou-viteza") && !sim {
         out!("gpu lant: --tablou-viteza exista doar cu --sim (pe placa il cere ciclul: test-placa --tablou-viteza); nimic scris in placa\n");
+        return;
+    }
+    // P6-251 (P2zzm): `--viteza-1800` = the cycle's request held 1 800 s, only with `--ciclu-viteza` here (in SIMULARE).
+    if rest.contains(&"--viteza-1800") && !rest.iter().any(|a| a.starts_with("--ciclu-viteza")) {
+        out!("gpu lant: --viteza-1800 exista doar cu --sim --ciclu-viteza (pe placa il cere ciclul: test-placa --viteza-1800); nimic scris in placa\n");
         return;
     }
     if rest.contains(&"--date-vechi") && !sim {
@@ -1904,6 +1909,10 @@ fn lant(rest: &[&str]) {
         let flr_trial = rest.contains(&"--flr-proba");
         let cycle = rest.iter().any(|a| a.starts_with("--ciclu-viteza"));
         crate::drivers::gpu_tur::BOOST_IN_CYCLE.store(cycle, core::sync::atomic::Ordering::SeqCst);
+        crate::drivers::gpu_golden::BOOST_DURATION_S.store(
+            if rest.contains(&"--viteza-1800") { crate::shell::ciclu::BOOST_LONG_S } else { 0 },
+            core::sync::atomic::Ordering::SeqCst,
+        );
         *crate::drivers::gpu_tur::SIM_BOOST_RULE.lock() =
             rest.contains(&"--ciclu-viteza-refuz").then_some(gpu_sim::fake_rm::BoostRule::Refuse(0x56));
         // P6-105: the dashboard at the end of the chain; `--tablou-refuz` = the RM model refuses the start.
@@ -1917,6 +1926,7 @@ fn lant(rest: &[&str]) {
         }
         crate::drivers::gpu_i10::SIM_STALE_READS.store(false, core::sync::atomic::Ordering::Relaxed);
         crate::drivers::gpu_tur::BOOST_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+        crate::drivers::gpu_golden::BOOST_DURATION_S.store(0, core::sync::atomic::Ordering::SeqCst);
         crate::drivers::gpu_tur::RUSD_ARMED.store(false, core::sync::atomic::Ordering::SeqCst);
         crate::drivers::gpu_tur::RUSD_EARLY.store(false, core::sync::atomic::Ordering::SeqCst);
         return;
