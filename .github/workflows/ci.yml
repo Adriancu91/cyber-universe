@@ -188,6 +188,9 @@ jobs:
           if tools/verifica-rand.py "test-placa --tablou-viteza --mm-tc --mm-tc-v5"; then echo "randul gresit a fost primit"; exit 1; fi
           # ... its corrected form and every row of the newest session must be accepted.
           tools/verifica-rand.py "test-placa --tablou-viteza --mm-tc --mm-tc-v4 --mm-tc-v5 --mm-tc-v6 --mm-tc-64k --mm-tc-dxdw"
+          # P6-258: the v8 row proposed in Cyber-GPU's note P3a (without v6) stays refused; the row given to the board is accepted.
+          if tools/verifica-rand.py "test-placa --tablou-viteza --mm-tc --mm-tc-v7 --mm-tc-v8 --mm-tc-64k --mm-tc-dxdw"; then echo "randul gresit a fost primit"; exit 1; fi
+          tools/verifica-rand.py "test-placa --tablou-viteza --mm-tc --mm-tc-v6 --mm-tc-v7 --mm-tc-v8 --mm-tc-64k --mm-tc-dxdw"
           tools/verifica-rand.py --din docs/STATE.md --ultima-sesiune
 
       - name: Acces la cyber-gpu (repo privat, B-005)
