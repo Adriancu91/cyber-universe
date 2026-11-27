@@ -990,6 +990,17 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::MM_TC_DXDW_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu mm-tc-sim: pornita cu mm_tc_v4, mm_tc_v5, mm_tc_v6, treapta 64 KiB si seturile inapoi qkv-513-dx / -dw (SIMULARE: dupa texte, mm_tc, mm_tc_v4, mm_tc_v5, mm_tc_v6 pe seturile aliniate, si @64k, comparate bit cu bit; qkv-513, qkv-513-dx si qkv-513-dw doar urcate si recitite)\n");
                 }
+                // P6-248: `onv7` = `onv6dxdw` plus `mm_tc_v7` after `mm_tc_v6` (on every aligned set and on the big sets' upload).
+                Some("onv7") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::MM_TC_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::MM_TC_V4_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::MM_TC_V5_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::MM_TC_V6_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::MM_TC_V7_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::MM_TC_64K_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::MM_TC_DXDW_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu mm-tc-sim: pornita cu mm_tc_v4, mm_tc_v5, mm_tc_v6, mm_tc_v7, treapta 64 KiB si seturile inapoi qkv-513-dx / -dw (SIMULARE: dupa texte, mm_tc, mm_tc_v4, mm_tc_v5, mm_tc_v6, mm_tc_v7 pe seturile aliniate, si @64k, comparate bit cu bit; qkv-513, qkv-513-dx si qkv-513-dw doar urcate si recitite)\n");
+                }
                 // P6-214: `on64k` = `mm_tc_pf` beside `mm_tc`, then both again at the 64 KiB step.
                 Some("on64k") if args.len() == 2 => {
                     crate::drivers::gpu_tur::MM_TC_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
@@ -1009,6 +1020,7 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::MM_TC_V4_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::MM_TC_V5_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::MM_TC_V6_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::MM_TC_V7_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::MM_TC128_V4_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::MM_TC_64K_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::MM_TC_DXDW_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);

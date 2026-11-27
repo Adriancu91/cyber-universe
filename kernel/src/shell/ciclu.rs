@@ -157,7 +157,7 @@ pub fn target(command: &str) -> Result<(String, String), &'static str> {
 
 /// Every `test-placa` option in the one order the line must keep (each at most once); the I9 text carries them as
 /// suffixes in this order. P6-236: shared with `board_refusal_hint`.
-const BOARD_OPTIONS: &[&str] = &[FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, TOKEN32, TOKEN32_V2, P8, P8_S8, BARIERA, BARIERA_LARGA, COLSUM, PAS_AUR, MM_TC, MM_TC128, MM_TC_PF, MM_TC_V4, MM_TC_V5, MM_TC_V6, MM_TC128_V4, MM_TC_64K, MM_TC_DXDW, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, ATTN_TC, ATTN_TC_V4, ATTN_TC0, ATTN_TC0_V4, ATTN_TC_64K, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_MIXED_FAST, TRAIN_VRAM, TRAIN_FUSED, TRAIN_513, TRAIN_513_TILES3, TRAIN_513_MM_TILE, TRAIN_513_FUSED_TILE, TRAIN_513_COLSUM, TRAIN_513_MIXED, TRAIN_513_MIXED_FAST, TRAIN_513_VIA_RAM, TRAIN_513_SLOTS, TRAIN_513_ATTN_TC16, TRAIN_513_ATTN_V4, TRAIN_513_ATTN_DS, TRAIN_513_MM_V5, TRAIN_513_MM_V6, TRAIN_513_MM_CHOICE, TRAIN_513_SM_STEP, TRAIN_513_MM_MODEL, TRAIN_513_RACE, TRAIN_513_PROBE_64K8, TRAIN_513_OCCUPANCY, TRAIN_RAM];
+const BOARD_OPTIONS: &[&str] = &[FLR_PROBA, TABLOU, TABLOU_VITEZA, LIPIT, SIMPLU, LN_NOU, LN_VECHI, LIPITA_LN, SFERTURI, LN_32, K651_OPT, ARGMAX_PLACA, ARGMAX_TOP, DIETA2, LOT, TOKEN32, TOKEN32_V2, P8, P8_S8, BARIERA, BARIERA_LARGA, COLSUM, PAS_AUR, MM_TC, MM_TC128, MM_TC_PF, MM_TC_V4, MM_TC_V5, MM_TC_V6, MM_TC_V7, MM_TC128_V4, MM_TC_64K, MM_TC_DXDW, ATTN_TILE, ATTN_TILE2, ATTN_TILE3, ATTN_TILE4, ATTN_TC, ATTN_TC_V4, ATTN_TC0, ATTN_TC0_V4, ATTN_TC_64K, RAM_VRAM, ADAM_RAM, TRAIN_MINI, TRAIN_MIXED, TRAIN_MIXED_FAST, TRAIN_VRAM, TRAIN_FUSED, TRAIN_513, TRAIN_513_TILES3, TRAIN_513_MM_TILE, TRAIN_513_FUSED_TILE, TRAIN_513_COLSUM, TRAIN_513_MIXED, TRAIN_513_MIXED_FAST, TRAIN_513_VIA_RAM, TRAIN_513_SLOTS, TRAIN_513_ATTN_TC16, TRAIN_513_ATTN_V4, TRAIN_513_ATTN_DS, TRAIN_513_MM_V5, TRAIN_513_MM_V6, TRAIN_513_MM_CHOICE, TRAIN_513_SM_STEP, TRAIN_513_MM_MODEL, TRAIN_513_RACE, TRAIN_513_PROBE_64K8, TRAIN_513_OCCUPANCY, TRAIN_RAM];
 
 /// P6-96: `test-placa [--i9 …]` of the automatic list -> the I9.
 pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
@@ -264,12 +264,16 @@ pub fn board_command(command: &str) -> Option<Result<String, &'static str>> {
         if all[at] == MM_TC_V6 && !out.ends_with(MM_TC_V5) {
             return Some(Err(FORM));
         }
+        // P6-248: `mm_tc_v7` only right after `mm_tc_v6` (the note compares it with v6, set by set).
+        if all[at] == MM_TC_V7 && !out.ends_with(MM_TC_V6) {
+            return Some(Err(FORM));
+        }
         // P6-212: `mm_tc128_v4` only right after `mm_tc`, `mm_tc_pf`, `mm_tc_v4` or `mm_tc_v5` (not with `mm_tc128`).
-        if all[at] == MM_TC128_V4 && !(out.ends_with(MM_TC) || out.ends_with(MM_TC_PF) || out.ends_with(MM_TC_V4) || out.ends_with(MM_TC_V5) || out.ends_with(MM_TC_V6)) {
+        if all[at] == MM_TC128_V4 && !(out.ends_with(MM_TC) || out.ends_with(MM_TC_PF) || out.ends_with(MM_TC_V4) || out.ends_with(MM_TC_V5) || out.ends_with(MM_TC_V6) || out.ends_with(MM_TC_V7)) {
             return Some(Err(FORM));
         }
         // P6-214: the 64 KiB step only right after `mm_tc` or one of its companions (last of them).
-        if all[at] == MM_TC_64K && ![MM_TC, MM_TC128, MM_TC_PF, MM_TC_V4, MM_TC_V5, MM_TC_V6, MM_TC128_V4].iter().any(|x| out.ends_with(x)) {
+        if all[at] == MM_TC_64K && ![MM_TC, MM_TC128, MM_TC_PF, MM_TC_V4, MM_TC_V5, MM_TC_V6, MM_TC_V7, MM_TC128_V4].iter().any(|x| out.ends_with(x)) {
             return Some(Err(FORM));
         }
         // P6-247: the two backward qkv sets only right after `--mm-tc-64k` (the note wants them at the 64 KiB step).
@@ -999,6 +1003,11 @@ pub const MM_TC_V5: &str = " --mm-tc-v5";
 /// (`test-placa … --mm-tc [--mm-tc-pf] --mm-tc-v4 --mm-tc-v5 --mm-tc-v6 [--mm-tc128-v4] [--mm-tc-64k]`).
 pub const MM_TC_V6: &str = " --mm-tc-v6";
 
+/// P6-248 (C-157 p.2, cyber-gpu `8b6c068`, note P2zzi): suffix of the I9 text when `mm_tc_v7` (`mm_tc_v6` with 16 bytes of
+/// padding per shared-memory row, 14 336 B) runs beside `mm_tc` in its probe, right after `mm_tc_v6`
+/// (`test-placa … --mm-tc [--mm-tc-pf] --mm-tc-v4 --mm-tc-v5 --mm-tc-v6 --mm-tc-v7 [--mm-tc128-v4] [--mm-tc-64k [--mm-tc-dxdw]]`).
+pub const MM_TC_V7: &str = " --mm-tc-v7";
+
 /// P6-212 (C-157 p.2, cyber-gpu `abb4f73`): suffix of the I9 text when `mm_tc128_v4` (`mm_tc128` with 128-bit reads in
 /// advance) runs beside `mm_tc` in its probe, last (`test-placa … --mm-tc [--mm-tc-pf] [--mm-tc-v4] --mm-tc128-v4`).
 pub const MM_TC128_V4: &str = " --mm-tc128-v4";
@@ -1434,6 +1443,10 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
         Some(x) => (x, true),
         None => (i9, false),
     };
+    let (i9, mm_tc_v7) = match i9.strip_suffix(MM_TC_V7) {
+        Some(x) => (x, true),
+        None => (i9, false),
+    };
     let (i9, mm_tc_v6) = match i9.strip_suffix(MM_TC_V6) {
         Some(x) => (x, true),
         None => (i9, false),
@@ -1647,6 +1660,8 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::MM_TC_V5_IN_CYCLE.store(mm_tc && mm_tc_v5, core::sync::atomic::Ordering::SeqCst);
     // P6-246: `mm_tc_v6` too, only when the list asked for it.
     crate::drivers::gpu_tur::MM_TC_V6_IN_CYCLE.store(mm_tc && mm_tc_v6, core::sync::atomic::Ordering::SeqCst);
+    // P6-248: `mm_tc_v7` too, only when the list asked for it.
+    crate::drivers::gpu_tur::MM_TC_V7_IN_CYCLE.store(mm_tc && mm_tc_v7, core::sync::atomic::Ordering::SeqCst);
     // P6-212: `mm_tc128_v4` too, only when the list asked for it.
     crate::drivers::gpu_tur::MM_TC128_V4_IN_CYCLE.store(mm_tc && mm_tc128_v4, core::sync::atomic::Ordering::SeqCst);
     // P6-214: the 64 KiB step too, only when the list asked for it.
@@ -1789,6 +1804,9 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     }
     if mm_tc && mm_tc_v5 {
         text.push_str("\n(mm_tc_v5 langa mm_tc: cerut de lista (--mm-tc-v5); in proba mm_tc, dupa fiecare set (si dupa mm_tc_v4), acelasi set cu programul mm_tc_v5 (aceeasi treaba si aceeasi bucla ca mm_tc_v4, dar iesirea scrisa prin cate 1 KiB pe grup de fire, deci blocul cere 12 KiB de memorie partajata in loc de 24: la treapta 64 KiB intra 4 blocuri pe unitate in loc de 2; nou pentru placa: programul mm_tc_v5, 128 de registre, blocuri de 128, 12 KiB + o bariera), doar pe seturile aliniate (celelalte: nealiniat, sarit), iesirea comparata octet cu octet cu a lui mm_tc; la qkv-513 tot 5 lansari si timpul median; trece = aceiasi biti ca mm_tc pe toate seturile rulate; predictia Cyber-GPU (cu --mm-tc-64k): mm_tc_v5@64k qkv-513 1,59-1,94 ms = 11,2-13,7 TFLOP/s (mm_tc_v4@64k 2,62 ms); peste 2,19 ms ocuparea nu e frana si ramane mm_tc_v4)\n");
+    }
+    if mm_tc && mm_tc_v7 {
+        text.push_str("\n(mm_tc_v7 langa mm_tc: cerut de lista (--mm-tc-v7); in proba mm_tc, dupa fiecare set (si dupa mm_tc_v6), acelasi set cu programul mm_tc_v7 (aceeasi treaba, lansare si aceiasi biti ca mm_tc_v6, dar randurile din memoria partajata au 16 octeti de umplutura, ca citirile sa nu se mai loveasca in aceleasi banci; nou pentru placa: programul mm_tc_v7, 128 de registre, blocuri de 128, 14 336 octeti partajati + o bariera, tot 4 blocuri pe unitate la treapta 64 KiB), doar pe seturile aliniate (celelalte: nealiniat, sarit), iesirea comparata octet cu octet cu a lui mm_tc; la qkv-513 (si qkv-513-dx / -dw cu --mm-tc-dxdw) tot 5 lansari si timpul median; trece = aceiasi biti ca mm_tc pe toate seturile rulate; predictia Cyber-GPU, v7 fata de v6: qkv-513 x1,00-1,20, qkv-513-dx x1,05-1,40, qkv-513-dw x1,10-1,60)\n");
     }
     if mm_tc && mm_tc_v6 {
         text.push_str("\n(mm_tc_v6 langa mm_tc: cerut de lista (--mm-tc-v6); in proba mm_tc, dupa fiecare set (si dupa mm_tc_v5), acelasi set cu programul mm_tc_v6 (aceeasi treaba, lansare, bloc de 12 KiB si aceiasi biti ca mm_tc_v5, dar in bucla fiecare fir scrie cele 4 valori f16 ale unui vector dintr-o singura scriere de 64 de biti; nou pentru placa: programul mm_tc_v6, 128 de registre, blocuri de 128, 12 KiB + o bariera), doar pe seturile aliniate (celelalte: nealiniat, sarit), iesirea comparata octet cu octet cu a lui mm_tc; la qkv-513 tot 5 lansari si timpul median; trece = aceiasi biti ca mm_tc pe toate seturile rulate; predictia Cyber-GPU (cu --mm-tc-64k): mm_tc_v6@64k qkv-513 1,70-1,87 ms (mm_tc_v5@64k 1,87); castigul principal e la inmultirile transpuse din pas, pe care proba nu il vede)\n");
@@ -2014,6 +2032,7 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::MM_TC_V4_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::MM_TC_V5_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::MM_TC_V6_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::MM_TC_V7_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::MM_TC128_V4_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::MM_TC_64K_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::MM_TC_DXDW_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
@@ -2176,6 +2195,13 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     // P6-246: `mm_tc_v6`'s verdict too.
     let result = if mm_tc && mm_tc_v6 {
         let verdict = text.lines().rev().find(|l| l.contains("proba mm_tc_v6: ")).map_or("proba mm_tc_v6: niciun rezultat (vezi raportul)", |l| l.trim());
+        format!("{}; {}", result, verdict)
+    } else {
+        result
+    };
+    // P6-248: `mm_tc_v7`'s verdict too.
+    let result = if mm_tc && mm_tc_v7 {
+        let verdict = text.lines().rev().find(|l| l.contains("proba mm_tc_v7: ")).map_or("proba mm_tc_v7: niciun rezultat (vezi raportul)", |l| l.trim());
         format!("{}; {}", result, verdict)
     } else {
         result
@@ -2543,6 +2569,14 @@ pub fn self_test() {
     assert!(board_command("test-placa --mm-tc --mm-tc-v4 --mm-tc-v6").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --mm-tc --mm-tc-v6").is_some_and(|r| r.is_err()));
     assert!(board_command("test-placa --mm-tc --mm-tc-v4 --mm-tc-v6 --mm-tc-v5").is_some_and(|r| r.is_err()));
+    // P6-248: `mm_tc_v7` only right after `mm_tc_v6`, before `mm_tc128_v4` / `--mm-tc-64k` (and `--mm-tc-dxdw` after it).
+    assert!(board_command("test-placa --mm-tc --mm-tc-v4 --mm-tc-v5 --mm-tc-v6 --mm-tc-v7 --mm-tc-64k") == Some(Ok(String::from("c135 --mm-tc --mm-tc-v4 --mm-tc-v5 --mm-tc-v6 --mm-tc-v7 --mm-tc-64k"))));
+    assert!(board_command("test-placa --tablou-viteza --mm-tc --mm-tc-v4 --mm-tc-v5 --mm-tc-v6 --mm-tc-v7 --mm-tc-64k").is_some_and(|r| r.is_ok()));
+    assert!(board_command("test-placa --tablou-viteza --mm-tc --mm-tc-v4 --mm-tc-v5 --mm-tc-v6 --mm-tc-v7 --mm-tc-64k --mm-tc-dxdw").is_some_and(|r| r.is_ok()));
+    assert!(board_command("test-placa --mm-tc --mm-tc-v4 --mm-tc-v5 --mm-tc-v6 --mm-tc-v7 --mm-tc128-v4 --mm-tc-64k").is_some_and(|r| r.is_ok()));
+    assert!(board_command("test-placa --mm-tc --mm-tc-v4 --mm-tc-v5 --mm-tc-v7").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --mm-tc --mm-tc-v7").is_some_and(|r| r.is_err()));
+    assert!(board_command("test-placa --mm-tc --mm-tc-v4 --mm-tc-v5 --mm-tc-v7 --mm-tc-v6").is_some_and(|r| r.is_err()));
     // P6-214: `--mm-tc-64k` right after `mm_tc` or any of its companions.
     assert!(board_command("test-placa --mm-tc --mm-tc-64k") == Some(Ok(String::from("c135 --mm-tc --mm-tc-64k"))));
     assert!(board_command("test-placa --mm-tc --mm-tc-pf --mm-tc-v4 --mm-tc-64k") == Some(Ok(String::from("c135 --mm-tc --mm-tc-pf --mm-tc-v4 --mm-tc-64k"))));

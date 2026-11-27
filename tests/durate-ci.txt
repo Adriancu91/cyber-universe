@@ -92,6 +92,7 @@ kronos-gpu-mm-tc-64k 600
 kronos-gpu-mm-tc-v5 700
 kronos-gpu-mm-tc-v6 800
 kronos-gpu-mm-tc-v6-dxdw 900
+kronos-gpu-mm-tc-v7 950
 kronos-gpu-p8 186
 kronos-gpu-p8-s8 200
 kronos-gpu-bariera 200
