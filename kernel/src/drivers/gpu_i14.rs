@@ -1521,7 +1521,7 @@ fn token32_runs<V: Mmio + ?Sized, K: Clock + ?Sized>(runner: &mut BoardRunner<'_
     'g: for per_sm in [8u32, 16] {
         let g = kt::token32_groups_for_sms(sms, per_sm)?;
         let step = kt::token32_step_for(g, sms)?;
-        runner.t32 = Some(T32 { prog, list, zone, groups: g, sms, counted: 0, counter_ok: 0, counter_bad: None, hung: None, prev: None, diff: v2, words: 0, tokens: 0 });
+        runner.t32 = Some(T32 { prog, list, zone, groups: g, sms, counted: 0, counter_ok: 0, counter_bad: None, hung: None, prev: None, diff: v2, words: 0, tokens: 0, per_token: Vec::new() });
         let mut pass = true;
         for r in refs {
             let run = runs.get(r.ri).ok_or(bad("token32: text necunoscut"))?;
@@ -1598,6 +1598,19 @@ fn token32_runs<V: Mmio + ?Sized, K: Clock + ?Sized>(runner: &mut BoardRunner<'_
                 t.tokens,
                 if t.diff { "doar cuvintele schimbate, work_list_changes" } else { "lista intreaga" }
             ));
+            if let Some((first, rest)) = t.per_token.split_first() {
+                let us = |v: Option<u64>| v.map_or(String::from("-"), |x| format!("{}", x));
+                runner.lines.push(format!(
+                    "{}: kronos --gpu: kt {pn} G={} cuvinte scrise in lista: primul simbol {}, mediana celorlalte {} (cel mai mic {}, cel mai mare {}, {} simboluri)",
+                    p,
+                    g,
+                    first,
+                    us(median_of(rest)),
+                    us(rest.iter().min().copied()),
+                    us(rest.iter().max().copied()),
+                    rest.len()
+                ));
+            }
         }
         runner.lines.push(format!("{}: kronos --gpu: kt {pn} G={} {}", p, g, if pass { "TRECE" } else { "NU TRECE" }));
         verdicts.push(format!("G={} {}", g, if pass { "TRECE" } else { "NU TRECE" }));
@@ -2066,6 +2079,9 @@ struct T32 {
     /// P6-243: words written in the list (all tokens) and tokens sent, for the average words per token.
     words: u64,
     tokens: u64,
+    /// P6-252 (cyber-gpu `de8bfbf`, P2zzn): words written for each token in order (the first one = the whole list), for
+    /// the row with the first token apart and the median of the others.
+    per_token: Vec<u64>,
 }
 
 const T32_CBUF: u64 = 0;
@@ -2275,6 +2291,7 @@ impl<V: Mmio + ?Sized, K: Clock + ?Sized> BoardRunner<'_, '_, V, K> {
         if let Some(t) = self.t32.as_mut() {
             t.words += written;
             t.tokens += 1;
+            t.per_token.push(written);
             if t.diff {
                 t.prev = Some(bytes);
             }
