@@ -652,6 +652,12 @@ pub static TRAIN_513_MM_V5_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync
 /// default.
 pub static TRAIN_513_MM_V6_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-254 (C-157, cyber-gpu `3206d58`, note `C-157_P2zzr_os490-v7-in-pas.md`): with [`TRAIN_513_MM_V6_IN_CYCLE`], every
+/// aligned product of #513's fast mixed step on `mm_tc_v7` first (`pack_mixed_fast_attn7`), `mm_tc_v5` / `mm_tc_v6` kept
+/// loaded beside it. Set only by the cycle (`test-placa … --pas-v5 --pas-v6 --pas-v7`) and, in the test build, by
+/// `gpu pas-v7-sim on`. Off by default.
+pub static TRAIN_513_MM_V7_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-178 (cyber-gpu `d173a59`, note C-157_P2s): with [`TRAIN_MINI_VRAM_IN_CYCLE`], the resident run twice from the same
 /// state — the batch and the results through the VRAM window (os-390), then through pinned RAM with the copy program in
 /// the step's own list — compared bit for bit. Set only by the cycle (`test-placa … --antrenare-mini --vram --lot-ram`)
