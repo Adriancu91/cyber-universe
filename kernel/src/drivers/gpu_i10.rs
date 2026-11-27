@@ -482,6 +482,9 @@ impl SimGpu {
             cp.register_program_with_needs(nvidia_ga104::mm_tc_v6::MM_TC_V6, c::mm_tc_v6_on_cpu, c::MM_TC_V6_NEEDS);
             // P6-248 (C-157 p.2, cyber-gpu `8b6c068`): `mm_tc_v7`, `mm_tc_v6` with padded shared rows (refuses misaligned products).
             cp.register_program_with_needs(nvidia_ga104::mm_tc_v7::MM_TC_V7, c::mm_tc_v7_on_cpu, c::MM_TC_V7_NEEDS);
+            // P6-258 (C-168 p.3, cyber-gpu `72ac8eb`): `mm_tc_v8` (128×128, 256 threads) and `mm_tc_v8n` (128×64, 128 threads).
+            cp.register_program_with_needs(nvidia_ga104::mm_tc_v8::MM_TC_V8, c::mm_tc_v8_on_cpu, c::MM_TC_V8_NEEDS);
+            cp.register_program_with_needs(nvidia_ga104::mm_tc_v8::MM_TC_V8N, c::mm_tc_v8n_on_cpu, c::MM_TC_V8N_NEEDS);
             // P6-212 (C-157 p.2, cyber-gpu `abb4f73`): `mm_tc128_v4`, `mm_tc128` with 128-bit reads (refuses misaligned).
             cp.register_program_with_needs(nvidia_ga104::mm_tc128_v4::MM_TC128_V4, c::mm_tc128_v4_on_cpu, c::MM_TC128_V4_NEEDS);
             // P6-141 (C-161 point 4): the three tiled training attention programs (blocks of 256, 32–37 KiB shared).
