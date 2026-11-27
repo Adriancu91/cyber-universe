@@ -4628,19 +4628,37 @@ fn mm_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
             }
         }
     }
-    if stopped.is_none() {
+    // P6-247 (C-157 p.2, cyber-gpu `1cb1846`, note P2zzh point 3.2): with `--mm-tc-dxdw`, after `qkv-513` the two backward
+    // products of the same qkv (`qkv-513-dx`, `qkv-513-dw`), each the same way (its own ~83 MB buffer, 5 launches per program).
+    let mut big_sets = alloc::vec![tp::QKV_SET];
+    if super::gpu_tur::MM_TC_DXDW_IN_CYCLE.load(ord) {
+        big_sets.push(tp::QKV_DX_SET);
+        big_sets.push(tp::QKV_DW_SET);
+    }
+    for si in big_sets {
+        if stopped.is_some() {
+            break;
+        }
+        let first_line = lines.len();
         let mut q128: Vec<Qkv128> = t128.iter().map(|_| Qkv128::default()).collect();
-        match mm_tc_qkv(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, &maps, prog.va, zone, &t128, &mut q128)? {
+        match mm_tc_qkv(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, &maps, prog.va, zone, &t128, &mut q128, si)? {
             QkvOutcome::Judged(r) => probe.add(r),
             QkvOutcome::Skipped => {}
-            QkvOutcome::Stopped => stopped = Some(tp::QKV_SET),
+            QkvOutcome::Stopped => stopped = Some(si),
+        }
+        // P6-247: the lines of `mm_tc_qkv` say `qkv-513`; for the backward sets, their own name.
+        if si != tp::QKV_SET {
+            let name = tp::set(si).map_or("?", |s| s.name);
+            for x in &mut lines[first_line..] {
+                *x = x.replace("qkv-513", name);
+            }
         }
         for (ci, q) in q128.into_iter().enumerate() {
             if q.stopped {
-                stopped128[ci] = Some(tp::QKV_SET);
+                stopped128[ci] = Some(si);
             }
             if q.unfit {
-                unfit[ci].push(tp::QKV_SET);
+                unfit[ci].push(si);
             }
             if let Some(x) = q.set {
                 r128[ci].push(x);
@@ -5005,10 +5023,11 @@ fn tc128_report(p: &str, label: &str, t: &Tc128, r: &[Tc128Set], stopped: Option
     let kt = t.kind.kt(t.step.is_some());
     // P6-210: the sets not launched because the product is not aligned for 128-bit reads.
     for &i in unfit {
-        lines.push(format!("{}: kronos --gpu: {} set {} ({}): nealiniat (randuri nu multiplu de 4 sau adrese nu multiplu de 16 octeti), sarit", p, n, tp::SETS[i].name, label));
+        lines.push(format!("{}: kronos --gpu: {} set {} ({}): nealiniat (randuri nu multiplu de 4 sau adrese nu multiplu de 16 octeti), sarit", p, n, tp::set(i).map_or("?", |s| s.name), label));
     }
     for x in r {
-        let name = tp::SETS[x.set].name;
+        // P6-247: `set(i)` also names `qkv-513-dx` / `-dw` (6 / 7).
+        let name = tp::set(x.set).map_or("?", |s| s.name);
         let t = match (x.old.median_ns(), x.new.median_ns()) {
             (Some(a), Some(b)) if b > 0 => format!("; mm_tc {} ns, {} {} ns = x{}.{:02}", a, n, b, a / b, (a % b) * 100 / b),
             _ => String::new(),
@@ -5108,9 +5127,11 @@ fn mm_tc_qkv<V: Mmio + ?Sized, K: Clock + ?Sized>(
     zone: Mapping,
     t128: &[Tc128],
     q128s: &mut [Qkv128],
+    si: usize,
 ) -> GpuResult<QkvOutcome> {
     use nvidia_ga104::{mm_tc as tc, mm_tc_probe as tp};
-    let set = &tp::SETS[tp::QKV_SET];
+    // P6-247: `si` = `QKV_SET`, or `QKV_DX_SET` / `QKV_DW_SET` (`set(i)`, cyber-gpu `1cb1846`).
+    let set = tp::set(si).ok_or(bad("mm_tc: set necunoscut"))?;
     let lay = set.layout();
     let big = match map_vram(st, lay.bytes as u64) {
         Ok(m) if m.va.is_multiple_of(PAGE) => m,
@@ -5167,7 +5188,10 @@ fn mm_tc_qkv<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let up_ms = t0.zip(crate::time::since_boot_us()).map_or(0, |(a, b)| b.saturating_sub(a) / 1000);
     let fnv = fnv1a_bytes(&inputs);
     drop(inputs);
-    journal.push(Event::Value { what: "kt mm_tc qkv intrari recitite identic", value: u32::from(same) });
+    // P6-247: the row stays `qkv-513`'s alone (the backward sets say it in their line).
+    if si == tp::QKV_SET {
+        journal.push(Event::Value { what: "kt mm_tc qkv intrari recitite identic", value: u32::from(same) });
+    }
     if !same {
         lines.push(format!(
             "{}: kronos --gpu: proba mm_tc: qkv-513: intrarile recitite din VRAM NU sunt cele urcate ({} octeti); nimic lansat",
@@ -5192,7 +5216,7 @@ fn mm_tc_qkv<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // 3. The launches (board only), each its own submission and time.
     let mut times = Vec::new();
     if permit.is_some() {
-        let (cb, q) = tp::launch_bytes(tp::QKV_SET, prog_va, zone.va, big.va)?;
+        let (cb, q) = tp::launch_bytes(si, prog_va, zone.va, big.va)?;
         {
             let w = st.mem.writer_mut();
             put_bytes(w, zone.pa, &cb)?;
@@ -5204,7 +5228,7 @@ fn mm_tc_qkv<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 Err(got) => {
                     lines.push(format!(
                         "{}: kronos --gpu: proba mm_tc: placa nu a terminat la setul {} (qkv-513), lansarea {}: ultima inregistrare = {:#x}; proba oprita, fara reincercare",
-                        p, tp::QKV_SET, r, got
+                        p, si, r, got
                     ));
                     return Ok(QkvOutcome::Stopped);
                 }
@@ -5240,7 +5264,7 @@ fn mm_tc_qkv<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 return Ok(QkvOutcome::Stopped);
             }
         }
-        let (cb, _) = tp::launch_bytes(tp::QKV_SET, prog_va, zone.va, big.va)?;
+        let (cb, _) = tp::launch_bytes(si, prog_va, zone.va, big.va)?;
         let (cb2, q2) = tc128_launch_bytes(&set.args(big.va), &cb, t)?;
         {
             let w = st.mem.writer_mut();
@@ -5256,7 +5280,7 @@ fn mm_tc_qkv<V: Mmio + ?Sized, K: Clock + ?Sized>(
                         "{}: kronos --gpu: proba {}: placa nu a terminat la setul {} (qkv-513), lansarea {}: ultima inregistrare = {:#x}; proba oprita, fara reincercare",
                         p,
                         t.name(),
-                        tp::QKV_SET,
+                        si,
                         r,
                         got
                     ));
@@ -5275,7 +5299,7 @@ fn mm_tc_qkv<V: Mmio + ?Sized, K: Clock + ?Sized>(
             }
             out2.extend_from_slice(&ram_read(&host, n as u64));
         }
-        q128.set = Some(Tc128Set::new(tp::QKV_SET, &out, &out2, times.clone(), times2)?);
+        q128.set = Some(Tc128Set::new(si, &out, &out2, times.clone(), times2)?);
     }
     if permit.is_none() {
         let nan = out.chunks(4).all(|w| w == tp::FILL.to_le_bytes());
@@ -5288,7 +5312,7 @@ fn mm_tc_qkv<V: Mmio + ?Sized, K: Clock + ?Sized>(
         ));
         return Ok(QkvOutcome::Skipped);
     }
-    Ok(QkvOutcome::Judged(tp::judge_set(tp::QKV_SET, &out, &times)?))
+    Ok(QkvOutcome::Judged(tp::judge_set(si, &out, &times)?))
 }
 
 /// P6-141 (C-161 point 4, C-160 point 7 fifth part; cyber-gpu note `C-160_P7e_atentia-pe-placi-proba.md`, commit
@@ -7559,7 +7583,7 @@ fn map_fast_tc(st: &mut GpuState) -> GpuResult<(Mapping, Mapping)> {
 /// P6-215: how many launches of one step got each `mm_tc` program (`mm_tc_v4 135, mm_tc_pf 12`).
 fn fast_picks_text(picks: &[Option<nvidia_ga104::train_step::TcPick>]) -> String {
     use nvidia_ga104::train_step::TcPick;
-    let parts: Vec<String> = [TcPick::V5, TcPick::V4, TcPick::Pf, TcPick::Tc, TcPick::Gelu, TcPick::AttnTc, TcPick::AttnTc16, TcPick::AttnTc16V4, TcPick::AttnTc16V4pf, TcPick::Attn0Tc, TcPick::Attn0TcV4]
+    let parts: Vec<String> = [TcPick::V6, TcPick::V5, TcPick::V4, TcPick::Pf, TcPick::Tc, TcPick::Gelu, TcPick::AttnTc, TcPick::AttnTc16, TcPick::AttnTc16V4, TcPick::AttnTc16V4pf, TcPick::Attn0Tc, TcPick::Attn0TcV4]
         .iter()
         .map(|k| (k, picks.iter().filter(|x| **x == Some(*k)).count()))
         .filter(|(_, n)| *n > 0)
@@ -8537,6 +8561,8 @@ const KT_513_ATTN_V4: &str = "kt antrenare-513 atentia pe f16 v4 (1/0)";
 const KT_513_ATTN_DS: &str = "kt antrenare-513 dS pe f16 (1/0)";
 /// P6-245: 1 when #513's fast mixed step ran with `mm_tc_v5` on the aligned products (`--pas-v5`).
 const KT_513_MM_V5: &str = "kt antrenare-513 mm_tc_v5 in pas (1/0)";
+/// P6-247: 1 when #513's fast mixed step ran with `mm_tc_v6` first on the aligned products (`--pas-v6`).
+const KT_513_MM_V6: &str = "kt antrenare-513 mm_tc_v6 in pas (1/0)";
 const KT_513_OUTSIDE_US: &str = "kt antrenare-513 us in afara placii pe pas (median)";
 /// P6-217 (note C-157_P2zg step 2): two batch slots (1/0), and the parts of steps 2..N sent while the step before ran.
 const KT_513_SLOTS: &str = "kt antrenare-513 doua locuri de lot (1/0)";
@@ -9176,6 +9202,25 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         None
     };
     journal.push(Event::Value { what: KT_513_MM_V5, value: u32::from(v5_map.is_some()) });
+    // P6-247 (`--pas-v6`, cyber-gpu `1cb1846`, note C-157_P2zzh): `mm_tc_v6` beside v5 (SHA-256 first, with the tail page);
+    // `pack_mixed_fast_attn6` picks it before v5 on every aligned product.
+    let v6_map = if v5_map.is_some() && super::gpu_tur::TRAIN_513_MM_V6_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+        use nvidia_ga104::mm_tc_v6 as m6;
+        if sha256_hex(m6::MM_TC_V6) != m6::MM_TC_V6_SHA256 {
+            lines.push(format!("{}: kronos --gpu: {}: SHA-256 al lui mm_tc_v6 nu e cel din nota: nimic trimis", p, tag));
+            return Err(bad("pasul mixt rapid: SHA-256 mm_tc_v6 gresit"));
+        }
+        let m = map_vram(st, program_map_bytes(m6::MM_TC_V6.len() as u64))?;
+        put_bytes(st.mem.writer_mut(), m.pa, m6::MM_TC_V6)?;
+        lines.push(format!(
+            "{}: kronos --gpu: {}: inmultirile aliniate ale pasului intai pe mm_tc_v6 (--pas-v6, nota Cyber-GPU C-157_P2zzh; scrierile f16 imperecheate): {} registre, {} octeti partajati, SHA-256 verificat; mm_tc_v5 langa el, restul ca inainte",
+            p, tag, m6::REGISTERS, m6::SHARED.bytes
+        ));
+        Some(m)
+    } else {
+        None
+    };
+    journal.push(Event::Value { what: KT_513_MM_V6, value: u32::from(v6_map.is_some()) });
     let mut fast_picks = String::new();
     let pages = |first: u64, n: u64| (first..first + n).map(|i| host + i * PAGE).collect::<Vec<u64>>();
     let stage = st.mem.alloc_sys_mapped(&pages(0, piece / PAGE))?;
@@ -9243,6 +9288,8 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     maps.extend(attn0_maps.iter().flat_map(|(a, b)| [*a, *b]));
     // P6-245: `mm_tc_v5` too.
     maps.extend(v5_map);
+    // P6-247: `mm_tc_v6` too.
+    maps.extend(v6_map);
     maps.extend(recs.iter().flatten().copied());
     let mut sys = alloc::vec![ctx.sys.clone(), stage.clone()];
     sys.extend(ctls.iter().cloned());
@@ -9461,7 +9508,11 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                         let with4 = fast.is_some() || attn0_maps.is_some();
                         // P6-245: with `--pas-v5`, `mm_tc_v5` on every aligned product (`pack_mixed_fast_attn5`).
                         let v5va = v5_map.as_ref().map_or(0, |m| m.va);
+                        // P6-247: with `--pas-v6`, `mm_tc_v6` first (`pack_mixed_fast_attn6`, v5 beside it).
+                        let v6va = v6_map.as_ref().map_or(0, |m| m.va);
                         let (zb, qmds, pk) = match (&via, attn, fast) {
+                            (Some(v), at, f) if v6va != 0 => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn6(&ml, prog_va, &progs, v5va, v6va, at, f, attn0, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
+                            (None, at, f) if v6va != 0 => ts::pack_mixed_fast_attn6(&ml, prog_va, &progs, v5va, v6va, at, f, attn0, Some(MIXED_FAST_STEP), ctl.va)?,
                             (Some(v), at, f) if v5va != 0 => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn5(&ml, prog_va, &progs, v5va, at, f, attn0, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
                             (None, at, f) if v5va != 0 => ts::pack_mixed_fast_attn5(&ml, prog_va, &progs, v5va, at, f, attn0, Some(MIXED_FAST_STEP), ctl.va)?,
                             (Some(v), at, f) if with4 => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn4(&ml, prog_va, &progs, at, f, attn0, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
@@ -9802,7 +9853,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 "{}: kronos --gpu: {}: alegerile mm_tc pe pas (--mixt-513-rapid, pack_mixed_fast{}, treapta memoriei comune {} KiB pe toate lansarile): {} (Cyber-GPU: {}, DEDUS{})",
                 p, tag, if attn16_map.is_some() { "_attn" } else { "" }, MIXED_FAST_STEP >> 10, fast_picks,
                 // P6-245: with `--pas-v5` the prediction of note C-157_P2zzf.
-                if v5_map.is_some() { "147 pe mm_tc_v5, 0 pe mm_tc_v4; placa ~78-84 ms pe pas la lot 2 (os-473: 97,1), 202-222 ms la lot 6" } else { "147 pe mm_tc_v4, inmultirile ~115-136 ms" },
+                if v6_map.is_some() { "147 pe mm_tc_v6, 0 pe mm_tc_v5; placa x0,885-0,979 fata de pasul cu v5 la lot 2, x0,867-0,976 la lot 6" } else if v5_map.is_some() { "147 pe mm_tc_v5, 0 pe mm_tc_v4; placa ~78-84 ms pe pas la lot 2 (os-473: 97,1), 202-222 ms la lot 6" } else { "147 pe mm_tc_v4, inmultirile ~115-136 ms" },
                 if attn_v4_map.is_some() { "; atentia: 12 pe attn_back_tile_tc16_v4 asteptate (os-465: 0,52 ms fata de 0,87 ms pe lansare), aceiasi biti ca tc16" } else if attn16_map.is_some() { "; atentia: 12 pe attn_back_tile_tc16, ~2,2-4,0 ms mai putin pe pas, DEDUS" } else { "" }
             ));
         }

@@ -419,6 +419,12 @@ pub static MM_TC128_V4_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::at
 /// Nothing new for the board (the same programs, the step fields of os-431). Off by default.
 pub static MM_TC_64K_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-247 (C-157 p.2, cyber-gpu `1cb1846`, note P2zzh): with [`MM_TC_64K_IN_CYCLE`], the probe also runs the two backward
+/// products of the same qkv (`qkv-513-dx`, `qkv-513-dw`; `mm_tc_probe::set(6 / 7)`) after `qkv-513`, with `mm_tc` and every
+/// companion, 5 launches each. Set only by the cycle (`test-placa … --mm-tc-64k --mm-tc-dxdw`) and, in the test build, by
+/// `gpu mm-tc-sim onv6dxdw`. Off by default.
+pub static MM_TC_DXDW_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-141 (C-161 point 4, cyber-gpu `44a4d16`): the tiled training attention probe (`attn_fwd_tile` → `attn_back_tile0`
 /// → `attn_back_tile` on 5 small sets + `atentie-513-b4` for the time), after `kronos --gpu`'s texts (and after the other
 /// probes when asked). Set only by the cycle when the list asks for it (`test-placa … --atentie-placi`) and, in the test
@@ -628,6 +634,12 @@ pub static TRAIN_513_ATTN_DS_IN_CYCLE: core::sync::atomic::AtomicBool = core::sy
 /// per SM at 64 KiB; `pack_mixed_fast_attn5`), the rest as before. Set only by the cycle (`test-placa … --atentie-tc16
 /// [--atentie-v4] [--atentie-ds] --pas-v5`) and, in the test build, by `gpu pas-v5-sim on`. Off by default.
 pub static TRAIN_513_MM_V5_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// P6-247 (C-157, cyber-gpu `1cb1846`, note `C-157_P2zzh_mm-tc-v6-in-pas.md`): with [`TRAIN_513_MM_V5_IN_CYCLE`], every
+/// aligned product of #513's fast mixed step on `mm_tc_v6` first (`pack_mixed_fast_attn6`), `mm_tc_v5` kept loaded beside
+/// it. Set only by the cycle (`test-placa … --pas-v5 --pas-v6`) and, in the test build, by `gpu pas-v6-sim on`. Off by
+/// default.
+pub static TRAIN_513_MM_V6_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 /// P6-178 (cyber-gpu `d173a59`, note C-157_P2s): with [`TRAIN_MINI_VRAM_IN_CYCLE`], the resident run twice from the same
 /// state — the batch and the results through the VRAM window (os-390), then through pinned RAM with the copy program in
