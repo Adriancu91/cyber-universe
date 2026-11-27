@@ -1686,6 +1686,24 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu atentie-tc16-sim: exista doar in build-ul de test (pe stick o porneste doar ciclul, test-placa ... --mixt-513-rapid --atentie-tc16)\n");
         }
+        Some("pas-v8-sim") => {
+            // P6-259 (cyber-gpu note C-168_P3b): test build only: with `pas-v5/v6/v7-sim on`, the aligned products on
+            // the program `mm_tc_v8::pick` gives (v7 / v8 / v8n; on the stick only the cycle, `test-placa … --pas-v7 --pas-v8`).
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TRAIN_513_MM_V8_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu pas-v8-sim: pornita (SIMULARE: in pasul mixt rapid #513, inmultirile aliniate pe mm_tc_v7 / mm_tc_v8 / mm_tc_v8n, alese pe forma)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TRAIN_513_MM_V8_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu pas-v8-sim: oprita\n");
+                }
+                _ => out!("folosire: gpu pas-v8-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu pas-v8-sim: exista doar in build-ul de test (pe stick o porneste doar ciclul, test-placa ... --pas-v7 --pas-v8)\n");
+        }
         Some("pas-v7-sim") => {
             // P6-254 (cyber-gpu note C-157_P2zzr): test build only: with `pas-v5-sim on` and `pas-v6-sim on`, the aligned
             // products on `mm_tc_v7` first (on the stick only the cycle turns it on, `test-placa … --pas-v6 --pas-v7`).

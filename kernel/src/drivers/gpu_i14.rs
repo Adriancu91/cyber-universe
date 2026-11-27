@@ -7870,7 +7870,7 @@ fn map_fast_tc(st: &mut GpuState) -> GpuResult<(Mapping, Mapping)> {
 /// P6-215: how many launches of one step got each `mm_tc` program (`mm_tc_v4 135, mm_tc_pf 12`).
 fn fast_picks_text(picks: &[Option<nvidia_ga104::train_step::TcPick>]) -> String {
     use nvidia_ga104::train_step::TcPick;
-    let parts: Vec<String> = [TcPick::V7, TcPick::V6, TcPick::V5, TcPick::V4, TcPick::Pf, TcPick::Tc, TcPick::Gelu, TcPick::AttnTc, TcPick::AttnTc16, TcPick::AttnTc16V4, TcPick::AttnTc16V4pf, TcPick::Attn0Tc, TcPick::Attn0TcV4]
+    let parts: Vec<String> = [TcPick::V8, TcPick::V8n, TcPick::V7, TcPick::V6, TcPick::V5, TcPick::V4, TcPick::Pf, TcPick::Tc, TcPick::Gelu, TcPick::AttnTc, TcPick::AttnTc16, TcPick::AttnTc16V4, TcPick::AttnTc16V4pf, TcPick::Attn0Tc, TcPick::Attn0TcV4]
         .iter()
         .map(|k| (k, picks.iter().filter(|x| **x == Some(*k)).count()))
         .filter(|(_, n)| *n > 0)
@@ -8852,6 +8852,8 @@ const KT_513_MM_V5: &str = "kt antrenare-513 mm_tc_v5 in pas (1/0)";
 const KT_513_MM_V6: &str = "kt antrenare-513 mm_tc_v6 in pas (1/0)";
 /// P6-254: 1 when #513's fast mixed step ran with `mm_tc_v7` first on the aligned products (`--pas-v7`).
 const KT_513_MM_V7: &str = "kt antrenare-513 mm_tc_v7 in pas (1/0)";
+/// P6-259: 1 when #513's fast mixed step ran with v7 / v8 / v8n picked by shape on the aligned products (`--pas-v8`).
+const KT_513_MM_V8: &str = "kt antrenare-513 mm_tc_v8 in pas (1/0)";
 const KT_513_OUTSIDE_US: &str = "kt antrenare-513 us in afara placii pe pas (median)";
 /// P6-217 (note C-157_P2zg step 2): two batch slots (1/0), and the parts of steps 2..N sent while the step before ran.
 const KT_513_SLOTS: &str = "kt antrenare-513 doua locuri de lot (1/0)";
@@ -9529,6 +9531,27 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         None
     };
     journal.push(Event::Value { what: KT_513_MM_V7, value: u32::from(v7_map.is_some()) });
+    // P6-259 (`--pas-v8`, cyber-gpu `c74237a`, note C-168_P3b): `mm_tc_v8` and `mm_tc_v8n` beside v7 (SHA-256 first, with
+    // the tail page); `pack_mixed_fast_attn8` gives every aligned product the program `mm_tc_v8::pick` picks by waves.
+    let v8_maps = if v7_map.is_some() && super::gpu_tur::TRAIN_513_MM_V8_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+        use nvidia_ga104::mm_tc_v8 as m8;
+        if sha256_hex(m8::MM_TC_V8) != m8::MM_TC_V8_SHA256 || sha256_hex(m8::MM_TC_V8N) != m8::MM_TC_V8N_SHA256 {
+            lines.push(format!("{}: kronos --gpu: {}: SHA-256 al lui mm_tc_v8 / mm_tc_v8n nu e cel din nota: nimic trimis", p, tag));
+            return Err(bad("pasul mixt rapid: SHA-256 mm_tc_v8 / mm_tc_v8n gresit"));
+        }
+        let a = map_vram(st, program_map_bytes(m8::MM_TC_V8.len() as u64))?;
+        put_bytes(st.mem.writer_mut(), a.pa, m8::MM_TC_V8)?;
+        let b = map_vram(st, program_map_bytes(m8::MM_TC_V8N.len() as u64))?;
+        put_bytes(st.mem.writer_mut(), b.pa, m8::MM_TC_V8N)?;
+        lines.push(format!(
+            "{}: kronos --gpu: {}: inmultirile aliniate ale pasului pe mm_tc_v7 / mm_tc_v8 / mm_tc_v8n, alese pe forma de mm_tc_v8::pick (--pas-v8, nota Cyber-GPU C-168_P3b; vitezele planului v8 {} % / v8n {} % fata de v7, DEDUS, {} SM-uri): mm_tc_v8 {} registre {} octeti partajati, mm_tc_v8n {} registre {} octeti partajati, SHA-256 verificate; restul ca inainte",
+            p, tag, m8::RATES_PLAN.v8_pct, m8::RATES_PLAN.v8n_pct, nvidia_ga104::wave_model::SMS, m8::REGISTERS, m8::SHARED.bytes, m8::REGISTERS_N, m8::SHARED_N.bytes
+        ));
+        Some((a, b))
+    } else {
+        None
+    };
+    journal.push(Event::Value { what: KT_513_MM_V8, value: u32::from(v8_maps.is_some()) });
     let mut fast_picks = String::new();
     let pages = |first: u64, n: u64| (first..first + n).map(|i| host + i * PAGE).collect::<Vec<u64>>();
     let stage = st.mem.alloc_sys_mapped(&pages(0, piece / PAGE))?;
@@ -9600,6 +9623,11 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     maps.extend(v6_map);
     // P6-254: `mm_tc_v7` too.
     maps.extend(v7_map);
+    // P6-259: `mm_tc_v8` / `mm_tc_v8n` too.
+    if let Some((a, b)) = v8_maps {
+        maps.push(a);
+        maps.push(b);
+    }
     maps.extend(recs.iter().flatten().copied());
     let mut sys = alloc::vec![ctx.sys.clone(), stage.clone()];
     sys.extend(ctls.iter().cloned());
@@ -9826,7 +9854,11 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                         let v6va = v6_map.as_ref().map_or(0, |m| m.va);
                         // P6-254: with `--pas-v7`, `mm_tc_v7` first (`pack_mixed_fast_attn7`, v6 / v5 beside it).
                         let v7va = v7_map.as_ref().map_or(0, |m| m.va);
+                        // P6-259: with `--pas-v8`, v7 / v8 / v8n picked by shape (`pack_mixed_fast_attn8`, the plan's rates).
+                        let v8p = v8_maps.as_ref().map(|(a, b)| ts::V8Programs { v8: a.va, v8n: b.va, sms: nvidia_ga104::wave_model::SMS, rates: nvidia_ga104::mm_tc_v8::RATES_PLAN });
                         let (zb, qmds, pk) = match (&via, attn, fast) {
+                            (Some(v), at, f) if v8p.is_some() => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn8(&ml, prog_va, &progs, v5va, v6va, v7va, v8p, at, f, attn0, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
+                            (None, at, f) if v8p.is_some() => ts::pack_mixed_fast_attn8(&ml, prog_va, &progs, v5va, v6va, v7va, v8p, at, f, attn0, Some(MIXED_FAST_STEP), ctl.va)?,
                             (Some(v), at, f) if v7va != 0 => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn7(&ml, prog_va, &progs, v5va, v6va, v7va, at, f, attn0, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
                             (None, at, f) if v7va != 0 => ts::pack_mixed_fast_attn7(&ml, prog_va, &progs, v5va, v6va, v7va, at, f, attn0, Some(MIXED_FAST_STEP), ctl.va)?,
                             (Some(v), at, f) if v6va != 0 => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn6(&ml, prog_va, &progs, v5va, v6va, at, f, attn0, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
@@ -10182,7 +10214,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 "{}: kronos --gpu: {}: alegerile mm_tc pe pas (--mixt-513-rapid, pack_mixed_fast{}, treapta memoriei comune {} KiB pe toate lansarile): {} (Cyber-GPU: {}, DEDUS{})",
                 p, tag, if attn16_map.is_some() { "_attn" } else { "" }, MIXED_FAST_STEP >> 10, fast_picks,
                 // P6-245: with `--pas-v5` the prediction of note C-157_P2zzf.
-                if v7_map.is_some() { "147 pe mm_tc_v7, 0 pe mm_tc_v6 / mm_tc_v5; oracolul mixt ACELEASI NUMERE la lot 2; placa 137-162 ms pe pas la lot 6 (os-487: 200,77)" } else if v6_map.is_some() { "147 pe mm_tc_v6, 0 pe mm_tc_v5; placa x0,885-0,979 fata de pasul cu v5 la lot 2, x0,867-0,976 la lot 6" } else if v5_map.is_some() { "147 pe mm_tc_v5, 0 pe mm_tc_v4; placa ~78-84 ms pe pas la lot 2 (os-473: 97,1), 202-222 ms la lot 6" } else { "147 pe mm_tc_v4, inmultirile ~115-136 ms" },
+                if v8_maps.is_some() { "lot 2: v7 73 / v8 26 / v8n 48, lot 6: v7 12 / v8 38 / v8n 97 (vitezele planului); oracolul mixt ACELEASI NUMERE" } else if v7_map.is_some() { "147 pe mm_tc_v7, 0 pe mm_tc_v6 / mm_tc_v5; oracolul mixt ACELEASI NUMERE la lot 2; placa 137-162 ms pe pas la lot 6 (os-487: 200,77)" } else if v6_map.is_some() { "147 pe mm_tc_v6, 0 pe mm_tc_v5; placa x0,885-0,979 fata de pasul cu v5 la lot 2, x0,867-0,976 la lot 6" } else if v5_map.is_some() { "147 pe mm_tc_v5, 0 pe mm_tc_v4; placa ~78-84 ms pe pas la lot 2 (os-473: 97,1), 202-222 ms la lot 6" } else { "147 pe mm_tc_v4, inmultirile ~115-136 ms" },
                 if attn_v4_map.is_some() { "; atentia: 12 pe attn_back_tile_tc16_v4 asteptate (os-465: 0,52 ms fata de 0,87 ms pe lansare), aceiasi biti ca tc16" } else if attn16_map.is_some() { "; atentia: 12 pe attn_back_tile_tc16, ~2,2-4,0 ms mai putin pe pas, DEDUS" } else { "" }
             ));
         }

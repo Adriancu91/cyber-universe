@@ -677,7 +677,7 @@ Din hub, C-117 (ideea lui Adrian, 12 nov 23:27: „analizatorul UHL” în Cyber
 - [x] **P6-257** PREDARE Cyber-GPU P2zzt (`b93e876`): `--token32-v3` — programul `token32_v3` (LayerNorm calculat de fiecare grup al înmulțirii următoare, lista `token_ln::work_list_ln`: 88 → 63 de operații la #513, QMD `token32_v3_qmd_wide`, 97 registre) după un `token32_v2` care a trecut, G = 384 apoi 768. Dep: P6-243. Plan: `docs/plans/P6-257.md`.
 - [x] **P6-258** PREDARE Cyber-GPU P3a (`72ac8eb`, C-168 p.3): `--mm-tc-v8` — `mm_tc_v8` (128×128, 256 fire) și `mm_tc_v8n` (128×64, 128 fire) în proba `--mm-tc`, după `mm_tc_v7`, bit cu bit cu `mm_tc`. Plan: `docs/plans/P6-258.md`.
   Gata (2026-11-27 ~19:46 RO): rândul de la 13:28 → REFUZAT cu motivul OS-ului, forma corectată și rândul os-496 → PRIMIT; pas nou în CI (partea `stick`); `docs/BUCLA_AUTOMATA.md`. Kernelul neatins (`boot` TRECE).
-- [~] **P6-259** PREDARE Cyber-GPU P3b (`c74237a`, C-168 p.3 G7): `--pas-v8` — `mm_tc_v8` / `mm_tc_v8n` în pasul mixt rapid #513, alese pe formă de `mm_tc_v8::pick` (vitezele planului, DEDUS), doar imediat după `--pas-v7`. **Pe placă abia după proba `--mm-tc-v8` (os-500) trecută** (nota P3b). Plan: `docs/plans/P6-259.md`.
+- [x] **P6-259** PREDARE Cyber-GPU P3b (`c74237a`, C-168 p.3 G7): `--pas-v8` — `mm_tc_v8` / `mm_tc_v8n` în pasul mixt rapid #513, alese pe formă de `mm_tc_v8::pick` (vitezele planului, DEDUS), doar imediat după `--pas-v7`. **Pe placă abia după proba `--mm-tc-v8` (os-500) trecută** (nota P3b). Plan: `docs/plans/P6-259.md`.
 - [ ] **P6-10** Închiderea Fazei 6 (testul pe laptop cu Adrian). Dep: P6-01 … P6-09.
 
 ## Mai târziu (mutate din Faza 5 — după ce suita office își atinge ținta)

@@ -38,6 +38,7 @@ jobs:
   # P6-245: twenty-one QEMU parts (teste-1..21): with `kronos-gpu-antrenare-513-v5` the table gives ~57.2 min out of 20, ~54.6 out of 21.
   # P6-247: twenty-two QEMU parts (teste-1..22): with `kronos-gpu-mm-tc-v6-dxdw` and `kronos-gpu-antrenare-513-v6` the table gives ~57.4 min out of 21, ~54.7 out of 22.
   # P6-254: twenty-three QEMU parts (teste-1..23): with `kronos-gpu-antrenare-513-v7` the table gives ~57.4 min out of 22, ~54.9 out of 23.
+  # P6-259: twenty-four QEMU parts (teste-1..24): with `kronos-gpu-antrenare-513-v8` the table gives ~57.3 min out of 23, ~54.9 out of 24.
   build-and-test:
     name: ${{ matrix.parte }}
     runs-on: ubuntu-24.04
@@ -47,51 +48,53 @@ jobs:
       matrix:
         include:
           - parte: teste-1
-            shard: 1/23
+            shard: 1/24
           - parte: teste-2
-            shard: 2/23
+            shard: 2/24
           - parte: teste-3
-            shard: 3/23
+            shard: 3/24
           - parte: teste-4
-            shard: 4/23
+            shard: 4/24
           - parte: teste-5
-            shard: 5/23
+            shard: 5/24
           - parte: teste-6
-            shard: 6/23
+            shard: 6/24
           - parte: teste-7
-            shard: 7/23
+            shard: 7/24
           - parte: teste-8
-            shard: 8/23
+            shard: 8/24
           - parte: teste-9
-            shard: 9/23
+            shard: 9/24
           - parte: teste-10
-            shard: 10/23
+            shard: 10/24
           - parte: teste-11
-            shard: 11/23
+            shard: 11/24
           - parte: teste-12
-            shard: 12/23
+            shard: 12/24
           - parte: teste-13
-            shard: 13/23
+            shard: 13/24
           - parte: teste-14
-            shard: 14/23
+            shard: 14/24
           - parte: teste-15
-            shard: 15/23
+            shard: 15/24
           - parte: teste-16
-            shard: 16/23
+            shard: 16/24
           - parte: teste-17
-            shard: 17/23
+            shard: 17/24
           - parte: teste-18
-            shard: 18/23
+            shard: 18/24
           - parte: teste-19
-            shard: 19/23
+            shard: 19/24
           - parte: teste-20
-            shard: 20/23
+            shard: 20/24
           - parte: teste-21
-            shard: 21/23
+            shard: 21/24
           - parte: teste-22
-            shard: 22/23
+            shard: 22/24
           - parte: teste-23
-            shard: 23/23
+            shard: 23/24
+          - parte: teste-24
+            shard: 24/24
           - parte: stick
             shard: ""
     steps:
@@ -191,6 +194,10 @@ jobs:
           # P6-258: the v8 row proposed in Cyber-GPU's note P3a (without v6) stays refused; the row given to the board is accepted.
           if tools/verifica-rand.py "test-placa --tablou-viteza --mm-tc --mm-tc-v7 --mm-tc-v8 --mm-tc-64k --mm-tc-dxdw"; then echo "randul gresit a fost primit"; exit 1; fi
           tools/verifica-rand.py "test-placa --tablou-viteza --mm-tc --mm-tc-v6 --mm-tc-v7 --mm-tc-v8 --mm-tc-64k --mm-tc-dxdw"
+          # P6-259: `--pas-v8` only right after `--pas-v7` (the rows for after os-500: lot 2 and lot 6).
+          if tools/verifica-rand.py "test-placa --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --atentie-tc16 --pas-v5 --pas-v6 --pas-v8"; then echo "randul gresit a fost primit"; exit 1; fi
+          tools/verifica-rand.py "test-placa --tablou-viteza --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --atentie-tc16 --atentie-v4 --atentie-ds --pas-v5 --pas-v6 --pas-v7 --pas-v8"
+          tools/verifica-rand.py "test-placa --tablou-viteza --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --lot-prin-ram --doua-locuri --atentie-tc16 --atentie-v4 --atentie-ds --pas-v5 --pas-v6 --pas-v7 --pas-v8 --lot-513 6"
           tools/verifica-rand.py --din docs/STATE.md --ultima-sesiune
 
       - name: Acces la cyber-gpu (repo privat, B-005)
