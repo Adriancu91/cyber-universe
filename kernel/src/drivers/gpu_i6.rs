@@ -763,7 +763,7 @@ pub fn prepare_i6() -> Vec<String> {
         let _guard = WINDOW_LOCK.lock();
         let mut win = ReadOnlyBar0Window::with_len(bar0, nvidia_ga104::fuse::FUSE_WINDOW);
         let _ = prepare("gpu0", &mut win, &mut j, &mut TscClock, &mut lines);
-        (win.refused + j.writes(), win.remaps, win.map_failed)
+        (win.refused + gpu::journal_writes(&j), win.remaps, win.map_failed)
     };
     close_and_check("gpu0", false, &mut lines);
     if map_failed {
@@ -1185,7 +1185,7 @@ pub fn prepare_i6_sim() -> Vec<String> {
     let mut clock = gpu_sim::clock::SimClock::default();
     let _ = prepare("model", &mut m, &mut j, &mut clock, &mut lines);
     close_and_check("model", false, &mut lines);
-    lines.push(gpu::writes_line(m.writes.len() + j.writes()));
+    lines.push(gpu::writes_line(m.writes.len() + gpu::journal_writes(&j)));
     sim_lines(lines, "gpu pregatire-i6")
 }
 

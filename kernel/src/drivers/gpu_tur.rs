@@ -212,7 +212,7 @@ pub fn tour() -> Vec<String> {
         if let Err(e) = tour_on(p, &mut cfg, Some(addr), &mut win, &mut TscClock, &mut j, &mut lines) {
             lines.push(format!("{}: tur de citire: {}", p, e));
         }
-        (cfg.refused + win.refused + j.writes(), win.remaps, win.map_failed)
+        (cfg.refused + win.refused + gpu::journal_writes(&j), win.remaps, win.map_failed)
     };
     gpu_i6::close_and_check(p, false, &mut lines);
     if map_failed {
@@ -1693,7 +1693,7 @@ pub fn tour_sim() -> Vec<String> {
         }
     }
     gpu_i6::close_and_check(p, false, &mut lines);
-    lines.push(gpu::writes_line(cfg.writes + bar0.writes.len() + j.writes()));
+    lines.push(gpu::writes_line(cfg.writes + bar0.writes.len() + gpu::journal_writes(&j)));
     gpu_i6::sim_lines(lines, "gpu tur")
 }
 

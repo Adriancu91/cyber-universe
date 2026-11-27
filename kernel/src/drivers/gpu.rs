@@ -375,7 +375,7 @@ fn probe_with_cyber_gpu(n: usize, d: &Device, lines: &mut Vec<String>) -> LibPro
         let mut win = ReadOnlyWindow { va: w, refused: 0 };
         let mut journal = gpu_core::diag::Journal::new(16);
         let chip = probe::probe_mmio_family(&mut win, &mut journal, family);
-        (chip, win.refused + journal.writes())
+        (chip, win.refused + journal_writes(&journal))
     });
     match r {
         Ok((Ok(chip), w)) => {
@@ -733,13 +733,20 @@ pub fn init_step(step: InitStep) -> Vec<String> {
             lines.push(format!("{}: maparea ferestrei a esuat (citirile au dat FFFFFFFF)", p));
         }
         lines.push(format!("{}: {} pagini mapate pe rand (doar citire)", p, win.remaps));
-        refused += win.refused + journal.writes();
+        refused += win.refused + journal_writes(&journal);
     }
     lines.push(writes_line(refused));
     for l in &lines {
         crate::info!("gpu: {}", l);
     }
     lines
+}
+
+/// P6-244 (Cyber-GPU P2zze, os-473): every write the library journaled, dropped ones included.
+/// `Journal::writes()` counts only the writes still in the ring, so it falls when a full ring drops
+/// old writes; the read-only checks below must count all of them.
+pub(super) fn journal_writes(j: &gpu_core::diag::Journal) -> usize {
+    usize::try_from(j.writes_total()).unwrap_or(usize::MAX)
 }
 
 pub(super) fn writes_line(refused: usize) -> String {
@@ -786,7 +793,7 @@ pub fn init_step_sim(step: InitStep) -> Vec<String> {
         }
     };
     lines.push(format!("model: {} citiri BAR0, timp simulat {} us", bar0.reads.len(), clock.now));
-    lines.push(writes_line(bar0.writes.len() + journal.writes()));
+    lines.push(writes_line(bar0.writes.len() + journal_writes(&journal)));
     let mut out: Vec<String> = lines.into_iter().map(|l| format!("SIMULARE: {}", l)).collect();
     out.insert(0, format!("SIMULARE: modelul gpu-sim al placii de pe workstation (cyber-gpu {}), nu placa reala", CYBER_GPU_REV));
     out.push(String::from("SIMULARE: nicio placa reala atinsa; rezultatul nu dovedeste nimic despre hardware"));
