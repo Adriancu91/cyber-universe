@@ -4467,6 +4467,12 @@ fn mm_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         tc::SHARED.bytes >> 10,
         tp::QKV_SET
     ));
+    // P6-250 (C-157 P2zzl): the max-speed window guard, checked on os-485's own numbers before any time is taken.
+    lines.push(format!(
+        "{}: kronos --gpu: proba mm_tc: paza ferestrei de viteza maxima (P6-250, BoostPlan::covers_ms), verificata pe numerele os-485: {}",
+        p,
+        if super::gpu_golden::speed_window_self_test() { "MERGE (v5@64k dX la 677,6 s in fereastra, v6 dX la 722,9 s si dW in afara; 1 800 s ar acoperi tot lantul)" } else { "GRESIT" }
+    ));
     // The program, then one VRAM page: the cbuf at +0 (0x800 bytes), the QMD at +0x800 (as P8).
     let prog = map_vram(st, program_map_bytes(tc::MM_TC.len() as u64))?;
     let zone = map_vram(st, PAGE)?;
@@ -5250,6 +5256,7 @@ fn mm_tc_qkv<V: Mmio + ?Sized, K: Clock + ?Sized>(
             put_bytes(w, zone.pa, &cb)?;
             put_bytes(w, zone.pa + tc::CBUF_BYTES as u64, &q)?;
         }
+        let t0 = clock.now_us();
         for r in 0..tp::QKV_REPEATS {
             match mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, &maps, &sys, zone.va + tc::CBUF_BYTES as u64)? {
                 Ok(ns) => times.push(ns),
@@ -5261,6 +5268,11 @@ fn mm_tc_qkv<V: Mmio + ?Sized, K: Clock + ?Sized>(
                     return Ok(QkvOutcome::Stopped);
                 }
             }
+        }
+        // P6-250 (C-157 P2zzl): the times of this set, against the cycle's max-speed window.
+        let what = format!("mm_tc pe setul {}", set.name);
+        if let Some(w) = super::gpu_golden::speed_window_line(p, &what, t0, clock.now_us(), journal) {
+            lines.push(w);
         }
     }
     // 4. The ranges back, in order, glued (all of them fit the window together: ~0,15 MB).
@@ -5300,6 +5312,7 @@ fn mm_tc_qkv<V: Mmio + ?Sized, K: Clock + ?Sized>(
             put_bytes(w, t.zone.pa + tc::CBUF_BYTES as u64, &q2)?;
         }
         let mut times2 = Vec::new();
+        let t0 = clock.now_us();
         for r in 0..tp::QKV_REPEATS {
             match mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, &maps, &sys, t.zone.va + tc::CBUF_BYTES as u64)? {
                 Ok(ns) => times2.push(ns),
@@ -5316,6 +5329,11 @@ fn mm_tc_qkv<V: Mmio + ?Sized, K: Clock + ?Sized>(
                     return Ok(QkvOutcome::Stopped);
                 }
             }
+        }
+        // P6-250: the companion's times, against the same window.
+        let what = format!("{} pe setul {}", t.name(), set.name);
+        if let Some(w) = super::gpu_golden::speed_window_line(p, &what, t0, clock.now_us(), journal) {
+            lines.push(w);
         }
         let mut out2 = Vec::with_capacity(set.read_len());
         for &(o, n) in &set.read_ranges() {
@@ -9615,6 +9633,8 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // P6-217: the next step's parts already submitted (in order), and how many went while the step before still ran.
     let mut ahead: Vec<(Sent, u32, usize)> = Vec::new();
     let (mut sent_ahead, mut held_back, mut timed_out) = (0usize, 0usize, false);
+    // P6-250 (C-157 P2zzl: "the lot-6 step with many flags may pass 600 s too"): the steps against the max-speed window.
+    let steps_t0 = clock.now_us();
     let mut run_steps = || -> GpuResult<()> {
         let mut next_prep: Option<Prep> = None;
         let mut prev_done: Option<u64> = None;
@@ -9882,6 +9902,10 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         "{}: kronos --gpu: {}: timpul pe pas (median, {} pasi): placa {} us = {} simboluri/s la antrenare (lot {} x {}; Windows / PyTorch ~39 300); pasul intreg {} us = {} simboluri/s",
         p, tag, losses.len(), us, tok_s, bsz, tl, host_med, full_tok_s
     ));
+    let what = format!("{} (pasii)", tag);
+    if let Some(w) = super::gpu_golden::speed_window_line(p, &what, steps_t0, clock.now_us(), journal) {
+        lines.push(w);
+    }
     if mixed {
         journal.push(Event::Value { what: KT_513_MIXED_TC, value: tc_per_step as u32 });
         lines.push(format!("{}: kronos --gpu: {}: pasul mixt: {} lansari mm_tc pe pas (din {}), S = {}", p, tag, tc_per_step, n_launch, scale as u32));

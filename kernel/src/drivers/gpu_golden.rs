@@ -459,6 +459,10 @@ pub(super) fn boost_begin<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized>
         journal.push(*e);
     }
     let start = r?;
+    // P6-250 (C-157 P2zzl): from here the window of the request, so later times can say when they fall outside it.
+    if matches!(start.answer, gp::BoostAnswer::Accepted) {
+        speed_window_mark(clock.now_us(), plan);
+    }
     lines.push(format!(
         "{}: ks: viteza maxima ceruta (doar in ciclu, {} s): inainte {}, cererea {}, dupa {}; verdict {} ({:?})",
         p,
@@ -506,6 +510,10 @@ pub(super) fn boost_end<B: Mmio + ?Sized, V: Mmio + ?Sized, K: Clock + ?Sized>(
     }
     let end = r?;
     journal.push(Event::Note(gp::rows::NO_LEVELS));
+    // P6-250 (C-157 P2zzl): how long the chain ran after the request, and how many timed sets fell outside its window.
+    if let Some(l) = speed_window_summary(p, clock.now_us(), journal) {
+        lines.push(l);
+    }
     lines.push(format!(
         "{}: ks: inainte de stergere {}, stergerea {}, starea de performanta la final: {}",
         p,
@@ -912,6 +920,85 @@ pub(super) fn dash_summary_self_test() -> bool {
         && verdict_text(nvidia_ga104::gsp::rusd_watch::Verdict::Stop(nvidia_ga104::gsp::rusd_watch::StopReason::Slowdown(0x20)))
             == "OPRIRE: incetinire termica / de urgenta (motive 0x20 = incetinire termica (software))"
         && dash_summary("t", "x", "k", &[]).len() == 1
+}
+
+/// P6-250 (C-157 P2zzl, after os-485: the request accepted at 114.3 s, the chain 1 611 s, the board in P8 at the end):
+/// the OS clock (µs) when the cycle's max-speed request was accepted, and its plan. `None` outside the cycle or when the
+/// request was refused / not sent: then no time is judged against a window.
+static SPEED_WINDOW: crate::sched::Mutex<Option<(u64, nvidia_ga104::gsp::perf::BoostPlan)>> = crate::sched::Mutex::new(None);
+/// P6-250: how many timed sets ended after the window (counted by [`speed_window_line`], read by [`speed_window_summary`]).
+static SPEED_OUTSIDE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+/// P6-250: the journal note of a timed set that ended after the window (one per set).
+pub(super) const KS_OUTSIDE_NOTE: &str = "ks timpi masurati in afara ferestrei de viteza maxima (cererea expirata)";
+/// P6-250: the journal values of the summary at the end of the chain.
+const KS_CHAIN_S: &str = "ks lantul dupa cererea de viteza maxima s";
+const KS_OUTSIDE_SETS: &str = "ks seturi de timpi in afara ferestrei de viteza maxima";
+
+fn speed_window_mark(at_us: u64, plan: nvidia_ga104::gsp::perf::BoostPlan) {
+    *SPEED_WINDOW.lock() = Some((at_us, plan));
+    SPEED_OUTSIDE.store(0, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// P6-250: the pure judgement — `Some((from_ms, to_ms))` (since the accepted request) when the piece of work that ran
+/// between `t0_us` and `t1_us` does NOT end inside the window (`BoostPlan::covers_ms`, cyber-gpu `310cbfb`).
+fn window_outside(accepted_us: u64, plan: &nvidia_ga104::gsp::perf::BoostPlan, t0_us: u64, t1_us: u64) -> Option<(u64, u64)> {
+    let from = t0_us.saturating_sub(accepted_us) / 1000;
+    let run = t1_us.saturating_sub(t0_us) / 1000;
+    (!plan.covers_ms(from, run)).then_some((from, from.saturating_add(run)))
+}
+
+/// P6-250 (C-157 P2zzl point 2): a line (and a journal note) when a timed set — `what` — that ran between `t0_us` and
+/// `t1_us` ended after the cycle's max-speed request had expired: its bits are judged as always, its times are not times
+/// at full speed. `None` when there is no accepted request (outside the cycle, SIMULARE) or the set ended inside it.
+pub(super) fn speed_window_line(p: &str, what: &str, t0_us: u64, t1_us: u64, journal: &mut Journal) -> Option<String> {
+    let (at, plan) = (*SPEED_WINDOW.lock())?;
+    let (from, to) = window_outside(at, &plan, t0_us, t1_us)?;
+    SPEED_OUTSIDE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    journal.push(Event::Note(KS_OUTSIDE_NOTE));
+    Some(format!(
+        "{}: ks: IN AFARA FERESTREI DE VITEZA: {} a rulat intre secundele {},{} si {},{} de la cererea acceptata, cererea tine {} s; timpii de aici NU sunt la viteza maxima (bitii se judeca la fel)",
+        p,
+        what,
+        from / 1000,
+        (from % 1000) / 100,
+        to / 1000,
+        (to % 1000) / 100,
+        plan.duration_s
+    ))
+}
+
+/// P6-250: at the end of the chain (`boost_end`): how long the chain ran after the accepted request, against the
+/// window, and how many timed sets fell outside it. The window is then forgotten.
+fn speed_window_summary(p: &str, now_us: u64, journal: &mut Journal) -> Option<String> {
+    let (at, plan) = SPEED_WINDOW.lock().take()?;
+    let after_s = now_us.saturating_sub(at) / 1_000_000;
+    let n = SPEED_OUTSIDE.swap(0, core::sync::atomic::Ordering::Relaxed);
+    journal.push(Event::Value { what: KS_CHAIN_S, value: after_s.min(u32::MAX as u64) as u32 });
+    journal.push(Event::Value { what: KS_OUTSIDE_SETS, value: n });
+    Some(format!(
+        "{}: ks: fereastra de viteza maxima: lantul a mai rulat {} s dupa cererea acceptata (cererea tine {} s): {}; seturi de timpi in afara ferestrei: {}",
+        p,
+        after_s,
+        plan.duration_s,
+        if after_s <= u64::from(plan.duration_s) { "IN fereastra" } else { "IESIT din fereastra (ce s-a masurat dupa nu e la viteza maxima)" },
+        n
+    ))
+}
+
+/// P6-250: self-test of the window on os-485's own numbers (requested at 114.3 s of the journal; v5@64k dX at 677.6 s
+/// inside, v6 dX at 722.9 s outside; the 600 s plan; a 1 800 s plan covers the whole 1 611 s chain).
+pub(super) fn speed_window_self_test() -> bool {
+    use nvidia_ga104::gsp::perf::BoostPlan;
+    let p = BoostPlan { enabled: true, ..BoostPlan::default() };
+    let long = BoostPlan { duration_s: 1800, ..p };
+    let at = 114_300_000u64;
+    p.duration_s == 600
+        && window_outside(at, &p, 677_600_000, 682_200_000).is_none()
+        && window_outside(at, &p, 722_900_000, 727_900_000) == Some((608_600, 613_600))
+        && window_outside(at, &p, 848_000_000, 1_532_000_000).is_some()
+        && window_outside(at, &long, 848_000_000, 1_611_000_000).is_none()
+        && window_outside(at, &BoostPlan::default(), at, at + 1000).is_some()
+        && window_outside(at, &p, 0, 0).is_none()
 }
 
 /// P6-142: what the dashboard says the max-speed request did (`compare_boost`, `kw viteza maxima` rows + one line).
