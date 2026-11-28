@@ -44,6 +44,7 @@ jobs:
   # P6-266: twenty-seven QEMU parts (teste-1..27): with `kronos-gpu-antrenare-513-rezidual-lipit` the table gives ~54.8 min out of 26, ~52.8 out of 27.
   # P6-268: twenty-eight QEMU parts (teste-1..28): with `kronos-gpu-antrenare-513-gelu-lipit` the table gives ~53.9 min out of 27, ~51.9 out of 28.
   # P6-269: twenty-nine QEMU parts (teste-1..29): with `kronos-gpu-antrenare-513-v8r` the table gives ~53.0 min out of 28, ~51.2 out of 29.
+  # P6-271: with `kronos-gpu-antrenare-513-gelu-inainte` the table gives ~52.6 min out of 29 (still 29 parts).
   build-and-test:
     name: ${{ matrix.parte }}
     runs-on: ubuntu-24.04

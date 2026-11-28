@@ -728,6 +728,13 @@ pub static TRAIN_513_FUSED_GELU_FAST_IN_CYCLE: core::sync::atomic::AtomicBool = 
 /// Set only by the cycle (`test-placa … --pas-v8 … --pas-v8r`) and, in the test build, by `gpu pas-v8r-sim on`. Off by default.
 pub static TRAIN_513_MM_V8R_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-271 (C-168 p.5 P5c, cyber-gpu `835e36b`, note `C-168_P5c_gelu-inainte-in-coada-fc.md`): with
+/// [`TRAIN_513_FUSED_GELU_FAST_IN_CYCLE`], #513's fast mixed step also glues GELU's forward into "fc"
+/// (`Plan::with_fused_gelu_fwd`, the `geluf` variants of v7 / v8 / v8n, `pack_mixed_fast_attn12`; 12 launches fewer).
+/// Set only by the cycle (`test-placa … --pas-gelu-lipit [--pas-v8r] --pas-gelu-inainte-lipit`) and, in the test build,
+/// by `gpu pas-gelu-inainte-sim on`. Off by default.
+pub static TRAIN_513_FUSED_GELU_FWD_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-260 (C-168 p.2 not done yet): in a board cycle (`test-placa …`) the training runs (`--antrenare-mini`,
 /// `--antrenare-513`) take the synthetic batches (MT19937, seed 0x164) even when Kronos's real data is on the stick
 /// (`/usb/antrenare/date`, copied on 27 nov for C-168): the board's verdicts (the #513 oracle tables, the mixed step's
