@@ -1280,7 +1280,7 @@ pub const TRAIN_513_MM_V7: &str = " --pas-v7";
 /// P6-259 (C-168 p.3 G7, cyber-gpu `c74237a`, note C-168_P3b): suffix of the I9 text when, in #513's fast mixed step,
 /// every aligned product goes to the program `mm_tc_v8::pick` gives by waves among `mm_tc_v7`, `mm_tc_v8` and
 /// `mm_tc_v8n` (`pack_mixed_fast_attn8`): `test-placa … --pas-v6 --pas-v7 --pas-v8`, last, only right after `--pas-v7`.
-/// The note: not on the board before the `--mm-tc-v8` probe (os-500) has passed.
+/// The note: not on the board before the `--mm-tc-v8` probe (os-500) has passed (it did; P6-260 uses its measured rates).
 pub const TRAIN_513_MM_V8: &str = " --pas-v8";
 
 /// P6-190 (C-165, cyber-gpu `a98298e`, note C-165_cursa-mm): suffix of the I9 text when, after #513's steps, the night
@@ -1852,6 +1852,8 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::TRAIN_513_MM_V6_IN_CYCLE.store(train_mini && train_vram && train_513 && train_513_tiles3 && train_513_mm_tile && train_513_mixed && train_513_mixed_fast && train_513_attn_tc16 && train_513_mm_v5 && train_513_mm_v6, core::sync::atomic::Ordering::SeqCst);
     // P6-254: `mm_tc_v7` first in the step only after `--pas-v6`.
     crate::drivers::gpu_tur::TRAIN_513_MM_V7_IN_CYCLE.store(train_mini && train_vram && train_513 && train_513_tiles3 && train_513_mm_tile && train_513_mixed && train_513_mixed_fast && train_513_attn_tc16 && train_513_mm_v5 && train_513_mm_v6 && train_513_mm_v7, core::sync::atomic::Ordering::SeqCst);
+    // P6-260: the board cycle's training runs keep the synthetic batches (their verdicts are measured on them).
+    crate::drivers::gpu_tur::BOARD_SYNTH_BATCHES_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
     // P6-259: v7 / v8 / v8n picked by shape in the step only after `--pas-v7`.
     crate::drivers::gpu_tur::TRAIN_513_MM_V8_IN_CYCLE.store(train_mini && train_vram && train_513 && train_513_tiles3 && train_513_mm_tile && train_513_mixed && train_513_mixed_fast && train_513_attn_tc16 && train_513_mm_v5 && train_513_mm_v6 && train_513_mm_v7 && train_513_mm_v8, core::sync::atomic::Ordering::SeqCst);
     // P6-190: the night race only when the list asked for it, last, after `--mm-placi`.
@@ -1981,7 +1983,7 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
             text.push_str("\n(inmultirile aliniate ale pasului mixt rapid #513 intai pe mm_tc_v6, cerut de lista (--pas-v6; C-157, PREDARE Cyber-GPU 1cb1846, nota C-157_P2zzh punctul 3): pack_mixed_fast_attn6 (cu --lot-prin-ram batch_ram::pack_mixed_fast_via_ram_attn6), mm_tc_v5 incarcat langa el, SHA-256 verificate; nou pentru placa: programul mm_tc_v6 (proba os-NNN --mm-tc-v6), acum si in pas; de pornit DOAR dupa ce proba mm_tc_v6 a dat aceiasi biti ca mm_tc; Cyber-GPU asteapta alegerile mm_tc_v6 147 / mm_tc_v5 0, oracolul mixt ACELEASI NUMERE, placa x0,885-0,979 fata de pasul cu v5 la lot 2, x0,867-0,976 la lot 6; DEDUS)");
         }
         if train_513_mm_v8 {
-            text.push_str("\n(inmultirile aliniate ale pasului mixt rapid #513 pe mm_tc_v7 / mm_tc_v8 / mm_tc_v8n, alese pe forma de mm_tc_v8::pick (regula valurilor, vitezele planului, DEDUS), cerut de lista (--pas-v8; C-168 p.3 G7, PREDARE Cyber-GPU c74237a, nota C-168_P3b): pack_mixed_fast_attn8 (cu --lot-prin-ram batch_ram::pack_mixed_fast_via_ram_attn8), mm_tc_v8 si mm_tc_v8n incarcate langa mm_tc_v7, SHA-256 verificate; nou pentru placa: nimic fata de proba --mm-tc-v8 (os-500), acum si in pas; nota cere: abia dupa ce proba os-500 a trecut; Cyber-GPU asteapta (scris inainte, cu vitezele planului) alegerile v7 73 / v8 26 / v8n 48 la lot 2 si v7 12 / v8 38 / v8n 97 la lot 6, oracolul mixt ACELEASI NUMERE)");
+            text.push_str("\n(inmultirile aliniate ale pasului mixt rapid #513 pe mm_tc_v7 / mm_tc_v8 / mm_tc_v8n, alese pe forma de mm_tc_v8::pick (regula valurilor, vitezele masurate in os-500: v8 110 % / v8n 118 % fata de v7), cerut de lista (--pas-v8; C-168 p.3 G7, PREDARE Cyber-GPU c74237a + 0fb2a6f, notele C-168_P3b / P3c): pack_mixed_fast_attn8 (cu --lot-prin-ram batch_ram::pack_mixed_fast_via_ram_attn8), mm_tc_v8 si mm_tc_v8n incarcate langa mm_tc_v7, SHA-256 verificate; nou pentru placa: nimic fata de proba --mm-tc-v8 (os-500), acum si in pas; proba os-500 a trecut la biti; asteptat (scris inainte, cu vitezele masurate) alegerile v7 73 / v8 24 / v8n 50 la lot 2 si v7 12 / v8 0 / v8n 135 la lot 6, oracolul mixt ACELEASI NUMERE, pasul lot 6 ~133 ms = ~23 000 simb/s (DEDUS Cyber-GPU; os-496: 147,7 ms))");
         }
         if train_513_mm_v7 {
             text.push_str("\n(inmultirile aliniate ale pasului mixt rapid #513 intai pe mm_tc_v7, cerut de lista (--pas-v7; C-157, PREDARE Cyber-GPU 3206d58, nota C-157_P2zzr): pack_mixed_fast_attn7 (cu --lot-prin-ram batch_ram::pack_mixed_fast_via_ram_attn7), mm_tc_v5 si mm_tc_v6 incarcate langa el, SHA-256 verificate; nou pentru placa: programul mm_tc_v7 (probele os-486 si os-490: aceiasi biti ca mm_tc, v7@64k cel mai bun pe qkv / dX / dW), acum si in pas; Cyber-GPU asteapta (scris inainte) alegerile mm_tc_v7 147 / mm_tc_v6 0 / mm_tc_v5 0, oracolul mixt ACELEASI NUMERE la lot 2; la lot 6 placa 137-162 ms pe pas (os-487: 200,77), ~19 000-22 400 simboluri/s; DEDUS)");
@@ -2211,6 +2213,7 @@ pub fn board_test(i9: &str, nth: usize) -> (String, String) {
     crate::drivers::gpu_tur::TRAIN_513_MM_V6_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TRAIN_513_MM_V7_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TRAIN_513_MM_V8_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+    crate::drivers::gpu_tur::BOARD_SYNTH_BATCHES_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TRAIN_513_MM_MODEL_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TRAIN_513_FUSED_TILE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
     crate::drivers::gpu_tur::TRAIN_513_RACE_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);

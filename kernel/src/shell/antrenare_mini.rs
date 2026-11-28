@@ -95,7 +95,10 @@ pub struct BoardBatches {
 /// MT19937 (seed 0x164) over the whole vocabulary — the step's numbers are judged against the oracle either way. Data
 /// that is there but fails the check is an error (never replaced in silence).
 pub fn board_batches(numar: usize, context: usize, steps: usize) -> Result<BoardBatches, String> {
-    let Some(dir) = date_bucati::DIRS.iter().find(|d| crate::fs::size(&format!("{}/index.json", d)).is_ok()) else {
+    // P6-260: in a board cycle the synthetic batches, even with data on the stick (see `BOARD_SYNTH_BATCHES_IN_CYCLE`).
+    let cycle_synth = crate::drivers::gpu_tur::BOARD_SYNTH_BATCHES_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    let found = if cycle_synth { None } else { date_bucati::DIRS.iter().find(|d| crate::fs::size(&format!("{}/index.json", d)).is_ok()) };
+    let Some(dir) = found else {
         let mut g = Mt19937::new(0x164);
         let batches = (0..steps)
             .map(|_| {
@@ -110,7 +113,11 @@ pub fn board_batches(numar: usize, context: usize, steps: usize) -> Result<Board
             .collect();
         return Ok(BoardBatches {
             synthetic: true,
-            source: format!("loturi sintetice (MT19937, samanta 0x164; nu exista {}/index.json sau {}/index.json)", date_bucati::DIRS[0], date_bucati::DIRS[1]),
+            source: if cycle_synth {
+                String::from("loturi sintetice (MT19937, samanta 0x164; in ciclul de pe placa datele reale nu se folosesc inca: verdictele sunt masurate pe loturile sintetice, C-168 p.2 vine separat)")
+            } else {
+                format!("loturi sintetice (MT19937, samanta 0x164; nu exista {}/index.json sau {}/index.json)", date_bucati::DIRS[0], date_bucati::DIRS[1])
+            },
             batches,
         });
     };

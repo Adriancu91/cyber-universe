@@ -9544,8 +9544,8 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         let b = map_vram(st, program_map_bytes(m8::MM_TC_V8N.len() as u64))?;
         put_bytes(st.mem.writer_mut(), b.pa, m8::MM_TC_V8N)?;
         lines.push(format!(
-            "{}: kronos --gpu: {}: inmultirile aliniate ale pasului pe mm_tc_v7 / mm_tc_v8 / mm_tc_v8n, alese pe forma de mm_tc_v8::pick (--pas-v8, nota Cyber-GPU C-168_P3b; vitezele planului v8 {} % / v8n {} % fata de v7, DEDUS, {} SM-uri): mm_tc_v8 {} registre {} octeti partajati, mm_tc_v8n {} registre {} octeti partajati, SHA-256 verificate; restul ca inainte",
-            p, tag, m8::RATES_PLAN.v8_pct, m8::RATES_PLAN.v8n_pct, nvidia_ga104::wave_model::SMS, m8::REGISTERS, m8::SHARED.bytes, m8::REGISTERS_N, m8::SHARED_N.bytes
+            "{}: kronos --gpu: {}: inmultirile aliniate ale pasului pe mm_tc_v7 / mm_tc_v8 / mm_tc_v8n, alese pe forma de mm_tc_v8::pick (--pas-v8, nota Cyber-GPU C-168_P3b / P3c; vitezele masurate in os-500 v8 {} % / v8n {} % fata de v7, {} SM-uri): mm_tc_v8 {} registre {} octeti partajati, mm_tc_v8n {} registre {} octeti partajati, SHA-256 verificate; restul ca inainte",
+            p, tag, m8::RATES_OS500.v8_pct, m8::RATES_OS500.v8n_pct, nvidia_ga104::wave_model::SMS, m8::REGISTERS, m8::SHARED.bytes, m8::REGISTERS_N, m8::SHARED_N.bytes
         ));
         Some((a, b))
     } else {
@@ -9854,8 +9854,8 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                         let v6va = v6_map.as_ref().map_or(0, |m| m.va);
                         // P6-254: with `--pas-v7`, `mm_tc_v7` first (`pack_mixed_fast_attn7`, v6 / v5 beside it).
                         let v7va = v7_map.as_ref().map_or(0, |m| m.va);
-                        // P6-259: with `--pas-v8`, v7 / v8 / v8n picked by shape (`pack_mixed_fast_attn8`, the plan's rates).
-                        let v8p = v8_maps.as_ref().map(|(a, b)| ts::V8Programs { v8: a.va, v8n: b.va, sms: nvidia_ga104::wave_model::SMS, rates: nvidia_ga104::mm_tc_v8::RATES_PLAN });
+                        // P6-259: with `--pas-v8`, v7 / v8 / v8n picked by shape (`pack_mixed_fast_attn8`); P6-260: the rates measured in os-500.
+                        let v8p = v8_maps.as_ref().map(|(a, b)| ts::V8Programs { v8: a.va, v8n: b.va, sms: nvidia_ga104::wave_model::SMS, rates: nvidia_ga104::mm_tc_v8::RATES_OS500 });
                         let (zb, qmds, pk) = match (&via, attn, fast) {
                             (Some(v), at, f) if v8p.is_some() => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn8(&ml, prog_va, &progs, v5va, v6va, v7va, v8p, at, f, attn0, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
                             (None, at, f) if v8p.is_some() => ts::pack_mixed_fast_attn8(&ml, prog_va, &progs, v5va, v6va, v7va, v8p, at, f, attn0, Some(MIXED_FAST_STEP), ctl.va)?,
@@ -10214,7 +10214,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                 "{}: kronos --gpu: {}: alegerile mm_tc pe pas (--mixt-513-rapid, pack_mixed_fast{}, treapta memoriei comune {} KiB pe toate lansarile): {} (Cyber-GPU: {}, DEDUS{})",
                 p, tag, if attn16_map.is_some() { "_attn" } else { "" }, MIXED_FAST_STEP >> 10, fast_picks,
                 // P6-245: with `--pas-v5` the prediction of note C-157_P2zzf.
-                if v8_maps.is_some() { "lot 2: v7 73 / v8 26 / v8n 48, lot 6: v7 12 / v8 38 / v8n 97 (vitezele planului); oracolul mixt ACELEASI NUMERE" } else if v7_map.is_some() { "147 pe mm_tc_v7, 0 pe mm_tc_v6 / mm_tc_v5; oracolul mixt ACELEASI NUMERE la lot 2; placa 137-162 ms pe pas la lot 6 (os-487: 200,77)" } else if v6_map.is_some() { "147 pe mm_tc_v6, 0 pe mm_tc_v5; placa x0,885-0,979 fata de pasul cu v5 la lot 2, x0,867-0,976 la lot 6" } else if v5_map.is_some() { "147 pe mm_tc_v5, 0 pe mm_tc_v4; placa ~78-84 ms pe pas la lot 2 (os-473: 97,1), 202-222 ms la lot 6" } else { "147 pe mm_tc_v4, inmultirile ~115-136 ms" },
+                if v8_maps.is_some() { "lot 2: v7 73 / v8 24 / v8n 50, lot 6: v7 12 / v8 0 / v8n 135 (vitezele masurate in os-500, nota P3c); oracolul mixt ACELEASI NUMERE; placa ~133 ms pe pas la lot 6 (os-496: 147,7)" } else if v7_map.is_some() { "147 pe mm_tc_v7, 0 pe mm_tc_v6 / mm_tc_v5; oracolul mixt ACELEASI NUMERE la lot 2; placa 137-162 ms pe pas la lot 6 (os-487: 200,77)" } else if v6_map.is_some() { "147 pe mm_tc_v6, 0 pe mm_tc_v5; placa x0,885-0,979 fata de pasul cu v5 la lot 2, x0,867-0,976 la lot 6" } else if v5_map.is_some() { "147 pe mm_tc_v5, 0 pe mm_tc_v4; placa ~78-84 ms pe pas la lot 2 (os-473: 97,1), 202-222 ms la lot 6" } else { "147 pe mm_tc_v4, inmultirile ~115-136 ms" },
                 if attn_v4_map.is_some() { "; atentia: 12 pe attn_back_tile_tc16_v4 asteptate (os-465: 0,52 ms fata de 0,87 ms pe lansare), aceiasi biti ca tc16" } else if attn16_map.is_some() { "; atentia: 12 pe attn_back_tile_tc16, ~2,2-4,0 ms mai putin pe pas, DEDUS" } else { "" }
             ));
         }

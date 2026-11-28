@@ -675,6 +675,14 @@ pub static TRAIN_513_MM_V7_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync
 /// (`test-placa … --pas-v7 --pas-v8`) and, in the test build, by `gpu pas-v8-sim on`. Off by default.
 pub static TRAIN_513_MM_V8_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-260 (C-168 p.2 not done yet): in a board cycle (`test-placa …`) the training runs (`--antrenare-mini`,
+/// `--antrenare-513`) take the synthetic batches (MT19937, seed 0x164) even when Kronos's real data is on the stick
+/// (`/usb/antrenare/date`, copied on 27 nov for C-168): the board's verdicts (the #513 oracle tables, the mixed step's
+/// "same numbers") are measured on the synthetic batches, and the real-data run needs its own recipe (the #513 weights,
+/// seed 1134, lr 5e-5) and oracle — a later task. Set only by the cycle; outside it (shell, SIMULARE) the data rule of
+/// P6-164 is unchanged.
+pub static BOARD_SYNTH_BATCHES_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-178 (cyber-gpu `d173a59`, note C-157_P2s): with [`TRAIN_MINI_VRAM_IN_CYCLE`], the resident run twice from the same
 /// state — the batch and the results through the VRAM window (os-390), then through pinned RAM with the copy program in
 /// the step's own list — compared bit for bit. Set only by the cycle (`test-placa … --antrenare-mini --vram --lot-ram`)
