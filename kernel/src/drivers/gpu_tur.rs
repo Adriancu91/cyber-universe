@@ -430,6 +430,11 @@ pub static MM_TC_V7_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomi
 /// (`test-placa … --mm-tc … --mm-tc-v6 --mm-tc-v7 --mm-tc-v8`; in the test build `gpu mm-tc-sim onv8`). Off by default.
 pub static MM_TC_V8_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-263 (C-168 p.3 follow-up, cyber-gpu `35cdbd3`, note P3d): inside the `mm_tc` probe, `mm_tc_v8r` (v8 with B read first
+/// in each slice, 120 registers) right after `mm_tc_v8` / `mm_tc_v8n`, on the aligned sets, compared bit for bit with `mm_tc`
+/// (`test-placa … --mm-tc-v7 --mm-tc-v8 --mm-tc-v8r`; in the test build `gpu mm-tc-sim onv8r`). Off by default.
+pub static MM_TC_V8R_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-212 (C-157 p.2, cyber-gpu `abb4f73`): inside the `mm_tc` probe, `mm_tc128_v4` (`mm_tc128` with 128-bit reads in
 /// advance, 168 registers) on every set it fits (aligned products only), last after `mm_tc_pf` / `mm_tc_v4`, compared bit
 /// for bit with `mm_tc` (`test-placa … --mm-tc … --mm-tc128-v4`; in the test build `gpu mm-tc-sim on128v4`). Off by default.
