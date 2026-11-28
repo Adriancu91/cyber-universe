@@ -39,6 +39,7 @@ jobs:
   # P6-247: twenty-two QEMU parts (teste-1..22): with `kronos-gpu-mm-tc-v6-dxdw` and `kronos-gpu-antrenare-513-v6` the table gives ~57.4 min out of 21, ~54.7 out of 22.
   # P6-254: twenty-three QEMU parts (teste-1..23): with `kronos-gpu-antrenare-513-v7` the table gives ~57.4 min out of 22, ~54.9 out of 23.
   # P6-259: twenty-four QEMU parts (teste-1..24): with `kronos-gpu-antrenare-513-v8` the table gives ~57.3 min out of 23, ~54.9 out of 24.
+  # P6-260: twenty-five QEMU parts (teste-1..25): run 46093194728 — teste-21 cut at the 60-minute limit (table ~55.0 min out of 24); ~52.8 out of 25.
   build-and-test:
     name: ${{ matrix.parte }}
     runs-on: ubuntu-24.04
@@ -48,53 +49,55 @@ jobs:
       matrix:
         include:
           - parte: teste-1
-            shard: 1/24
+            shard: 1/25
           - parte: teste-2
-            shard: 2/24
+            shard: 2/25
           - parte: teste-3
-            shard: 3/24
+            shard: 3/25
           - parte: teste-4
-            shard: 4/24
+            shard: 4/25
           - parte: teste-5
-            shard: 5/24
+            shard: 5/25
           - parte: teste-6
-            shard: 6/24
+            shard: 6/25
           - parte: teste-7
-            shard: 7/24
+            shard: 7/25
           - parte: teste-8
-            shard: 8/24
+            shard: 8/25
           - parte: teste-9
-            shard: 9/24
+            shard: 9/25
           - parte: teste-10
-            shard: 10/24
+            shard: 10/25
           - parte: teste-11
-            shard: 11/24
+            shard: 11/25
           - parte: teste-12
-            shard: 12/24
+            shard: 12/25
           - parte: teste-13
-            shard: 13/24
+            shard: 13/25
           - parte: teste-14
-            shard: 14/24
+            shard: 14/25
           - parte: teste-15
-            shard: 15/24
+            shard: 15/25
           - parte: teste-16
-            shard: 16/24
+            shard: 16/25
           - parte: teste-17
-            shard: 17/24
+            shard: 17/25
           - parte: teste-18
-            shard: 18/24
+            shard: 18/25
           - parte: teste-19
-            shard: 19/24
+            shard: 19/25
           - parte: teste-20
-            shard: 20/24
+            shard: 20/25
           - parte: teste-21
-            shard: 21/24
+            shard: 21/25
           - parte: teste-22
-            shard: 22/24
+            shard: 22/25
           - parte: teste-23
-            shard: 23/24
+            shard: 23/25
           - parte: teste-24
-            shard: 24/24
+            shard: 24/25
+          - parte: teste-25
+            shard: 25/25
           - parte: stick
             shard: ""
     steps:
