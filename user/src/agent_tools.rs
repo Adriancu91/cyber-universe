@@ -370,7 +370,8 @@ pub fn run(name: &str, input: &Value, root: &str, gh: Option<&Gh>, term: &mut Op
                 }
                 out.push('\n');
             }
-            Ok(out)
+            // P6-267 (hub note 28 Nov 10:52, Adrian's rule): no MAC address or serial leaves the machine.
+            Ok(hide_ids(&out))
         }
         // P6-211 (C-166 step 2): the dashboard as the OS already logged it (`kw tabloul …` rows); no new board command.
         "tablou" => {
@@ -492,4 +493,54 @@ pub fn channel_command(nr: u32, text: &str, sig: Option<&str>, root: &str, term:
             text.trim()
         )),
     }
+}
+
+/// P6-267 (hub note 28 Nov 10:52, Adrian's rule of 25 Nov: no serials or MAC addresses in the hub): `text` with every
+/// MAC address (six hex pairs joined by `:` or `-`) written as `xx:xx:xx:xx:xx:xx` and every value after the word
+/// `serial` (`serial ABC123`, `serial: …`, `serial=…`; at least 4 letters / digits with a digit among them) written as
+/// `(ascuns)`. Everything else stays byte for byte.
+pub fn hide_ids(text: &str) -> String {
+    let b = text.as_bytes();
+    let hex = |i: usize| b.get(i).is_some_and(|c| c.is_ascii_hexdigit());
+    let mac_at = |i: usize| {
+        if i + 17 > b.len() || (i > 0 && (b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b':' || b[i - 1] == b'-')) {
+            return false;
+        }
+        let sep = b[i + 2];
+        if sep != b':' && sep != b'-' {
+            return false;
+        }
+        // A longer run of pairs (an EUI-64) is hidden too: its first six pairs are.
+        (0..6).all(|g| hex(i + 3 * g) && hex(i + 3 * g + 1) && (g == 5 || b[i + 3 * g + 2] == sep))
+    };
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < b.len() {
+        if mac_at(i) {
+            out.push_str("xx:xx:xx:xx:xx:xx");
+            i += 17;
+            continue;
+        }
+        // "serial", then spaces / ':' / '=', then a value with a digit.
+        if b.len() - i >= 6 && b[i..i + 6].eq_ignore_ascii_case(b"serial") && (i == 0 || !b[i - 1].is_ascii_alphanumeric()) {
+            let mut j = i + 6;
+            while j < b.len() && matches!(b[j], b' ' | b':' | b'=' | b'\t') {
+                j += 1;
+            }
+            let mut k = j;
+            while k < b.len() && (b[k].is_ascii_alphanumeric() || matches!(b[k], b'-' | b'_' | b'.')) {
+                k += 1;
+            }
+            if j > i + 6 && k - j >= 4 && b[j..k].iter().any(|c| c.is_ascii_digit()) {
+                out.push_str(&text[i..j]);
+                out.push_str("(ascuns)");
+                i = k;
+                continue;
+            }
+        }
+        let ch = text[i..].chars().next().unwrap_or(' ');
+        out.push(ch);
+        i += ch.len_utf8().max(1);
+    }
+    out
 }

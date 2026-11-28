@@ -9178,6 +9178,8 @@ const KT_513_MM_V8: &str = "kt antrenare-513 mm_tc_v8 in pas (1/0)";
 const KT_513_MM_V8_LONG_K: &str = "kt antrenare-513 garda suma lunga in pas (1/0)";
 /// P6-265: 1 when #513's fast mixed step ran with `attn_fwd_tc` on the aligned forward attention (`--pas-atentie-fwd-tc`).
 const KT_513_ATTN_FWD_TC: &str = "kt antrenare-513 attn_fwd_tc in pas (1/0)";
+/// P6-266: 1 when #513's fast mixed step ran with the residual backward glued (`--pas-rezidual-lipit`, `ln_back_res`).
+const KT_513_FUSED_BACK_FAST: &str = "kt antrenare-513 rezidual lipit in pas rapid (1/0)";
 const KT_513_OUTSIDE_US: &str = "kt antrenare-513 us in afara placii pe pas (median)";
 /// P6-217 (note C-157_P2zg step 2): two batch slots (1/0), and the parts of steps 2..N sent while the step before ran.
 const KT_513_SLOTS: &str = "kt antrenare-513 doua locuri de lot (1/0)";
@@ -9565,6 +9567,18 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         None
     };
     let choice = mm_choice.as_ref().map(|(c, ..)| *c);
+    // P6-266 (`--pas-rezidual-lipit`, cyber-gpu `e127322`, note C-168_P5a): the fast mixed step (`--pas-v8`) planned with
+    // `with_fused_back` too: per layer `ln_back_res` (the os-415 program, in `check_programs`) instead of `ln_back` +
+    // `vadd` at "ln2" and "ln1", 24 launches fewer at #513. Only on the mixed fast path (not with `--lipit-placi`,
+    // `--mm-alegere` or the race); `v8_maps` is checked once it exists.
+    let fused_fast = mm_tile
+        && !fused_tile
+        && !mm_choice_on
+        && !super::gpu_tur::TRAIN_513_RACE_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst)
+        && super::gpu_tur::TRAIN_513_MIXED_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst)
+        && super::gpu_tur::TRAIN_MIXED_FAST_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst)
+        && super::gpu_tur::TRAIN_513_MM_V8_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst)
+        && super::gpu_tur::TRAIN_513_FUSED_BACK_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     let build = |base: u64| -> GpuResult<Plan> {
         let pl = if tiles3 { Plan::new_tiles3(a, bsz, tl, x0, base)? } else { Plan::new(a, bsz, tl, x0, base)? };
         let pl = if fused_tile {
@@ -9576,9 +9590,12 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         } else {
             pl
         };
-        Ok(if colsum_split { pl.with_colsum_split() } else { pl })
+        let pl = if colsum_split { pl.with_colsum_split() } else { pl };
+        // P6-266: the order of cyber-gpu T306 (`new_tiles3` + `with_mm_tile` + `with_colsum_split` + `with_fused_back`).
+        Ok(if fused_fast { pl.with_fused_back() } else { pl })
     };
     journal.push(Event::Value { what: KT_513_TILES3, value: tiles3 as u32 });
+    journal.push(Event::Value { what: KT_513_FUSED_BACK_FAST, value: fused_fast as u32 });
     journal.push(Event::Value { what: KT_513_MM_TILE, value: mm_tile as u32 });
     journal.push(Event::Value { what: KT_513_COLSUM_SPLIT, value: colsum_split as u32 });
     journal.push(Event::Value { what: KT_513_FUSED_TILE, value: fused_tile as u32 });
@@ -9668,7 +9685,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         return Err(bad("antrenare-513: planul nu are doua locuri de lot"));
     }
     if plan0.bytes() > arena_bytes || plan0.mm_tile() != mm_tile || plan0.colsum_split() != colsum_split || plan0.programs() != probe_programs
-        || plan0.fused_back() != fused_tile || plan0.fused_gelu() != fused_tile || plan0.mm_tile_gelu() != fused_tile
+        || plan0.fused_back() != (fused_tile || fused_fast) || plan0.fused_gelu() != fused_tile || plan0.mm_tile_gelu() != fused_tile
         || (plan0.fused_programs(), plan0.mm_tile_gelu_programs()) != probe_extra
         || (plan0.mm_choice().copied(), plan0.mm_choice_programs().to_vec()) != probe_choice
         || plan0.mm_choice().copied() != choice
@@ -9738,6 +9755,18 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         let pm = map_vram(st, program_map_bytes(prog.code().len() as u64))?;
         put_bytes(st.mem.writer_mut(), pm.pa, prog.code())?;
         progs.push((prog, pm));
+    }
+    // P6-266: the packer does not check that `ln_back_res` is loaded (note C-168_P5a): the OS does, before any launch.
+    if fused_fast {
+        let want = [ts::Prog::LnBackRes];
+        if plan0.fused_programs() != &want[..] || !progs.iter().any(|(q, _)| *q == ts::Prog::LnBackRes) {
+            lines.push(format!("{}: kronos --gpu: {}: NU A RULAT: ln_back_res nu e in programele planului sau nu e incarcat (--pas-rezidual-lipit); nimic trimis", p, tag));
+            return Err(bad("antrenare-513: ln_back_res lipsa"));
+        }
+        lines.push(format!(
+            "{}: kronos --gpu: {}: reziduurile inapoi lipite in pasul rapid (--pas-rezidual-lipit, nota Cyber-GPU C-168_P5a): Plan::with_fused_back, pe fiecare strat ln_back_res in locul lui ln_back + vadd la ln2 si ln1; ln_back_res incarcat (SHA-256 verificat, acelasi binar ca os-415); {} lansari pe pas (Cyber-GPU, DEDUS: 24 mai putin, 491 -> 467 pe placa; vadd 48 -> 24, ln_back 25 -> 1, ln_back_res 24; oracolul lot 2 ACELEASI NUMERE; castig 0,5-1,1 ms pe pas la lot 6)",
+            p, tag, n_launch
+        ));
     }
     // P6-198: `mm_tc` beside the step's programs, with the tail page like every program (P6-194); SHA-256 checked.
     let tc_map: Option<Mapping> = if mixed {
@@ -9905,6 +9934,11 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         None
     };
     journal.push(Event::Value { what: KT_513_MM_V8, value: u32::from(v8_maps.is_some()) });
+    // P6-266: `--pas-rezidual-lipit` only on the step `--pas-v8` built (the cycle sets both; the test build may not).
+    if fused_fast && v8_maps.is_none() {
+        lines.push(format!("{}: kronos --gpu: {}: NU A RULAT: --pas-rezidual-lipit cere pasul rapid cu --pas-v8; nimic trimis", p, tag));
+        return Err(bad("antrenare-513: rezidual lipit fara --pas-v8"));
+    }
     // P6-264 (`--pas-v8-garda`, cyber-gpu `9805b5c`, note C-168_P3e): products with k >= LONG_K_OS503 back on v7.
     let long_k = if v8_maps.is_some() && super::gpu_tur::TRAIN_513_MM_V8_LONG_K_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
         lines.push(format!(

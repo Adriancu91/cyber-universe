@@ -567,6 +567,8 @@ fn veghe(s: &Settings, minutes: u64, tours: u64, analysis: u64) -> i64 {
         let state = agent_tools::run("stare", &Value::Null, &s.root, None, &mut term, &mut note).unwrap_or_else(|e| e);
         let log_input = Value::object([("n", Value::Number(String::from("60")))]);
         let log = agent_tools::run("citeste_jurnal", &log_input, &s.root, None, &mut term, &mut note).unwrap_or_else(|e| e);
+        // P6-267: the log's lines (the network driver writes its MAC at start) without MAC addresses or serials.
+        let log = agent_tools::hide_ids(&log);
         let fresh = new_lines(&seen, &log);
         let important = important_lines(&log, 5);
         seen = log;
@@ -604,11 +606,13 @@ fn veghe(s: &Settings, minutes: u64, tours: u64, analysis: u64) -> i64 {
             state,
             if important.is_empty() { String::from("(niciunul)\n") } else { important }
         );
+        // P6-267: and once more over the whole page (Claude's summary may quote a line).
+        let md = agent_tools::hide_ids(&md);
         let day = stamp[..10].replace('-', "");
         let day_file = format!("{}/agent-{}.txt", dir, day);
         let mut day_log = claude_api::read_file(&day_file, 900 * 1024).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
         if analyse {
-            day_log.push_str(&format!("{} tura {}{}\n{}\n", stamp, tour, if alerts.is_empty() { "" } else { " ABATERE" }, last.as_ref().map_or("", |l| l.1.as_str())));
+            day_log.push_str(&agent_tools::hide_ids(&format!("{} tura {}{}\n{}\n", stamp, tour, if alerts.is_empty() { "" } else { " ABATERE" }, last.as_ref().map_or("", |l| l.1.as_str()))));
             for l in &alerts {
                 day_log.push_str(&format!("  abatere: {}\n", l.trim()));
             }

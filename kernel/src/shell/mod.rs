@@ -1770,6 +1770,23 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu pas-atentie-fwd-tc-sim: exista doar in build-ul de test (pe stick o porneste doar ciclul, test-placa ... --pas-v8 ...)\n");
         }
+        Some("pas-rezidual-lipit-sim") => {
+            // P6-266 (cyber-gpu note C-168_P5a): test build only, with `pas-v8-sim on`: `ln_back_res` in the fast step.
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TRAIN_513_FUSED_BACK_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu pas-rezidual-lipit-sim: pornita (SIMULARE: in pasul mixt rapid #513, cu --pas-v8, ln_back_res in locul lui ln_back + vadd)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TRAIN_513_FUSED_BACK_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu pas-rezidual-lipit-sim: oprita\n");
+                }
+                _ => out!("folosire: gpu pas-rezidual-lipit-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu pas-rezidual-lipit-sim: exista doar in build-ul de test (pe stick o porneste doar ciclul, test-placa ... --pas-v8 ...)\n");
+        }
         Some("pas-v8-sim") => {
             // P6-259 (cyber-gpu note C-168_P3b): test build only: with `pas-v5/v6/v7-sim on`, the aligned products on
             // the program `mm_tc_v8::pick` gives (v7 / v8 / v8n; on the stick only the cycle, `test-placa … --pas-v7 --pas-v8`).

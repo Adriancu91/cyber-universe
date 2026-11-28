@@ -1947,6 +1947,8 @@ fn test_agent() {
     assert!(signed.starts_with("7 incepe ") && signed.contains("\n7 refuz ") && !signed.contains("6 incepe"), "test: agent-placa.txt: {}", signed);
     info!("test: agent: comanda semnata 7 a trecut poarta nucleului, board_test a refuzat-o (fara cheile lui Adrian)");
     let _ = fs::remove("/etc/hub/permite-live-placa");
+    // P6-267: a MAC address and a serial in the log must not reach the live page or the day file.
+    warn!("test: net de proba pentru agent: placa pornita, MAC 52:54:00:ab:cd:ef, disc serial WD-123456789");
     warn!("test: abatere de proba pentru agent veghe (P6-204)");
     // P6-209: `0 2 0` = Claude's summary on every tour (2 requests); then `0 2` = the settings' 10 minutes: the first
     // tour with the summary, the second only the raw numbers (1 request more).
@@ -1959,10 +1961,20 @@ fn test_agent() {
     let live = core::str::from_utf8(&live).expect("test: os-agent.md nu e text");
     assert!(live.contains("## Cifrele brute (la fiecare 0 min, fara Claude)") && live.contains("urmatorul la abatere"), "test: os-agent.md (cifre): {}", live);
     let days = fs::list("/etc/agent/live").expect("test: dosarul live");
+    // P6-267: the test line is there, hidden (the day file keeps tour 1's deviations).
+    let hidden = days.iter().any(|(name, _)| {
+        let t = fs::read_all(&alloc::format!("/etc/agent/live/{}", name)).unwrap_or_default();
+        let t = core::str::from_utf8(&t).unwrap_or("");
+        t.contains("MAC xx:xx:xx:xx:xx:xx, disc serial (ascuns)")
+    });
+    assert!(hidden, "test: agent veghe: randul de proba cu MAC / serial nu apare ascuns");
+    info!("test: agent veghe: adresa MAC si serialul ascunse (P6-267)");
     info!("test: agent veghe: {} fisiere in /etc/agent/live", days.len());
     for (name, _) in days.iter() {
         let text = fs::read_all(&alloc::format!("/etc/agent/live/{}", name)).unwrap_or_default();
         assert!(!text.windows(6).any(|w| w == b"tok-gh" || w == b"sk-tes"), "test: un secret in {}", name);
+        // P6-267: no MAC address (the test one, nor QEMU's 52:54:00:…) and no serial.
+        assert!(!text.windows(8).any(|w| w == b"52:54:00") && !text.windows(9).any(|w| w == b"123456789"), "test: o adresa MAC sau un serial in {}", name);
     }
     let ledger = fs::read_all("/etc/agent/cheltuieli.txt").expect("test: registrul");
     info!("test: agent veghe: {} cereri veghe in registru", core::str::from_utf8(&ledger).unwrap_or("").matches(" veghe intrare=").count());
