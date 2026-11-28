@@ -4724,8 +4724,20 @@ fn mm_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
     // blocks per unit instead of one — each compared bit for bit with `mm_tc` at today's step.
     let comps: Vec<(Comp, Option<u32>)> = if super::gpu_tur::MM_TC_64K_IN_CYCLE.load(ord) {
         let mut v = alloc::vec![(Comp::Tc, Some(STEP_64K))];
+        // P6-270 (C-168 p.3, cyber-gpu `92b0017`, note P3f): `--mm-tc-doar-64k` drops the companions' plain runs (the step
+        // launches everything at 64 KiB, so no figure in use is lost) to keep the chain inside the max-speed window.
+        let only_64k = super::gpu_tur::MM_TC_ONLY_64K_IN_CYCLE.load(ord);
+        if only_64k {
+            lines.push(format!(
+                "{}: kronos --gpu: proba mm_tc: insotitorii doar la treapta 64 KiB (--mm-tc-doar-64k, nota Cyber-GPU P3f): {} rulari simple sarite, mm_tc ramane simplu + @64k (reperul pentru biti)",
+                p,
+                comps.len()
+            ));
+        }
         for c in comps {
-            v.push((c, None));
+            if !only_64k {
+                v.push((c, None));
+            }
             v.push((c, Some(STEP_64K)));
         }
         v

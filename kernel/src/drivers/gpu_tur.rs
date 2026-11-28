@@ -452,6 +452,12 @@ pub static MM_TC_64K_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atom
 /// `gpu mm-tc-sim onv6dxdw`. Off by default.
 pub static MM_TC_DXDW_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-270 (C-168 p.3, cyber-gpu `92b0017`, note P3f): with [`MM_TC_64K_IN_CYCLE`], every companion of `mm_tc` runs only at
+/// the 64 KiB step (no plain run), so the long chain (os-505: 2 429 s) fits the 1 800 s max-speed window; `mm_tc` itself
+/// keeps both runs (the reference for the bits). Set only by the cycle (`test-placa … --mm-tc-64k [--mm-tc-dxdw]
+/// --mm-tc-doar-64k`) and, in the test build, by `gpu mm-tc-sim onv8r64`. Off by default.
+pub static MM_TC_ONLY_64K_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-141 (C-161 point 4, cyber-gpu `44a4d16`): the tiled training attention probe (`attn_fwd_tile` → `attn_back_tile0`
 /// → `attn_back_tile` on 5 small sets + `atentie-513-b4` for the time), after `kronos --gpu`'s texts (and after the other
 /// probes when asked). Set only by the cycle when the list asks for it (`test-placa … --atentie-placi`) and, in the test

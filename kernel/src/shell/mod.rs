@@ -1001,6 +1001,18 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::MM_TC_DXDW_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu mm-tc-sim: pornita cu mm_tc_v4, mm_tc_v5, mm_tc_v6, mm_tc_v7, treapta 64 KiB si seturile inapoi qkv-513-dx / -dw (SIMULARE: dupa texte, mm_tc, mm_tc_v4, mm_tc_v5, mm_tc_v6, mm_tc_v7 pe seturile aliniate, si @64k, comparate bit cu bit; qkv-513, qkv-513-dx si qkv-513-dw doar urcate si recitite)\n");
                 }
+                // P6-270: `onv8r64` = `onv8r` with the companions only at the 64 KiB step (`--mm-tc-doar-64k`, note P3f).
+                Some("onv8r64") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::MM_TC_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::MM_TC_V6_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::MM_TC_V7_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::MM_TC_V8_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::MM_TC_V8R_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::MM_TC_64K_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::MM_TC_DXDW_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::MM_TC_ONLY_64K_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu mm-tc-sim: pornita cu mm_tc_v6, mm_tc_v7, mm_tc_v8, mm_tc_v8n, mm_tc_v8r doar la treapta 64 KiB si seturile inapoi qkv-513-dx / -dw (SIMULARE: dupa texte, mm_tc simplu + @64k, companionii doar @64k pe seturile aliniate, comparati bit cu bit; qkv-513, qkv-513-dx si qkv-513-dw doar urcate si recitite)\n");
+                }
                 // P6-263: `onv8r` = `onv8` plus `mm_tc_v8r` right after v8 / v8n (the P3d board row's companions).
                 Some("onv8r") if args.len() == 2 => {
                     crate::drivers::gpu_tur::MM_TC_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
@@ -1048,9 +1060,10 @@ fn gpu(args: &[&str]) {
                     crate::drivers::gpu_tur::MM_TC128_V4_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::MM_TC_64K_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     crate::drivers::gpu_tur::MM_TC_DXDW_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    crate::drivers::gpu_tur::MM_TC_ONLY_64K_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
                     out!("gpu mm-tc-sim: oprita\n");
                 }
-                _ => out!("folosire: gpu mm-tc-sim on|on128|onpf|onv4|onv5|onv6|onv6dxdw|onv7|onv8|onv8r|on128v4|on64k|off\n"),
+                _ => out!("folosire: gpu mm-tc-sim on|on128|onpf|onv4|onv5|onv6|onv6dxdw|onv7|onv8|onv8r|onv8r64|on128v4|on64k|off\n"),
             }
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu mm-tc-sim: exista doar in build-ul de test (pe stick proba mm_tc o porneste doar ciclul, test-placa --mm-tc)\n");
