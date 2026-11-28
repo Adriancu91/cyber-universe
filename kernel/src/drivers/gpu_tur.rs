@@ -692,6 +692,18 @@ pub static TRAIN_513_MM_V7_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync
 /// (`test-placa … --pas-v7 --pas-v8`) and, in the test build, by `gpu pas-v8-sim on`. Off by default.
 pub static TRAIN_513_MM_V8_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-264 (C-168 p.3, cyber-gpu `9805b5c`, note `C-168_P3e_garda-suma-lunga.md`): with [`TRAIN_513_MM_V8_IN_CYCLE`], every
+/// aligned product of #513's fast mixed step with a sum of k >= `mm_tc_v8::LONG_K_OS503` goes back to `mm_tc_v7`
+/// (`pack_mixed_fast_attn8k`). Set only by the cycle (`test-placa … --pas-v8 --pas-v8-garda`) and, in the test build, by
+/// `gpu pas-v8-garda-sim on`. Off by default.
+pub static TRAIN_513_MM_V8_LONG_K_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// P6-265 (C-168 p.4 step 4, cyber-gpu `9428d34`, note `C-168_P4b_atentie-fwd-tc-in-pas.md`): with
+/// [`TRAIN_513_MM_V8_IN_CYCLE`], every aligned `attn_fwd_tile3` launch of #513's fast mixed step on `attn_fwd_tc`
+/// (`attn_fwd_tc_list` + `pack_mixed_fast_attn9`). Set only by the cycle (`test-placa … --pas-v8 [--pas-v8-garda]
+/// --pas-atentie-fwd-tc`) and, in the test build, by `gpu pas-atentie-fwd-tc-sim on`. Off by default.
+pub static TRAIN_513_ATTN_FWD_TC_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-260 (C-168 p.2 not done yet): in a board cycle (`test-placa …`) the training runs (`--antrenare-mini`,
 /// `--antrenare-513`) take the synthetic batches (MT19937, seed 0x164) even when Kronos's real data is on the stick
 /// (`/usb/antrenare/date`, copied on 27 nov for C-168): the board's verdicts (the #513 oracle tables, the mixed step's

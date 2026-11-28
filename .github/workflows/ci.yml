@@ -40,6 +40,7 @@ jobs:
   # P6-254: twenty-three QEMU parts (teste-1..23): with `kronos-gpu-antrenare-513-v7` the table gives ~57.4 min out of 22, ~54.9 out of 23.
   # P6-259: twenty-four QEMU parts (teste-1..24): with `kronos-gpu-antrenare-513-v8` the table gives ~57.3 min out of 23, ~54.9 out of 24.
   # P6-260: twenty-five QEMU parts (teste-1..25): run 46093194728 — teste-21 cut at the 60-minute limit (table ~55.0 min out of 24); ~52.8 out of 25.
+  # P6-264 / P6-265: twenty-six QEMU parts (teste-1..26): with `kronos-gpu-antrenare-513-atentie-fwd-tc` the table gives ~55.8 min out of 25, ~53.7 out of 26.
   build-and-test:
     name: ${{ matrix.parte }}
     runs-on: ubuntu-24.04
@@ -49,55 +50,57 @@ jobs:
       matrix:
         include:
           - parte: teste-1
-            shard: 1/25
+            shard: 1/26
           - parte: teste-2
-            shard: 2/25
+            shard: 2/26
           - parte: teste-3
-            shard: 3/25
+            shard: 3/26
           - parte: teste-4
-            shard: 4/25
+            shard: 4/26
           - parte: teste-5
-            shard: 5/25
+            shard: 5/26
           - parte: teste-6
-            shard: 6/25
+            shard: 6/26
           - parte: teste-7
-            shard: 7/25
+            shard: 7/26
           - parte: teste-8
-            shard: 8/25
+            shard: 8/26
           - parte: teste-9
-            shard: 9/25
+            shard: 9/26
           - parte: teste-10
-            shard: 10/25
+            shard: 10/26
           - parte: teste-11
-            shard: 11/25
+            shard: 11/26
           - parte: teste-12
-            shard: 12/25
+            shard: 12/26
           - parte: teste-13
-            shard: 13/25
+            shard: 13/26
           - parte: teste-14
-            shard: 14/25
+            shard: 14/26
           - parte: teste-15
-            shard: 15/25
+            shard: 15/26
           - parte: teste-16
-            shard: 16/25
+            shard: 16/26
           - parte: teste-17
-            shard: 17/25
+            shard: 17/26
           - parte: teste-18
-            shard: 18/25
+            shard: 18/26
           - parte: teste-19
-            shard: 19/25
+            shard: 19/26
           - parte: teste-20
-            shard: 20/25
+            shard: 20/26
           - parte: teste-21
-            shard: 21/25
+            shard: 21/26
           - parte: teste-22
-            shard: 22/25
+            shard: 22/26
           - parte: teste-23
-            shard: 23/25
+            shard: 23/26
           - parte: teste-24
-            shard: 24/25
+            shard: 24/26
           - parte: teste-25
-            shard: 25/25
+            shard: 25/26
+          - parte: teste-26
+            shard: 26/26
           - parte: stick
             shard: ""
     steps:
@@ -201,6 +204,9 @@ jobs:
           if tools/verifica-rand.py "test-placa --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --atentie-tc16 --pas-v5 --pas-v6 --pas-v8"; then echo "randul gresit a fost primit"; exit 1; fi
           tools/verifica-rand.py "test-placa --tablou-viteza --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --atentie-tc16 --atentie-v4 --atentie-ds --pas-v5 --pas-v6 --pas-v7 --pas-v8"
           tools/verifica-rand.py "test-placa --tablou-viteza --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --lot-prin-ram --doua-locuri --atentie-tc16 --atentie-v4 --atentie-ds --pas-v5 --pas-v6 --pas-v7 --pas-v8 --lot-513 6"
+          # P6-264 / P6-265: the long-sum guard and attn_fwd_tc in the step only after --pas-v8.
+          tools/verifica-rand.py "test-placa --tablou-viteza --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --atentie-tc16 --atentie-v4 --atentie-ds --pas-v5 --pas-v6 --pas-v7 --pas-v8 --pas-v8-garda --pas-atentie-fwd-tc"
+          if tools/verifica-rand.py "test-placa --tablou-viteza --antrenare-mini --vram --antrenare-513 --placi3 --mm-placi --colsum-impartit --mixt-513 --mixt-513-rapid --atentie-tc16 --atentie-v4 --atentie-ds --pas-v5 --pas-v6 --pas-v7 --pas-atentie-fwd-tc"; then echo "randul gresit a fost primit"; exit 1; fi
           tools/verifica-rand.py --din docs/STATE.md --ultima-sesiune
 
       - name: Acces la cyber-gpu (repo privat, B-005)

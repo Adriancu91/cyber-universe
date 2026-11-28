@@ -1736,6 +1736,40 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu atentie-tc16-sim: exista doar in build-ul de test (pe stick o porneste doar ciclul, test-placa ... --mixt-513-rapid --atentie-tc16)\n");
         }
+        Some("pas-v8-garda-sim") => {
+            // P6-264 (cyber-gpu note C-168_P3e): test build only, with `pas-v8-sim on`: the long-sum guard.
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TRAIN_513_MM_V8_LONG_K_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu pas-v8-garda-sim: pornita (SIMULARE: in pasul mixt rapid #513, cu --pas-v8, produsele cu suma k >= 8 192 inapoi pe mm_tc_v7)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TRAIN_513_MM_V8_LONG_K_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu pas-v8-garda-sim: oprita\n");
+                }
+                _ => out!("folosire: gpu pas-v8-garda-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu pas-v8-garda-sim: exista doar in build-ul de test (pe stick o porneste doar ciclul, test-placa ... --pas-v8 ...)\n");
+        }
+        Some("pas-atentie-fwd-tc-sim") => {
+            // P6-265 (cyber-gpu note C-168_P4b): test build only, with `pas-v8-sim on`: `attn_fwd_tc` in the step.
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TRAIN_513_ATTN_FWD_TC_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu pas-atentie-fwd-tc-sim: pornita (SIMULARE: in pasul mixt rapid #513, cu --pas-v8, atentia inainte aliniata pe attn_fwd_tc)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TRAIN_513_ATTN_FWD_TC_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu pas-atentie-fwd-tc-sim: oprita\n");
+                }
+                _ => out!("folosire: gpu pas-atentie-fwd-tc-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu pas-atentie-fwd-tc-sim: exista doar in build-ul de test (pe stick o porneste doar ciclul, test-placa ... --pas-v8 ...)\n");
+        }
         Some("pas-v8-sim") => {
             // P6-259 (cyber-gpu note C-168_P3b): test build only: with `pas-v5/v6/v7-sim on`, the aligned products on
             // the program `mm_tc_v8::pick` gives (v7 / v8 / v8n; on the stick only the cycle, `test-placa … --pas-v7 --pas-v8`).
