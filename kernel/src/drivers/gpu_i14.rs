@@ -8190,7 +8190,7 @@ fn map_fast_tc(st: &mut GpuState) -> GpuResult<(Mapping, Mapping)> {
 /// P6-215: how many launches of one step got each `mm_tc` program (`mm_tc_v4 135, mm_tc_pf 12`).
 fn fast_picks_text(picks: &[Option<nvidia_ga104::train_step::TcPick>]) -> String {
     use nvidia_ga104::train_step::TcPick;
-    let parts: Vec<String> = [TcPick::V8, TcPick::V8n, TcPick::V7, TcPick::V6, TcPick::V5, TcPick::V4, TcPick::Pf, TcPick::Tc, TcPick::Gelu, TcPick::AttnTc, TcPick::AttnTc16, TcPick::AttnTc16V4, TcPick::AttnTc16V4pf, TcPick::Attn0Tc, TcPick::Attn0TcV4, TcPick::AttnFwdTc]
+    let parts: Vec<String> = [TcPick::V8, TcPick::V8n, TcPick::V7, TcPick::V8Gelu, TcPick::V8nGelu, TcPick::V7Gelu, TcPick::V6, TcPick::V5, TcPick::V4, TcPick::Pf, TcPick::Tc, TcPick::Gelu, TcPick::AttnTc, TcPick::AttnTc16, TcPick::AttnTc16V4, TcPick::AttnTc16V4pf, TcPick::Attn0Tc, TcPick::Attn0TcV4, TcPick::AttnFwdTc]
         .iter()
         .map(|k| (k, picks.iter().filter(|x| **x == Some(*k)).count()))
         .filter(|(_, n)| *n > 0)
@@ -9180,6 +9180,8 @@ const KT_513_MM_V8_LONG_K: &str = "kt antrenare-513 garda suma lunga in pas (1/0
 const KT_513_ATTN_FWD_TC: &str = "kt antrenare-513 attn_fwd_tc in pas (1/0)";
 /// P6-266: 1 when #513's fast mixed step ran with the residual backward glued (`--pas-rezidual-lipit`, `ln_back_res`).
 const KT_513_FUSED_BACK_FAST: &str = "kt antrenare-513 rezidual lipit in pas rapid (1/0)";
+/// P6-268: 1 when #513's fast mixed step ran with GELU' glued into the fast products' tail (`--pas-gelu-lipit`).
+const KT_513_FUSED_GELU_FAST: &str = "kt antrenare-513 gelu lipit in pas rapid (1/0)";
 const KT_513_OUTSIDE_US: &str = "kt antrenare-513 us in afara placii pe pas (median)";
 /// P6-217 (note C-157_P2zg step 2): two batch slots (1/0), and the parts of steps 2..N sent while the step before ran.
 const KT_513_SLOTS: &str = "kt antrenare-513 doua locuri de lot (1/0)";
@@ -9579,6 +9581,9 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         && super::gpu_tur::TRAIN_MIXED_FAST_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst)
         && super::gpu_tur::TRAIN_513_MM_V8_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst)
         && super::gpu_tur::TRAIN_513_FUSED_BACK_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    // P6-268 (`--pas-gelu-lipit`, cyber-gpu `ea9bfd9`, note C-168_P5b): over P5a, `with_fused_gelu` too: "proj-dX" writes
+    // GELU's backward itself (`MixedLaunch::TcGelu`), on the GELU' variant of the fast program it would take anyway.
+    let gelu_fast_on = fused_fast && super::gpu_tur::TRAIN_513_FUSED_GELU_FAST_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
     let build = |base: u64| -> GpuResult<Plan> {
         let pl = if tiles3 { Plan::new_tiles3(a, bsz, tl, x0, base)? } else { Plan::new(a, bsz, tl, x0, base)? };
         let pl = if fused_tile {
@@ -9592,10 +9597,13 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         };
         let pl = if colsum_split { pl.with_colsum_split() } else { pl };
         // P6-266: the order of cyber-gpu T306 (`new_tiles3` + `with_mm_tile` + `with_colsum_split` + `with_fused_back`).
-        Ok(if fused_fast { pl.with_fused_back() } else { pl })
+        let pl = if fused_fast { pl.with_fused_back() } else { pl };
+        // P6-268: the order of cyber-gpu T307 (P5a's plan + `with_fused_gelu`).
+        Ok(if gelu_fast_on { pl.with_fused_gelu() } else { pl })
     };
     journal.push(Event::Value { what: KT_513_TILES3, value: tiles3 as u32 });
     journal.push(Event::Value { what: KT_513_FUSED_BACK_FAST, value: fused_fast as u32 });
+    journal.push(Event::Value { what: KT_513_FUSED_GELU_FAST, value: gelu_fast_on as u32 });
     journal.push(Event::Value { what: KT_513_MM_TILE, value: mm_tile as u32 });
     journal.push(Event::Value { what: KT_513_COLSUM_SPLIT, value: colsum_split as u32 });
     journal.push(Event::Value { what: KT_513_FUSED_TILE, value: fused_tile as u32 });
@@ -9685,7 +9693,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         return Err(bad("antrenare-513: planul nu are doua locuri de lot"));
     }
     if plan0.bytes() > arena_bytes || plan0.mm_tile() != mm_tile || plan0.colsum_split() != colsum_split || plan0.programs() != probe_programs
-        || plan0.fused_back() != (fused_tile || fused_fast) || plan0.fused_gelu() != fused_tile || plan0.mm_tile_gelu() != fused_tile
+        || plan0.fused_back() != (fused_tile || fused_fast) || plan0.fused_gelu() != (fused_tile || gelu_fast_on) || plan0.mm_tile_gelu() != fused_tile
         || (plan0.fused_programs(), plan0.mm_tile_gelu_programs()) != probe_extra
         || (plan0.mm_choice().copied(), plan0.mm_choice_programs().to_vec()) != probe_choice
         || plan0.mm_choice().copied() != choice
@@ -9758,8 +9766,10 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     }
     // P6-266: the packer does not check that `ln_back_res` is loaded (note C-168_P5a): the OS does, before any launch.
     if fused_fast {
-        let want = [ts::Prog::LnBackRes];
-        if plan0.fused_programs() != &want[..] || !progs.iter().any(|(q, _)| *q == ts::Prog::LnBackRes) {
+        // P6-268: with `--pas-gelu-lipit` also `mm_train_gelu` (note C-168_P5b: never launched in the mixed step, where it
+        // becomes `TcGelu`; loaded anyway, harmless).
+        let want: &[ts::Prog] = if gelu_fast_on { &[ts::Prog::LnBackRes, ts::Prog::MmTrainGelu] } else { &[ts::Prog::LnBackRes] };
+        if plan0.fused_programs() != want || !progs.iter().any(|(q, _)| *q == ts::Prog::LnBackRes) {
             lines.push(format!("{}: kronos --gpu: {}: NU A RULAT: ln_back_res nu e in programele planului sau nu e incarcat (--pas-rezidual-lipit); nimic trimis", p, tag));
             return Err(bad("antrenare-513: ln_back_res lipsa"));
         }
@@ -9939,6 +9949,34 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         lines.push(format!("{}: kronos --gpu: {}: NU A RULAT: --pas-rezidual-lipit cere pasul rapid cu --pas-v8; nimic trimis", p, tag));
         return Err(bad("antrenare-513: rezidual lipit fara --pas-v8"));
     }
+    // P6-268 (`--pas-gelu-lipit`, cyber-gpu `ea9bfd9`, note C-168_P5b): the three GELU' variants of the fast products
+    // (SHA-256 first: `mm_tc_fast_gelu::check` and the sums of the note), each with the tail page like every program.
+    let gelu_maps = if gelu_fast_on {
+        use nvidia_ga104::mm_tc_fast_gelu as fg;
+        const NOTE: [&str; 3] = [
+            "ed8082045e2255d96dbcca4f42bb44bb4e199a91e57e1dc03e95d57c756a10c2",
+            "d0d061ce7711fdf9f1a9e56ea52162fc84752f23f53987e78907be694af05417",
+            "81e6e4ab50145e08dfa04627a0fc46afb17ba331087f547ddb7bd3c3fa259714",
+        ];
+        let codes = [fg::MM_TC_V7_GELU, fg::MM_TC_V8_GELU, fg::MM_TC_V8N_GELU];
+        if fg::check().is_err() || codes.iter().zip(NOTE).any(|(c, h)| sha256_hex(c) != h) {
+            lines.push(format!("{}: kronos --gpu: {}: SHA-256 al lui mm_tc_v7_gelu / mm_tc_v8_gelu / mm_tc_v8n_gelu nu e cel din nota: nimic trimis", p, tag));
+            return Err(bad("pasul mixt rapid: SHA-256 mm_tc_*_gelu gresit"));
+        }
+        let mut m: Vec<Mapping> = Vec::new();
+        for c in codes {
+            let pm = map_vram(st, program_map_bytes(c.len() as u64))?;
+            put_bytes(st.mem.writer_mut(), pm.pa, c)?;
+            m.push(pm);
+        }
+        lines.push(format!(
+            "{}: kronos --gpu: {}: GELU' lipit in coada inmultirilor rapide (--pas-gelu-lipit, nota Cyber-GPU C-168_P5b): Plan::with_fused_gelu peste --pas-rezidual-lipit, proj-dX+gelu pe varianta GELU a programului ales (mm_tc_v7_gelu {} / mm_tc_v8_gelu {} / mm_tc_v8n_gelu {} registre), SHA-256 verificate, pack_mixed_fast_attn10; {} lansari pe pas (Cyber-GPU, scris inainte: 12 mai putin, 467 -> 455 pe placa, gelu_tr 24 -> 12; lot 6 12 x mm_tc_v8n_gelu, lot 2 12 x mm_tc_v8_gelu; oracolul lot 2 ACELEASI NUMERE; castig 1,0-1,8 ms pe pas la lot 6, sub 0,5 ms = RATAT)",
+            p, tag, fg::REGISTERS_V7, fg::REGISTERS_V8, fg::REGISTERS_V8N, n_launch
+        ));
+        Some((m[0], m[1], m[2]))
+    } else {
+        None
+    };
     // P6-264 (`--pas-v8-garda`, cyber-gpu `9805b5c`, note C-168_P3e): products with k >= LONG_K_OS503 back on v7.
     let long_k = if v8_maps.is_some() && super::gpu_tur::TRAIN_513_MM_V8_LONG_K_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
         lines.push(format!(
@@ -10047,6 +10085,10 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     }
     // P6-265: `attn_fwd_tc` too.
     maps.extend(fwd_map);
+    // P6-268: the three GELU' variants too.
+    if let Some((a, b, c)) = gelu_maps {
+        maps.extend([a, b, c]);
+    }
     maps.extend(recs.iter().flatten().copied());
     let mut sys = alloc::vec![ctx.sys.clone(), stage.clone()];
     sys.extend(ctls.iter().cloned());
@@ -10280,7 +10322,11 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                         // P6-264 / P6-265: the long-sum guard and `attn_fwd_tc` (`pack_mixed_fast_attn9`; both 0 = `attn8`).
                         let fwd_va = fwd_map.as_ref().map_or(0, |m| m.va);
                         let attn9 = long_k != 0 || fwd_va != 0;
+                        // P6-268: with `--pas-gelu-lipit`, the GELU' variants (`pack_mixed_fast_attn10`; `None` = `attn9`).
+                        let gf = gelu_maps.as_ref().map(|(a, b, c)| ts::GeluFast { v7: a.va, v8: b.va, v8n: c.va });
                         let (zb, qmds, pk) = match (&via, attn, fast) {
+                            (Some(v), at, f) if v8p.is_some() && gf.is_some() => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn10(&ml, prog_va, &progs, v5va, v6va, v7va, v8p, long_k, fwd_va, gf, at, f, attn0, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
+                            (None, at, f) if v8p.is_some() && gf.is_some() => ts::pack_mixed_fast_attn10(&ml, prog_va, &progs, v5va, v6va, v7va, v8p, long_k, fwd_va, gf, at, f, attn0, Some(MIXED_FAST_STEP), ctl.va)?,
                             (Some(v), at, f) if v8p.is_some() && attn9 => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn9(&ml, prog_va, &progs, v5va, v6va, v7va, v8p, long_k, fwd_va, at, f, attn0, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
                             (None, at, f) if v8p.is_some() && attn9 => ts::pack_mixed_fast_attn9(&ml, prog_va, &progs, v5va, v6va, v7va, v8p, long_k, fwd_va, at, f, attn0, Some(MIXED_FAST_STEP), ctl.va)?,
                             (Some(v), at, f) if v8p.is_some() => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn8(&ml, prog_va, &progs, v5va, v6va, v7va, v8p, at, f, attn0, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
@@ -10298,6 +10344,11 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                             (Some(v), at, _) => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn(&ml, prog_va, &progs, at, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
                             (None, at, _) => ts::pack_mixed_fast_attn(&ml, prog_va, &progs, at, Some(MIXED_FAST_STEP), ctl.va)?,
                         };
+                        // P6-268: `mm_tc_gelu` is not loaded (gelu: 0): a product that would fall on it is refused before
+                        // anything is sent (at #513 there is none; note C-168_P5b).
+                        if pk.contains(&Some(ts::TcPick::Gelu)) {
+                            return Err(bad("antrenare-513: NU A RULAT: un produs proj-dX+gelu nealiniat ar cadea pe mm_tc_gelu, neincarcat (--pas-gelu-lipit); nimic trimis"));
+                        }
                         picks = Some(fast_picks_text(&pk));
                         (zb, qmds, pk)
                     }

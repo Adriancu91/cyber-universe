@@ -487,6 +487,10 @@ impl SimGpu {
             cp.register_program_with_needs(nvidia_ga104::mm_tc_v8::MM_TC_V8N, c::mm_tc_v8n_on_cpu, c::MM_TC_V8N_NEEDS);
             // P6-263 (C-168 p.3 follow-up, cyber-gpu `35cdbd3`, note P3d): `mm_tc_v8r` (v8, fewer register copies, 120 registers).
             cp.register_program_with_needs(nvidia_ga104::mm_tc_v8r::MM_TC_V8R, c::mm_tc_v8r_on_cpu, c::MM_TC_V8R_NEEDS);
+            // P6-268 (C-168 p.5 P5b, cyber-gpu `ea9bfd9`): the GELU' variants of v7 / v8 / v8n (their K loop, `mm_tc_gelu`'s store; aligned only).
+            cp.register_program_with_needs(nvidia_ga104::mm_tc_fast_gelu::MM_TC_V7_GELU, c::mm_tc_v7_gelu_on_cpu, c::MM_TC_V7_GELU_NEEDS);
+            cp.register_program_with_needs(nvidia_ga104::mm_tc_fast_gelu::MM_TC_V8_GELU, c::mm_tc_v8_gelu_on_cpu, c::MM_TC_V8_GELU_NEEDS);
+            cp.register_program_with_needs(nvidia_ga104::mm_tc_fast_gelu::MM_TC_V8N_GELU, c::mm_tc_v8n_gelu_on_cpu, c::MM_TC_V8N_GELU_NEEDS);
             // P6-212 (C-157 p.2, cyber-gpu `abb4f73`): `mm_tc128_v4`, `mm_tc128` with 128-bit reads (refuses misaligned).
             cp.register_program_with_needs(nvidia_ga104::mm_tc128_v4::MM_TC128_V4, c::mm_tc128_v4_on_cpu, c::MM_TC128_V4_NEEDS);
             // P6-141 (C-161 point 4): the three tiled training attention programs (blocks of 256, 32–37 KiB shared).
