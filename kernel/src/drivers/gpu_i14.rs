@@ -8190,7 +8190,7 @@ fn map_fast_tc(st: &mut GpuState) -> GpuResult<(Mapping, Mapping)> {
 /// P6-215: how many launches of one step got each `mm_tc` program (`mm_tc_v4 135, mm_tc_pf 12`).
 fn fast_picks_text(picks: &[Option<nvidia_ga104::train_step::TcPick>]) -> String {
     use nvidia_ga104::train_step::TcPick;
-    let parts: Vec<String> = [TcPick::V8, TcPick::V8n, TcPick::V7, TcPick::V8Gelu, TcPick::V8nGelu, TcPick::V7Gelu, TcPick::V6, TcPick::V5, TcPick::V4, TcPick::Pf, TcPick::Tc, TcPick::Gelu, TcPick::AttnTc, TcPick::AttnTc16, TcPick::AttnTc16V4, TcPick::AttnTc16V4pf, TcPick::Attn0Tc, TcPick::Attn0TcV4, TcPick::AttnFwdTc]
+    let parts: Vec<String> = [TcPick::V8, TcPick::V8r, TcPick::V8n, TcPick::V7, TcPick::V8Gelu, TcPick::V8nGelu, TcPick::V7Gelu, TcPick::V6, TcPick::V5, TcPick::V4, TcPick::Pf, TcPick::Tc, TcPick::Gelu, TcPick::AttnTc, TcPick::AttnTc16, TcPick::AttnTc16V4, TcPick::AttnTc16V4pf, TcPick::Attn0Tc, TcPick::Attn0TcV4, TcPick::AttnFwdTc]
         .iter()
         .map(|k| (k, picks.iter().filter(|x| **x == Some(*k)).count()))
         .filter(|(_, n)| *n > 0)
@@ -9182,6 +9182,8 @@ const KT_513_ATTN_FWD_TC: &str = "kt antrenare-513 attn_fwd_tc in pas (1/0)";
 const KT_513_FUSED_BACK_FAST: &str = "kt antrenare-513 rezidual lipit in pas rapid (1/0)";
 /// P6-268: 1 when #513's fast mixed step ran with GELU' glued into the fast products' tail (`--pas-gelu-lipit`).
 const KT_513_FUSED_GELU_FAST: &str = "kt antrenare-513 gelu lipit in pas rapid (1/0)";
+/// P6-269: 1 when #513's fast mixed step ran with `mm_tc_v8r` where the rule picks v8 (`--pas-v8r`).
+const KT_513_MM_V8R: &str = "kt antrenare-513 mm_tc_v8r in pas (1/0)";
 const KT_513_OUTSIDE_US: &str = "kt antrenare-513 us in afara placii pe pas (median)";
 /// P6-217 (note C-157_P2zg step 2): two batch slots (1/0), and the parts of steps 2..N sent while the step before ran.
 const KT_513_SLOTS: &str = "kt antrenare-513 doua locuri de lot (1/0)";
@@ -9949,6 +9951,25 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         lines.push(format!("{}: kronos --gpu: {}: NU A RULAT: --pas-rezidual-lipit cere pasul rapid cu --pas-v8; nimic trimis", p, tag));
         return Err(bad("antrenare-513: rezidual lipit fara --pas-v8"));
     }
+    // P6-269 (`--pas-v8r`, cyber-gpu `d6e4c7c`, note C-168_P3g): `mm_tc_v8r` (the os-505 binary, SHA-256 first, with the
+    // tail page) on every product the wave rule gives v8 (`pack_mixed_fast_attn11`).
+    let v8r_map = if v8_maps.is_some() && super::gpu_tur::TRAIN_513_MM_V8R_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+        use nvidia_ga104::mm_tc_v8r as m8r;
+        if sha256_hex(m8r::MM_TC_V8R) != m8r::MM_TC_V8R_SHA256 {
+            lines.push(format!("{}: kronos --gpu: {}: SHA-256 al lui mm_tc_v8r nu e cel din nota: nimic trimis", p, tag));
+            return Err(bad("pasul mixt rapid: SHA-256 mm_tc_v8r gresit"));
+        }
+        let m = map_vram(st, program_map_bytes(m8r::MM_TC_V8R.len() as u64))?;
+        put_bytes(st.mem.writer_mut(), m.pa, m8r::MM_TC_V8R)?;
+        lines.push(format!(
+            "{}: kronos --gpu: {}: produsele pe care regula le da lui mm_tc_v8 merg pe mm_tc_v8r (--pas-v8r, nota Cyber-GPU C-168_P3g): {} registre, SHA-256 verificat (acelasi binar ca proba os-505), pack_mixed_fast_attn11; impartirea v7 / v8 / v8n neschimbata (Cyber-GPU, scris inainte: lot 2 24 lansari v8 -> v8r, 12 cu --pas-gelu-lipit, mm_tc_v8r 5,2-5,4 ms fata de mm_tc_v8 5,81 ms in os-507, pasul -0,4...-0,7 ms; lot 6 neschimbat, 0 v8)",
+            p, tag, m8r::REGISTERS
+        ));
+        Some(m)
+    } else {
+        None
+    };
+    journal.push(Event::Value { what: KT_513_MM_V8R, value: u32::from(v8r_map.is_some()) });
     // P6-268 (`--pas-gelu-lipit`, cyber-gpu `ea9bfd9`, note C-168_P5b): the three GELU' variants of the fast products
     // (SHA-256 first: `mm_tc_fast_gelu::check` and the sums of the note), each with the tail page like every program.
     let gelu_maps = if gelu_fast_on {
@@ -10085,6 +10106,8 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     }
     // P6-265: `attn_fwd_tc` too.
     maps.extend(fwd_map);
+    // P6-269: `mm_tc_v8r` too.
+    maps.extend(v8r_map);
     // P6-268: the three GELU' variants too.
     if let Some((a, b, c)) = gelu_maps {
         maps.extend([a, b, c]);
@@ -10324,7 +10347,11 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
                         let attn9 = long_k != 0 || fwd_va != 0;
                         // P6-268: with `--pas-gelu-lipit`, the GELU' variants (`pack_mixed_fast_attn10`; `None` = `attn9`).
                         let gf = gelu_maps.as_ref().map(|(a, b, c)| ts::GeluFast { v7: a.va, v8: b.va, v8n: c.va });
+                        // P6-269: with `--pas-v8r`, v8r where the rule picks v8 (`pack_mixed_fast_attn11`; 0 = `attn10`).
+                        let v8rva = v8r_map.as_ref().map_or(0, |m| m.va);
                         let (zb, qmds, pk) = match (&via, attn, fast) {
+                            (Some(v), at, f) if v8p.is_some() && v8rva != 0 => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn11(&ml, prog_va, &progs, v5va, v6va, v7va, v8p, long_k, fwd_va, gf, v8rva, at, f, attn0, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
+                            (None, at, f) if v8p.is_some() && v8rva != 0 => ts::pack_mixed_fast_attn11(&ml, prog_va, &progs, v5va, v6va, v7va, v8p, long_k, fwd_va, gf, v8rva, at, f, attn0, Some(MIXED_FAST_STEP), ctl.va)?,
                             (Some(v), at, f) if v8p.is_some() && gf.is_some() => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn10(&ml, prog_va, &progs, v5va, v6va, v7va, v8p, long_k, fwd_va, gf, at, f, attn0, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,
                             (None, at, f) if v8p.is_some() && gf.is_some() => ts::pack_mixed_fast_attn10(&ml, prog_va, &progs, v5va, v6va, v7va, v8p, long_k, fwd_va, gf, at, f, attn0, Some(MIXED_FAST_STEP), ctl.va)?,
                             (Some(v), at, f) if v8p.is_some() && attn9 => nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn9(&ml, prog_va, &progs, v5va, v6va, v7va, v8p, long_k, fwd_va, at, f, attn0, Some(MIXED_FAST_STEP), ctx.copy_va, ctl.va, v)?,

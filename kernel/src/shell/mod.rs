@@ -1770,6 +1770,23 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu pas-atentie-fwd-tc-sim: exista doar in build-ul de test (pe stick o porneste doar ciclul, test-placa ... --pas-v8 ...)\n");
         }
+        Some("pas-v8r-sim") => {
+            // P6-269 (cyber-gpu note C-168_P3g): test build only, with `pas-v8-sim on`: `mm_tc_v8r` where the rule picks v8.
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TRAIN_513_MM_V8R_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu pas-v8r-sim: pornita (SIMULARE: in pasul mixt rapid #513, cu --pas-v8, mm_tc_v8r unde regula alege mm_tc_v8)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TRAIN_513_MM_V8R_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu pas-v8r-sim: oprita\n");
+                }
+                _ => out!("folosire: gpu pas-v8r-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu pas-v8r-sim: exista doar in build-ul de test (pe stick o porneste doar ciclul, test-placa ... --pas-v8 ... --pas-v8r)\n");
+        }
         Some("pas-gelu-lipit-sim") => {
             // P6-268 (cyber-gpu note C-168_P5b): test build only, with `pas-rezidual-lipit-sim on`: GELU' glued into the
             // fast products' tail (`mm_tc_v7_gelu` / `mm_tc_v8_gelu` / `mm_tc_v8n_gelu`).

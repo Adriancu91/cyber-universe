@@ -717,6 +717,11 @@ pub static TRAIN_513_FUSED_BACK_IN_CYCLE: core::sync::atomic::AtomicBool = core:
 /// `gpu pas-gelu-lipit-sim on`. Off by default.
 pub static TRAIN_513_FUSED_GELU_FAST_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-269 (C-168 p.3 P3g, cyber-gpu `d6e4c7c`, note `C-168_P3g_v8r-in-pas.md`): with [`TRAIN_513_MM_V8_IN_CYCLE`], every
+/// product the wave rule gives `mm_tc_v8` goes on `mm_tc_v8r` (the os-505 binary, 120 registers; `pack_mixed_fast_attn11`).
+/// Set only by the cycle (`test-placa … --pas-v8 … --pas-v8r`) and, in the test build, by `gpu pas-v8r-sim on`. Off by default.
+pub static TRAIN_513_MM_V8R_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-260 (C-168 p.2 not done yet): in a board cycle (`test-placa …`) the training runs (`--antrenare-mini`,
 /// `--antrenare-513`) take the synthetic batches (MT19937, seed 0x164) even when Kronos's real data is on the stick
 /// (`/usb/antrenare/date`, copied on 27 nov for C-168): the board's verdicts (the #513 oracle tables, the mixed step's
