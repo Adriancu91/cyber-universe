@@ -730,3 +730,162 @@ fn what_twin(fused: bool, recompute: bool) -> &'static str {
         (true, true) => "lipirea + recalcularea",
     }
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// P6-261 (C-168 p.2, Adrian 27 Nov): #513's step on the board with Kronos's real data (`test-placa … --date-reale`).
+// The start weights are #513's own (the golden step's `initiale/`, copied by Kronos onto the stick, S143), the batches
+// are drawn from the real data with seed 1134 exactly as PyTorch drew them for oracle S141, AdamW lr 5e-5, and the
+// first 10 steps are judged against S141's numbers (hub `integrare/kronos/ORACOL_DATE_REALE/`).
+// ---------------------------------------------------------------------------------------------------------------------
+
+/// P6-261: where the #513 start weights are read from (`E:\antrenare\pas_de_aur_513\` on the stick).
+pub const REAL_513_DIR: &str = "/usb/antrenare/pas_de_aur_513";
+/// P6-261: SHA-256 of #513's golden-step `reteta.json` (hub `integrare/kronos/PAS_DE_AUR.md`); its `fisiere` hold the
+/// SHA-256 of every `initiale/<tensor>.f32`.
+pub const REAL_513_RETETA_SHA256: &str = "ce4150b8825ee9c4467385d09fd01fa21d5617de5600a98f900f17514fe3d0a4";
+/// P6-261: S141's batch seed (`torch.Generator().manual_seed(1134)`, never re-seeded between steps).
+pub const REAL_SEED: u64 = 1134;
+/// P6-261: S141's learning rate (AdamW, betas 0.9 / 0.999, eps 1e-8, weight decay 0.1, clipping at 1.0).
+pub const REAL_LR: f64 = 5e-5;
+/// P6-261: the whole string of Kronos's real data (27 chunks of #651's line), as S141 read it.
+pub const REAL_TOTAL: u64 = 1_341_190_791;
+
+/// P6-261: S141's window start positions (`loturi.i64`), steps 1 and 10, for batch 2 and batch 6.
+pub const S141_POS_L2: [[u64; 2]; 2] = [[279_145_862, 518_214_093], [349_038_848, 311_586_698]];
+pub const S141_POS_L6: [[u64; 6]; 2] = [
+    [279_145_862, 518_214_093, 915_399_206, 352_686_366, 165_793_673, 1_052_688_074],
+    [827_259_421, 577_202_571, 686_667_938, 1_242_539_425, 141_568_109, 1_173_008_144],
+];
+
+// P6-261: S141's (loss, gradient norm before clipping) on steps 1–10, from each run's `rezultat.json` (7 decimals).
+pub const S141_L2_F32: [(f32, f32); 10] = [(1.0678667, 3.6899831), (0.5959122, 3.5857217), (1.4264183, 4.5876637), (0.8467280, 3.6507270), (1.3362308, 4.4231362), (2.6823983, 5.4591880), (2.4211724, 5.3960729), (1.1506605, 4.6883221), (1.8086476, 4.3971443), (1.1361495, 3.8986859)];
+pub const S141_L6_F32: [(f32, f32); 10] = [(1.0106624, 2.1880777), (1.5823275, 2.5983753), (1.7407957, 2.7161884), (1.5395293, 2.5801136), (1.3127360, 2.5609803), (1.7563977, 2.8845179), (1.2398208, 2.2579005), (0.9854081, 2.1894217), (1.6435226, 2.4508343), (1.9417509, 2.8716474)];
+pub const S141_L2_BF16: [(f32, f32); 10] = [(1.0678424, 3.6896188), (0.5963951, 3.5856006), (1.4264663, 4.5864458), (0.8474367, 3.6489942), (1.3369986, 4.4323411), (2.6835480, 5.4603543), (2.4208565, 5.3974271), (1.1502817, 4.6658287), (1.8083915, 4.3938999), (1.1357737, 3.8876646)];
+pub const S141_L6_BF16: [(f32, f32); 10] = [(1.0107665, 2.1878641), (1.5829521, 2.6025033), (1.7412577, 2.7168643), (1.5396791, 2.5752683), (1.3118843, 2.5613229), (1.7562867, 2.8716738), (1.2395828, 2.2537894), (0.9852831, 2.1857972), (1.6430936, 2.4465814), (1.9415709, 2.8685601)];
+
+/// P6-261: S141's F32 and bf16 tables for a batch (only 2 and 6 were measured).
+pub fn s141_tables(numar: usize) -> Option<(&'static [(f32, f32); 10], &'static [(f32, f32); 10])> {
+    match numar {
+        2 => Some((&S141_L2_F32, &S141_L2_BF16)),
+        6 => Some((&S141_L6_F32, &S141_L6_BF16)),
+        _ => None,
+    }
+}
+
+/// P6-261: the window positions of `steps` steps of `numar` drawn as S141 drew them (one generator seeded 1134,
+/// `torch.randint(total - context - 1, (numar,))` per step).
+pub fn real_positions(total: u64, numar: usize, context: u64, steps: usize) -> Result<Vec<Vec<u64>>, String> {
+    let mut g = Mt19937::new(REAL_SEED);
+    (0..steps).map(|_| date_bucati::positions(&mut g, total, numar, context)).collect()
+}
+
+/// P6-261: steps 1 and 10 of [`real_positions`] on the real string against S141's `loturi.i64` (batch 2 and 6).
+pub fn real_positions_match(numar: usize, pos: &[Vec<u64>]) -> bool {
+    let want: [&[u64]; 2] = match numar {
+        2 => [&S141_POS_L2[0], &S141_POS_L2[1]],
+        6 => [&S141_POS_L6[0], &S141_POS_L6[1]],
+        _ => return false,
+    };
+    pos.len() == 10 && pos[0] == want[0] && pos[9] == want[1]
+}
+
+/// P6-261: the check of the check (no data needed): the generator draws S141's positions for batch 2 and 6 on the real
+/// string's length, and a wrong seed or a wrong length does not.
+pub fn real_positions_self_test() -> bool {
+    let ok = |numar: usize| real_positions(REAL_TOTAL, numar, 512, 10).is_ok_and(|p| real_positions_match(numar, &p));
+    let wrong_total = real_positions(REAL_TOTAL - 1, 2, 512, 10).is_ok_and(|p| real_positions_match(2, &p));
+    let wrong_seed = {
+        let mut g = Mt19937::new(REAL_SEED + 1);
+        let p: Vec<Vec<u64>> = (0..10).filter_map(|_| date_bucati::positions(&mut g, REAL_TOTAL, 2, 512).ok()).collect();
+        real_positions_match(2, &p)
+    };
+    date_bucati::generator_matches_torch() && ok(2) && ok(6) && !wrong_total && !wrong_seed && !real_positions_match(4, &[])
+}
+
+/// P6-261: the batches of `--date-reale`: Kronos's data (checked as Kronos checks it), S141's positions (steps 1 and 10
+/// checked against `loturi.i64` before anything is used), the windows read across chunks. Only batch 2 or 6 × 512.
+pub fn real_batches_513(numar: usize, context: usize, steps: usize) -> Result<BoardBatches, String> {
+    if s141_tables(numar).is_none() || context != 512 || steps != 10 {
+        return Err(format!("--date-reale: oracolul S141 are doar lot 2 sau 6 x 512, 10 pasi (cerut {} x {}, {} pasi)", numar, context, steps));
+    }
+    let dir = date_bucati::DIRS
+        .iter()
+        .find(|d| crate::fs::size(&format!("{}/index.json", d)).is_ok())
+        .ok_or_else(|| format!("--date-reale: LIPSESC DATELE: nu exista {}/index.json sau {}/index.json", date_bucati::DIRS[0], date_bucati::DIRS[1]))?;
+    let ix = date_bucati::read_index(dir)?;
+    if ix.total != REAL_TOTAL {
+        return Err(format!("--date-reale: {} are {} simboluri, nu {} (datele lui S141)", dir, ix.total, REAL_TOTAL));
+    }
+    let c = date_bucati::check(&ix, None);
+    if !c.ok() {
+        return Err(format!("--date-reale: datele din {} nu trec verificarea lui Kronos ({} probleme)", dir, c.wrong.len()));
+    }
+    if !date_bucati::generator_matches_torch() {
+        return Err(String::from("--date-reale: generatorul nu da valorile PyTorch de referinta"));
+    }
+    let pos = real_positions(ix.total, numar, context as u64, steps)?;
+    if !real_positions_match(numar, &pos) {
+        return Err(format!("--date-reale: pozitiile trase (pasul 1 {:?}) nu sunt cele din loturi.i64 al lui S141", pos[0]));
+    }
+    let mut batches = Vec::with_capacity(steps);
+    for (k, p) in pos.iter().enumerate() {
+        let (x, y) = date_bucati::batch(&ix, p, context as u64)?;
+        if let Some(bad) = x.iter().chain(y.iter()).find(|&&s| s as usize >= VOCAB) {
+            return Err(format!("--date-reale: lotul pasului {}: simbolul {} e in afara vocabularului ({})", k + 1, bad, VOCAB));
+        }
+        batches.push((x, y));
+    }
+    Ok(BoardBatches {
+        synthetic: false,
+        source: format!(
+            "datele reale ale lui Kronos din {} ({} simboluri, verificate ca la Kronos, amprenta {}; samanta 1134 ca S141, pozitiile pasilor 1 si 10 = loturi.i64)",
+            dir, ix.total, date_bucati::fingerprint(&ix)
+        ),
+        batches,
+    })
+}
+
+/// P6-261: the SHA-256 of `initiale/<name>.f32` written in `reteta.json` → `fisiere` (the first `"sha256"` after the
+/// file's key; the file's own SHA-256 is checked first, so its shape is known).
+fn reteta_file_sha<'a>(reteta: &'a str, file: &str) -> Option<&'a str> {
+    let key = format!("\"{}\": {{", file);
+    let at = reteta.find(&key)? + key.len();
+    let s = at + reteta[at..].find("\"sha256\": \"")? + "\"sha256\": \"".len();
+    reteta.get(s..s + 64)
+}
+
+/// P6-261: #513's start weights from [`REAL_513_DIR`]: `reteta.json` (its SHA-256 = [`REAL_513_RETETA_SHA256`]), then
+/// every tensor of `a` in `named_parameters()` order from `initiale/<name>.f32`, its size and its SHA-256 (from
+/// `reteta.json`) checked. Returns the weights and a line saying what was read.
+pub fn real_weights_513(a: &Arch) -> Result<(Vec<Vec<f32>>, String), String> {
+    use super::antrenare::sha256_hex;
+    let path = format!("{}/reteta.json", REAL_513_DIR);
+    let rb = crate::fs::read_all(&path)
+        .map_err(|_| format!("--date-reale: LIPSESC GREUTATILE #513: nu exista {} (Kronos le copiaza pe stick in E:\\antrenare\\pas_de_aur_513\\, S143)", path))?;
+    let sum = sha256_hex(&rb);
+    if sum != REAL_513_RETETA_SHA256 {
+        return Err(format!("--date-reale: {} are SHA-256 {}, nu cel al pasului de aur #513 ({}...)", path, sum, &REAL_513_RETETA_SHA256[..16]));
+    }
+    let reteta = String::from_utf8_lossy(&rb).into_owned();
+    let mut out = Vec::new();
+    let mut bytes = 0u64;
+    for t in a.tensors() {
+        let file = format!("initiale/{}.f32", t.name);
+        let want = reteta_file_sha(&reteta, &file).ok_or_else(|| format!("--date-reale: reteta.json nu are {}", file))?;
+        let p = format!("{}/{}", REAL_513_DIR, file);
+        let b = crate::fs::read_all(&p).map_err(|e| format!("--date-reale: nu pot citi {}: {}", p, e.message()))?;
+        if b.len() != 4 * t.elements() {
+            return Err(format!("--date-reale: {}: {} octeti, astept {}", p, b.len(), 4 * t.elements()));
+        }
+        if sha256_hex(&b) != want {
+            return Err(format!("--date-reale: {}: SHA-256 nu e cel din reteta.json", p));
+        }
+        bytes += b.len() as u64;
+        out.push(b.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect());
+    }
+    let line = format!(
+        "greutatile #513 de pornire din {}: {} tensori, {} MiB, reteta.json SHA-256 {}... si fiecare fisier verificate",
+        REAL_513_DIR, out.len(), bytes >> 20, &REAL_513_RETETA_SHA256[..16]
+    );
+    Ok((out, line))
+}

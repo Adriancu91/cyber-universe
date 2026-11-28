@@ -603,6 +603,12 @@ pub static TRAIN_513_SM_STEP_IN_CYCLE: core::sync::atomic::AtomicBool = core::sy
 /// by `gpu antrenare-mini-sim lot513 <N>`. If the arena of N does not fit, the step falls back to 2 and says why.
 pub static TRAIN_513_BATCH: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
+/// P6-261 (C-168 p.2): #513's step on Kronos's real data (`test-placa … --antrenare-513 … --date-reale`): #513's own start
+/// weights from the stick (`antrenare_mini::REAL_513_DIR`), the batches drawn with seed 1134 as oracle S141, AdamW lr 5e-5,
+/// judged against S141 on steps 1–10. Without the weights or the data the step does not run (the reason by name). Set
+/// only by the cycle and, in the test build, by `gpu antrenare-mini-sim date-reale`. Off by default.
+pub static TRAIN_513_REAL_DATA_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-196 (cyber-gpu `214be67` + `0c74b3c`, note C-165_cursa-mm steps 2-3; os-416 race): with
 /// [`TRAIN_513_MM_TILE_IN_CYCLE`], #513's `mm_train` shapes on the variant the os-416 race picked
 /// (`Plan::with_mm_choice`). Set only by the cycle (`test-placa … --mm-placi [--colsum-impartit] --mm-alegere`) and, in

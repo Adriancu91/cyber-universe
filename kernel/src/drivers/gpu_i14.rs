@@ -9477,11 +9477,40 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
         journal.push(Event::Value { what: KT_513_BATCH, value: bsz as u32 });
     }
-    let data = match am::board_batches(bsz, tl, steps) {
-        Ok(d) => d,
-        Err(e) => {
-            lines.push(format!("{}: kronos --gpu: {}: NU A RULAT: {}; nimic trimis", p, tag, e));
-            return Err(bad("antrenare-513: datele"));
+    // P6-261 (C-168 p.2): with `--date-reale`, #513's own start weights from the stick and the batches of oracle S141
+    // (seed 1134, positions checked against `loturi.i64`), AdamW lr 5e-5; without them the step does not run.
+    let real = super::gpu_tur::TRAIN_513_REAL_DATA_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst);
+    let lr = if real { am::REAL_LR } else { 1e-3 };
+    let mut real_w: Option<Vec<Vec<f32>>> = None;
+    let data = if real {
+        let self_ok = am::real_positions_self_test();
+        lines.push(format!(
+            "{}: kronos --gpu: {}: --date-reale (C-168 p.2, P6-261): tragerea S141 (samanta 1134, lot 2 si 6, pasii 1 si 10 = loturi.i64) verificata fara date: {}",
+            p, tag, if self_ok { "MERGE" } else { "GRESIT" }
+        ));
+        let got = if self_ok {
+            am::real_weights_513(&a).and_then(|(w, line)| am::real_batches_513(bsz, tl, steps).map(|d| (w, line, d)))
+        } else {
+            Err(String::from("--date-reale: generatorul nu trage pozitiile S141"))
+        };
+        match got {
+            Ok((w, line, d)) => {
+                lines.push(format!("{}: kronos --gpu: {}: {}; AdamW lr 5e-5 (reteta S141)", p, tag, line));
+                real_w = Some(w);
+                d
+            }
+            Err(e) => {
+                lines.push(format!("{}: kronos --gpu: {}: NU A RULAT: {}; nimic trimis", p, tag, e));
+                return Ok(false);
+            }
+        }
+    } else {
+        match am::board_batches(bsz, tl, steps) {
+            Ok(d) => d,
+            Err(e) => {
+                lines.push(format!("{}: kronos --gpu: {}: NU A RULAT: {}; nimic trimis", p, tag, e));
+                return Err(bad("antrenare-513: datele"));
+            }
         }
     };
     if ts::check_programs().is_err() {
@@ -9517,7 +9546,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     let mm_choice = if mm_choice_on {
         // The step's shapes, from a probe of the `with_mm_tile` plan (the choice keeps the shapes and the order).
         let pl = if tiles3 { Plan::new_tiles3(a, bsz, tl, x0, nvidia_ga104::mmu::VA_BASE)? } else { Plan::new(a, bsz, tl, x0, nvidia_ga104::mmu::VA_BASE)? };
-        let adam0 = AdamW { lr: 1e-3, beta1: 0.9, beta2: 0.999, eps: 1e-8, weight_decay: 0.1, t: 0, m: Vec::new(), v: Vec::new() };
+        let adam0 = AdamW { lr, beta1: 0.9, beta2: 0.999, eps: 1e-8, weight_decay: 0.1, t: 0, m: Vec::new(), v: Vec::new() };
         let list = pl.with_mm_tile().resident()?.step(Recipe::AdamW513, &adam0, 1)?;
         let forms = nvidia_ga104::mm_train_variants::forms(&list);
         if mm_model_on {
@@ -9652,8 +9681,8 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     journal.push(Event::Value { what: KT_513_LAUNCHES, value: n_launch as u32 });
     journal.push(Event::Value { what: KT_513_SUBS, value: n_parts as u32 });
     lines.push(format!(
-        "{}: kronos --gpu: {} ({}): modelul vocabular {}, context {}, E {}, {} capete, {} straturi ({} greutati), lot {} x {}, AdamW lr 1e-3, taiere 1,0; {}; {}{}{}{}{}; {} programe (SHA-256 verificate), {} lansari pe pas in {} trimiteri (cel mult {} lansari pe trimitere); arena {} MiB in VRAM (VRAM liber {} MiB), urcata o data pe bucati de {} KiB; {} pasi{}",
-        p, tag, label, a.vocab, a.ctx, a.n_emb, a.heads, a.layers, count, bsz, tl, data.source,
+        "{}: kronos --gpu: {} ({}): modelul vocabular {}, context {}, E {}, {} capete, {} straturi ({} greutati), lot {} x {}, AdamW lr {:e}, taiere 1,0; {}; {}{}{}{}{}; {} programe (SHA-256 verificate), {} lansari pe pas in {} trimiteri (cel mult {} lansari pe trimitere); arena {} MiB in VRAM (VRAM liber {} MiB), urcata o data pe bucati de {} KiB; {} pasi{}",
+        p, tag, label, a.vocab, a.ctx, a.n_emb, a.heads, a.layers, count, bsz, tl, lr, data.source,
         if tiles3 { "atentia pe placi gen 3 (attn_fwd_tile3, attn_back_tile0_3, attn_back_tile_3; --placi3)" } else { "atentia de baza (attn_fwd, attn_back)" },
         if mixed { "; inmultirile pe mm_tc (pasul mixt, S = 16384; --mixt-513 in locul lui mm_train_tile de la --mm-placi)" } else if mm_tile { "; inmultirile pe mm_train_tile (blocuri 256 x 64 x 64; --mm-placi)" } else { "" },
         if fused_tile { "; lipit (ln_back_res, GELU' in proj-dX) cu proj-dX+gelu pe mm_train_tile_gelu (--lipit-placi)" } else { "" },
@@ -9975,7 +10004,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         }
     };
     // 1. The arena, once, in pieces: the start weights, the first batch, the segment lists, the result words.
-    let params0 = am::initial(&a, 0);
+    let params0 = real_w.take().unwrap_or_else(|| am::initial(&a, 0));
     let w_vas: Vec<u64> = (0..params0.len()).map(|i| plan0.t(plan0.w, i)).collect();
     let u = |v: &[u32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
     let mut small = plan0.batch_uploads(x0, y0)?;
@@ -10063,8 +10092,8 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
     };
     // The optimizer's numbers only (the step's list does not read the CPU's m, v: they live in the arena) — on the
     // board no GiB-sized m, v on the heap.
-    let adam = AdamW { lr: 1e-3, beta1: 0.9, beta2: 0.999, eps: 1e-8, weight_decay: 0.1, t: 0, m: Vec::new(), v: Vec::new() };
-    let mut oracle = (!board).then(|| (params0.clone(), AdamW::new(&params0, 1e-3, 0.9, 0.999, 1e-8, 0.1)));
+    let adam = AdamW { lr, beta1: 0.9, beta2: 0.999, eps: 1e-8, weight_decay: 0.1, t: 0, m: Vec::new(), v: Vec::new() };
+    let mut oracle = (!board).then(|| (params0.clone(), AdamW::new(&params0, lr, 0.9, 0.999, 1e-8, 0.1)));
     // P6-205: the step's shared-memory step, picked once on step 1's list (every step has the same programs; checked
     // again on every step's list before it is packed).
     let sm_step: Option<u32> = if sm_step_on {
@@ -10910,11 +10939,33 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
             p, tag, if o.pass { "ACELEASI NUMERE (mixt)" } else { "DIFERA" }, o.worst.0, o.worst.1, o.last.0, o.last.1
         ));
     }
-    let oracle = if mixed { mixed_check } else { f32_check };
+    // P6-261: on the real data, the verdict is oracle S141 (F32) on all 10 steps, with the tolerances written before the
+    // run (the F32 step 1e-3; the mixed step as on the synthetic batches: the loss 1e-3, the norm 2e-3); PyTorch's own
+    // bf16 run is shown beside it (how far bf16 alone moves the numbers).
+    let real_check = if real && board {
+        am::s141_tables(bsz).map(|(f32_t, bf16_t)| {
+            let o = oracle_513_check(&losses, &norms, f32_t, f32_t.len(), if mixed { TOL_MIXED } else { (TOL, TOL) });
+            let b = oracle_513_check(&losses, &norms, bf16_t, bf16_t.len(), (f64::INFINITY, f64::INFINITY));
+            let (bl, bn): (Vec<f32>, Vec<f32>) = bf16_t.iter().copied().unzip();
+            let tb = oracle_513_check(&bl, &bn, f32_t, f32_t.len(), (f64::INFINITY, f64::INFINITY));
+            lines.push(format!(
+                "{}: kronos --gpu: {}: date reale fata de oracolul S141 F32 (lot {}, samanta 1134, lr 5e-5): {} — pasii 1-10: abaterea pierderii {:.1e}, a normei {:.1e} (toleranta {}); pasul 1 {:.6} (S141 {:.6}); fata de S141 bf16: {:.1e} / {:.1e}; bf16 al PyTorch fata de F32: {:.1e} / {:.1e}",
+                p, tag, bsz, if !o.pass { "DIFERA" } else if mixed { "ACELEASI NUMERE (mixt)" } else { "ACELEASI NUMERE" }, o.worst.0, o.worst.1,
+                if mixed { "pierderea 1e-3, norma 2e-3: pasul mixt" } else { "1e-3" },
+                losses.first().copied().unwrap_or(f32::NAN), f32_t[0].0, b.worst.0, b.worst.1, tb.worst.0, tb.worst.1
+            ));
+            o
+        })
+    } else {
+        None
+    };
+    let oracle = if real_check.is_some() { real_check } else if mixed { mixed_check } else { f32_check };
     if let Some(o) = &oracle {
         journal.push(Event::Value { what: KT_513_ORACLE, value: u32::from(o.pass) });
     }
-    let pass = if let Some(o) = &oracle {
+    let pass = if real && board {
+        oracle.as_ref().is_some_and(|o| o.pass) && bad_w == 0 && losses.len() == steps
+    } else if let Some(o) = &oracle {
         start_ok && o.pass && bad_w == 0 && losses.len() == steps
     } else if board {
         start_ok && falls && bad_w == 0 && losses.len() == steps
@@ -10950,6 +11001,7 @@ fn train_513_resident<V: Mmio + ?Sized, K: Clock + ?Sized>(
         "{}: kronos --gpu: {}: {}",
         p, tag,
         match (pass, board) {
+            (true, true) if real => "TRECE (pasul #513 pe datele reale, din greutatile #513 = oracolul S141 in pasii 1-10, toate numerele finite)",
             (true, true) if oracle.is_some() => "TRECE (pasul #513 cu arena in VRAM = oracolul procesorului in pasii 1-9, toate numerele finite)",
             (true, true) => "TRECE (pasul #513 cu arena in VRAM: pierderea porneste de la ln V si scade, toate numerele finite)",
             (true, false) => "TRECE (pasul #513 pe bucati si parti = oracolul, bucatile = urcarile planului)",

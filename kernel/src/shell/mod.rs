@@ -1210,6 +1210,25 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu tablou-pas-sim: exista doar in build-ul de test (pe stick: test-placa --tablou-viteza ...)\n");
         }
+        Some("date-reale-sim") => {
+            // P6-261: test build only: #513's step of the next `antrenare-mini-sim vram-513…` run on the real data (the
+            // S141 draw checked without data; without #513's weights on the stick the step refuses by name); on the stick
+            // it is `test-placa … --antrenare-513 … --date-reale`.
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TRAIN_513_REAL_DATA_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu date-reale-sim: pornit (pasul #513 cu greutatile #513 de pe stick, loturile S141, lr 5e-5)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::TRAIN_513_REAL_DATA_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu date-reale-sim: oprit\n");
+                }
+                _ => out!("folosire: gpu date-reale-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu date-reale-sim: exista doar in build-ul de test (pe stick: test-placa ... --antrenare-513 ... --date-reale)\n");
+        }
         Some("lot513-sim") => {
             // P6-208: test build only: #513's batch for the next `antrenare-mini-sim vram-513…` run (0 = the default 2);
             // on the stick it is `test-placa … --antrenare-513 … --lot-513 N`.
