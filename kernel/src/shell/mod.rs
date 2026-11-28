@@ -1649,6 +1649,25 @@ fn gpu(args: &[&str]) {
             #[cfg(not(feature = "test-gpu-sim"))]
             out!("gpu atentie-tc-sim: exista doar in build-ul de test (pe stick o porneste doar ciclul, test-placa --atentie-placi --atentie2 --atentie3 --atentie-tc)\n");
         }
+        Some("atentie-fwd-tc-sim") => {
+            // P6-262 (cyber-gpu note C-168_P4a): test build only: with `gpu atentie-placi-sim on`, after the tiled
+            // attention probe, `attn_fwd_tc` beside `attn_fwd_tile3` (on the stick only the cycle turns it on,
+            // `test-placa … --atentie-placi --atentie2 --atentie3 --atentie-fwd-tc`).
+            #[cfg(feature = "test-gpu-sim")]
+            match args.get(1).copied() {
+                Some("on") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::ATTN_FWD_TC_IN_CYCLE.store(true, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu atentie-fwd-tc-sim: pornita (SIMULARE: dupa proba atentiei pe placi, attn_fwd_tc langa attn_fwd_tile3 pe 4 seturi mici aliniate + atentie-513-b4, judecate cu attn_fwd_tc_probe::judge)\n");
+                }
+                Some("off") if args.len() == 2 => {
+                    crate::drivers::gpu_tur::ATTN_FWD_TC_IN_CYCLE.store(false, core::sync::atomic::Ordering::SeqCst);
+                    out!("gpu atentie-fwd-tc-sim: oprita\n");
+                }
+                _ => out!("folosire: gpu atentie-fwd-tc-sim on|off\n"),
+            }
+            #[cfg(not(feature = "test-gpu-sim"))]
+            out!("gpu atentie-fwd-tc-sim: exista doar in build-ul de test (pe stick o porneste doar ciclul, test-placa --atentie-placi --atentie2 --atentie3 --atentie-fwd-tc)\n");
+        }
         Some("atentie-tc16-sim") => {
             // P6-231 (cyber-gpu notes C-157_P2zm step 2 / C-157_P2zp): test build only: in the next
             // `antrenare-mini-sim vram-513-mixt rapid …`, dQ / dK / dV on `attn_back_tile_tc16` (on the stick only the

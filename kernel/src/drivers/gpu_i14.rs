@@ -3459,6 +3459,13 @@ fn kronos_job<V: Mmio + ?Sized, K: Clock + ?Sized>(
             if let Err(e) = attn_tile_probe(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, &ctx) {
                 lines.push(format!("{}: kronos --gpu: proba atentiei pe placi: oprita: {}", p, e));
             }
+            // P6-262 (C-168 p.4, cyber-gpu `b060477`, note P4a): `attn_fwd_tc` beside `attn_fwd_tile3`, only when the
+            // cycle's list asks for it (`test-placa … --atentie3 … --atentie-fwd-tc`); its failure is a line.
+            if super::gpu_tur::ATTN_FWD_TC_IN_CYCLE.load(core::sync::atomic::Ordering::SeqCst) {
+                if let Err(e) = attn_fwd_tc_probe(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, &ctx) {
+                    lines.push(format!("{}: kronos --gpu: atentie-fwd-tc: oprita: {}", p, e));
+                }
+            }
         }
         // P6-161 (C-157, cyber-gpu `9359f21`): the RAM ↔ VRAM probe with the copy engine, only when the cycle's list asks
         // for it (`test-placa … --ram-vram`), after everything else; its failure is a line.
@@ -6069,6 +6076,290 @@ fn attn_tile_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
         (None, None, None) => Ok(()),
         _ => Err(GpuError::Timeout { waited_us: WAIT_US }),
     }
+}
+
+/// P6-262 (C-168 point 4, step 3; cyber-gpu note `C-168_P4a_atentie-fwd-tc-proba.md`, commit `b060477`): the probe
+/// `--atentie-fwd-tc` — `attn_fwd_tc` (the attention forward on the tensor cores, f16 products) alone on the board,
+/// beside `attn_fwd_tile3` on the same inputs, outside any training step. The four small aligned sets of
+/// `attn_fwd_tc_probe::SETS` in host RAM (whole), then `atentie-513-b4` in VRAM (inputs up and back through the arena,
+/// 5 launches of each program, the bands back). Before EACH program the ranges of `fwd_ranges` (P rows, att rows and
+/// their guards) are filled with NaN; `attn_fwd_tc` must leave the tiles above the diagonal tile unwritten. The verdict
+/// is `attn_fwd_tc_probe::judge` (a margin against `attn_fwd_tile3`, not the same bits). New for the board: only the
+/// program `attn_fwd_tc` (SHA-256 checked first), at the 64 KiB shared step. A launch the board does not finish stops the
+/// probe (no retry). In SIMULARE the small sets run on the emulated CPU; the big set's launches are skipped.
+#[allow(clippy::too_many_arguments)]
+fn attn_fwd_tc_probe<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    doorbell: &mut Bell<'_, V>,
+    subs: &mut u32,
+    ctx: &CopyCtx,
+) -> GpuResult<bool> {
+    use nvidia_ga104::attn_fwd_tc as tc;
+    use nvidia_ga104::attn_fwd_tc_probe as fp;
+    use nvidia_ga104::attn_tile_probe as ap;
+    let label = if permit.is_some() { "placa" } else { "SIMULARE" };
+    let old = AttnGen::Three;
+    for (name, bin, want) in [(old.name(0), old.binary(0), old.sha256(0)), ("attn_fwd_tc", tc::ATTN_FWD_TC, tc::ATTN_FWD_TC_SHA256)] {
+        let sha = sha256_hex(bin);
+        if sha != want {
+            lines.push(format!("{}: kronos --gpu: atentie-fwd-tc: SHA-256 al programului {} = {} nu e cel din nota ({}): nimic trimis", p, name, sha, want));
+            return Err(bad("atentie-fwd-tc: SHA-256 gresit"));
+        }
+    }
+    lines.push(format!(
+        "{}: kronos --gpu: atentie-fwd-tc ceruta ({}): programul nou attn_fwd_tc ({} registre, {} octeti partajati, treapta 64 KiB, argumentele la 0x700 intr-un cbuf de 0x800, SHA-256 verificat) langa {} pe aceleasi intrari; {} seturi mici aliniate, apoi {}",
+        p,
+        label,
+        tc::REGISTERS,
+        tc::SHARED.bytes,
+        old.name(0),
+        fp::TIMING_SET,
+        fp::SETS[fp::TIMING_SET].name
+    ));
+    // The two programs, each with one VRAM page: the cbuf at +0 (up to 0x800 bytes), the QMD at +0x800.
+    let mut maps = ctx.maps.clone();
+    let mut prog_va = [0u64; 2];
+    let mut zones: Vec<Mapping> = Vec::with_capacity(2);
+    for (k, bin) in [old.binary(0), tc::ATTN_FWD_TC].into_iter().enumerate() {
+        let m = map_vram(st, program_map_bytes(bin.len() as u64))?;
+        put_bytes(st.mem.writer_mut(), m.pa, bin)?;
+        prog_va[k] = m.va;
+        maps.push(m);
+        let z = map_vram(st, PAGE)?;
+        maps.push(z);
+        zones.push(z);
+    }
+    // cbuf + QMD of program `k` (0 = tile3, 1 = tc) on `set` with its buffer at `buf_va`.
+    let bytes = |k: usize, set: &ap::ProbeSet, buf_va: u64| -> GpuResult<(Vec<u8>, Vec<u8>)> {
+        if k == 0 {
+            let (cb, q) = ap::launch_bytes3(set, ap::PROGS3[0], prog_va[0], zones[0].va, buf_va)?;
+            Ok((cb.to_vec(), q.to_vec()))
+        } else {
+            let (cb, q) = fp::launch_bytes(set, prog_va[1], zones[1].va, buf_va)?;
+            Ok((cb.to_vec(), q.to_vec()))
+        }
+    };
+    let names = [old.name(0), "attn_fwd_tc"];
+    let mut probe = fp::Probe::default();
+    let mut stopped: Option<usize> = None;
+    // 1. The small sets, whole, in host RAM.
+    let small = fp::SETS[..fp::TIMING_SET].iter().map(|s| s.layout().bytes as u64).max().unwrap_or(PAGE);
+    let buf = st.mem.alloc_sys_mapped(&arena_pages(0, small.div_ceil(PAGE))?)?;
+    if !buf.va.is_multiple_of(PAGE) {
+        return Err(bad("atentie-fwd-tc: bufferul nu e aliniat la 4 KiB"));
+    }
+    'sets: for (i, set) in fp::SETS[..fp::TIMING_SET].iter().enumerate() {
+        if !fp::fits(set) {
+            return Err(bad("atentie-fwd-tc: set nealiniat in nota"));
+        }
+        let sys = [ctx.sys.clone(), buf.clone()];
+        ram_write(&buf, &set.buffer());
+        let ranges = fp::fwd_ranges(set);
+        let mut outs: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
+        let mut ns = [0u64; 2];
+        for k in 0..2 {
+            for &(o, n) in &ranges {
+                let fill: Vec<u8> = core::iter::repeat_n(fp::FILL.to_le_bytes(), n / 4).flatten().collect();
+                ram_write_at(&buf, o as u64, &fill);
+            }
+            let (cb, q) = bytes(k, set, buf.va)?;
+            {
+                let w = st.mem.writer_mut();
+                put_bytes(w, zones[k].pa, &cb)?;
+                put_bytes(w, zones[k].pa + 0x800, &q)?;
+            }
+            match mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, &maps, &sys, zones[k].va + 0x800)? {
+                Ok(t) => ns[k] = t,
+                Err(got) => {
+                    lines.push(format!(
+                        "{}: kronos --gpu: atentie-fwd-tc: placa nu a terminat la setul {} ({}), programul {}: ultima inregistrare = {:#x}; proba oprita, fara reincercare",
+                        p, i, set.name, names[k], got
+                    ));
+                    stopped = Some(i);
+                    break 'sets;
+                }
+            }
+            for &(o, n) in &ranges {
+                outs[k].extend_from_slice(&ram_read_at(&buf, o as u64, n as u64));
+            }
+        }
+        probe.add(fp::judge(set, &outs[0], &outs[1], &ns[..1], &ns[1..])?);
+    }
+    // 2. `atentie-513-b4` in VRAM (the time).
+    if stopped.is_none() {
+        match attn_fwd_tc_big(p, vbar, clock, journal, st, l, permit, lines, doorbell, subs, ctx, &maps, &zones, &bytes, names)? {
+            Some(Ok(r)) => probe.add(r),
+            Some(Err(())) => stopped = Some(fp::TIMING_SET),
+            None => {}
+        }
+    }
+    lines.extend(probe.lines(label).into_iter().map(|x| format!("{}: kronos --gpu: {}", p, x)));
+    journal.push(Event::Value { what: "kt atentie-fwd-tc seturi in margine", value: probe.in_limits() as u32 });
+    if let Some(s) = probe.sets.iter().find(|s| s.name == fp::SETS[fp::TIMING_SET].name) {
+        journal.push(Event::Value { what: "kt atentie-fwd-tc 513-b4 tile3 (ns)", value: s.median_tile3().map_or(0, |x| u32::try_from(x).unwrap_or(u32::MAX)) });
+        journal.push(Event::Value { what: "kt atentie-fwd-tc 513-b4 tc (ns)", value: s.median_tc().map_or(0, |x| u32::try_from(x).unwrap_or(u32::MAX)) });
+    }
+    let timed = probe.sets.iter().any(|s| s.name == fp::SETS[fp::TIMING_SET].name);
+    let verdict = match stopped {
+        Some(i) => format!("NU A TERMINAT (la setul {})", i),
+        None if probe.passes() => String::from("TRECE"),
+        None => String::from("NU TRECE"),
+    };
+    lines.push(format!(
+        "{}: kronos --gpu: atentie-fwd-tc (vechi langa nou, {}): {}: {} / {} seturi in margine (O <= 1e-3, P <= 2e-3 fata de {}); {}",
+        p,
+        label,
+        verdict,
+        probe.in_limits(),
+        probe.sets.len(),
+        old.name(0),
+        if timed { "atentie-513-b4 cronometrat" } else { "atentie-513-b4 omis" }
+    ));
+    Ok(stopped.is_none() && probe.passes())
+}
+
+/// P6-262: `atentie-513-b4` of the `--atentie-fwd-tc` probe: its buffer in VRAM (if the allocation fails: skipped,
+/// `None`), the inputs up and back through the arena (nothing is launched on a wrong upload), then for each program the
+/// ranges filled with NaN, 5 launches, the ranges back. `Some(Err(()))` = the board did not finish (a line says where).
+/// In SIMULARE the launches are skipped and the NaN ranges are read back and checked instead (`None`).
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn attn_fwd_tc_big<V: Mmio + ?Sized, K: Clock + ?Sized>(
+    p: &str,
+    vbar: &mut V,
+    clock: &mut K,
+    journal: &mut Journal,
+    st: &mut GpuState,
+    l: &mut Launched,
+    permit: Option<&HardwareWritePermit>,
+    lines: &mut Vec<String>,
+    doorbell: &mut Bell<'_, V>,
+    subs: &mut u32,
+    ctx: &CopyCtx,
+    maps: &[Mapping],
+    zones: &[Mapping],
+    bytes: &dyn Fn(usize, &nvidia_ga104::attn_tile_probe::ProbeSet, u64) -> GpuResult<(Vec<u8>, Vec<u8>)>,
+    names: [&str; 2],
+) -> GpuResult<Option<Result<nvidia_ga104::attn_fwd_tc_probe::SetResult, ()>>> {
+    use nvidia_ga104::attn_fwd_tc_probe as fp;
+    let set = &fp::SETS[fp::TIMING_SET];
+    let lay = set.layout();
+    let big = match map_vram(st, lay.bytes as u64) {
+        Ok(m) if m.va.is_multiple_of(PAGE) => m,
+        Ok(_) => {
+            lines.push(format!("{}: kronos --gpu: atentie-fwd-tc: {} omis: bufferul din VRAM nu e aliniat la 4 KiB", p, set.name));
+            return Ok(None);
+        }
+        Err(e) => {
+            lines.push(format!("{}: kronos --gpu: atentie-fwd-tc: {} omis: {} MB de VRAM nu s-au putut lua ({:?})", p, set.name, lay.bytes / 1_000_000, e));
+            return Ok(None);
+        }
+    };
+    let win = I11_BOARD_BYTES;
+    let host = st.mem.alloc_sys_mapped(&arena_pages(0, win / PAGE)?)?;
+    let cz = map_vram(st, PAGE)?;
+    let mut maps = maps.to_vec();
+    maps.push(big);
+    maps.push(cz);
+    let sys = [ctx.sys.clone(), host.clone()];
+    let copy = |vbar: &mut V, clock: &mut K, journal: &mut Journal, st: &mut GpuState, l: &mut Launched, doorbell: &mut Bell<'_, V>, subs: &mut u32, src: u64, dst: u64, len: u64| -> GpuResult<bool> {
+        {
+            let w = st.mem.writer_mut();
+            put_bytes(w, cz.pa, &transfer::copy_cbuf(src, dst, len)?)?;
+            put_bytes(w, cz.pa + 0x800, &transfer::copy_qmd(ctx.copy_va, cz.va, len)?.to_bytes()?)?;
+        }
+        Ok(mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, &maps, &sys, cz.va + 0x800)?.is_ok())
+    };
+    // The inputs (everything before P), up and back.
+    let mut inputs = alloc::vec![0u8; lay.p];
+    set.write_inputs(|at, b| inputs[at..at + b.len()].copy_from_slice(b));
+    for (k, piece) in inputs.chunks(win as usize).enumerate() {
+        ram_write(&host, piece);
+        if !copy(vbar, clock, journal, st, l, doorbell, subs, host.va, big.va + k as u64 * win, (piece.len() as u64).next_multiple_of(16))? {
+            lines.push(format!("{}: kronos --gpu: atentie-fwd-tc: {}: urcarea bucatii {} nu s-a terminat; proba oprita, fara reincercare", p, set.name, k));
+            return Ok(Some(Err(())));
+        }
+    }
+    let mut same = true;
+    for (k, piece) in inputs.chunks(win as usize).enumerate() {
+        ram_write(&host, &[]);
+        if !copy(vbar, clock, journal, st, l, doorbell, subs, big.va + k as u64 * win, host.va, (piece.len() as u64).next_multiple_of(16))? {
+            lines.push(format!("{}: kronos --gpu: atentie-fwd-tc: {}: recitirea bucatii {} nu s-a terminat; proba oprita, fara reincercare", p, set.name, k));
+            return Ok(Some(Err(())));
+        }
+        same &= ram_read(&host, piece.len() as u64) == piece;
+    }
+    drop(inputs);
+    if !same {
+        lines.push(format!("{}: kronos --gpu: atentie-fwd-tc: {}: intrarile recitite din VRAM NU sunt cele urcate; nimic lansat", p, set.name));
+        return Ok(None);
+    }
+    lines.push(format!("{}: kronos --gpu: atentie-fwd-tc: {}: {} octeti de intrari urcati si recititi identic din VRAM; bufferul {} octeti", p, set.name, lay.p, lay.bytes));
+    let ranges = fp::fwd_ranges(set);
+    let groups = spans(&ranges, win);
+    let mut outs: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
+    let mut times: [Vec<u64>; 2] = [Vec::new(), Vec::new()];
+    for k in 0..2 {
+        for &(start, len, _, _) in &groups {
+            let fill: Vec<u8> = core::iter::repeat_n(fp::FILL.to_le_bytes(), len as usize / 4).flatten().collect();
+            ram_write(&host, &fill);
+            if !copy(vbar, clock, journal, st, l, doorbell, subs, host.va, big.va + start, len)? {
+                lines.push(format!("{}: kronos --gpu: atentie-fwd-tc: {}: umplerea cu NaN nu s-a terminat; proba oprita, fara reincercare", p, set.name));
+                return Ok(Some(Err(())));
+            }
+        }
+        if permit.is_some() {
+            let (cb, q) = bytes(k, set, big.va)?;
+            {
+                let w = st.mem.writer_mut();
+                put_bytes(w, zones[k].pa, &cb)?;
+                put_bytes(w, zones[k].pa + 0x800, &q)?;
+            }
+            for r in 0..set.repeats {
+                match mm_tc_launch(vbar, clock, journal, st, l, permit, doorbell, subs, ctx, &maps, &sys, zones[k].va + 0x800)? {
+                    Ok(ns) => times[k].push(ns),
+                    Err(got) => {
+                        lines.push(format!(
+                            "{}: kronos --gpu: atentie-fwd-tc: placa nu a terminat la setul {} ({}), programul {}, lansarea {}: ultima inregistrare = {:#x}; proba oprita, fara reincercare",
+                            p, fp::TIMING_SET, set.name, names[k], r, got
+                        ));
+                        return Ok(Some(Err(())));
+                    }
+                }
+            }
+        }
+        for &(start, len, first, count) in &groups {
+            ram_write(&host, &[]);
+            if !copy(vbar, clock, journal, st, l, doorbell, subs, big.va + start, host.va, len)? {
+                lines.push(format!("{}: kronos --gpu: atentie-fwd-tc: {}: citirea benzilor nu s-a terminat; proba oprita, fara reincercare", p, set.name));
+                return Ok(Some(Err(())));
+            }
+            for &(o, n) in &ranges[first..first + count] {
+                outs[k].extend_from_slice(&ram_read_at(&host, o as u64 - start, n as u64));
+            }
+        }
+    }
+    if permit.is_none() {
+        let nan = outs.iter().all(|o| o.chunks(4).all(|w| w == fp::FILL.to_le_bytes()));
+        lines.push(format!(
+            "{}: kronos --gpu: atentie-fwd-tc {} (SIMULARE): benzile si garzile umplute cu NaN si recitite de doua ori ({} octeti in {} intervale, {} copii, {}); cele {} lansari sarite in simulare (prea mari pentru procesorul emulat)",
+            p,
+            set.name,
+            outs[0].len(),
+            ranges.len(),
+            groups.len(),
+            if nan { "neatinse" } else { "ATINSE" },
+            2 * set.repeats
+        ));
+        return Ok(None);
+    }
+    Ok(Some(Ok(fp::judge(set, &outs[0], &outs[1], &times[0], &times[1])?)))
 }
 
 /// P6-160: a newer generation of the tiled attention programs (`attn_*_2`, `attn_*_3`), run after the first on the

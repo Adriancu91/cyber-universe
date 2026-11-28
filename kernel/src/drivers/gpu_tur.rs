@@ -500,6 +500,12 @@ pub static ATTN_TC0_V4_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::at
 /// `gpu atentie-tc-sim on 64k` / `v4-64k`). Off by default.
 pub static ATTN_TC_64K_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// P6-262 (C-168 point 4, cyber-gpu note C-168_P4a, commit `b060477`): after the tiled attention probe, `attn_fwd_tc`
+/// (the attention forward on the tensor cores) beside `attn_fwd_tile3` on its own aligned sets + `atentie-513-b4`. Set
+/// only by the cycle (`test-placa … --atentie-placi --atentie2 --atentie3 … --atentie-fwd-tc`) and, in the test build,
+/// by `gpu atentie-fwd-tc-sim on`. Off by default.
+pub static ATTN_FWD_TC_IN_CYCLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// P6-161 (C-157, cyber-gpu `9359f21`): the RAM ↔ VRAM probe with the copy engine — the copy object allocated on the
 /// work channel right after I9 (one RM message), then, after `kronos --gpu`'s texts, one submission of copies host RAM ↔
 /// VRAM timed and checked byte for byte (`kt ramvram …`). Set only by the cycle (`test-placa … --ram-vram`) and, in the
